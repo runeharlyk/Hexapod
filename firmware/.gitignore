@@ -1,0 +1,7 @@
+.pio
+data/
+www/
+build/
+lib/ESP32-sveltekit/WWWData.h
+**/.vscode/c_cpp_properties.json
+**/.vscode/launch.json

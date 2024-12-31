@@ -1,0 +1,26 @@
+#include <features.h>
+
+namespace feature_service {
+
+void features(JsonObject &root) {
+    root["upload_firmware"] = USE_UPLOAD_FIRMWARE;
+    root["download_firmware"] = USE_DOWNLOAD_FIRMWARE;
+    root["sleep"] = USE_SLEEP;
+    root["camera"] = USE_CAMERA;
+    root["imu"] = USE_MPU6050 | USE_BNO055;
+    root["mag"] = USE_MAG;
+    root["bmp"] = USE_BMP;
+    root["sonar"] = USE_USS;
+    root["firmware_version"] = APP_VERSION;
+    root["firmware_name"] = APP_NAME;
+    root["firmware_built_target"] = BUILD_TARGET;
+}
+
+esp_err_t getFeatures(PsychicRequest *request) {
+    PsychicJsonResponse response = PsychicJsonResponse(request, false);
+    JsonObject root = response.getRoot();
+    features(root);
+    return response.send();
+}
+
+} // namespace feature_service
