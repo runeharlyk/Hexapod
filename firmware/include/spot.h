@@ -55,24 +55,24 @@ class Spot {
     }
 
     // plan
-    void planMotion() { updatedMotion = _motionService.updateMotion(); }
+    // void planMotion() { updatedMotion = _motionService.updateMotion(); }
 
     // act
-    void updateActuators() {
-        if (updatedMotion) _servoController.setAngles(_motionService.getAngles());
+    //     void updateActuators() {
+    //         if (updatedMotion) _servoController.setAngles(_motionService.getAngles());
 
-        _servoController.updateServoState();
-#if FT_ENABLED(USE_WS2812)
-        _ledService.loop();
-#endif
-    }
+    //         _servoController.updateServoState();
+    // #if FT_ENABLED(USE_WS2812)
+    //         _ledService.loop();
+    // #endif
+    //     }
 
     // communicate
-    void emitTelemetry() {
-        if (updatedMotion) EXECUTE_EVERY_N_MS(100, { _motionService.emitAngles(); });
-        EXECUTE_EVERY_N_MS(1000, { _peripherals.emitIMU(); });
-        // _peripherals.emitSonar();
-    }
+    // void emitTelemetry() {
+    //     if (updatedMotion) EXECUTE_EVERY_N_MS(100, { _motionService.emitAngles(); });
+    //     EXECUTE_EVERY_N_MS(1000, { _peripherals.emitIMU(); });
+    //     // _peripherals.emitSonar();
+    // }
 
   private:
     PsychicHttpServer _server;
