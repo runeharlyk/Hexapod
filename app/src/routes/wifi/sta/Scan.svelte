@@ -1,17 +1,20 @@
 <script lang="ts">
-    import { closeModal } from 'svelte-modals';
     import { focusTrap } from 'svelte-focus-trap';
     import { fly } from 'svelte/transition';
-
     import { onMount, onDestroy } from 'svelte';
     import RssiIndicator from '$lib/components/statusbar/RSSIIndicator.svelte';
     import type { NetworkItem, NetworkList } from '$lib/types/models';
     import { api } from '$lib/api';
     import { AP, Network, Reload, Cancel } from '$lib/components/icons';
+    import { modals, exitBeforeEnter } from 'svelte-modals';
 
     // provided by <Modals />
-    export let isOpen: boolean;
-    export let storeNetwork: any;
+    interface Props {
+        isOpen: boolean;
+        storeNetwork: any;
+    }
+
+    let { isOpen, storeNetwork }: Props = $props();
 
     const encryptionType = [
         'Open',
@@ -25,9 +28,9 @@
         'WAPI PSK'
     ];
 
-    let listOfNetworks: NetworkItem[] = [];
+    let listOfNetworks: NetworkItem[] = $state([]);
 
-    let scanActive = false;
+    let scanActive = $state(false);
 
     let pollingId: number;
 
@@ -73,15 +76,14 @@
         role="dialog"
         class="pointer-events-none fixed inset-0 z-50 flex items-center justify-center"
         transition:fly={{ y: 50 }}
-        on:introstart
-        on:outroend
+        use:exitBeforeEnter
         use:focusTrap
     >
         <div
             class="bg-base-100 rounded-box pointer-events-auto flex max-h-full min-w-fit max-w-md flex-col justify-between p-4 shadow-lg"
         >
             <h2 class="text-base-content text-start text-2xl font-bold">Scan Networks</h2>
-            <div class="divider my-2" />
+            <div class="divider my-2"></div>
             <div class="overflow-y-auto">
                 {#if scanActive}<div
                         class="bg-base-100 flex flex-col items-center justify-center p-6"
@@ -93,10 +95,10 @@
                     <ul class="menu">
                         {#each listOfNetworks as network, i}
                             <li>
-                                <!-- svelte-ignore a11y-click-events-have-key-events -->
+                                <!-- svelte-ignore a11y_click_events_have_key_events -->
                                 <div
                                     class="bg-base-200 rounded-btn my-1 flex items-center space-x-3 hover:scale-[1.02] active:scale-[0.98]"
-                                    on:click={() => {
+                                    onclick={() => {
                                         storeNetwork(network.ssid);
                                     }}
                                     role="button"
@@ -114,7 +116,7 @@
                                             Channel: {network.channel}
                                         </div>
                                     </div>
-                                    <div class="flex-grow" />
+                                    <div class="grow"></div>
                                     <RssiIndicator showDBm={true} rssi={network.rssi} />
                                 </div>
                             </li>
@@ -122,20 +124,23 @@
                     </ul>
                 {/if}
             </div>
-            <div class="divider my-2" />
+            <div class="divider my-2"></div>
             <div class="flex flex-wrap justify-end gap-2">
                 <button
                     class="btn btn-primary inline-flex flex-none items-center"
                     disabled={scanActive}
-                    on:click={scanNetworks}
-                    ><Reload class="mr-2 h-5 w-5" /><span>Scan again</span></button
+                    onclick={scanNetworks}
                 >
+                    <Reload class="mr-2 h-5 w-5" /><span>Scan again</span>
+                </button>
 
-                <div class="flex-grow" />
+                <div class="grow"></div>
                 <button
                     class="btn btn-warning text-warning-content inline-flex flex-none items-center"
-                    on:click={closeModal}><Cancel class="mr-2 h-5 w-5" /><span>Cancel</span></button
+                    onclick={() => modals.close()}
                 >
+                    <Cancel class="mr-2 h-5 w-5" /><span>Cancel</span>
+                </button>
             </div>
         </div>
     </div>

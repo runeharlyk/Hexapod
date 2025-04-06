@@ -1,42 +1,44 @@
 <script lang="ts">
-	import File from './File.svelte';
-	import { createEventDispatcher } from 'svelte';
-	import { FolderIcon, FolderOpenOutline } from '$lib/components/icons';
+  import Folder from './Folder.svelte'
+  import File from './File.svelte'
+  import { FolderIcon, FolderOpenOutline } from '$lib/components/icons'
 
-	export let expanded = false;
-	export let name;
-	export let files;
+  interface Props {
+    expanded?: boolean
+    name: string
+    files: any
+    selected: (name: string) => void
+    onDelete: (name: string) => void
+  }
 
-	function toggle() {
-		expanded = !expanded;
-	}
+  let { expanded = $bindable(false), name, files, selected, onDelete }: Props = $props()
 
-    const dispatch = createEventDispatcher();
-
-    const updateSelected = async (event:any) => {
-        dispatch('selected', { name:event.detail.name });
-    }
+  function toggle() {
+    expanded = !expanded
+  }
 </script>
 
-<button class="flex pl-2" on:click={toggle}>
+<div class="folder-item">
+  <button class="flex items-center pl-2 hover:bg-gray-700 w-full rounded py-1" onclick={toggle}>
     {#if expanded}
-        <FolderOpenOutline class="w-6 h-6" />
+      <FolderOpenOutline class="w-5 h-5 mr-1" />
     {:else}
-        <FolderIcon class="w-6 h-6" />
+      <FolderIcon class="w-5 h-5 mr-1" />
     {/if}
-    {name}
-</button>
+    <span class="text-sm">{name}</span>
+  </button>
 
-{#if expanded}
-    <ul class="ml-5 border-l border-slate-600">
-        {#each Object.entries(files) as [name, content]}
-            <li class="p-1">
-                {#if typeof content == 'object'}
-					<svelte:self {name} files={content} on:selected={updateSelected} />
-				{:else}
-					<File {name} on:selected={updateSelected}/>
-				{/if}
-			</li>
-		{/each}
-	</ul>
-{/if}
+  {#if expanded}
+    <ul class="ml-4 border-l border-gray-600 mt-1">
+      {#each Object.entries(files) as [itemName, content]}
+        <li class="py-1">
+          {#if typeof content === 'object'}
+            <Folder name={itemName} files={content} {selected} {onDelete} />
+          {:else}
+            <File name={itemName} {selected} {onDelete} />
+          {/if}
+        </li>
+      {/each}
+    </ul>
+  {/if}
+</div>

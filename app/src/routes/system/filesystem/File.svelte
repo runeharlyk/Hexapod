@@ -1,18 +1,24 @@
-<script>
-	import { FileIcon } from '$lib/components/icons';
-    import { createEventDispatcher } from 'svelte';
-    
-	export let name;
-    
-    const dispatch = createEventDispatcher();
+<script lang="ts">
+  import { FileIcon, TrashIcon } from '$lib/components/icons'
 
-    const updateSelected = async () => {
-        dispatch('selected', { name });
-    }
+  interface Props {
+    name: string
+    selected: (name: string) => void
+    onDelete: (name: string) => void
+  }
+
+  let { name, selected, onDelete }: Props = $props()
 </script>
 
-<!-- svelte-ignore a11y-interactive-supports-focus -->
-<!-- svelte-ignore a11y-click-events-have-key-events -->
-<span role="button" class="flex pl-4 gap-2 items-center" on:click={updateSelected}>
-    <FileIcon/>{name}
-</span>
+<div class="flex items-center pl-4 group hover:bg-gray-700 rounded py-1">
+  <button class="flex items-center gap-2 flex-grow" onclick={() => selected(name)}>
+    <FileIcon class="w-4 h-4" />
+    <span class="text-sm">{name}</span>
+  </button>
+
+  <button
+    class="opacity-0 group-hover:opacity-100 p-1 hover:text-red-500"
+    onclick={() => onDelete(name)}>
+    <TrashIcon class="w-4 h-4" />
+  </button>
+</div>

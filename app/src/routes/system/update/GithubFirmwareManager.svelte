@@ -1,6 +1,6 @@
 <script lang="ts">
-    import { page } from '$app/stores';
-    import { openModal, closeModal, closeAllModals } from 'svelte-modals';
+    import { page } from '$app/state';
+    import { modals } from 'svelte-modals';
     import { slide } from 'svelte/transition';
     import { cubicOut } from 'svelte/easing';
     import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -21,7 +21,7 @@
             accept: 'application/vnd.github+json',
             'X-GitHub-Api-Version': '2022-11-28'
         };
-        const result = await api.get(`https://api.github.com/repos/${$page.data.github}/releases`, {
+        const result = await api.get(`https://api.github.com/repos/${page.data.github}/releases`, {
             headers
         });
         if (result.isErr()) {
@@ -53,17 +53,17 @@
         }
         if (url === '') {
             // if no asset was found, use the first one
-            openModal(InfoDialog, {
+            modals.open(InfoDialog, {
                 title: 'No matching firmware found',
                 message:
                     'No matching firmware was found for the current device. Upload the firmware manually or build from sources.',
                 dismiss: { label: 'OK', icon: Check },
-                onDismiss: () => closeModal()
+                onDismiss: () => modals.close()
             });
             return;
         }
 
-        openModal(ConfirmDialog, {
+        modals.open(ConfirmDialog, {
             title: 'Confirm flashing new firmware to the device',
             message: 'Are you sure you want to overwrite the existing firmware with a new one?',
             labels: {
@@ -72,8 +72,8 @@
             },
             onConfirm: () => {
                 postGithubDownload(url);
-                openModal(GithubUpdateDialog, {
-                    onConfirm: () => closeAllModals()
+                modals.open(GithubUpdateDialog, {
+                    onConfirm: () => modals.closeAll()
                 });
             }
         });
@@ -81,8 +81,12 @@
 </script>
 
 <SettingsCard collapsible={false}>
-    <Github slot="icon" class="lex-shrink-0 mr-2 h-6 w-6 self-end rounded-full" />
-    <span slot="title">Github Firmware Manager</span>
+    {#snippet icon()}
+        <Github class="lex-shrink-0 mr-2 h-6 w-6 self-end rounded-full" />
+    {/snippet}
+    {#snippet title()}
+        <span>Github Firmware Manager</span>
+    {/snippet}
     {#await getGithubAPI()}
         <Spinner />
     {:then githubReleases}
@@ -136,7 +140,7 @@
                                     {#if compareVersions($features.firmware_version, release.tag_name) != 0}
                                         <button
                                             class="btn btn-ghost btn-circle btn-sm"
-                                            on:click={() => {
+                                            onclick={() => {
                                                 confirmGithubUpdate(release.assets);
                                             }}
                                         >
@@ -152,7 +156,7 @@
         </div>
     {:catch error}
         <div class="alert alert-error shadow-lg">
-            <Error class="h-6 w-6 flex-shrink-0" />
+            <Error class="h-6 w-6 shrink-0" />
             <span
                 >Please connect to a network with internet access to perform a firmware update.</span
             >

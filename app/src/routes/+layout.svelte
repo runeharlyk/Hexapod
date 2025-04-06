@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onDestroy, onMount } from 'svelte';
-    import { page } from '$app/stores';
-    import { Modals, closeModal } from 'svelte-modals';
+    import { page } from '$app/state';
+    import { Modals, modals } from 'svelte-modals';
     import Toast from '$lib/components/toasts/Toast.svelte';
     import { notifications } from '$lib/components/toasts/notifications';
     import { fade } from 'svelte/transition';
@@ -22,6 +22,11 @@
         useFeatureFlags
     } from '$lib/stores';
     import type { Analytics, DownloadOTA } from '$lib/types/models';
+    interface Props {
+        children?: import('svelte').Snippet;
+    }
+
+    let { children }: Props = $props();
 
     const features = useFeatureFlags();
 
@@ -82,11 +87,11 @@
 
     const handleOAT = (data: DownloadOTA) => telemetry.setDownloadOTA(data);
 
-    let menuOpen = false;
+    let menuOpen = $state(false);
 </script>
 
 <svelte:head>
-    <title>{$page.data.title}</title>
+    <title>{page.data.title}</title>
 </svelte:head>
 
 <div class="drawer">
@@ -96,24 +101,25 @@
         <Statusbar />
 
         <!-- Main page content here -->
-        <slot />
+        {@render children?.()}
     </div>
     <!-- Side Navigation -->
     <div class="drawer-side z-30 shadow-lg">
-        <label for="main-menu" class="drawer-overlay" />
-        <Menu on:menuClicked={() => (menuOpen = false)} />
+        <label for="main-menu" class="drawer-overlay"></label>
+        <Menu menuClicked={() => (menuOpen = false)} />
     </div>
 </div>
 
 <Modals>
-    <!-- svelte-ignore a11y-click-events-have-key-events -->
-    <!-- svelte-ignore a11y-no-static-element-interactions -->
-    <div
-        slot="backdrop"
-        class="fixed inset-0 z-40 max-h-full max-w-full bg-black/20 backdrop-blur"
-        transition:fade
-        on:click={closeModal}
-    />
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    {#snippet backdrop()}
+        <div
+            class="fixed inset-0 z-40 max-h-full max-w-full bg-black/20 backdrop-blur-sm"
+            transition:fade
+            onclick={modals.closeAll}
+        ></div>
+    {/snippet}
 </Modals>
 
 <Toast />

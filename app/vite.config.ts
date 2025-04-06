@@ -3,9 +3,11 @@ import { defineConfig } from 'vite';
 import Icons from 'unplugin-icons/vite';
 import viteLittleFS from './vite-plugin-littlefs';
 import EnvCaster from '@niku/vite-env-caster';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
     plugins: [
+        tailwindcss(),
         sveltekit(),
         Icons({
             compiler: 'svelte'
@@ -19,7 +21,7 @@ export default defineConfig({
     server: {
         proxy: {
             '/api': {
-                target: 'http://spot-micro.local/',
+                target: 'http://192.168.0.221',
                 changeOrigin: true,
                 ws: true
             }

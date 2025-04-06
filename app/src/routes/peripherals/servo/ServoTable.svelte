@@ -1,9 +1,15 @@
 <script lang="ts">
     import { api } from '$lib/api';
     import { onMount } from 'svelte';
-    export let data = {
-        servos: []
-    };
+    interface Props {
+        data?: any;
+    }
+
+    let {
+        data = $bindable({
+            servos: []
+        })
+    }: Props = $props();
 
     const updateValue = (event, index, key) => {
         data.servos[index][key] = event.target.innerText;
@@ -11,6 +17,7 @@
 
     const syncConfig = async () => {
         await api.post('/api/servo/config', data);
+        console.log(data);
     };
 
     onMount(async () => {
@@ -25,8 +32,9 @@
     <table class="table table-xs">
         <thead>
             <tr>
+                <!-- <th>Name</th> -->
                 <th>Center PWM</th>
-                <th>Center Angle</th>
+                <th>Pin</th>
                 <th>Direction</th>
                 <th>Conversion</th>
             </tr>
@@ -34,31 +42,38 @@
         <tbody>
             {#each data.servos as servo, index}
                 <tr>
+                    <!-- <td
+                        contenteditable="true"
+                        onblur={syncConfig}
+                        oninput={event => updateValue(event, index, 'name')}
+                    >
+                        {servo.name}
+                    </td> -->
                     <td
                         contenteditable="true"
-                        on:blur={syncConfig}
-                        on:input={event => updateValue(event, index, 'center_pwm')}
+                        onblur={syncConfig}
+                        oninput={event => updateValue(event, index, 'center_pwm')}
                     >
                         {servo.center_pwm}
                     </td>
                     <td
                         contenteditable="true"
-                        on:blur={syncConfig}
-                        on:input={event => updateValue(event, index, 'center_angle')}
+                        onblur={syncConfig}
+                        oninput={event => updateValue(event, index, 'pin')}
                     >
                         {servo.center_angle}
                     </td>
                     <td
                         contenteditable="true"
-                        on:blur={syncConfig}
-                        on:input={event => updateValue(event, index, 'direction')}
+                        onblur={syncConfig}
+                        oninput={event => updateValue(event, index, 'direction')}
                     >
                         {servo.direction}
                     </td>
                     <td
                         contenteditable="true"
-                        on:blur={syncConfig}
-                        on:input={event => updateValue(event, index, 'conversion')}
+                        onblur={syncConfig}
+                        oninput={event => updateValue(event, index, 'conversion')}
                     >
                         {servo.conversion}
                     </td>
