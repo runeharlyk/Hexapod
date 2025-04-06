@@ -60,7 +60,10 @@ class Spot {
 
     // act
     void updateActuators() {
-        if (updatedMotion) _servoController.setAngles(_motionService.getAngles());
+        // if (updatedMotion)
+        _servoController.updateLeftPwm(_motionService.getLeftPwm());
+        _servoController.updateRightPwm(_motionService.getRightPwm());
+        // _servoController.setAngles(_motionService.getAngles());
 
         _servoController.updateServoState();
 #if FT_ENABLED(USE_WS2812)

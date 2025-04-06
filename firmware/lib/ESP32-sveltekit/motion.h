@@ -11,6 +11,9 @@
 #include <gait/crawl_state.h>
 #include <gait/bezier_state.h>
 
+#include "motion_table.h"
+#include "config.h"
+
 #define DEFAULT_STATE false
 #define ANGLES_EVENT "angles"
 #define INPUT_EVENT "input"
@@ -59,7 +62,6 @@ class MotionService {
     void handleInput(JsonObject &root, int originId) {
         JsonArray array = root["data"].as<JsonArray>();
         command.lx = array[1];
-        command.lx = array[1];
         command.ly = array[2];
         command.rx = array[3];
         command.ry = array[4];
@@ -83,7 +85,7 @@ class MotionService {
 
     void handleMode(JsonObject &root, int originId) {
         motionState = (MOTION_STATE)root["data"].as<int>();
-        ESP_LOGV("MotionService", "Mode %d", motionState);
+        ESP_LOGI("MotionService", "Mode %d", motionState);
         char output[2];
         itoa((int)motionState, output, 10);
         motionState == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
@@ -107,19 +109,104 @@ class MotionService {
         switch (motionState) {
             case MOTION_STATE::DEACTIVATED: return false;
             case MOTION_STATE::IDLE: return false;
-            case MOTION_STATE::CALIBRATION: update_angles(calibration_angles, new_angles, false); break;
-            case MOTION_STATE::REST: update_angles(rest_angles, new_angles, false); break;
-            case MOTION_STATE::STAND: kinematics.calculate_inverse_kinematics(body_state, new_angles); break;
+            case MOTION_STATE::CALIBRATION:
+                exec_motion(lut_calibration_length, lut_calibration);
+                // update_angles(calibration_angles, new_angles, false);
+                break;
+            case MOTION_STATE::REST:
+                // update_angles(rest_angles, new_angles, false);
+                break;
+            case MOTION_STATE::STAND:
+                // kinematics.calculate_inverse_kinematics(body_state, new_angles);
+                break;
             case MOTION_STATE::CRAWL:
-                crawlGait->step(body_state, command);
-                kinematics.calculate_inverse_kinematics(body_state, new_angles);
+                // crawlGait->step(body_state, command);
+                // kinematics.calculate_inverse_kinematics(body_state, new_angles);
                 break;
             case MOTION_STATE::WALK:
-                walkGait->step(body_state, command);
-                kinematics.calculate_inverse_kinematics(body_state, new_angles);
+                walk(command);
+                // walkGait->step(body_state, command);
+                // kinematics.calculate_inverse_kinematics(body_state, new_angles);
                 break;
         }
-        return update_angles(new_angles, angles);
+        return true; // update_angles(new_angles, angles);
+    }
+
+    void walk(ControllerCommand command) {
+        float abs_lx = abs(command.lx);
+        float abs_ly = abs(command.ly);
+
+        if (abs_ly > abs_lx && abs_ly > 30) {
+            if (command.ly > 0) {
+                if (abs(command.lx) < 30) {
+                    exec_motion(lut_fast_forward_length, lut_fast_forward);
+                } else if (command.lx > 30) {
+                    exec_motion(lut_walk_r45_length, lut_walk_r45);
+                } else if (command.lx < -30) {
+                    exec_motion(lut_walk_l45_length, lut_walk_l45);
+                }
+            } else {
+                if (abs(command.lx) < 30) {
+                    exec_motion(lut_fast_backward_length, lut_fast_backward);
+                } else if (command.lx > 30) {
+                    exec_motion(lut_walk_r135_length, lut_walk_r135);
+                } else if (command.lx < -30) {
+                    exec_motion(lut_walk_l135_length, lut_walk_l135);
+                }
+            }
+        } else if (abs_lx > abs_ly && abs_lx > 30) {
+            if (command.lx > 0) {
+                exec_motion(lut_walk_r90_length, lut_walk_r90);
+            } else {
+                exec_motion(lut_walk_l90_length, lut_walk_l90);
+            }
+        } else if (abs_lx <= 30 && abs_ly <= 30) {
+            if (command.rx > 30) {
+                exec_motion(lut_turn_right_length, lut_turn_right);
+            } else if (command.rx < -30) {
+                exec_motion(lut_turn_left_length, lut_turn_left);
+            } else if (command.ry > 30) {
+                exec_motion(lut_rotate_x_length, lut_rotate_x);
+            } else if (command.ry < -30) {
+                exec_motion(lut_rotate_y_length, lut_rotate_y);
+            }
+        } else if (command.s > 100) {
+            exec_motion(lut_twist_length, lut_twist);
+        } else if (command.s1 > 100) {
+            exec_motion(lut_climb_forward_length, lut_climb_forward);
+        }
+    }
+
+    void exec_motion(int lut_size, int lut[][6][3]) {
+        for (int leg_idx = 0; leg_idx < 3; leg_idx++) {
+            for (int joint_idx = 0; joint_idx < 3; joint_idx++) {
+                int prev_right = lut[prev_step][leg_idx][joint_idx];
+                int prev_left = lut[prev_step][leg_idx + 3][joint_idx];
+                int next_right = lut[step_count][leg_idx][joint_idx];
+                int next_left = lut[step_count][leg_idx + 3][joint_idx];
+
+                float t = float(interp_counter) / INTERP_STEPS;
+                int right_value = prev_right + (next_right - prev_right) * t;
+                int left_value = prev_left + (next_left - prev_left) * t;
+
+                if (leg_idx == 1 && joint_idx != 0) {
+                    right_value = SERVOMID - (right_value - SERVOMID);
+                    left_value = SERVOMID - (left_value - SERVOMID);
+                }
+
+                int pin = legs_order[leg_idx][joint_idx];
+                right_pwm_values[pin] = right_value + right_offset_ticks[leg_idx][joint_idx];
+                left_pwm_values[pin] = left_value + left_offset_ticks[leg_idx][joint_idx];
+            }
+        }
+
+        interp_counter++;
+
+        if (interp_counter >= INTERP_STEPS) {
+            interp_counter = 0;
+            prev_step = step_count;
+            step_count = (step_count + 1) % lut_size;
+        }
     }
 
     bool update_angles(float new_angles[12], float angles[12], bool useLerp = true) {
@@ -136,15 +223,22 @@ class MotionService {
 
     float *getAngles() { return angles; }
 
+    uint16_t *getLeftPwm() { return left_pwm_values; }
+    uint16_t *getRightPwm() { return right_pwm_values; }
+
   private:
     ServoController *_servoController;
-    Kinematics kinematics;
+    int step_count = 0;
+    // Kinematics kinematics;
     ControllerCommand command = {0, 0, 0, 0, 0, 0, 0, 0};
 
     friend class GaitState;
 
-    std::unique_ptr<GaitState> crawlGait = std::make_unique<EightPhaseWalkState>();
-    std::unique_ptr<GaitState> walkGait = std::make_unique<BezierState>();
+    uint16_t right_pwm_values[11] = {SERVOMID};
+    uint16_t left_pwm_values[11] = {SERVOMID};
+
+    // std::unique_ptr<GaitState> crawlGait = std::make_unique<EightPhaseWalkState>();
+    // std::unique_ptr<GaitState> walkGait = std::make_unique<BezierState>();
 
     MOTION_STATE motionState = MOTION_STATE::DEACTIVATED;
     unsigned long _lastUpdate;
@@ -159,6 +253,10 @@ class MotionService {
 
     float rest_angles[12] = {0, 90, -145, 0, 90, -145, 0, 90, -145, 0, 90, -145};
     float calibration_angles[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+    static const int INTERP_STEPS = 8;
+    int interp_counter = 0;
+    int prev_step = 0;
 };
 
 #endif

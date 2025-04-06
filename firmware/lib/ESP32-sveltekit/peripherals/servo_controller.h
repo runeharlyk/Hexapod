@@ -31,7 +31,7 @@ class ServoController : public StatefulService<ServoSettings> {
         : endpoint(ServoSettings::read, ServoSettings::update, this),
           _persistence(ServoSettings::read, ServoSettings::update, this, SERVO_SETTINGS_FILE),
           _left_pca {0x40},
-          _right_pca {0x40} {}
+          _right_pca {0x41} {}
 
     void begin() {
         socket.onEvent(EVENT_SERVO_CONFIGURATION_SETTINGS,
@@ -51,7 +51,11 @@ class ServoController : public StatefulService<ServoSettings> {
             ESP_LOGE("Peripherals", "Invalid PWM value %d for %d :: Valid range 0-4096", value, index);
             return;
         }
-        _left_pca.setPWM(index, 0, value);
+        if (index < 12) {
+            _left_pca.setPWM(index, 0, value);
+        } else {
+            _right_pca.setPWM(index - 12, 0, value);
+        }
     }
 
     void activate() {
@@ -102,24 +106,29 @@ class ServoController : public StatefulService<ServoSettings> {
     }
 
     void calculatePWM() {
-        uint16_t pwms[12];
-        for (int i = 0; i < 12; i++) {
-            angles[i] = lerp(angles[i], target_angles[i], 0.05);
-            auto &servo = state().servos[i];
-            float angle = servo.direction * angles[i] + servo.centerAngle;
-            uint16_t pwm = angle * servo.conversion + servo.centerPwm;
-            if (pwm < 125 || pwm > 600) {
-                ESP_LOGE("ServoController", "Servo %d, Invalid PWM value %d", i, pwm);
-                continue;
-            }
-            pwms[i] = pwm;
-        }
-        _left_pca.setMultiplePWM(pwms, 12);
+        // uint16_t pwms[12];
+        // for (int i = 0; i < 12; i++) {
+        //     angles[i] = lerp(angles[i], target_angles[i], 0.05);
+        //     auto &servo = state().servos[i];
+        //     float angle = servo.direction * angles[i] + servo.centerAngle;
+        //     uint16_t pwm = angle * servo.conversion + servo.centerPwm;
+        //     if (pwm < 125 || pwm > 600) {
+        //         ESP_LOGE("ServoController", "Servo %d, Invalid PWM value %d", i, pwm);
+        //         continue;
+        //     }
+        //     pwms[i] = pwm;
+        // }
+        // _left_pca.setMultiplePWM(pwms, 6);
+        // _right_pca.setMultiplePWM(pwms + 6, 6);
     }
 
     void updateServoState() {
-        if (control_state == SERVO_CONTROL_STATE::ANGLE) calculatePWM();
+        // if (control_state == SERVO_CONTROL_STATE::ANGLE) calculatePWM();
     }
+
+    void updateLeftPwm(uint16_t pwm[11]) { _left_pca.setMultiplePWM(pwm, 11); }
+
+    void updateRightPwm(uint16_t pwm[11]) { _right_pca.setMultiplePWM(pwm, 11); }
 
     StatefulHttpEndpoint<ServoSettings> endpoint;
 
@@ -127,12 +136,12 @@ class ServoController : public StatefulService<ServoSettings> {
     void initializePCA() {
         _left_pca.begin();
         _left_pca.setPWMFreq(FACTORY_SERVO_PWM_FREQUENCY);
-        _left_pca.setOscillatorFrequency(FACTORY_SERVO_OSCILLATOR_FREQUENCY);
-        _left_pca.sleep();
+        // _left_pca.setOscillatorFrequency(FACTORY_SERVO_OSCILLATOR_FREQUENCY);
+        // _left_pca.sleep();
         _right_pca.begin();
         _right_pca.setPWMFreq(FACTORY_SERVO_PWM_FREQUENCY);
-        _right_pca.setOscillatorFrequency(FACTORY_SERVO_OSCILLATOR_FREQUENCY);
-        _right_pca.sleep();
+        // _right_pca.setOscillatorFrequency(FACTORY_SERVO_OSCILLATOR_FREQUENCY);
+        // _right_pca.sleep();
     }
     FSPersistence<ServoSettings> _persistence;
 
