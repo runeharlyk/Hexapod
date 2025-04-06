@@ -14,12 +14,6 @@ typedef struct {
 
 class ServoSettings {
   public:
-    servo_settings_t servos[18] = {{306, 1, 0, 2, "Servo1"},  {306, 1, 0, 2, "Servo2"},  {306, 1, 0, 2, "Servo3"},
-                                   {306, 1, 0, 2, "Servo4"},  {306, 1, 0, 2, "Servo5"},  {306, 1, 0, 2, "Servo6"},
-                                   {306, 1, 0, 2, "Servo7"},  {306, 1, 0, 2, "Servo8"},  {306, 1, 0, 2, "Servo9"},
-                                   {306, 1, 0, 2, "Servo10"}, {306, 1, 0, 2, "Servo11"}, {306, 1, 0, 2, "Servo12"},
-                                   {306, 1, 0, 2, "Servo13"}, {306, 1, 0, 2, "Servo14"}, {306, 1, 0, 2, "Servo15"},
-                                   {306, 1, 0, 2, "Servo16"}, {306, 1, 0, 2, "Servo17"}, {306, 1, 0, 2, "Servo18"}};
     static void read(ServoSettings &settings, JsonObject &root) {
         JsonArray servos = root["servos"].to<JsonArray>();
         for (auto &servo : settings.servos) {

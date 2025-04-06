@@ -57,7 +57,14 @@
 #define USE_GPS 0
 #endif
 
+// ESP32 MDNS on by default
+#ifndef USE_MDNS
+#define USE_MDNS 1
+#endif
+
 namespace feature_service {
+
+void printFeatureConfiguration();
 
 void features(JsonObject &root);
 

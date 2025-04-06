@@ -6,14 +6,25 @@ DRAM_ATTR Spot spot;
 #include <Adafruit_PWMServoDriver.h>
 
 #include "config.h"
-#include "motion.h"
+#include "motion_table.h"
 
 Adafruit_PWMServoDriver left_pwm = Adafruit_PWMServoDriver(0x40);
 Adafruit_PWMServoDriver right_pwm = Adafruit_PWMServoDriver(0x41);
 
-MotionMode current_motion = MotionMode::Mode_Standby;
-MotionMode next_motion = MotionMode::Mode_Standby;
+void IRAM_ATTR SpotControlLoopEntry(void*) {
+    ESP_LOGI("main", "Setup complete now runing tsk");
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    const TickType_t xFrequency = 5 / portTICK_PERIOD_MS;
+    for (;;) {
+        // spot.readSensors();
+        spot.planMotion();
+        CALLS_PER_SECOND(updateActuators);
+        spot.updateActuators();
+        spot.emitTelemetry();
 
+        vTaskDelayUntil(&xLastWakeTime, xFrequency);
+    }
+}
 void exec_motion(int lut_size, int lut[][6][3]);
 
 void setup() {
@@ -94,7 +105,6 @@ void exec_motion(int lut_size, int lut[][6][3]) {
                 int left_value = lut[lut_idx][leg_idx + 3][joint_idx] + left_offset_ticks[leg_idx][joint_idx];
                 int pin = legs_order[leg_idx][joint_idx];
 
-                // For middle leg (leg_idx 1), invert values before interpolation for smoother motion
                 if (leg_idx == 1 && joint_idx != 0) {
                     right_value = SERVOMID - (right_value - SERVOMID);
                     left_value = SERVOMID - (left_value - SERVOMID);

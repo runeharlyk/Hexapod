@@ -1,11 +1,3 @@
-/**
- * This is an automatically generated header, which includes motion path LUTs
- *
- * - Copyright (C) 2024 - PRESENT  rookidroid.com
- * - E-mail: info@rookidroid.com
- * - Website: https://rookidroid.com/
- */
-
 #ifndef MOTION_H
 #define MOTION_H
 

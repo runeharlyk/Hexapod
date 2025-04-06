@@ -36,8 +36,11 @@ class PhaseGaitState : public GaitState {
         if (num_phases() == 4) return;
 
         const auto &shift = shifts[phase / 2];
-        body_state.xm += (shift[0] - body_state.xm) * dt * 4;
-        body_state.zm += (shift[2] - body_state.zm) * dt * 4;
+        float base_stiffness = 1.2f;
+        float adaptive_stiffness = base_stiffness * (0.5f + 0.5f * gait_state.step_velocity);
+
+        body_state.xm += (shift[0] - body_state.xm) * dt * adaptive_stiffness;
+        body_state.zm += (shift[2] - body_state.zm) * dt * adaptive_stiffness;
     }
 
     void updateFeetPositions(body_state_t &body_state) {

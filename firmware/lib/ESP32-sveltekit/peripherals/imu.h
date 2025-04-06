@@ -64,8 +64,6 @@ class IMU {
 
     float getAngleZ() { return imu_success ? ypr[2] * 180 / M_PI : 0; }
 
-    // Quaternion* getQuaternion() { return &q; }
-
     void readIMU(JsonObject& root) {
         if (!imu_success) return;
         root["x"] = round2(getAngleX());

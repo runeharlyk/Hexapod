@@ -2,15 +2,13 @@
 
 static const char *TAG = "Spot";
 
-Spot::Spot()
-#if FT_ENABLED(USE_MOTION)
-    : _motionService(&_servoController)
-#endif
-{
-}
+Spot::Spot() : _motionService(&_servoController) {}
 
 void Spot::initialize() {
     ESP_LOGI(TAG, "Running Firmware Version: %s", APP_VERSION);
+
+    feature_service::printFeatureConfiguration();
+
     ESPFS.begin(true);
     g_taskManager.begin();
 #if FT_ENABLED(USE_WS2812)
@@ -21,8 +19,6 @@ void Spot::initialize() {
     setupServer();
 
     startServices();
-
-    setupMDNS();
 
     ESP_LOGV(TAG, "Starting misc loop task");
     g_taskManager.createTask(this->_loopImpl, "Spot misc", 4096, this, 2, NULL, APPLICATION_CORE);
@@ -77,6 +73,7 @@ void Spot::setupServer() {
     _server.on("/api/files/delete", HTTP_POST, FileSystem::handleDelete);
     _server.on("/api/files/upload/*", HTTP_POST, FileSystem::uploadHandler);
     _server.on("/api/files/edit", HTTP_POST, FileSystem::handleEdit);
+    _server.on("/api/files/mkdir", HTTP_POST, FileSystem::mkdir);
 
     // SERVO
     _server.on("/api/servo/config", HTTP_GET,
@@ -103,6 +100,16 @@ void Spot::setupServer() {
         return _downloadFirmwareService.handleDownloadUpdate(r, json);
     });
 #endif
+
+    // MDNS
+    _server.on("/api/mdns/status", HTTP_GET,
+               [this](PsychicRequest *request) { return _mdnsService.getStatus(request); });
+    _server.on("/api/mdns/settings", HTTP_GET,
+               [this](PsychicRequest *request) { return _mdnsService.endpoint.getState(request); });
+    _server.on("/api/mdns/settings", HTTP_POST, [this](PsychicRequest *request, JsonVariant &json) {
+        return _mdnsService.endpoint.handleStateUpdate(request, json);
+    });
+    _server.on("/api/mdns/query", HTTP_POST, MDNSService::queryServices);
 
 #ifdef EMBED_WWW
     ESP_LOGV(TAG, "Registering routes from PROGMEM static resources");
@@ -154,15 +161,6 @@ void Spot::setupServer() {
     DefaultHeaders::Instance().addHeader("Server", _appName);
 }
 
-void Spot::setupMDNS() {
-    ESP_LOGV(TAG, "Starting MDNS");
-    MDNS.begin(_wifiService.getHostname());
-    MDNS.setInstanceName(_appName);
-    MDNS.addService("http", "tcp", _port);
-    MDNS.addService("ws", "tcp", _port);
-    MDNS.addServiceTxt("http", "tcp", "Firmware Version", APP_VERSION);
-}
-
 void Spot::startServices() {
     _apService.begin();
 #if FT_ENABLED(USE_UPLOAD_FIRMWARE)
@@ -176,6 +174,7 @@ void Spot::startServices() {
 #if FT_ENABLED(USE_CAMERA)
     _cameraService.begin();
 #endif
+    _mdnsService.begin();
 }
 
 void IRAM_ATTR Spot::loop() {
