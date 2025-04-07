@@ -61,7 +61,7 @@
                         onblur={syncConfig}
                         oninput={event => updateValue(event, index, 'pin')}
                     >
-                        {servo.center_angle}
+                        {servo.pin}
                     </td>
                     <td
                         contenteditable="true"

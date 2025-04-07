@@ -51,10 +51,11 @@ class ServoController : public StatefulService<ServoSettings> {
             ESP_LOGE("Peripherals", "Invalid PWM value %d for %d :: Valid range 0-4096", value, index);
             return;
         }
+        int pin = state().servos[index].pin;
         if (index < 12) {
-            _left_pca.setPWM(index, 0, value);
+            _left_pca.setPWM(pin, 0, value);
         } else {
-            _right_pca.setPWM(index - 12, 0, value);
+            _right_pca.setPWM(pin, 0, value);
         }
     }
 
@@ -89,11 +90,11 @@ class ServoController : public StatefulService<ServoSettings> {
     }
 
     void syncAngles(const String &originId) {
-        char output[100];
-        snprintf(output, sizeof(output), "[%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f]", angles[0],
-                 angles[1], angles[2], angles[3], angles[4], angles[5], angles[6], angles[7], angles[8], angles[9],
-                 angles[10], angles[11]);
-        socket.emit("angles", output, String(originId).c_str());
+        // char output[100];
+        // snprintf(output, sizeof(output), "[%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f]", angles[0],
+        //          angles[1], angles[2], angles[3], angles[4], angles[5], angles[6], angles[7], angles[8], angles[9],
+        //          angles[10], angles[11]);
+        // socket.emit("angles", output, String(originId).c_str());
     }
 
     void updateActiveState() { is_active ? activate() : deactivate(); }
@@ -106,29 +107,42 @@ class ServoController : public StatefulService<ServoSettings> {
     }
 
     void calculatePWM() {
-        // uint16_t pwms[12];
-        // for (int i = 0; i < 12; i++) {
-        //     angles[i] = lerp(angles[i], target_angles[i], 0.05);
-        //     auto &servo = state().servos[i];
-        //     float angle = servo.direction * angles[i] + servo.centerAngle;
-        //     uint16_t pwm = angle * servo.conversion + servo.centerPwm;
-        //     if (pwm < 125 || pwm > 600) {
-        //         ESP_LOGE("ServoController", "Servo %d, Invalid PWM value %d", i, pwm);
-        //         continue;
-        //     }
-        //     pwms[i] = pwm;
-        // }
-        // _left_pca.setMultiplePWM(pwms, 6);
-        // _right_pca.setMultiplePWM(pwms + 6, 6);
+        for (int i = 0; i < 9; i++) {
+            auto servo = state().servos[i];
+            left_current_pwm[i] = lerp(left_current_pwm[i], left_target_pwms[i], 0.05);
+            right_current_pwm[i] = lerp(right_current_pwm[i], right_target_pwms[i], 0.05);
+
+            left_pwm[servo.pin] = left_current_pwm[i];
+            right_pwm[servo.pin] = right_current_pwm[i];
+            if (servo.direction == -1) {
+                left_pwm[servo.pin] = servo.centerPwm - (left_pwm[servo.pin] - servo.centerPwm);
+                right_pwm[servo.pin] = servo.centerPwm - (right_pwm[servo.pin] - servo.centerPwm);
+            }
+
+            if (servo.pin > max_pin_used) {
+                max_pin_used = servo.pin;
+            }
+        }
+        _left_pca.setMultiplePWM(left_pwm, max_pin_used + 1);
+        _right_pca.setMultiplePWM(right_pwm, max_pin_used + 1);
+    }
+
+    void getCalibrationPWM(uint16_t left[9], uint16_t right[9]) {
+        for (int i = 0; i < 9; i++) {
+            auto servoLeft = state().servos[i];
+            auto servoRight = state().servos[i + 9];
+            left[i] = servoLeft.centerPwm;
+            right[i] = servoRight.centerPwm;
+        }
     }
 
     void updateServoState() {
-        // if (control_state == SERVO_CONTROL_STATE::ANGLE) calculatePWM();
+        if (control_state == SERVO_CONTROL_STATE::ANGLE) calculatePWM();
     }
 
-    void updateLeftPwm(uint16_t pwm[11]) { _left_pca.setMultiplePWM(pwm, 11); }
+    void updateLeftPwm(uint16_t pwm[9]) { memcpy(left_target_pwms, pwm, sizeof(uint16_t) * 9); }
 
-    void updateRightPwm(uint16_t pwm[11]) { _right_pca.setMultiplePWM(pwm, 11); }
+    void updateRightPwm(uint16_t pwm[9]) { memcpy(right_target_pwms, pwm, sizeof(uint16_t) * 9); }
 
     StatefulHttpEndpoint<ServoSettings> endpoint;
 
@@ -148,13 +162,19 @@ class ServoController : public StatefulService<ServoSettings> {
     Adafruit_PWMServoDriver _left_pca;
     Adafruit_PWMServoDriver _right_pca;
 
-    uint16_t left_pwms[11];
-    uint16_t right_pwms[11];
+    uint16_t left_target_pwms[9];
+    uint16_t right_target_pwms[9];
+    uint16_t left_current_pwm[9];
+    uint16_t right_current_pwm[9];
+
+    uint16_t left_pwm[16];
+    uint16_t right_pwm[16];
+    uint8_t max_pin_used = 0;
 
     SERVO_CONTROL_STATE control_state = SERVO_CONTROL_STATE::DEACTIVATED;
 
     bool is_active {false};
-    float angles[12] = {0, 90, -145, 0, 90, -145, 0, 90, -145, 0, 90, -145};
+    // float angles[12] = {0, 90, -145, 0, 90, -145, 0, 90, -145, 0, 90, -145};
     float target_angles[12] = {0, 90, -145, 0, 90, -145, 0, 90, -145, 0, 90, -145};
 };
 

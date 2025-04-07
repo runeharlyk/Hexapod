@@ -5,12 +5,12 @@ DRAM_ATTR Spot spot;
 void IRAM_ATTR SpotControlLoopEntry(void*) {
     ESP_LOGI("main", "Setup complete now running tsk");
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    const TickType_t xFrequency = 2 / portTICK_PERIOD_MS;
+    const TickType_t xFrequency = 5 / portTICK_PERIOD_MS;
     for (;;) {
         // spot.readSensors();
         spot.planMotion();
         spot.updateActuators();
-        spot.emitTelemetry();
+        // spot.emitTelemetry();
 
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }

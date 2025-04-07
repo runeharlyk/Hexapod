@@ -110,7 +110,7 @@ class MotionService {
             case MOTION_STATE::DEACTIVATED: return false;
             case MOTION_STATE::IDLE: return false;
             case MOTION_STATE::CALIBRATION:
-                exec_motion(lut_calibration_length, lut_calibration);
+                _servoController->getCalibrationPWM(left_pwm_values, right_pwm_values);
                 // update_angles(calibration_angles, new_angles, false);
                 break;
             case MOTION_STATE::REST:
@@ -180,33 +180,12 @@ class MotionService {
     void exec_motion(int lut_size, int lut[][6][3]) {
         for (int leg_idx = 0; leg_idx < 3; leg_idx++) {
             for (int joint_idx = 0; joint_idx < 3; joint_idx++) {
-                int prev_right = lut[prev_step][leg_idx][joint_idx];
-                int prev_left = lut[prev_step][leg_idx + 3][joint_idx];
-                int next_right = lut[step_count][leg_idx][joint_idx];
-                int next_left = lut[step_count][leg_idx + 3][joint_idx];
-
-                float t = float(interp_counter) / INTERP_STEPS;
-                int right_value = prev_right + (next_right - prev_right) * t;
-                int left_value = prev_left + (next_left - prev_left) * t;
-
-                if (leg_idx == 1 && joint_idx != 0) {
-                    right_value = SERVOMID - (right_value - SERVOMID);
-                    left_value = SERVOMID - (left_value - SERVOMID);
-                }
-
-                int pin = legs_order[leg_idx][joint_idx];
-                right_pwm_values[pin] = right_value + right_offset_ticks[leg_idx][joint_idx];
-                left_pwm_values[pin] = left_value + left_offset_ticks[leg_idx][joint_idx];
+                int pin = leg_idx * 3 + joint_idx;
+                right_pwm_values[pin] = lut[step_count / 8][leg_idx][joint_idx];
+                left_pwm_values[pin] = lut[step_count / 8][leg_idx + 3][joint_idx];
             }
         }
-
-        interp_counter++;
-
-        if (interp_counter >= INTERP_STEPS) {
-            interp_counter = 0;
-            prev_step = step_count;
-            step_count = (step_count + 1) % lut_size;
-        }
+        step_count = (step_count + 1) % (lut_size * 8);
     }
 
     bool update_angles(float new_angles[12], float angles[12], bool useLerp = true) {
@@ -234,8 +213,8 @@ class MotionService {
 
     friend class GaitState;
 
-    uint16_t right_pwm_values[11] = {SERVOMID};
-    uint16_t left_pwm_values[11] = {SERVOMID};
+    uint16_t right_pwm_values[9] = {SERVOMID};
+    uint16_t left_pwm_values[9] = {SERVOMID};
 
     // std::unique_ptr<GaitState> crawlGait = std::make_unique<EightPhaseWalkState>();
     // std::unique_ptr<GaitState> walkGait = std::make_unique<BezierState>();
@@ -253,10 +232,6 @@ class MotionService {
 
     float rest_angles[12] = {0, 90, -145, 0, 90, -145, 0, 90, -145, 0, 90, -145};
     float calibration_angles[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-
-    static const int INTERP_STEPS = 8;
-    int interp_counter = 0;
-    int prev_step = 0;
 };
 
 #endif
