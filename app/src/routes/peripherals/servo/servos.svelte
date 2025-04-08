@@ -12,7 +12,7 @@
 
     let active = $state(false);
 
-    let servoId = $state(0);
+    let { pwm = $bindable(), servoId = $bindable() } = $props();
 
     const throttler = new Throttler();
 
@@ -29,7 +29,7 @@
         socket.sendEvent('servoState', { active: 0 });
     };
 
-    let pwm = $state(306);
+    const setServoCenter = () => {};
 
     const updatePWM = () => {
         throttler.throttle(() => {

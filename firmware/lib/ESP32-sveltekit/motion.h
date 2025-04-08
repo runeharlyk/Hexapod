@@ -181,11 +181,11 @@ class MotionService {
         for (int leg_idx = 0; leg_idx < 3; leg_idx++) {
             for (int joint_idx = 0; joint_idx < 3; joint_idx++) {
                 int pin = leg_idx * 3 + joint_idx;
-                right_pwm_values[pin] = lut[step_count / 8][leg_idx][joint_idx];
-                left_pwm_values[pin] = lut[step_count / 8][leg_idx + 3][joint_idx];
+                right_pwm_values[pin] = lut[step_count / 4][leg_idx][joint_idx];
+                left_pwm_values[pin] = lut[step_count / 4][leg_idx + 3][joint_idx];
             }
         }
-        step_count = (step_count + 1) % (lut_size * 8);
+        step_count = (step_count + 1) % (lut_size * 4);
     }
 
     bool update_angles(float new_angles[12], float angles[12], bool useLerp = true) {

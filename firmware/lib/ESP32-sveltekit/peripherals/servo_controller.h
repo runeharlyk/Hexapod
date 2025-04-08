@@ -52,7 +52,7 @@ class ServoController : public StatefulService<ServoSettings> {
             return;
         }
         int pin = state().servos[index].pin;
-        if (index < 12) {
+        if (index < 9) {
             _left_pca.setPWM(pin, 0, value);
         } else {
             _right_pca.setPWM(pin, 0, value);
@@ -108,19 +108,26 @@ class ServoController : public StatefulService<ServoSettings> {
 
     void calculatePWM() {
         for (int i = 0; i < 9; i++) {
-            auto servo = state().servos[i];
+            auto servoLeft = state().servos[i];
+            auto servoRight = state().servos[i + 9];
             left_current_pwm[i] = lerp(left_current_pwm[i], left_target_pwms[i], 0.05);
             right_current_pwm[i] = lerp(right_current_pwm[i], right_target_pwms[i], 0.05);
 
-            left_pwm[servo.pin] = left_current_pwm[i];
-            right_pwm[servo.pin] = right_current_pwm[i];
-            if (servo.direction == -1) {
-                left_pwm[servo.pin] = servo.centerPwm - (left_pwm[servo.pin] - servo.centerPwm);
-                right_pwm[servo.pin] = servo.centerPwm - (right_pwm[servo.pin] - servo.centerPwm);
+            left_pwm[servoLeft.pin] = left_current_pwm[i];
+            right_pwm[servoRight.pin] = right_current_pwm[i];
+
+            if (servoLeft.direction == -1) {
+                left_pwm[servoLeft.pin] = servoLeft.centerPwm - (left_pwm[servoLeft.pin] - servoLeft.centerPwm);
+            }
+            if (servoRight.direction == -1) {
+                right_pwm[servoRight.pin] = servoRight.centerPwm - (right_pwm[servoRight.pin] - servoRight.centerPwm);
             }
 
-            if (servo.pin > max_pin_used) {
-                max_pin_used = servo.pin;
+            if (servoLeft.pin > max_pin_used) {
+                max_pin_used = servoLeft.pin;
+            }
+            if (servoRight.pin > max_pin_used) {
+                max_pin_used = servoRight.pin;
             }
         }
         _left_pca.setMultiplePWM(left_pwm, max_pin_used + 1);

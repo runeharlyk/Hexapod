@@ -3,12 +3,16 @@
     import { onMount } from 'svelte';
     interface Props {
         data?: any;
+        pwm: number;
+        servoId: number;
     }
 
     let {
         data = $bindable({
             servos: []
-        })
+        }),
+        pwm = $bindable(306),
+        servoId = $bindable(0)
     }: Props = $props();
 
     const updateValue = (event, index, key) => {
@@ -26,9 +30,13 @@
             data = result.inner;
         }
     });
+    const setServoCenter = () => {
+        data.servos[servoId]['center_pwm'] = pwm;
+    };
 </script>
 
 <div class="overflow-x-auto">
+    <button class="btn" onclick={setServoCenter}>Save servo center pwm</button>
     <table class="table table-xs">
         <thead>
             <tr>
