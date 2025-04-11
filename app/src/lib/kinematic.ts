@@ -1,318 +1,323 @@
 export interface body_state_t {
-  omega: number
-  phi: number
-  psi: number
-  xm: number
-  ym: number
-  zm: number
-  feet: number[][]
+    omega: number;
+    phi: number;
+    psi: number;
+    xm: number;
+    ym: number;
+    zm: number;
+    feet: number[][];
 }
 
 export interface position {
-  x: number
-  y: number
-  z: number
+    x: number;
+    y: number;
+    z: number;
 }
 
 export interface target_position {
-  x: number
-  z: number
-  yaw: number
+    x: number;
+    z: number;
+    yaw: number;
 }
 
-const { cos, sin, atan2, sqrt } = Math
+const { cos, sin, atan2, sqrt } = Math;
 
-const DEG2RAD = 0.017453292519943
+const DEG2RAD = 0.017453292519943;
 
-export default class Kinematic {
-  l1: number
-  l2: number
-  l3: number
-  l4: number
+export interface HexapodConfig {
+    legMountX: number[];
+    legMountY: number[];
+    legRootToJoint1: number;
+    legJoint1ToJoint2: number;
+    legJoint2ToJoint3: number;
+    legJoint3ToTip: number;
+    legMountAngle: number[];
+    legScale: number[][];
+}
 
-  L: number
-  W: number
+export function computeDefaultPosition(config: HexapodConfig): number[][] {
+    const footPositions: number[][] = Array(6)
+        .fill(0)
+        .map(() => Array(3).fill(0));
 
-  DEG2RAD = DEG2RAD
+    const l1 = config.legRootToJoint1;
+    const l2 = config.legJoint1ToJoint2;
+    const l3 = config.legJoint2ToJoint3;
+    const l4 = config.legJoint3ToTip;
 
-  sHp = sin(Math.PI / 2)
-  cHp = cos(Math.PI / 2)
+    const forward = l2 + l3 * sin(30) + l4 * sin(15);
+    const down = l3 * cos(30) + l4 * cos(15);
 
-  Tlf: number[][] = []
-  Trf: number[][] = []
-  Tlb: number[][] = []
-  Trb: number[][] = []
+    const spreadScale = 1;
+    const localTip: number[] = [(l1 + forward) * spreadScale, 0, -down];
 
-  point_lf: number[][]
-  point_rf: number[][]
-  point_lb: number[][]
-  point_rb: number[][]
-  Ix: number[][]
+    for (let i = 0; i < 6; i++) {
+        const angle = (config.legMountAngle[i] * Math.PI) / 180;
+        const rot = [
+            [Math.cos(angle), -Math.sin(angle), 0],
+            [Math.sin(angle), Math.cos(angle), 0],
+            [0, 0, 1]
+        ];
 
-  constructor() {
-    this.l1 = 60.5 / 100
-    this.l2 = 10 / 100
-    this.l3 = 100.7 / 100
-    this.l4 = 118.5 / 100
+        // Matrix multiplication (rot @ local_tip)
+        const rotated = [
+            rot[0][0] * localTip[0] + rot[0][1] * localTip[1] + rot[0][2] * localTip[2],
+            rot[1][0] * localTip[0] + rot[1][1] * localTip[1] + rot[1][2] * localTip[2],
+            rot[2][0] * localTip[0] + rot[2][1] * localTip[1] + rot[2][2] * localTip[2]
+        ];
 
-    this.L = 230 / 100
-    this.W = 75 / 100
+        footPositions[i] = [
+            config.legMountX[i] + rotated[0],
+            config.legMountY[i] + rotated[1],
+            rotated[2]
+        ];
+    }
 
-    this.point_lf = [
-      [this.cHp, 0, this.sHp, this.L / 2],
-      [0, 1, 0, 0],
-      [-this.sHp, 0, this.cHp, this.W / 2],
-      [0, 0, 0, 1]
-    ]
+    return footPositions;
+}
 
-    this.point_rf = [
-      [this.cHp, 0, this.sHp, this.L / 2],
-      [0, 1, 0, 0],
-      [-this.sHp, 0, this.cHp, -this.W / 2],
-      [0, 0, 0, 1]
-    ]
+export function gen_posture(j2_angle: number, j3_angle: number, config: HexapodConfig): number[][] {
+    const mountX = config.legMountX;
+    const mountY = config.legMountY;
+    const rootJ1 = config.legRootToJoint1;
+    const j1_j2 = config.legJoint1ToJoint2;
+    const j2_j3 = config.legJoint2ToJoint3;
+    const j3_tip = config.legJoint3ToTip;
+    const mountAngle = config.legMountAngle.map(a => (a / 180) * Math.PI);
+    const j2_rad = (j2_angle / 180) * Math.PI;
+    const j3_rad = (j3_angle / 180) * Math.PI;
+    const expr = rootJ1 + j1_j2 + j2_j3 * Math.sin(j2_rad) + j3_tip * Math.cos(j3_rad);
+    const posture: number[][] = [];
+    for (let i = 0; i < 6; i++) {
+        posture.push([
+            mountX[i] + expr * Math.cos(mountAngle[i]),
+            mountY[i] + expr * Math.sin(mountAngle[i]),
+            j2_j3 * Math.cos(j2_rad) - j3_tip * Math.sin(j3_rad)
+        ]);
+    }
+    return posture;
+}
 
-    this.point_lb = [
-      [this.cHp, 0, this.sHp, -this.L / 2],
-      [0, 1, 0, 0],
-      [-this.sHp, 0, this.cHp, this.W / 2],
-      [0, 0, 0, 1]
-    ]
+export default class Kinematics {
+    l1: number; // legRootToJoint1
+    l2: number; // legJoint1ToJoint2
+    l3: number; // legJoint2ToJoint3
+    l4: number; // legJoint3ToTip
 
-    this.point_rb = [
-      [this.cHp, 0, this.sHp, -this.L / 2],
-      [0, 1, 0, 0],
-      [-this.sHp, 0, this.cHp, -this.W / 2],
-      [0, 0, 0, 1]
-    ]
-    this.Ix = [
-      [-1, 0, 0, 0],
-      [0, 1, 0, 0],
-      [0, 0, 1, 0],
-      [0, 0, 0, 1]
-    ]
-  }
+    legMountX: number[];
+    legMountY: number[];
+    legMountAngle: number[];
 
-  public calcIK(body_state: body_state_t): number[] {
-    this.bodyIK(body_state)
+    DEG2RAD = DEG2RAD;
 
-    return [
-      ...this.legIK(this.multiplyVector(this.inverse(this.Tlf), body_state.feet[0])),
-      ...this.legIK(
-        this.multiplyVector(
-          this.Ix,
-          this.multiplyVector(this.inverse(this.Trf), body_state.feet[1])
-        )
-      ),
-      ...this.legIK(this.multiplyVector(this.inverse(this.Tlb), body_state.feet[2])),
-      ...this.legIK(
-        this.multiplyVector(
-          this.Ix,
-          this.multiplyVector(this.inverse(this.Trb), body_state.feet[3])
-        )
-      )
-    ]
-  }
+    // Transformation matrices for the hip mounting points relative to the body center
+    T_hip: number[][][] = [];
 
-  bodyIK(p: body_state_t) {
-    const cos_omega = cos(p.omega * this.DEG2RAD)
-    const sin_omega = sin(p.omega * this.DEG2RAD)
-    const cos_phi = cos(p.phi * this.DEG2RAD)
-    const sin_phi = sin(p.phi * this.DEG2RAD)
-    const cos_psi = cos(p.psi * this.DEG2RAD)
-    const sin_psi = sin(p.psi * this.DEG2RAD)
+    constructor(config: HexapodConfig) {
+        this.l1 = config.legRootToJoint1 / 100; // Convert to meters if necessary
+        this.l2 = config.legJoint1ToJoint2 / 100;
+        this.l3 = config.legJoint2ToJoint3 / 100;
+        this.l4 = config.legJoint3ToTip / 100;
 
-    const Tm: number[][] = [
-      [cos_phi * cos_psi, -sin_psi * cos_phi, sin_phi, p.xm],
-      [
-        sin_omega * sin_phi * cos_psi + sin_psi * cos_omega,
-        -sin_omega * sin_phi * sin_psi + cos_omega * cos_psi,
-        -sin_omega * cos_phi,
-        p.ym
-      ],
-      [
-        sin_omega * sin_psi - sin_phi * cos_omega * cos_psi,
-        sin_omega * cos_psi + sin_phi * sin_psi * cos_omega,
-        cos_omega * cos_phi,
-        p.zm
-      ],
-      [0, 0, 0, 1]
-    ]
+        this.legMountX = config.legMountX.map((val: number) => val / 100); // Convert to meters
+        this.legMountY = config.legMountY.map((val: number) => val / 100);
+        this.legMountAngle = config.legMountAngle;
 
-    this.Tlf = this.matrixMultiply(Tm, this.point_lf)
-    this.Trf = this.matrixMultiply(Tm, this.point_rf)
-    this.Tlb = this.matrixMultiply(Tm, this.point_lb)
-    this.Trb = this.matrixMultiply(Tm, this.point_rb)
-  }
-
-  public legIK(point: number[]): number[] {
-    const [x, y, z] = point
-
-    let F = sqrt(x ** 2 + y ** 2 - this.l1 ** 2)
-    if (isNaN(F)) F = this.l1
-
-    const G = F - this.l2
-    const H = sqrt(G ** 2 + z ** 2)
-
-    const theta1 = -atan2(y, x) - atan2(F, -this.l1)
-    const D = (H ** 2 - this.l3 ** 2 - this.l4 ** 2) / (2 * this.l3 * this.l4)
-    let theta3 = atan2(sqrt(1 - D ** 2), D)
-    if (isNaN(theta3)) theta3 = 0
-
-    const theta2 = atan2(z, G) - atan2(this.l4 * sin(theta3), this.l3 + this.l4 * cos(theta3))
-
-    return [theta1, theta2, theta3]
-  }
-
-  matrixMultiply(a: number[][], b: number[][]): number[][] {
-    const result: number[][] = []
-
-    for (let i = 0; i < a.length; i++) {
-      const row: number[] = []
-
-      for (let j = 0; j < b[0].length; j++) {
-        let sum = 0
-
-        for (let k = 0; k < a[i].length; k++) {
-          sum += a[i][k] * b[k][j]
+        for (let i = 0; i < 6; i++) {
+            const angleRad = this.legMountAngle[i] * this.DEG2RAD;
+            this.T_hip[i] = [
+                [cos(angleRad), -sin(angleRad), 0, this.legMountX[i]],
+                [sin(angleRad), cos(angleRad), 0, this.legMountY[i]],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1]
+            ];
         }
-
-        row.push(sum)
-      }
-
-      result.push(row)
     }
 
-    return result
-  }
+    public calcIK(body_state: body_state_t): number[] {
+        this.bodyIK(body_state);
 
-  multiplyVector(matrix: number[][], vector: number[]): number[] {
-    const rows = matrix.length
-    const cols = matrix[0].length
-    const vectorLength = vector.length
-
-    if (cols !== vectorLength) {
-      throw new Error('Matrix and vector dimensions do not match for multiplication.')
-    }
-
-    const result = []
-
-    for (let i = 0; i < rows; i++) {
-      let sum = 0
-
-      for (let j = 0; j < cols; j++) {
-        sum += matrix[i][j] * vector[j]
-      }
-
-      result.push(sum)
-    }
-
-    return result
-  }
-
-  private inverse(matrix: number[][]): number[][] {
-    const det = this.determinant(matrix)
-    const adjugate = this.adjugate(matrix)
-    const scalar = 1 / det
-    const inverse: number[][] = []
-
-    for (let i = 0; i < matrix.length; i++) {
-      const row: number[] = []
-
-      for (let j = 0; j < matrix[i].length; j++) {
-        row.push(adjugate[i][j] * scalar)
-      }
-
-      inverse.push(row)
-    }
-
-    return inverse
-  }
-
-  private determinant(matrix: number[][]): number {
-    if (matrix.length !== matrix[0].length) {
-      throw new Error('The matrix is not square.')
-    }
-
-    if (matrix.length === 2) {
-      return matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0]
-    }
-
-    let det = 0
-
-    for (let i = 0; i < matrix.length; i++) {
-      const sign = i % 2 === 0 ? 1 : -1
-      const subMatrix: number[][] = []
-
-      for (let j = 1; j < matrix.length; j++) {
-        const row: number[] = []
-
-        for (let k = 0; k < matrix.length; k++) {
-          if (k !== i) {
-            row.push(matrix[j][k])
-          }
+        const jointAngles: number[] = [];
+        for (let i = 0; i < 6; i++) {
+            const footInBodyFrame = body_state.feet[i];
+            // Transform the foot position from the body frame to the hip frame
+            const hipFrameInverse = this.inverse(this.T_hip[i]);
+            const footInHipFrame = this.multiplyVector(hipFrameInverse, [
+                ...footInBodyFrame,
+                1
+            ]).slice(0, 3);
+            jointAngles.push(...this.legIK(footInHipFrame));
         }
-
-        subMatrix.push(row)
-      }
-
-      det += sign * matrix[0][i] * this.determinant(subMatrix)
+        return jointAngles;
     }
 
-    return det
-  }
+    bodyIK(p: body_state_t) {
+        const cos_omega = cos(p.omega * this.DEG2RAD);
+        const sin_omega = sin(p.omega * this.DEG2RAD);
+        const cos_phi = cos(p.phi * this.DEG2RAD);
+        const sin_phi = sin(p.phi * this.DEG2RAD);
+        const cos_psi = cos(p.psi * this.DEG2RAD);
+        const sin_psi = sin(p.psi * this.DEG2RAD);
 
-  private adjugate(matrix: number[][]): number[][] {
-    if (matrix.length !== matrix[0].length) {
-      throw new Error('The matrix is not square.')
+        const Tm: number[][] = [
+            [cos_phi * cos_psi, -sin_psi * cos_phi, sin_phi, p.xm],
+            [
+                sin_omega * sin_phi * cos_psi + sin_psi * cos_omega,
+                -sin_omega * sin_phi * sin_psi + cos_omega * cos_psi,
+                -sin_omega * cos_phi,
+                p.ym
+            ],
+            [
+                sin_omega * sin_psi - sin_phi * cos_omega * cos_psi,
+                sin_omega * cos_psi + sin_phi * sin_psi * cos_omega,
+                cos_omega * cos_phi,
+                p.zm
+            ],
+            [0, 0, 0, 1]
+        ];
+
+        // Update T_hip to include body orientation (translation is already in constructor)
+        for (let i = 0; i < 6; i++) {
+            const hipOffset = [
+                this.T_hip[i][0][3],
+                this.T_hip[i][1][3],
+                this.T_hip[i][2][3],
+                this.T_hip[i][3][3]
+            ];
+            const rotatedOffset = this.multiplyVector(Tm, hipOffset).slice(0, 3);
+            const angleRad = this.legMountAngle[i] * this.DEG2RAD;
+            this.T_hip[i] = [
+                [
+                    cos(angleRad) * Tm[0][0] + sin(angleRad) * Tm[1][0],
+                    cos(angleRad) * Tm[0][1] + sin(angleRad) * Tm[1][1],
+                    cos(angleRad) * Tm[0][2] + sin(angleRad) * Tm[1][2],
+                    rotatedOffset[0]
+                ],
+                [
+                    -sin(angleRad) * Tm[0][0] + cos(angleRad) * Tm[1][0],
+                    -sin(angleRad) * Tm[0][1] + cos(angleRad) * Tm[1][1],
+                    -sin(angleRad) * Tm[0][2] + cos(angleRad) * Tm[1][2],
+                    rotatedOffset[1]
+                ],
+                [Tm[2][0], Tm[2][1], Tm[2][2], rotatedOffset[2]],
+                [0, 0, 0, 1]
+            ];
+        }
     }
 
-    const adjugate: number[][] = []
+    public legIK(point: number[]): number[] {
+        const [x, y, z] = point;
 
-    for (let i = 0; i < matrix.length; i++) {
-      const row: number[] = []
+        // Assuming the first joint rotates around Z, the next two around Y in their local frames
+        const theta1 = atan2(y, x); // Hip/Coxa angle
 
-      for (let j = 0; j < matrix[i].length; j++) {
-        const sign = (i + j) % 2 === 0 ? 1 : -1
-        const subMatrix: number[][] = []
+        const effectiveX = sqrt(x ** 2 + y ** 2) - this.l1 * cos(theta1);
+        const targetDistSq = effectiveX ** 2 + z ** 2;
+        const targetDist = sqrt(targetDistSq);
 
-        for (let k = 0; k < matrix.length; k++) {
-          if (k !== i) {
-            const subRow: number[] = []
+        const cosTheta3Num = targetDistSq - this.l2 ** 2 - this.l3 ** 2;
+        const cosTheta3Den = 2 * this.l2 * this.l3;
+        const cosTheta3 = cosTheta3Num / cosTheta3Den;
 
-            for (let l = 0; l < matrix.length; l++) {
-              if (l !== j) {
-                subRow.push(matrix[k][l])
-              }
+        // Clamp cosTheta3 to avoid NaN from acos
+        const clampedCosTheta3 = Math.max(-1, Math.min(1, cosTheta3));
+        const theta3 = atan2(-sqrt(1 - clampedCosTheta3 ** 2), clampedCosTheta3); // Knee/Femur angle (assuming downward bend is negative)
+
+        const theta2 =
+            atan2(z, effectiveX) - atan2(this.l3 * sin(theta3), this.l2 + this.l3 * cos(theta3)); // Ankle/Tibia angle
+
+        return [theta1, theta2, theta3];
+    }
+
+    matrixMultiply(a: number[][], b: number[][]): number[][] {
+        const result: number[][] = [];
+        for (let i = 0; i < a.length; i++) {
+            result[i] = [];
+            for (let j = 0; j < b[0].length; j++) {
+                let sum = 0;
+                for (let k = 0; k < a[i].length; k++) {
+                    sum += a[i][k] * b[k][j];
+                }
+                result[i][j] = sum;
             }
-
-            subMatrix.push(subRow)
-          }
         }
-
-        const cofactor = sign * this.determinant(subMatrix)
-        row.push(cofactor)
-      }
-
-      adjugate.push(row)
+        return result;
     }
 
-    return this.transpose(adjugate)
-  }
-
-  private transpose(matrix: number[][]): number[][] {
-    const transposed: number[][] = []
-
-    for (let i = 0; i < matrix.length; i++) {
-      const row: number[] = []
-
-      for (let j = 0; j < matrix[i].length; j++) {
-        row.push(matrix[j][i])
-      }
-
-      transposed.push(row)
+    multiplyVector(matrix: number[][], vector: number[]): number[] {
+        const result: number[] = [];
+        for (let i = 0; i < matrix.length; i++) {
+            let sum = 0;
+            for (let j = 0; j < matrix[0].length; j++) {
+                sum += matrix[i][j] * vector[j];
+            }
+            result[i] = sum;
+        }
+        return result;
     }
 
-    return transposed
-  }
+    private inverse(matrix: number[][]): number[][] {
+        const det = this.determinant(matrix);
+        if (det === 0) {
+            throw new Error('Matrix is singular and has no inverse.');
+        }
+        const adjugate = this.adjugate(matrix);
+        const scalar = 1 / det;
+        const inverse: number[][] = [];
+        for (let i = 0; i < matrix.length; i++) {
+            inverse[i] = [];
+            for (let j = 0; j < matrix[i].length; j++) {
+                inverse[i][j] = adjugate[i][j] * scalar;
+            }
+        }
+        return inverse;
+    }
+
+    private determinant(matrix: number[][]): number {
+        const n = matrix.length;
+        if (n === 1) {
+            return matrix[0][0];
+        } else if (n === 2) {
+            return matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0];
+        } else {
+            let det = 0;
+            for (let i = 0; i < n; i++) {
+                const subMatrix = matrix
+                    .slice(1)
+                    .map(row => row.slice(0, i).concat(row.slice(i + 1)));
+                det += (i % 2 === 0 ? 1 : -1) * matrix[0][i] * this.determinant(subMatrix);
+            }
+            return det;
+        }
+    }
+
+    private adjugate(matrix: number[][]): number[][] {
+        const n = matrix.length;
+        const adjugate: number[][] = [];
+        for (let i = 0; i < n; i++) {
+            adjugate[i] = [];
+            for (let j = 0; j < n; j++) {
+                const subMatrix = matrix
+                    .slice(0, i)
+                    .concat(matrix.slice(i + 1))
+                    .map(row => row.slice(0, j).concat(row.slice(j + 1)));
+                const cofactor = (i + j) % 2 === 0 ? 1 : -1 * this.determinant(subMatrix);
+                adjugate[i][j] = cofactor;
+            }
+        }
+        return this.transpose(adjugate);
+    }
+
+    private transpose(matrix: number[][]): number[][] {
+        const rows = matrix.length;
+        const cols = matrix[0].length;
+        const transposed: number[][] = [];
+        for (let j = 0; j < cols; j++) {
+            transposed[j] = [];
+            for (let i = 0; i < rows; i++) {
+                transposed[j][i] = matrix[i][j];
+            }
+        }
+        return transposed;
+    }
 }

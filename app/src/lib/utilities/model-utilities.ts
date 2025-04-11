@@ -32,7 +32,6 @@ export const loadModelAsync = async (
                 model_xml = xml;
                 try {
                     const model = urdfLoader.parse(xml);
-                    console.log(model);
 
                     model.rotation.x = -Math.PI / 2;
                     model.rotation.z = Math.PI / 2;
@@ -42,7 +41,6 @@ export const loadModelAsync = async (
                     const joints = Object.entries(model.joints)
                         .filter(joint => joint[1].jointType !== 'fixed')
                         .map(joint => joint[0]);
-                    console.log(joints);
 
                     resolve(Result.ok([model, joints]));
                 } catch (error) {

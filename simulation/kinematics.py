@@ -66,6 +66,24 @@ def compute_default_position():
         foot_positions[i] = pos
     return foot_positions
 
+def gen_posture(j2_angle, j3_angle, config=config):
+    mount = np.array(config.mountPosition)
+    mount_x = mount[:, 0] 
+    mount_y = mount[:, 1]
+    root_j1 = config.kLegRootToJoint1
+    j1_j2 = config.kLegJoint1ToJoint2
+    j2_j3 = config.kLegJoint2ToJoint3
+    j3_tip = config.kLegJoint3ToTip
+    mount_angle = np.array(config.defaultAngle) / 180 * np.pi
+
+    j2_rad = j2_angle / 180 * np.pi
+    j3_rad = j3_angle / 180 * np.pi
+    posture = np.zeros((6, 3))
+
+    posture[:, 0] = mount_x + (root_j1 + j1_j2 + (j2_j3 * np.sin(j2_rad)) + j3_tip * np.cos(j3_rad)) * np.cos(mount_angle)
+    posture[:, 1] = mount_y + (root_j1 + j1_j2 + (j2_j3 * np.sin(j2_rad)) + j3_tip * np.cos(j3_rad)) * np.sin(mount_angle)
+    posture[:, 2] = j2_j3 * np.cos(j2_rad) - j3_tip * np.sin(j3_rad)
+    return posture
 
 def whole_body_kinematics(state: BodyStateT):
     joint_angles = np.zeros(18)
