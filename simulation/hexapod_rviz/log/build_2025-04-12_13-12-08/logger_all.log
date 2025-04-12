@@ -1,0 +1,94 @@
+[0.104s] DEBUG:colcon:Command line arguments: ['/usr/bin/colcon', 'build']
+[0.104s] DEBUG:colcon:Parsed command line arguments: Namespace(log_base=None, log_level=None, verb_name='build', build_base='build', install_base='install', merge_install=False, symlink_install=False, test_result_base=None, continue_on_error=False, executor='parallel', parallel_workers=4, event_handlers=None, ignore_user_meta=False, metas=['./colcon.meta'], base_paths=['.'], packages_ignore=None, packages_ignore_regex=None, paths=None, packages_up_to=None, packages_up_to_regex=None, packages_above=None, packages_above_and_dependencies=None, packages_above_depth=None, packages_select_by_dep=None, packages_skip_by_dep=None, packages_skip_up_to=None, packages_select_build_failed=False, packages_skip_build_finished=False, packages_select_test_failures=False, packages_skip_test_passed=False, packages_select=None, packages_skip=None, packages_select_regex=None, packages_skip_regex=None, packages_start=None, packages_end=None, cmake_args=None, cmake_target=None, cmake_target_skip_unavailable=False, cmake_clean_cache=False, cmake_clean_first=False, cmake_force_configure=False, ament_cmake_args=None, catkin_cmake_args=None, catkin_skip_building_tests=False, verb_parser=<colcon_defaults.argument_parser.defaults.DefaultArgumentsDecorator object at 0x7e88179fb260>, verb_extension=<colcon_core.verb.build.BuildVerb object at 0x7e881799e720>, main=<bound method BuildVerb.main of <colcon_core.verb.build.BuildVerb object at 0x7e881799e720>>)
+[0.148s] Level 1:colcon.colcon_core.package_discovery:discover_packages(colcon_meta) check parameters
+[0.148s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) check parameters
+[0.148s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) check parameters
+[0.148s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) check parameters
+[0.148s] Level 1:colcon.colcon_core.package_discovery:discover_packages(colcon_meta) discover
+[0.148s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) discover
+[0.148s] INFO:colcon.colcon_core.package_discovery:Crawling recursively for packages in '/home/rune/Hexapod/simulation/hexapod_rviz'
+[0.148s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['ignore', 'ignore_ament_install']
+[0.148s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ignore'
+[0.148s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ignore_ament_install'
+[0.148s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['colcon_pkg']
+[0.149s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'colcon_pkg'
+[0.149s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['colcon_meta']
+[0.149s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'colcon_meta'
+[0.149s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['ros']
+[0.149s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ros'
+[0.176s] DEBUG:colcon.colcon_core.package_identification:Package '.' with type 'ros.ament_cmake' and name 'hexapod_rviz'
+[0.176s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) using defaults
+[0.176s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) discover
+[0.176s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) using defaults
+[0.176s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) discover
+[0.176s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) using defaults
+[0.196s] Level 5:colcon.colcon_core.verb:set package 'hexapod_rviz' build argument 'cmake_args' from command line to 'None'
+[0.196s] Level 5:colcon.colcon_core.verb:set package 'hexapod_rviz' build argument 'cmake_target' from command line to 'None'
+[0.196s] Level 5:colcon.colcon_core.verb:set package 'hexapod_rviz' build argument 'cmake_target_skip_unavailable' from command line to 'False'
+[0.196s] Level 5:colcon.colcon_core.verb:set package 'hexapod_rviz' build argument 'cmake_clean_cache' from command line to 'False'
+[0.196s] Level 5:colcon.colcon_core.verb:set package 'hexapod_rviz' build argument 'cmake_clean_first' from command line to 'False'
+[0.196s] Level 5:colcon.colcon_core.verb:set package 'hexapod_rviz' build argument 'cmake_force_configure' from command line to 'False'
+[0.196s] Level 5:colcon.colcon_core.verb:set package 'hexapod_rviz' build argument 'ament_cmake_args' from command line to 'None'
+[0.196s] Level 5:colcon.colcon_core.verb:set package 'hexapod_rviz' build argument 'catkin_cmake_args' from command line to 'None'
+[0.196s] Level 5:colcon.colcon_core.verb:set package 'hexapod_rviz' build argument 'catkin_skip_building_tests' from command line to 'False'
+[0.196s] DEBUG:colcon.colcon_core.verb:Building package 'hexapod_rviz' with the following arguments: {'ament_cmake_args': None, 'build_base': '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz', 'catkin_cmake_args': None, 'catkin_skip_building_tests': False, 'cmake_args': None, 'cmake_clean_cache': False, 'cmake_clean_first': False, 'cmake_force_configure': False, 'cmake_target': None, 'cmake_target_skip_unavailable': False, 'install_base': '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz', 'merge_install': False, 'path': '/home/rune/Hexapod/simulation/hexapod_rviz', 'symlink_install': False, 'test_result_base': None}
+[0.196s] INFO:colcon.colcon_core.executor:Executing jobs using 'parallel' executor
+[0.198s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:run_until_complete
+[0.198s] INFO:colcon.colcon_ros.task.ament_cmake.build:Building ROS package in '/home/rune/Hexapod/simulation/hexapod_rviz' with build type 'ament_cmake'
+[0.198s] INFO:colcon.colcon_cmake.task.cmake.build:Building CMake package in '/home/rune/Hexapod/simulation/hexapod_rviz'
+[0.200s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_core.shell.bat': Not used on non-Windows systems
+[0.200s] DEBUG:colcon.colcon_core.shell:Skip shell extension 'dsv' for command environment
+[0.201s] WARNING:colcon.colcon_core.prefix_path.colcon:The path '/home/rune/Hexapod/simulation/rviz/install' in the environment variable COLCON_PREFIX_PATH doesn't exist
+[0.201s] WARNING:colcon.colcon_ros.prefix_path.ament:The path '/home/rune/Hexapod/simulation/rviz/install/hexapod' in the environment variable AMENT_PREFIX_PATH doesn't exist
+[0.201s] WARNING:colcon.colcon_ros.prefix_path.catkin:The path '/home/rune/Hexapod/simulation/rviz/install/hexapod' in the environment variable CMAKE_PREFIX_PATH doesn't exist
+[0.214s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake /home/rune/Hexapod/simulation/hexapod_rviz -DCMAKE_INSTALL_PREFIX=/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz
+[1.116s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake /home/rune/Hexapod/simulation/hexapod_rviz -DCMAKE_INSTALL_PREFIX=/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz
+[1.118s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz -- -j4 -l4
+[1.180s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz -- -j4 -l4
+[1.194s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz
+[1.223s] Level 1:colcon.colcon_core.environment:create_environment_scripts_only(hexapod_rviz)
+[1.224s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz
+[1.226s] Level 1:colcon.colcon_core.environment:checking '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz' for CMake module files
+[1.227s] Level 1:colcon.colcon_core.environment:checking '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz' for CMake config files
+[1.227s] Level 1:colcon.colcon_core.shell:create_environment_hook('hexapod_rviz', 'cmake_prefix_path')
+[1.227s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/hook/cmake_prefix_path.dsv'
+[1.228s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/hook/cmake_prefix_path.sh'
+[1.229s] Level 1:colcon.colcon_core.environment:checking '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/bin'
+[1.229s] Level 1:colcon.colcon_core.environment:checking '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/lib/pkgconfig/hexapod_rviz.pc'
+[1.231s] Level 1:colcon.colcon_core.environment:checking '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/lib/python3.12/site-packages'
+[1.231s] Level 1:colcon.colcon_core.environment:checking '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/bin'
+[1.232s] INFO:colcon.colcon_core.shell:Creating package descriptor '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/package.dsv'
+[1.232s] INFO:colcon.colcon_core.shell:Creating package script '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/package.sh'
+[1.233s] INFO:colcon.colcon_core.shell:Creating package script '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/package.bash'
+[1.233s] INFO:colcon.colcon_core.shell:Creating package script '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/package.zsh'
+[1.234s] Level 1:colcon.colcon_core.environment:create_file_with_runtime_dependencies(/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/colcon-core/packages/hexapod_rviz)
+[1.234s] Level 1:colcon.colcon_core.environment:create_environment_scripts_only(hexapod_rviz)
+[1.235s] Level 1:colcon.colcon_core.environment:checking '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz' for CMake module files
+[1.235s] Level 1:colcon.colcon_core.environment:checking '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz' for CMake config files
+[1.235s] Level 1:colcon.colcon_core.shell:create_environment_hook('hexapod_rviz', 'cmake_prefix_path')
+[1.235s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/hook/cmake_prefix_path.dsv'
+[1.236s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/hook/cmake_prefix_path.sh'
+[1.237s] Level 1:colcon.colcon_core.environment:checking '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/bin'
+[1.237s] Level 1:colcon.colcon_core.environment:checking '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/lib/pkgconfig/hexapod_rviz.pc'
+[1.237s] Level 1:colcon.colcon_core.environment:checking '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/lib/python3.12/site-packages'
+[1.237s] Level 1:colcon.colcon_core.environment:checking '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/bin'
+[1.237s] INFO:colcon.colcon_core.shell:Creating package descriptor '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/package.dsv'
+[1.238s] INFO:colcon.colcon_core.shell:Creating package script '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/package.sh'
+[1.238s] INFO:colcon.colcon_core.shell:Creating package script '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/package.bash'
+[1.239s] INFO:colcon.colcon_core.shell:Creating package script '/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/package.zsh'
+[1.239s] Level 1:colcon.colcon_core.environment:create_file_with_runtime_dependencies(/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/colcon-core/packages/hexapod_rviz)
+[1.240s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:closing loop
+[1.240s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:loop closed
+[1.240s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:run_until_complete finished with '0'
+[1.240s] DEBUG:colcon.colcon_core.event_reactor:joining thread
+[1.246s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_notification.desktop_notification.terminal_notifier': Not used on non-Darwin systems
+[1.246s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_notification.desktop_notification.win32': Not used on non-Windows systems
+[1.246s] INFO:colcon.colcon_notification.desktop_notification:Sending desktop notification using 'notify2'
+[1.267s] DEBUG:colcon.colcon_core.event_reactor:joined thread
+[1.268s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/rune/Hexapod/simulation/hexapod_rviz/install/local_setup.sh'
+[1.269s] INFO:colcon.colcon_core.shell:Creating prefix util module '/home/rune/Hexapod/simulation/hexapod_rviz/install/_local_setup_util_sh.py'
+[1.270s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/rune/Hexapod/simulation/hexapod_rviz/install/setup.sh'
+[1.271s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/rune/Hexapod/simulation/hexapod_rviz/install/local_setup.bash'
+[1.271s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/rune/Hexapod/simulation/hexapod_rviz/install/setup.bash'
+[1.273s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/rune/Hexapod/simulation/hexapod_rviz/install/local_setup.zsh'
+[1.273s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/rune/Hexapod/simulation/hexapod_rviz/install/setup.zsh'

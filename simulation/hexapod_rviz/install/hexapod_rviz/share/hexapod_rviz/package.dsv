@@ -1,0 +1,6 @@
+source;share/hexapod_rviz/hook/cmake_prefix_path.dsv
+source;share/hexapod_rviz/hook/cmake_prefix_path.sh
+source;share/hexapod_rviz/local_setup.bash
+source;share/hexapod_rviz/local_setup.dsv
+source;share/hexapod_rviz/local_setup.sh
+source;share/hexapod_rviz/local_setup.zsh

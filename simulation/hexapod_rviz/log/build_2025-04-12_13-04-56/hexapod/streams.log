@@ -1,0 +1,26 @@
+[0.017s] Invoking command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake /home/rune/Hexapod/simulation/hexapod_rviz -DCMAKE_INSTALL_PREFIX=/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod
+[0.091s] -- The C compiler identification is GNU 13.3.0
+[0.166s] -- The CXX compiler identification is GNU 13.3.0
+[0.193s] -- Detecting C compiler ABI info
+[0.325s] -- Detecting C compiler ABI info - done
+[0.338s] -- Check for working C compiler: /usr/bin/cc - skipped
+[0.338s] -- Detecting C compile features
+[0.338s] -- Detecting C compile features - done
+[0.353s] -- Detecting CXX compiler ABI info
+[0.500s] -- Detecting CXX compiler ABI info - done
+[0.511s] -- Check for working CXX compiler: /usr/bin/c++ - skipped
+[0.512s] -- Detecting CXX compile features
+[0.512s] -- Detecting CXX compile features - done
+[0.515s] -- Found ament_cmake: 2.5.3 (/opt/ros/jazzy/share/ament_cmake/cmake)
+[0.684s] -- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter 
+[0.888s] [31mCMake Error at /opt/ros/jazzy/share/ament_cmake_core/cmake/core/ament_package_xml.cmake:53 (message):
+[0.888s]   ament_package_xml() package name 'hexapod' in '/package.xml' does not match
+[0.888s]   current PROJECT_NAME 'your_robot'.  You must call project() with the same
+[0.888s]   package name before.
+[0.888s] Call Stack (most recent call first):
+[0.888s]   /opt/ros/jazzy/share/ament_cmake_core/cmake/core/ament_package.cmake:63 (ament_package_xml)
+[0.889s]   CMakeLists.txt:10 (ament_package)
+[0.889s] 
+[0.890s] [0m
+[0.890s] -- Configuring incomplete, errors occurred!
+[0.896s] Invoked command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod' returned '1': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake /home/rune/Hexapod/simulation/hexapod_rviz -DCMAKE_INSTALL_PREFIX=/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod

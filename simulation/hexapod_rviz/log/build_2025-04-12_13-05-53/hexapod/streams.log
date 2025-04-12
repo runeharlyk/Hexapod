@@ -1,0 +1,15 @@
+[0.015s] Invoking command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod -- -j4 -l4
+[0.081s] Invoked command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod -- -j4 -l4
+[0.096s] Invoking command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod
+[0.110s] -- Install configuration: ""
+[0.110s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod/share/hexapod/launch
+[0.111s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod/share/hexapod/launch/display.launch.py
+[0.111s] -- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod/share/hexapod/urdf
+[0.111s] -- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod/share/hexapod/urdf/model.urdf
+[0.111s] -- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod/share/hexapod/urdf/model.xacro
+[0.111s] [31mCMake Error at cmake_install.cmake:46 (file):
+[0.111s]   file INSTALL cannot find "/home/rune/Hexapod/simulation/hexapod_rviz/rviz":
+[0.111s]   No such file or directory.
+[0.111s] 
+[0.112s] [0m
+[0.114s] Invoked command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod' returned '1': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod

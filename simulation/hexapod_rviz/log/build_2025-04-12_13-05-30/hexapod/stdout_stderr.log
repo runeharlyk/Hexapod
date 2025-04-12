@@ -1,0 +1,12 @@
+-- Found ament_cmake: 2.5.3 (/opt/ros/jazzy/share/ament_cmake/cmake)
+-- Configuring done (0.4s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod
+-- Install configuration: ""
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod/share/hexapod/launch
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod/share/hexapod/launch/display.launch.py
+[31mCMake Error at cmake_install.cmake:46 (file):
+  file INSTALL cannot find "/home/rune/Hexapod/simulation/hexapod_rviz/urdf":
+  No such file or directory.
+
+[0m

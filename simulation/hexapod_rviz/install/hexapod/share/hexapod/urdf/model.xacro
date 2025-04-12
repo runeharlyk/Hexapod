@@ -1,0 +1,188 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="robot">
+    <material name="shell_color">
+        <color rgba="1 1 1 1" />
+    </material>
+    <material name="body_color">
+        <color rgba="0.1 0.1 0.1 1" />
+    </material>
+    <material name="foot_color">
+        <color rgba="0 0.75 1 1" />
+    </material>
+
+    <!-- Params -->
+
+    <xacro:property name="body_length" value="0.140" />
+    <xacro:property name="body_width" value="0.110" />
+    <xacro:property name="body_height" value="0.070" />
+
+    <xacro:property name="shoulder_length" value="0.044" />
+    <xacro:property name="shoulder_width" value="0.038" />
+
+    <xacro:property name="leg_length" value="0.1075" />
+    <xacro:property name="foot_length" value="0.130" />
+
+    <xacro:property name="toe_radius" value="0.020" />
+    <xacro:property name="toe_width" value="0.020" />
+    <xacro:property name="shift" value="-1.015" />
+    <xacro:property name="shiftx" value="0.38" />
+    <xacro:property name="shifty" value="0.6" />
+
+    <xacro:property name="leg_x" value="0.37" />
+    <xacro:property name="leg_x_center" value="0.51" />
+    <xacro:property name="leg_y" value="0.69" />
+    <xacro:property name="leg_y_center" value="0" />
+    <xacro:property name="shiftz" value="0" />
+
+    <xacro:property name="front_left_angle" value="2.35619" />
+    <xacro:property name="front_right_angle" value="0.785398" />
+    <xacro:property name="middle_left_angle" value="3.14159" />
+    <xacro:property name="middle_right_angle" value="0" />
+    <xacro:property name="back_left_angle" value="-2.35619" />
+    <xacro:property name="back_right_angle" value="-0.785398" />
+
+    <!-- Macros -->
+
+    <xacro:macro name="gen_shoulder" params="name">
+        <link name="${name}">
+            <visual>
+                <geometry>
+                    <mesh filename="package://hexapod_rviz/urdf/stl/joint.stl" scale="0.01 0.01 0.01" />
+                </geometry>
+                <origin rpy="0 0 3.14159" xyz="-0.12 -0.05 0.4" />
+                <material name="body_color" />
+            </visual>
+            <collision>
+                <geometry>
+                    <box size="${shoulder_length} ${shoulder_width} ${body_height}" />
+                </geometry>
+                <origin rpy="0 0 0" xyz="0 0 0" />
+            </collision>
+            <inertial>
+                <mass value="0.10" />
+                <inertia ixx="100" ixy="0" ixz="0" iyy="100" iyz="0" izz="100" />
+            </inertial>
+        </link>
+    </xacro:macro>
+
+    <xacro:macro name="gen_leg" params="name">
+        <link name="${name}">
+            <visual>
+                <geometry>
+                    <mesh filename="package://hexapod_rviz/urdf/stl/middle_joint.stl" scale="0.01 0.01 0.01" />
+                </geometry>
+                <origin rpy="0 0 0" xyz="-1.7142 0 -0.011" />
+                <material name="body_color" />
+            </visual>
+        </link>
+    </xacro:macro>
+
+    <xacro:macro name="gen_foot" params="name">
+        <link name="${name}">
+            <visual>
+                <geometry>
+                    <mesh filename="package://hexapod_rviz/urdf/stl/foot.stl" scale="0.01 0.01 0.01" />
+                </geometry>
+                <origin rpy="0 3.14159 0" xyz="0.98 -0.485 0.0225" />
+                <material name="body_color" />
+            </visual>
+            <collision>
+                <geometry>
+                    <box size="0.026 0.020 ${foot_length}" />
+                </geometry>
+                <origin rpy="0.0 0.0 0.0" xyz="0.0 0.0 -0.050" />
+            </collision>
+            <inertial>
+                <mass value="0.1" />
+                <inertia ixx="1000" ixy="0" ixz="0" iyy="1000" iyz="0" izz="1000" />
+            </inertial>
+        </link>
+    </xacro:macro>
+
+    <!-- Macros joints -->
+
+    <xacro:macro name="gen_shoulder_joint" params="pos shiftx shifty angle">
+        <joint name="${pos}_shoulder" type="revolute">
+            <parent link="base_link" />
+            <child link="${pos}_shoulder_link" />
+            <axis xyz="0 0 1" />
+            <origin rpy="0 0 ${angle}" xyz="${shiftx} ${shifty} 0" />
+            <limit effort="1000.0" lower="-0.548" upper="0.548" velocity="0.7" />
+            <dynamics damping="0.0" friction="0.5" />
+        </joint>
+    </xacro:macro>
+
+    <xacro:macro name="gen_leg_joint" params="pos shift">
+        <joint name="${pos}_leg" type="revolute">
+            <parent link="${pos}_shoulder_link" />
+            <child link="${pos}_leg_link" />
+            <axis xyz="0 1 0" />
+            <origin rpy="0 0 0" xyz="-0.28 ${shift} 0.59" />
+            <limit effort="1000.0" lower="-2.666" upper="1.548" velocity="0.5" />
+            <dynamics damping="0.0" friction="0.0" />
+        </joint>
+    </xacro:macro>
+
+    <xacro:macro name="gen_foot_joint" params="pos">
+        <joint name="${pos}_foot" type="revolute">
+            <parent link="${pos}_leg_link" />
+            <child link="${pos}_foot_link" />
+            <axis xyz="0 1 0" />
+            <origin rpy="0 0 0" xyz="-0.43 0 -0" />
+            <limit effort="1000.0" lower="-2.6" upper="0.1" velocity="0.5" />
+            <dynamics damping="0.0" friction="0.5" />
+        </joint>
+    </xacro:macro>
+
+    <!-- Leg macros -->
+
+    <xacro:macro name="gen_full_leg_joint" params="pos shiftx shifty shift angle">
+        <xacro:gen_shoulder name="${pos}_shoulder_link" />
+        <xacro:gen_leg name="${pos}_leg_link" />
+        <xacro:gen_foot name="${pos}_foot_link" />
+
+        <xacro:gen_shoulder_joint pos="${pos}" shiftx="${shiftx}" shifty="${shifty}"
+            angle="${angle}" />
+        <xacro:gen_leg_joint pos="${pos}" shift="${shift}" />
+        <xacro:gen_foot_joint pos="${pos}" />
+    </xacro:macro>
+
+
+    <!-- Robot Body -->
+    <link name="base_link">
+        <visual>
+            <geometry>
+                <mesh filename="package://hexapod_rviz/urdf/stl/body.stl" scale="0.01 0.01 0.01" />
+            </geometry>
+            <material name="body_color" />
+            <origin rpy="0 0 0" xyz="-0.286 -0.6 0.40" />
+        </visual>
+
+        <collision>
+            <geometry>
+                <box size="${body_length} ${body_width} ${body_height}" />
+            </geometry>
+            <origin rpy="0 0 0" xyz="0 0 0" />
+        </collision>
+        <inertial>
+            <mass value="2.80" />
+            <inertia ixx="100" ixy="0" ixz="0" iyy="100" iyz="0" izz="100" />
+        </inertial>
+    </link>
+
+    <xacro:gen_full_leg_joint pos="front_left" shiftx="${leg_x}" shifty="-${leg_y}" shift="${shift}"
+        angle="${front_left_angle}" />
+    <xacro:gen_full_leg_joint pos="front_right" shiftx="-${leg_x}" shifty="-${leg_y}"
+        shift="${shift}" angle="${front_right_angle}" />
+
+    <xacro:gen_full_leg_joint pos="middle_left" shiftx="${leg_x_center}" shifty="${leg_y_center}"
+        shift="${shift}"
+        angle="${middle_left_angle}" />
+    <xacro:gen_full_leg_joint pos="middle_right" shiftx="-${leg_x_center}" shifty="${leg_y_center}"
+        shift="${shift}" angle="${middle_right_angle}" />
+
+    <xacro:gen_full_leg_joint pos="back_left" shiftx="${leg_x}" shifty="${leg_y}" shift="${shift}"
+        angle="${back_left_angle}" />
+    <xacro:gen_full_leg_joint pos="back_right" shiftx="-${leg_x}" shifty="${leg_y}" shift="${shift}"
+        angle="${back_right_angle}" />
+</robot>

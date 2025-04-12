@@ -1,0 +1,18 @@
+[0.017s] Invoking command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake /home/rune/Hexapod/simulation/hexapod_rviz -DCMAKE_INSTALL_PREFIX=/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod
+[0.039s] -- Found ament_cmake: 2.5.3 (/opt/ros/jazzy/share/ament_cmake/cmake)
+[0.390s] -- Configuring done (0.4s)
+[0.392s] -- Generating done (0.0s)
+[0.395s] -- Build files have been written to: /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod
+[0.400s] Invoked command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake /home/rune/Hexapod/simulation/hexapod_rviz -DCMAKE_INSTALL_PREFIX=/home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod
+[0.401s] Invoking command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod -- -j4 -l4
+[0.464s] Invoked command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod -- -j4 -l4
+[0.478s] Invoking command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod
+[0.489s] -- Install configuration: ""
+[0.489s] -- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod/share/hexapod/launch
+[0.490s] -- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod/share/hexapod/launch/display.launch.py
+[0.490s] [31mCMake Error at cmake_install.cmake:46 (file):
+[0.490s]   file INSTALL cannot find "/home/rune/Hexapod/simulation/hexapod_rviz/urdf":
+[0.490s]   No such file or directory.
+[0.490s] 
+[0.490s] [0m
+[0.493s] Invoked command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod' returned '1': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod

@@ -1,0 +1,44 @@
+-- The C compiler identification is GNU 13.3.0
+-- The CXX compiler identification is GNU 13.3.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found ament_cmake: 2.5.3 (/opt/ros/jazzy/share/ament_cmake/cmake)
+-- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter 
+-- Configuring done (0.9s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz
+-- Install configuration: ""
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/launch
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/launch/display.launch.py
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/urdf
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/urdf/model.urdf
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/urdf/model.xacro
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/urdf/stl
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/urdf/stl/middle_joint.stl
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/urdf/stl/joint.stl
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/urdf/stl/foot.stl
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/urdf/stl/body.stl
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/rviz
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/ament_index/resource_index/package_run_dependencies/hexapod_rviz
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/ament_index/resource_index/parent_prefix_path/hexapod_rviz
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/environment/ament_prefix_path.sh
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/environment/ament_prefix_path.dsv
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/environment/path.sh
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/environment/path.dsv
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/local_setup.bash
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/local_setup.sh
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/local_setup.zsh
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/local_setup.dsv
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/package.dsv
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/ament_index/resource_index/packages/hexapod_rviz
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/cmake/hexapod_rvizConfig.cmake
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/cmake/hexapod_rvizConfig-version.cmake
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/package.xml

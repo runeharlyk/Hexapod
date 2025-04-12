@@ -1,0 +1,31 @@
+[0.018s] Invoking command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz -- -j4 -l4
+[0.087s] Invoked command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz -- -j4 -l4
+[0.103s] Invoking command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz
+[0.117s] -- Install configuration: ""
+[0.117s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/launch
+[0.117s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/launch/display.launch.py
+[0.117s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/urdf
+[0.118s] -- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/urdf/model.urdf
+[0.118s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/urdf/model.xacro
+[0.118s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/stl
+[0.118s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/stl/middle_joint.stl
+[0.118s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/stl/joint.stl
+[0.118s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/stl/foot.stl
+[0.118s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/stl/body.stl
+[0.118s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/rviz
+[0.118s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/ament_index/resource_index/package_run_dependencies/hexapod_rviz
+[0.118s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/ament_index/resource_index/parent_prefix_path/hexapod_rviz
+[0.118s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/environment/ament_prefix_path.sh
+[0.118s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/environment/ament_prefix_path.dsv
+[0.118s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/environment/path.sh
+[0.119s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/environment/path.dsv
+[0.119s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/local_setup.bash
+[0.119s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/local_setup.sh
+[0.119s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/local_setup.zsh
+[0.119s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/local_setup.dsv
+[0.119s] -- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/package.dsv
+[0.119s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/ament_index/resource_index/packages/hexapod_rviz
+[0.119s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/cmake/hexapod_rvizConfig.cmake
+[0.119s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/cmake/hexapod_rvizConfig-version.cmake
+[0.119s] -- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod_rviz/share/hexapod_rviz/package.xml
+[0.121s] Invoked command in '/home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/rune/Hexapod/simulation/hexapod_rviz/build/hexapod_rviz

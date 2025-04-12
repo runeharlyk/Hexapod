@@ -1,0 +1,11 @@
+-- Install configuration: ""
+-- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod/share/hexapod/launch
+-- Up-to-date: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod/share/hexapod/launch/display.launch.py
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod/share/hexapod/urdf
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod/share/hexapod/urdf/model.urdf
+-- Installing: /home/rune/Hexapod/simulation/hexapod_rviz/install/hexapod/share/hexapod/urdf/model.xacro
+[31mCMake Error at cmake_install.cmake:46 (file):
+  file INSTALL cannot find "/home/rune/Hexapod/simulation/hexapod_rviz/rviz":
+  No such file or directory.
+
+[0m
