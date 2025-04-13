@@ -3,7 +3,6 @@ from path_lib import semicircle_generator
 
 
 def get_rotate_z_matrix(angle):
-    angle = angle * np.pi / 180
     return np.matrix(
         [
             [np.cos(angle), -np.sin(angle), 0, 0],
@@ -17,7 +16,7 @@ def path_rotate_z(path, angle):
     ptx = np.append(path, np.ones((np.shape(path)[0], 1)), axis=1)
     return ((get_rotate_z_matrix(angle) * np.matrix(ptx).T).T)[:, :-1]
 
-def gen_walk_path(standby_coordinate, g_steps=112, g_radius=30, direction=0):
+def gen_walk_path(standby_coordinate, g_steps=448, g_radius=30, direction=0):
     assert (g_steps % 4) == 0
     halfsteps = int(g_steps / 2)
 

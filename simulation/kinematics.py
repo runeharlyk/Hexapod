@@ -166,12 +166,8 @@ def inverse_kinematics(dest, config):
 
     temp_dest = dest - mount_position
     local_dest = np.zeros_like(dest)
-    local_dest[:, 0] = temp_dest[:, 0] * np.cos(mount_angle) + temp_dest[:, 1] * np.sin(
-        mount_angle
-    )
-    local_dest[:, 1] = temp_dest[:, 0] * np.sin(mount_angle) - temp_dest[:, 1] * np.cos(
-        mount_angle
-    )
+    local_dest[:, 0] = temp_dest[:, 0] * np.cos(mount_angle) + temp_dest[:, 1] * np.sin(mount_angle)
+    local_dest[:, 1] = temp_dest[:, 0] * np.sin(mount_angle) - temp_dest[:, 1] * np.cos(mount_angle)
     local_dest[:, 2] = temp_dest[:, 2]
 
     angles = np.zeros((6, 3))
