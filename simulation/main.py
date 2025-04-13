@@ -60,5 +60,5 @@ while True:
         )
     
     p.stepSimulation()
-    time.sleep(dt * speed)
+    time.sleep(dt)
     t += dt * speed
