@@ -15,7 +15,10 @@ p.setAdditionalSearchPath(pybullet_data.getDataPath())
 model_path = os.path.join(os.path.dirname(__file__), "model.urdf")
 robot_id = p.loadURDF(model_path, useFixedBase=False)
 plane_id = p.loadURDF("plane.urdf")
-p.setGravity(0,0,-10)
+p.resetBasePositionAndOrientation(robot_id, [0, 0, 0.4], [0, 0, 0, 1])
+p.setGravity(0, 0, -9.8)
+p.setTimeStep(1 / 240)
+p.setPhysicsEngineParameter(numSolverIterations=50)
 
 gui = GUI(robot_id)
 
@@ -46,7 +49,15 @@ while True:
     joints = joints.reshape(6, 3)[leg_order].flatten()
 
     for i, j in enumerate(joint_indices):
-        p.resetJointState(robot_id, j, joints[i])
+        p.setJointMotorControl2(
+            robot_id,
+            jointIndex=j,
+            controlMode=p.POSITION_CONTROL,
+            targetPosition=joints[i],
+            force=343, #  / 100 for newtons - Fix mass
+            positionGain=0.5,
+            maxVelocity=13.09,
+        )
     
     p.stepSimulation()
     time.sleep(dt * speed)
