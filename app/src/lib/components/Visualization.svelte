@@ -5,10 +5,9 @@
     import SceneBuilder from '$lib/sceneBuilder';
     import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
     import type { URDFRobot } from 'urdf-loader';
-    import { degToRad, lerp, radToDeg } from 'three/src/math/MathUtils';
+    import { degToRad, lerp } from 'three/src/math/MathUtils';
     import Kinematics, {
         computeDefaultPosition,
-        gen_posture,
         type body_state_t,
         type HexapodConfig
     } from '$lib/kinematic';
@@ -118,6 +117,7 @@
         }
 
         const limbs = gui_panel.addFolder('limbs');
+        limbs.add({ center: resetLimbs }, 'center');
         for (const name of $jointNames) {
             limbs.add(jointAngles, name, -150, 150).onChange(updateLimbs).listen();
         }
@@ -128,6 +128,13 @@
         visibility.add(settings, 'Target position');
         visibility.add(settings, 'Smooth motion');
         visibility.addColor(settings, 'Background');
+    };
+
+    const resetLimbs = () => {
+        for (const name of $jointNames) {
+            jointAngles[name] = 0;
+        }
+        updateLimbs();
     };
 
     const updateLimbs = () => {
