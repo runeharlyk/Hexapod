@@ -16,7 +16,7 @@ class GUI:
         self.pitch_slider = p.addUserDebugParameter("pitch", -np.pi/4, np.pi/4, 0)
         self.roll_slider = p.addUserDebugParameter("roll", -np.pi/4, np.pi/4, 0)
 
-        self.direction_slider = p.addUserDebugParameter("Direction", 0, np.pi, 0)
+        self.direction_slider = p.addUserDebugParameter("Direction", -np.pi, np.pi, 0)
         self.step_height_slider = p.addUserDebugParameter("Step height", 0, 0.1, 0.04)
         self.speed_slider = p.addUserDebugParameter("Speed", 0, 2, 1)
 

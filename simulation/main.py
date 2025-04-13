@@ -13,7 +13,9 @@ from gui import GUI
 p.connect(p.GUI)
 p.setAdditionalSearchPath(pybullet_data.getDataPath())
 model_path = os.path.join(os.path.dirname(__file__), "model.urdf")
-robot_id = p.loadURDF(model_path, useFixedBase=True)
+robot_id = p.loadURDF(model_path, useFixedBase=False)
+plane_id = p.loadURDF("plane.urdf")
+p.setGravity(0,0,-10)
 
 gui = GUI(robot_id)
 
