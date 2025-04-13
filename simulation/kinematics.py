@@ -127,7 +127,7 @@ def ik(to):
     return angles
 
 
-def inverse_kinematics(dest, config):
+def inverse_kinematics(dest, body_state, config):
     """Calculates the joint angles for each leg of the hexapod to reach a desired destination.
 
     Args:
@@ -135,6 +135,11 @@ def inverse_kinematics(dest, config):
             for each leg. The shape of the array is (6, 3), where:
                 - 6 is the number of legs.
                 - 3 is the number of coordinates (x, y, z).
+        body_state (BodyStateT): A dictionary containing the body state with keys:
+            - omega: roll angle in radians
+            - phi: pitch angle in radians
+            - psi: yaw angle in radians 
+            - xm, ym, zm: position of the body
         config (dict): A dictionary containing the hexapod's configuration parameters.
             The dictionary should contain the following keys:
                 - "legMountX": A list of x-coordinates for the leg mounts.
@@ -164,7 +169,20 @@ def inverse_kinematics(dest, config):
     mount_position[:, 1] = mount_y
     leg_scale = np.array(config["legScale"])
 
-    temp_dest = dest - mount_position
+    # Apply body rotation transformation
+    roll = body_state["omega"]
+    pitch = body_state["phi"]
+    yaw = body_state["psi"]
+    
+    # Create rotation matrices
+    rot_matrix = rot_z(yaw) @ rot_y(pitch) @ rot_x(roll)
+    
+    # Apply rotation to destination points
+    rotated_dest = np.zeros_like(dest)
+    for i in range(6):
+        rotated_dest[i] = rot_matrix @ dest[i]
+    
+    temp_dest = rotated_dest - mount_position
     local_dest = np.zeros_like(dest)
     local_dest[:, 0] = temp_dest[:, 0] * np.cos(mount_angle) + temp_dest[:, 1] * np.sin(mount_angle)
     local_dest[:, 1] = temp_dest[:, 0] * np.sin(mount_angle) - temp_dest[:, 1] * np.cos(mount_angle)
@@ -181,8 +199,24 @@ def inverse_kinematics(dest, config):
     ar = np.arctan2(y, x)
     lr2 = x * x + y * y
     lr = np.sqrt(lr2)
-    a1 = np.arccos((lr2 + j2_j3 * j2_j3 - j3_tip * j3_tip) / (2 * j2_j3 * lr))
-    a2 = np.arccos((lr2 - j2_j3 * j2_j3 + j3_tip * j3_tip) / (2 * j3_tip * lr))
+    
+    # Handle potential numerical issues and invalid configurations
+    valid_legs = lr > 1e-6
+    a1 = np.zeros_like(lr)
+    a2 = np.zeros_like(lr)
+    
+    # Calculate angles only for valid leg positions
+    if np.any(valid_legs):
+        # Use safe_acos to prevent numerical errors
+        cos_a1 = (lr2[valid_legs] + j2_j3*j2_j3 - j3_tip*j3_tip) / (2 * j2_j3 * lr[valid_legs])
+        cos_a2 = (lr2[valid_legs] - j2_j3*j2_j3 + j3_tip*j3_tip) / (2 * j3_tip * lr[valid_legs])
+        
+        # Clip values to valid domain for arccos
+        cos_a1 = np.clip(cos_a1, -1.0, 1.0)
+        cos_a2 = np.clip(cos_a2, -1.0, 1.0)
+        
+        a1[valid_legs] = np.arccos(cos_a1)
+        a2[valid_legs] = np.arccos(cos_a2)
 
     angles[:, 1] = ((ar + a1) * 180 / np.pi) * leg_scale[:, 1]
     angles[:, 2] = (90 - ((a1 + a2) * 180 / np.pi)) * leg_scale[:, 1] - 90
