@@ -4,8 +4,6 @@ from typing import TypedDict, List
 
 import config
 
-pi = math.acos(-1)
-
 class BodyStateT(TypedDict):
   omega: float
   phi: float
@@ -51,7 +49,7 @@ def compute_default_position():
     forward = l2 + l3 * config.SIN30 + l4 * config.SIN15
     down = l3 * config.COS30 + l4 * config.COS15
 
-    spread_scale = 1.3
+    spread_scale = 1
     local_tip = np.array([(l1 + forward) * spread_scale, 0, -down])
 
     for i in range(6):
@@ -67,14 +65,14 @@ def compute_default_position():
     return foot_positions
 
 def gen_posture(j2_angle, j3_angle, config=config):
-    mount = np.array(config.mountPosition)
-    mount_x = mount[:, 0] 
-    mount_y = mount[:, 1]
-    root_j1 = config.kLegRootToJoint1
-    j1_j2 = config.kLegJoint1ToJoint2
-    j2_j3 = config.kLegJoint2ToJoint3
-    j3_tip = config.kLegJoint3ToTip
-    mount_angle = np.array(config.defaultAngle) / 180 * np.pi
+    # mount = np.array(config.mountPosition)
+    mount_x = config["legMountX"]
+    mount_y = config["legMountY"]
+    root_j1 = config["legRootToJoint1"]
+    j1_j2 = config["legJoint1ToJoint2"]
+    j2_j3 = config["legJoint2ToJoint3"]
+    j3_tip = config["legJoint3ToTip"]
+    mount_angle = np.array(config["legMountAngle"]) / 180 * np.pi
 
     j2_rad = j2_angle / 180 * np.pi
     j3_rad = j3_angle / 180 * np.pi
@@ -106,7 +104,7 @@ def ik(to):
     x = to[0] - config.kLegRootToJoint1
     y = to[1]
 
-    angles.append(math.atan2(y, x) * 180 / pi)
+    angles.append(math.atan2(y, x) * 180 / math.pi)
 
     x = math.sqrt(x*x + y*y) - config.kLegJoint1ToJoint2
     y = to[2]
@@ -119,11 +117,78 @@ def ik(to):
     if lr < 1e-6:
         return None
 
-    a1 = pi - safe_acos((lr2 + L2*L2 - L3*L3) / (2 * L2 * lr))
+    a1 = math.pi - safe_acos((lr2 + L2*L2 - L3*L3) / (2 * L2 * lr))
     a2 = safe_acos((lr2 - L2*L2 + L3*L3) / (2 * L3 * lr))
     ar = math.atan2(y, x)
 
-    angles.append((ar + a1) * 180 / pi)
-    angles.append(90 - ((a1 + a2) * 180 / pi))
+    angles.append((ar + a1) * 180 / math.pi)
+    angles.append(90 - ((a1 + a2) * 180 / math.pi))
+
+    return angles
+
+
+def inverse_kinematics(dest, config):
+    """Calculates the joint angles for each leg of the hexapod to reach a desired destination.
+
+    Args:
+        dest (numpy.ndarray): A 3D array representing the desired destination coordinates
+            for each leg. The shape of the array is (6, 3), where:
+                - 6 is the number of legs.
+                - 3 is the number of coordinates (x, y, z).
+        config (dict): A dictionary containing the hexapod's configuration parameters.
+            The dictionary should contain the following keys:
+                - "legMountX": A list of x-coordinates for the leg mounts.
+                - "legMountY": A list of y-coordinates for the leg mounts.
+                - "legRootToJoint1": The distance from the leg root to joint 1.
+                - "legJoint1ToJoint2": The distance from joint 1 to joint 2.
+                - "legJoint2ToJoint3": The distance from joint 2 to joint 3.
+                - "legJoint3ToTip": The distance from joint 3 to the leg tip.
+                - "legMountAngle": A list of angles for the leg mounts in degrees.
+                - "legScale": A list of scaling factors for each leg's joint angles.
+
+    Returns:
+        numpy.ndarray: A 3D array representing the joint angles for each leg.
+        The shape of the array is (6, 3), where:
+            - 6 is the number of legs.
+            - 3 is the number of joint angles (j1, j2, j3).
+    """
+    mount_x = np.array(config["legMountX"])
+    mount_y = np.array(config["legMountY"])
+    root_j1 = config["legRootToJoint1"]
+    j1_j2 = config["legJoint1ToJoint2"]
+    j2_j3 = config["legJoint2ToJoint3"]
+    j3_tip = config["legJoint3ToTip"]
+    mount_angle = np.array(config["legMountAngle"]) / 180 * np.pi
+    mount_position = np.zeros((6, 3))
+    mount_position[:, 0] = mount_x
+    mount_position[:, 1] = mount_y
+    leg_scale = np.array(config["legScale"])
+
+    temp_dest = dest - mount_position
+    local_dest = np.zeros_like(dest)
+    local_dest[:, 0] = temp_dest[:, 0] * np.cos(mount_angle) + temp_dest[:, 1] * np.sin(
+        mount_angle
+    )
+    local_dest[:, 1] = temp_dest[:, 0] * np.sin(mount_angle) - temp_dest[:, 1] * np.cos(
+        mount_angle
+    )
+    local_dest[:, 2] = temp_dest[:, 2]
+
+    angles = np.zeros((6, 3))
+    x = local_dest[:, 0] - root_j1
+    y = local_dest[:, 1]
+
+    angles[:, 0] = -(np.arctan2(y, x) * 180 / np.pi)
+
+    x = np.sqrt(x * x + y * y) - j1_j2
+    y = local_dest[:, 2]
+    ar = np.arctan2(y, x)
+    lr2 = x * x + y * y
+    lr = np.sqrt(lr2)
+    a1 = np.arccos((lr2 + j2_j3 * j2_j3 - j3_tip * j3_tip) / (2 * j2_j3 * lr))
+    a2 = np.arccos((lr2 - j2_j3 * j2_j3 + j3_tip * j3_tip) / (2 * j3_tip * lr))
+
+    angles[:, 1] = ((ar + a1) * 180 / np.pi) * leg_scale[:, 1]
+    angles[:, 2] = (90 - ((a1 + a2) * 180 / np.pi)) * leg_scale[:, 1] - 90
 
     return angles
