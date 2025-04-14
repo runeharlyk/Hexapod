@@ -4,8 +4,8 @@ import numpy as np
 class GUI:
     def __init__(self, bot):
         self.bot = bot
-        self.c_yaw = 0
-        self.c_pitch = -7
+        self.c_yaw = 10
+        self.c_pitch = -17
         self.c_distance = 5
 
 
@@ -17,7 +17,8 @@ class GUI:
         self.roll_slider = p.addUserDebugParameter("roll", -np.pi/4, np.pi/4, 0)
 
         self.direction_slider = p.addUserDebugParameter("Direction", -np.pi, np.pi, 0)
-        self.step_height_slider = p.addUserDebugParameter("Step height", 0, 0.1, 0.04)
+        self.step_length_slider = p.addUserDebugParameter("Step length", 0, 30, 60)
+        self.step_height_slider = p.addUserDebugParameter("Step height", 0, 20, 60)
         self.speed_slider = p.addUserDebugParameter("Speed", 0, 2, 1)
 
 
@@ -57,8 +58,9 @@ class GUI:
             p.readUserDebugParameter(self.yaw_slider),
         ])
 
-        direction, step_height, speed, = (p.readUserDebugParameter(s) for s in (self.direction_slider, self.step_height_slider, self.speed_slider))
+        direction, step_height, speed, step_length = (p.readUserDebugParameter(s) for s in 
+            (self.direction_slider, self.step_height_slider, self.speed_slider, self.step_length_slider))
 
-        return position, orientation, direction, step_height, speed
+        return position, orientation, direction, step_height, speed, step_length
 
 
