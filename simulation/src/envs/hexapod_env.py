@@ -55,7 +55,7 @@ class HexapodRobot:
             )
 
 class HexapodEnv(gym.Env):
-    def __init__(self, terrain_type: TerrainType = TerrainType.MAZE):
+    def __init__(self, terrain_type: TerrainType = TerrainType.FLAT):
         super().__init__()
         p.connect(p.GUI)
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
