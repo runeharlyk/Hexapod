@@ -5,13 +5,13 @@ import time
 import json
 import numpy as np
 
-from kinematics import BodyStateT, gen_posture, inverse_kinematics
-from gait import GaitStateT, gait_controller
-from gui import GUI
+from src.robot.kinematics import BodyStateT, gen_posture, inverse_kinematics
+from src.robot.gait import GaitStateT, gait_controller
+from src.utils.gui import GUI
 
 p.connect(p.GUI)
 p.setAdditionalSearchPath(pybullet_data.getDataPath())
-model_path = os.path.join(os.path.dirname(__file__), "model.urdf")
+model_path = os.path.join(os.path.dirname(__file__), "src/resources/model.urdf")
 robot_id = p.loadURDF(model_path, useFixedBase=False)
 plane_id = p.loadURDF("plane.urdf")
 p.resetBasePositionAndOrientation(robot_id, [0, 0, 0.4], [0, 0, 0, 1])
@@ -35,14 +35,14 @@ gait_state = GaitStateT(step_height=0.04, step_x=0.2, step_z=0, step_angle=0, st
 dt = 1./240
 t = 0
 
-# offset = [0, 0.5, 0, 0.5, 0, 0.5] # tri-gate
-# stand_frac = 3.1 / 6
+offset = [0, 0.5, 0, 0.5, 0, 0.5] # tri-gate
+stand_frac = 3.1 / 6
 
 # offset = [0, 1/3, 2/3, 2/3, 1/3, 0] # bi-gate
 # stand_frac = 2.1 / 6
 
-offset = [0, 1/6*1, 1/6*2, 1/6*5, 1/6*4, 1/6*3] # wave
-stand_frac = 5 / 6
+# offset = [0, 1/6*1, 1/6*2, 1/6*5, 1/6*4, 1/6*3] # wave
+# stand_frac = 5 / 6
 while True:
     position, orientation, direction, step_height, speed, step_length = gui.update()
     body_state["omega"] = orientation[0]
