@@ -32,18 +32,21 @@ stand_frac = 3.1 / 6
 
 # offset = [0, 1/6*1, 1/6*2, 1/6*5, 1/6*4, 1/6*3] # wave
 # stand_frac = 5 / 6
+gait_state["offset"] = offset
+gait_state["stand_frac"] = stand_frac
+
 while True:
-    position, orientation, direction, step_height, speed, step_length = env.gui.update()
-    body_state["omega"] = orientation[0]
-    body_state["phi"] = orientation[1]
-    body_state["psi"] = orientation[2]
+    env.gui.update_gait_state(gait_state)
+    env.gui.update_body_state(body_state)
+    env.gui.update()
+
     pose = np.zeros((6, 3))
 
     for i in range(6):
         pose[i] = standby[i]
-        if step_length != 0:
+        if gait_state["step_x"] != 0:
             phase = (t + offset[i]) % 1
-            pose[i] += gait_controller(step_length, direction, step_height, stand_frac, phase)
+            pose[i] += gait_controller(gait_state, phase)
     angles = inverse_kinematics(pose, body_state, config).flatten().round(2)
     joints = np.deg2rad(angles)
     
@@ -52,6 +55,6 @@ while True:
     env.step(joints)
 
     time.sleep(dt)
-    t += dt * speed
+    t += dt * gait_state["step_velocity"]
     t %= 1.0
     print(t)

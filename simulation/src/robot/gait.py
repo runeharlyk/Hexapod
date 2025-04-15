@@ -9,6 +9,8 @@ class GaitStateT(TypedDict):
     step_angle: float
     step_velocity: float
     step_depth: float
+    stand_frac: float
+    offset: list[float]
 
 def stance_curve(length, angle, depth, phase):
     x_polar, z_polar = np.cos(angle), np.sin(angle)
@@ -46,9 +48,9 @@ def bezier_curve(length, angle, height, phase):
     coeffs = np.array([math.comb(n, i) * (phase**i) * ((1 - phase)**(n - i)) for i in range(n + 1)])
     return np.sum(ctrl * coeffs[:, None], axis=0)
 
-def gait_controller(length, angle, height, stand_frac, t):
-    if t < stand_frac:
-        return stance_curve(length, angle, 0, t / stand_frac)
+def gait_controller(gait_state: GaitStateT, t):
+    if t < gait_state["stand_frac"]:
+        return stance_curve(gait_state["step_x"], gait_state["step_angle"], gait_state["step_depth"], t / gait_state["stand_frac"])
     else:
-        return bezier_curve(length, angle, height, (t - stand_frac) / (1 - stand_frac))
+        return bezier_curve(gait_state["step_x"], gait_state["step_angle"], gait_state["step_height"], (t - gait_state["stand_frac"]) / (1 - gait_state["stand_frac"]))
 

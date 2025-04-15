@@ -1,13 +1,16 @@
 import pybullet as p
 import numpy as np
 
+from src.robot.kinematics import BodyStateT
+from src.robot.gait import GaitStateT
+
+
 class GUI:
     def __init__(self, bot):
         self.bot = bot
         self.c_yaw = 10
         self.c_pitch = -17
         self.c_distance = 5
-
 
         self.x_slider = p.addUserDebugParameter("x", -0.1, 0.1, 0)
         self.y_slider = p.addUserDebugParameter("y", -0.1, 0.1, 0)
@@ -16,12 +19,30 @@ class GUI:
         self.pitch_slider = p.addUserDebugParameter("pitch", -np.pi/4, np.pi/4, 0)
         self.roll_slider = p.addUserDebugParameter("roll", -np.pi/4, np.pi/4, 0)
 
-        self.direction_slider = p.addUserDebugParameter("Direction", -np.pi, np.pi, 0)
-        self.step_length_slider = p.addUserDebugParameter("Step length", 0, 30, 60)
-        self.step_height_slider = p.addUserDebugParameter("Step height", 0, 20, 60)
+        self.step_x_slider = p.addUserDebugParameter("Step x", 0, 60, 30)
+        self.step_z_slider = p.addUserDebugParameter("Step z", 0, 60, 30)
+        self.angle_slider = p.addUserDebugParameter("Angle", -np.pi, np.pi, 0)
+        self.step_height_slider = p.addUserDebugParameter("Step height", 0, 50, 30)
+        self.step_depth_slider = p.addUserDebugParameter("Step depth", 0, 0.01, 0.002)
         self.speed_slider = p.addUserDebugParameter("Speed", 0, 2, 1)
+        self.stand_frac_slider = p.addUserDebugParameter("Stand frac", 0, 1, 0.5)
 
+    def update_gait_state(self, gait_state: GaitStateT):
+        gait_state["step_x"] = p.readUserDebugParameter(self.step_x_slider) 
+        gait_state["step_z"] = p.readUserDebugParameter(self.step_z_slider)
+        gait_state["step_angle"] = p.readUserDebugParameter(self.angle_slider)
+        gait_state["step_height"] = p.readUserDebugParameter(self.step_height_slider)
+        gait_state["step_depth"] = p.readUserDebugParameter(self.step_depth_slider)
+        gait_state["step_velocity"] = p.readUserDebugParameter(self.speed_slider)
+        gait_state["stand_frac"] = p.readUserDebugParameter(self.stand_frac_slider)
 
+    def update_body_state(self, body_state: BodyStateT):
+        body_state["x"] = p.readUserDebugParameter(self.x_slider)
+        body_state["y"] = p.readUserDebugParameter(self.y_slider)
+        body_state["z"] = p.readUserDebugParameter(self.z_slider)
+        body_state["omega"] = p.readUserDebugParameter(self.roll_slider)
+        body_state["phi"] = p.readUserDebugParameter(self.pitch_slider)
+        body_state["psi"] = p.readUserDebugParameter(self.yaw_slider)
 
     def update(self):
         quadruped_pos, _ = p.getBasePositionAndOrientation(self.bot)
@@ -46,21 +67,18 @@ class GUI:
             p.disconnect()
             exit()
 
-        position = np.array([
+        self.position = np.array([
             p.readUserDebugParameter(self.x_slider),
             p.readUserDebugParameter(self.y_slider),
             p.readUserDebugParameter(self.z_slider)
         ])
 
-        orientation = np.array([
+        self.orientation = np.array([
             p.readUserDebugParameter(self.roll_slider),
             p.readUserDebugParameter(self.pitch_slider),
             p.readUserDebugParameter(self.yaw_slider),
         ])
 
-        direction, step_height, speed, step_length = (p.readUserDebugParameter(s) for s in 
-            (self.direction_slider, self.step_height_slider, self.speed_slider, self.step_length_slider))
-
-        return position, orientation, direction, step_height, speed, step_length
+        return self.position, self.orientation
 
 
