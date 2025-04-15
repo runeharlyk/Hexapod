@@ -2,7 +2,7 @@ import pybullet as p
 import numpy as np
 
 from src.robot.kinematics import BodyStateT
-from src.robot.gait import GaitStateT, GaitType, default_stand_frac
+from src.robot.gait import GaitStateT, GaitType, default_stand_frac, default_offset
 
 
 class GUI:
@@ -27,8 +27,10 @@ class GUI:
         self.speed_slider = p.addUserDebugParameter("Speed", 0, 2, 1)
         self.stand_frac_slider = p.addUserDebugParameter("Stand frac", 0, 1, 0.5)
 
-        self.gait_type_slider = p.addUserDebugParameter("Gait Type", 0, len(GaitType) - 1, 0, paramType=p.GUI_ENUM,
-                                      enumNames=[g.value for g in GaitType])
+        self.gait_type_slider = p.addUserDebugParameter("Gait Type", 0, len(GaitType) - 1, 0)
+
+        # self.gait_type_slider = p.addUserDebugParameter("Gait Type", 0, len(GaitType) - 1, 0, paramType=p.GUI_ENUM,
+        #                               enumNames=[g.value for g in GaitType])
         self.last_gait_type = GaitType.TRI_GATE
 
     def update_gait_state(self, gait_state: GaitStateT):
@@ -39,6 +41,7 @@ class GUI:
         gait_state["step_depth"] = p.readUserDebugParameter(self.step_depth_slider)
         gait_state["step_velocity"] = p.readUserDebugParameter(self.speed_slider)
         gait_state["stand_frac"] = p.readUserDebugParameter(self.stand_frac_slider)
+        gait_state["offset"] = default_offset[self.last_gait_type]
 
     def update_body_state(self, body_state: BodyStateT):
         body_state["x"] = p.readUserDebugParameter(self.x_slider)
@@ -49,10 +52,11 @@ class GUI:
         body_state["psi"] = p.readUserDebugParameter(self.yaw_slider)
 
     def update(self):
-        if p.readUserDebugParameter(self.gait_type_slider) != self.last_gait_type:
-            self.last_gait_type = p.readUserDebugParameter(self.gait_type_slider)
+        gait_type = GaitType(int(p.readUserDebugParameter(self.gait_type_slider)))
+        if gait_type != self.last_gait_type:
+            self.last_gait_type = gait_type
             p.removeUserDebugItem(self.stand_frac_slider)
-            self.stand_frac_slider = p.addUserDebugParameter("Stand frac", 0, 1, default_stand_frac[self.last_gait_type])
+            self.stand_frac_slider = p.addUserDebugParameter("Stand frac", 0, 1, default_stand_frac[gait_type])
 
         quadruped_pos, _ = p.getBasePositionAndOrientation(self.bot)
         p.resetDebugVisualizerCamera(

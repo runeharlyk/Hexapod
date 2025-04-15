@@ -8,6 +8,7 @@ from src.utils.gui import GUI
 
 class TerrainType(Enum):
     FLAT = "flat"
+    PLANAR_REFLECTION = "planar_reflection"
     TERRAIN = "terrain"
 
 class HexapodRobot:
@@ -71,6 +72,11 @@ class HexapodEnv(gym.Env):
     def load_terrain(self, terrain_type: TerrainType):
         if terrain_type == TerrainType.FLAT:
             self.terrain = p.loadURDF("plane.urdf")
+        elif terrain_type == TerrainType.PLANAR_REFLECTION:
+            p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)
+            p.configureDebugVisualizer(p.COV_ENABLE_PLANAR_REFLECTION, 1)
+            p.configureDebugVisualizer(p.COV_ENABLE_TINY_RENDERER, 0)
+            self.terrain = p.loadURDF("plane_transparent.urdf", useMaximalCoordinates=True)
         elif terrain_type == TerrainType.TERRAIN:
             terrainShape = p.createCollisionShape(shapeType = p.GEOM_HEIGHTFIELD, meshScale=[.1,.1,24],fileName = "heightmaps/wm_height_out.png")
             textureId = p.loadTexture("heightmaps/gimp_overlay_out.png")

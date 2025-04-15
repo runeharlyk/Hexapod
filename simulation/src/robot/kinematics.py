@@ -23,22 +23,6 @@ def rot_z(theta): return np.array([[np.cos(theta), -np.sin(theta), 0],
                                    [np.sin(theta),  np.cos(theta), 0],
                                    [0, 0, 1]])
 
-def world_to_leg_local(foot_pos, base_pose, mount_pos, mount_angle_deg):
-    roll, pitch, yaw, xm, ym, zm = base_pose
-    base_rot = rot_z(yaw) @ rot_y(pitch) @ rot_x(roll)
-    T_base = np.eye(4)
-    T_base[:3, :3] = base_rot
-    T_base[:3, 3] = [xm, ym, zm]
-
-    mount_rot = rot_z(np.radians(mount_angle_deg))
-    T_mount = np.eye(4)
-    T_mount[:3, :3] = mount_rot
-    T_mount[:3, 3] = mount_pos
-
-    T_world_to_leg = np.linalg.inv(T_base @ T_mount)
-    foot_pos_h = np.append(foot_pos, 1)
-    return (T_world_to_leg @ foot_pos_h)[:3]
-
 def compute_default_position():
     foot_positions = np.zeros((6, 3))
     l1 = config.kLegRootToJoint1
@@ -65,7 +49,6 @@ def compute_default_position():
     return foot_positions
 
 def gen_posture(j2_angle, j3_angle, config=config):
-    # mount = np.array(config.mountPosition)
     mount_x = config["legMountX"]
     mount_y = config["legMountY"]
     root_j1 = config["legRootToJoint1"]
@@ -96,15 +79,12 @@ def inverse_kinematics(dest, body_state, config):
     mount_position[:, 1] = mount_y
     leg_scale = np.array(config["legScale"])
 
-    # Apply body rotation transformation
     roll = body_state["omega"]
     pitch = body_state["phi"]
     yaw = body_state["psi"]
     
-    # Create rotation matrices
     rot_matrix = rot_z(yaw) @ rot_y(pitch) @ rot_x(roll)
     
-    # Apply rotation to destination points
     rotated_dest = np.zeros_like(dest)
     for i in range(6):
         rotated_dest[i] = rot_matrix @ dest[i]
@@ -127,18 +107,14 @@ def inverse_kinematics(dest, body_state, config):
     lr2 = x * x + y * y
     lr = np.sqrt(lr2)
     
-    # Handle potential numerical issues and invalid configurations
     valid_legs = lr > 1e-6
     a1 = np.zeros_like(lr)
     a2 = np.zeros_like(lr)
     
-    # Calculate angles only for valid leg positions
     if np.any(valid_legs):
-        # Use safe_acos to prevent numerical errors
         cos_a1 = (lr2[valid_legs] + j2_j3*j2_j3 - j3_tip*j3_tip) / (2 * j2_j3 * lr[valid_legs])
         cos_a2 = (lr2[valid_legs] - j2_j3*j2_j3 + j3_tip*j3_tip) / (2 * j3_tip * lr[valid_legs])
         
-        # Clip values to valid domain for arccos
         cos_a1 = np.clip(cos_a1, -1.0, 1.0)
         cos_a2 = np.clip(cos_a2, -1.0, 1.0)
         

@@ -24,24 +24,6 @@ gait_state = GaitStateT(step_height=0.04, step_x=0.2, step_z=0, step_angle=0, st
 dt = 1./240
 t = 0
 
-offset = [0, 0.5, 0, 0.5, 0, 0.5] # tri-gate
-stand_frac = 3.1 / 6
-
-# offset = [0, 1/3, 2/3, 2/3, 1/3, 0] # bi-gate
-# stand_frac = 2.1 / 6
-
-# offset = [0, 1/6*1, 1/6*2, 1/6*5, 1/6*4, 1/6*3] # wave
-# stand_frac = 5 / 6
-gait_state["offset"] = offset
-gait_state["stand_frac"] = stand_frac
-
-offset_from_type = {
-    GaitType.TRI_GATE: [0, 0.5, 0, 0.5, 0, 0.5],
-    GaitType.BI_GATE: [0, 1/3, 2/3, 2/3, 1/3, 0],
-    GaitType.WAVE: [0, 1/6*1, 1/6*2, 1/6*5, 1/6*4, 1/6*3],
-    GaitType.RIPPLE: [0, 1/6*1, 1/6*2, 1/6*5, 1/6*4, 1/6*3]
-}
-
 while True:
     env.gui.update_gait_state(gait_state)
     env.gui.update_body_state(body_state)
@@ -52,7 +34,7 @@ while True:
     for i in range(6):
         pose[i] = standby[i]
         if gait_state["step_x"] != 0:
-            phase = (t + offset[i]) % 1
+            phase = (t + gait_state["offset"][i]) % 1
             pose[i] += gait_controller(gait_state, phase)
     angles = inverse_kinematics(pose, body_state, config).flatten().round(2)
     joints = np.deg2rad(angles)

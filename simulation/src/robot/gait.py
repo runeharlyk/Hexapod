@@ -1,6 +1,27 @@
 import math
 import numpy as np
 from typing import TypedDict
+from enum import Enum
+
+class GaitType(Enum):
+    TRI_GATE = 0
+    BI_GATE = 1
+    WAVE = 2
+    RIPPLE = 3
+
+default_offset = {
+    GaitType.TRI_GATE: [0, 0.5, 0, 0.5, 0, 0.5],
+    GaitType.BI_GATE: [0, 1/3, 2/3, 2/3, 1/3, 0],
+    GaitType.WAVE: [0, 1/6*1, 1/6*2, 1/6*5, 1/6*4, 1/6*3],
+    GaitType.RIPPLE: [0, 1/6*1, 1/6*2, 1/6*5, 1/6*4, 1/6*3]
+}
+
+default_stand_frac = {
+    GaitType.TRI_GATE: 3.1 / 6,
+    GaitType.BI_GATE: 2.1 / 6,
+    GaitType.WAVE: 5 / 6,
+    GaitType.RIPPLE: 5 / 6
+}
 
 class GaitStateT(TypedDict):
     step_height: float
@@ -11,6 +32,7 @@ class GaitStateT(TypedDict):
     step_depth: float
     stand_frac: float
     offset: list[float]
+    gait_type: GaitType
 
 def stance_curve(length, angle, depth, phase):
     x_polar, z_polar = np.cos(angle), np.sin(angle)
