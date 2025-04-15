@@ -1,0 +1,14 @@
+gymnasium==1.1.1
+matplotlib==3.10.1
+numpy==1.26.4
+opencv-python==4.11.0.86
+pillow==11.2.1
+pybullet==3.2
+seaborn==0.13
+sympy==1.13.3
+torch==2.4.1+cu118
+torchaudio==2.4.1+cu118
+torchsummary==1.5.1
+torchvision==0.19.1
+tqdm==4.66.4
+xacro==1.13.3
