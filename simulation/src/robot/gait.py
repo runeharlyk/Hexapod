@@ -71,8 +71,13 @@ def bezier_curve(length, angle, height, phase):
     return np.sum(ctrl * coeffs[:, None], axis=0)
 
 def gait_controller(gait_state: GaitStateT, t):
+    step_length = np.hypot(gait_state["step_x"], gait_state["step_z"]) / 2
+    angle = np.arctan2(gait_state["step_z"], step_length)
+    if gait_state["step_x"] < 0:
+        step_length = -step_length
     if t < gait_state["stand_frac"]:
-        return stance_curve(gait_state["step_x"], gait_state["step_angle"], gait_state["step_depth"], t / gait_state["stand_frac"])
+        pos = stance_curve(step_length, angle, gait_state["step_depth"], t / gait_state["stand_frac"])
     else:
-        return bezier_curve(gait_state["step_x"], gait_state["step_angle"], gait_state["step_height"], (t - gait_state["stand_frac"]) / (1 - gait_state["stand_frac"]))
+        pos = bezier_curve(step_length, angle, gait_state["step_height"], (t - gait_state["stand_frac"]) / (1 - gait_state["stand_frac"]))
+    return pos
 

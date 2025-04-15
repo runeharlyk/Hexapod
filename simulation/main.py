@@ -33,7 +33,7 @@ while True:
 
     for i in range(6):
         pose[i] = standby[i]
-        if gait_state["step_x"] != 0:
+        if gait_state["step_x"] != 0 or gait_state["step_z"] != 0:
             phase = (t + gait_state["offset"][i]) % 1
             pose[i] += gait_controller(gait_state, phase)
     angles = inverse_kinematics(pose, body_state, config).flatten().round(2)
