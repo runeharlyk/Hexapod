@@ -10,6 +10,7 @@ class TerrainType(Enum):
     FLAT = "flat"
     PLANAR_REFLECTION = "planar_reflection"
     TERRAIN = "terrain"
+    MAZE = "maze"
 
 class HexapodRobot:
     def __init__(
@@ -54,7 +55,7 @@ class HexapodRobot:
             )
 
 class HexapodEnv(gym.Env):
-    def __init__(self, terrain_type: TerrainType = TerrainType.FLAT):
+    def __init__(self, terrain_type: TerrainType = TerrainType.MAZE):
         super().__init__()
         p.connect(p.GUI)
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
@@ -82,7 +83,12 @@ class HexapodEnv(gym.Env):
             textureId = p.loadTexture("heightmaps/gimp_overlay_out.png")
             self.terrain = p.createMultiBody(0, terrainShape)
             p.changeVisualShape(self.terrain, -1, textureUniqueId = textureId)
-
+        elif terrain_type == TerrainType.MAZE:
+            terrainShape = p.createCollisionShape(shapeType = p.GEOM_HEIGHTFIELD, meshScale=[1,1,3],fileName = "heightmaps/Maze.png")
+            textureId = p.loadTexture("heightmaps/Maze.png")
+            maze = p.createMultiBody(0, terrainShape)
+            self.terrain = [p.loadURDF("plane.urdf"), maze]
+            p.changeVisualShape(self.terrain[1], -1, textureUniqueId = textureId)
     def setup_simulation(self):
         p.resetBasePositionAndOrientation(self.robot.robot_id, [0, 0, 1], [0, 0, 0, 1])
         p.setGravity(0, 0, -9.8)
