@@ -6,7 +6,7 @@ import json
 import numpy as np
 
 from src.robot.kinematics import BodyStateT, gen_posture, inverse_kinematics
-from src.robot.gait import GaitStateT, gait_controller
+from src.robot.gait import GaitStateT, GaitType, gait_controller
 from src.envs.hexapod_env import HexapodEnv
 env = HexapodEnv()
 
@@ -34,6 +34,13 @@ stand_frac = 3.1 / 6
 # stand_frac = 5 / 6
 gait_state["offset"] = offset
 gait_state["stand_frac"] = stand_frac
+
+offset_from_type = {
+    GaitType.TRI_GATE: [0, 0.5, 0, 0.5, 0, 0.5],
+    GaitType.BI_GATE: [0, 1/3, 2/3, 2/3, 1/3, 0],
+    GaitType.WAVE: [0, 1/6*1, 1/6*2, 1/6*5, 1/6*4, 1/6*3],
+    GaitType.RIPPLE: [0, 1/6*1, 1/6*2, 1/6*5, 1/6*4, 1/6*3]
+}
 
 while True:
     env.gui.update_gait_state(gait_state)

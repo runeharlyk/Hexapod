@@ -2,7 +2,7 @@ import pybullet as p
 import numpy as np
 
 from src.robot.kinematics import BodyStateT
-from src.robot.gait import GaitStateT
+from src.robot.gait import GaitStateT, GaitType, default_stand_frac
 
 
 class GUI:
@@ -27,6 +27,10 @@ class GUI:
         self.speed_slider = p.addUserDebugParameter("Speed", 0, 2, 1)
         self.stand_frac_slider = p.addUserDebugParameter("Stand frac", 0, 1, 0.5)
 
+        self.gait_type_slider = p.addUserDebugParameter("Gait Type", 0, len(GaitType) - 1, 0, paramType=p.GUI_ENUM,
+                                      enumNames=[g.value for g in GaitType])
+        self.last_gait_type = GaitType.TRI_GATE
+
     def update_gait_state(self, gait_state: GaitStateT):
         gait_state["step_x"] = p.readUserDebugParameter(self.step_x_slider) 
         gait_state["step_z"] = p.readUserDebugParameter(self.step_z_slider)
@@ -45,6 +49,11 @@ class GUI:
         body_state["psi"] = p.readUserDebugParameter(self.yaw_slider)
 
     def update(self):
+        if p.readUserDebugParameter(self.gait_type_slider) != self.last_gait_type:
+            self.last_gait_type = p.readUserDebugParameter(self.gait_type_slider)
+            p.removeUserDebugItem(self.stand_frac_slider)
+            self.stand_frac_slider = p.addUserDebugParameter("Stand frac", 0, 1, default_stand_frac[self.last_gait_type])
+
         quadruped_pos, _ = p.getBasePositionAndOrientation(self.bot)
         p.resetDebugVisualizerCamera(
             cameraDistance=self.c_distance,
