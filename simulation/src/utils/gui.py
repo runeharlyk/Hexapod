@@ -12,15 +12,15 @@ class GUI:
         self.c_pitch = -17
         self.c_distance = 5
 
-        self.x_slider = p.addUserDebugParameter("x", -0.1, 0.1, 0)
-        self.y_slider = p.addUserDebugParameter("y", -0.1, 0.1, 0)
-        self.z_slider = p.addUserDebugParameter("z", -0.1, 0.1, 0)
+        self.x_slider = p.addUserDebugParameter("x", -50, 50, 0)
+        self.y_slider = p.addUserDebugParameter("y", -50, 50, 0)
+        self.z_slider = p.addUserDebugParameter("z", -50, 50, 0)
         self.yaw_slider = p.addUserDebugParameter("yaw", -np.pi/4, np.pi/4, 0)
         self.pitch_slider = p.addUserDebugParameter("pitch", -np.pi/4, np.pi/4, 0)
         self.roll_slider = p.addUserDebugParameter("roll", -np.pi/4, np.pi/4, 0)
 
-        self.step_x_slider = p.addUserDebugParameter("Step x", 0, 60, 30)
-        self.step_z_slider = p.addUserDebugParameter("Step z", 0, 60, 30)
+        self.step_x_slider = p.addUserDebugParameter("Step x", -50, 50, 0)
+        self.step_z_slider = p.addUserDebugParameter("Step z", -50, 50, 0)
         self.angle_slider = p.addUserDebugParameter("Angle", -np.pi, np.pi, 0)
         self.step_height_slider = p.addUserDebugParameter("Step height", 0, 50, 30)
         self.step_depth_slider = p.addUserDebugParameter("Step depth", 0, 0.01, 0.002)

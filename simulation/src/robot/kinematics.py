@@ -13,15 +13,49 @@ class BodyStateT(TypedDict):
   zm: float
   feet: List[List[float]]
 
-def rot_x(theta): return np.array([[1, 0, 0],
-                                   [0, np.cos(theta), -np.sin(theta)],
-                                   [0, np.sin(theta), np.cos(theta)]])
-def rot_y(theta): return np.array([[np.cos(theta), 0, np.sin(theta)],
-                                   [0, 1, 0],
-                                   [-np.sin(theta), 0, np.cos(theta)]])
-def rot_z(theta): return np.array([[np.cos(theta), -np.sin(theta), 0],
-                                   [np.sin(theta),  np.cos(theta), 0],
-                                   [0, 0, 1]])
+def rot_x(theta):
+    c = np.cos(theta)
+    s = np.sin(theta)
+    return np.array([
+        [1, 0, 0],
+        [0, c, -s],
+        [0, s, c]
+    ])
+
+def rot_y(theta):
+    c = np.cos(theta)
+    s = np.sin(theta)
+    return np.array([
+        [c, 0, s],
+        [0, 1, 0],
+        [-s, 0, c]
+    ])
+
+def rot_z(theta):
+    c = np.cos(theta)
+    s = np.sin(theta)
+    return np.array([
+        [c, -s, 0],
+        [s, c, 0],
+        [0, 0, 1]
+    ])
+
+def get_transformation_matrix(body_state):
+    roll = body_state["omega"]
+    pitch = body_state["phi"]
+    yaw = body_state["psi"]
+    
+    translation = np.array([
+        [1, 0, 0, body_state["x"]],
+        [0, 1, 0, body_state["y"]],
+        [0, 0, 1, body_state["z"]],
+        [0, 0, 0, 1]
+    ])
+    
+    rotation = np.eye(4)
+    rotation[:3, :3] = rot_z(yaw) @ rot_y(pitch) @ rot_x(roll)
+    
+    return translation @ rotation
 
 def compute_default_position():
     foot_positions = np.zeros((6, 3))
@@ -79,15 +113,13 @@ def inverse_kinematics(dest, body_state, config):
     mount_position[:, 1] = mount_y
     leg_scale = np.array(config["legScale"])
 
-    roll = body_state["omega"]
-    pitch = body_state["phi"]
-    yaw = body_state["psi"]
-    
-    rot_matrix = rot_z(yaw) @ rot_y(pitch) @ rot_x(roll)
+    transformation = get_transformation_matrix(body_state)
     
     rotated_dest = np.zeros_like(dest)
     for i in range(6):
-        rotated_dest[i] = rot_matrix @ dest[i]
+        point = np.append(dest[i], 1)
+        transformed = transformation @ point
+        rotated_dest[i] = transformed[:3]
     
     temp_dest = rotated_dest - mount_position
     local_dest = np.zeros_like(dest)
