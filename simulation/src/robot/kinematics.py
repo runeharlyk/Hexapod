@@ -11,6 +11,7 @@ class BodyStateT(TypedDict):
   ym: float
   zm: float
   feet: List[List[float]]
+  default_feet: List[List[float]]
 
 def rot_x(theta):
     c = np.cos(theta)

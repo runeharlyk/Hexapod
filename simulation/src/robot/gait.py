@@ -36,21 +36,19 @@ class GaitStateT(TypedDict):
     offset: list[float]
     gait_type: GaitType
 
-def stance_curve(length, angle, depth, phase):
+def sine_curve(length, angle, height, phase):
     x_polar, z_polar = np.cos(angle), np.sin(angle)
     step = length * (1 - 2 * phase)
     x, z = step * x_polar, step * z_polar
-    y = -depth * np.cos(np.pi * (x + z) / (2 * length)) if length != 0 else 0
+    y = height * np.cos(np.pi * (x + z) / (2 * length)) if length != 0 else 0
     return np.array([x, z, y])
 
 
 def yaw_arc(feet_pos, current_pos):
-    feet_pos = np.asarray(feet_pos)
-    current_pos = np.asarray(current_pos)
-    foot_mag = np.hypot(feet_pos[0], feet_pos[2])
-    foot_dir = np.arctan2(feet_pos[2], feet_pos[0])
+    foot_mag = np.hypot(feet_pos[0], feet_pos[1])
+    foot_dir = np.arctan2(feet_pos[1], feet_pos[0])
     offsets = current_pos - feet_pos
-    offset_mag = np.hypot(offsets[0], offsets[2])
+    offset_mag = np.hypot(offsets[0], offsets[1])
     offset_mod = np.arctan2(offset_mag, foot_mag)
     return np.pi / 2 + foot_dir + offset_mod
 
@@ -75,39 +73,55 @@ def bezier_curve(length, angle, height, phase):
     return np.sum(ctrl * coeffs[:, None], axis=0)
 
 
-t = 0
+class GaitController:
+    def __init__(self, default_pos: np.ndarray):
+        self.t = 0.0
+        self.default_pos = default_pos
+        self.num_legs = len(default_pos)
 
-def update_gait(gait_state: GaitStateT, body_state:BodyStateT, default_pos: np.ndarray, dt: float):
-    global t
-    t += dt * gait_state["step_velocity"]
-    t %= 1.0
-    pose = np.zeros((6, 3))
+    def step(self, gait_state: GaitStateT, body_state: BodyStateT, dt: float):
+        self.gait_state = gait_state
+        self.body_state = body_state
 
-    for i in range(6):
-        pose[i] = default_pos[i]
-        if gait_state["step_x"] != 0 or gait_state["step_z"] != 0:
-            phase = (t + gait_state["offset"][i]) % 1
-            pose[i] = gait_controller(gait_state, default_pos[i], phase)
-    body_state["feet"] = pose
+        self.step_length = np.hypot(gait_state["step_x"], gait_state["step_z"])
+        if gait_state["step_x"] < 0: self.step_length = -self.step_length
 
+        self._update_phase(dt)
+        self._update_feet()
 
-def gait_controller(gait_state: GaitStateT, default_pos: np.ndarray, t):
-    step_length = np.hypot(gait_state["step_x"], gait_state["step_z"])
-    if gait_state["step_x"] < 0: step_length = -step_length
-
-    angle = np.arctan2(gait_state["step_z"], step_length) * 2
+    def _update_phase(self, dt):
+        self.t += dt * self.gait_state["step_velocity"]
+        self.t %= 1.0
     
-    length = step_length / 2
+    def _update_feet(self):
+        new_feet = np.array([self._update_foot(i) for i in range(self.num_legs)])
+        self.body_state["feet"] = new_feet
 
-    if t < gait_state["stand_frac"]:
-        delta_pos = stance_curve(length, angle, gait_state["step_depth"], t / gait_state["stand_frac"])
-        length = gait_state["step_angle"] * 2
-        angle = yaw_arc(default_pos, default_pos + delta_pos) # Use body_state current feet position
-        delta_rot = stance_curve(length, angle, gait_state["step_depth"], t / gait_state["stand_frac"])
-    else:
-        delta_pos = bezier_curve(length, angle, gait_state["step_height"], (t - gait_state["stand_frac"]) / (1 - gait_state["stand_frac"]))
-        length = gait_state["step_angle"] * 2
-        angle = yaw_arc(default_pos, default_pos + delta_pos)
-        delta_rot = bezier_curve(length, angle, gait_state["step_height"], t / gait_state["stand_frac"])
-    return default_pos + delta_pos #+ delta_rot * 0.02
+    def _update_foot(self, i):
+        res = self.default_pos[i]
+        if self.gait_state["step_x"] != 0 or self.gait_state["step_z"] != 0 or self.gait_state["step_angle"] != 0:
+            phase = (self.t + self.gait_state["offset"][i]) % 1
+            if phase < self.gait_state["stand_frac"]:
+                local_phase = phase / self.gait_state["stand_frac"]
+                res = self.default_pos[i] + self._stance_controller(i, self.gait_state, local_phase, self.gait_state["step_depth"])
+            else:
+                local_phase = (phase - self.gait_state["stand_frac"]) / (1 - self.gait_state["stand_frac"])
+                res = self.default_pos[i] + self._swing_controller(i, self.gait_state, local_phase, self.gait_state["step_height"])
+        return res
 
+    def _stance_controller(self, i, gait_state: GaitStateT, phase, depth):
+        return self._controller(i, gait_state, sine_curve, phase, -depth)
+
+    def _swing_controller(self, i, gait_state: GaitStateT, phase, height):
+        return self._controller(i, gait_state, bezier_curve, phase, height)
+
+    def _controller(self, i, gait_state: GaitStateT, curve, phase, *args):
+        angle = np.arctan2(gait_state["step_z"], self.step_length) * 2
+        length = self.step_length / 2
+        pos = curve(length, angle, *args, phase)
+
+        length = np.rad2deg(gait_state["step_angle"])
+        angle = yaw_arc(self.default_pos[i], self.body_state["feet"][i])
+
+        rot = curve(length, angle, *args, phase)
+        return pos + rot
