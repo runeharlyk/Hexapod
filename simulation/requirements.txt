@@ -5,6 +5,7 @@ opencv-python==4.11.0.86
 pillow==11.2.1
 pybullet==3.2
 seaborn==0.13
+stable-baselines3[extra]==2.6.0
 sympy==1.13.3
 torch==2.4.1+cu118
 torchaudio==2.4.1+cu118

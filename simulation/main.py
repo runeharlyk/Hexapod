@@ -15,7 +15,7 @@ leg_order = [3, 0, 4, 1, 5, 2]
 standby = gen_posture(60, 75, config)
 
 body_state = BodyStateT(omega=0, phi=0, psi=0, x=0, y=0, z=0, feet=standby, default_feet=standby)
-gait_state = GaitStateT(step_height=0.04, step_x=0.2, step_z=0, step_angle=0, step_velocity=0.2, step_depth=0.002)
+gait_state = GaitStateT(step_height=30, step_x=0, step_z=0, step_angle=0, step_velocity=1, step_depth=0.002)
 
 gait = GaitController(standby)
 
@@ -29,6 +29,8 @@ while True:
     angles = inverse_kinematics(body_state, config).flatten().round(2)
     joints = np.deg2rad(angles).reshape(6, 3)[leg_order].flatten()
 
-    env.step(joints)
+    _, _, done, truncated, _ = env.step(joints)
+    if done or truncated:
+        env.reset()
 
     time.sleep(dt)

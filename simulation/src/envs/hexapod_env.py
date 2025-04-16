@@ -24,8 +24,8 @@ class HexapodRobot:
         self.robot_id = p.loadURDF(urdf_path, position, q_orientation, useFixedBase=use_fixed_base)
 
     def get_observation(self):
-        _, orientation = p.getBasePositionAndOrientation(self.robot_id)
-        orientation = p.getEulerFromQuaternion(orientation)[:2]
+        position, orientation = p.getBasePositionAndOrientation(self.robot_id)
+        orientation = p.getEulerFromQuaternion(orientation)
         velocity, angular_velocity = p.getBaseVelocity(self.robot_id)
         joint_states = p.getJointStates(
             self.robot_id, range(p.getNumJoints(self.robot_id))
@@ -34,6 +34,7 @@ class HexapodRobot:
         joint_velocities = [state[1] for state in joint_states]
         return np.concatenate(
             [
+                position,
                 orientation,
                 velocity,
                 angular_velocity,
@@ -55,20 +56,39 @@ class HexapodRobot:
             )
 
 class HexapodEnv(gym.Env):
-    def __init__(self, terrain_type: TerrainType = TerrainType.FLAT):
+    def __init__(self, terrain_type: TerrainType = TerrainType.FLAT, render_mode: str = "human"):
         super().__init__()
-        p.connect(p.GUI)
+        if render_mode == "human":
+            p.connect(p.GUI)
+        else:
+            p.connect(p.DIRECT)
+
+        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(48,))
+        self.action_space = gym.spaces.Box(low=-1, high=1, shape=(18,))
         p.setAdditionalSearchPath(pybullet_data.getDataPath())
+
+        self.terrain_type = terrain_type
+        self.render_mode = render_mode
+        self.target_velocity = 0.5
+        self.max_steps = float("inf")
+        self.current_step = 0
+
+        self._setup_world()
+        if render_mode == "human":
+            self.env_start_state = p.saveState()
+
+        # env parameters
+        self._distance_limit = float("inf")
+
+    def _setup_world(self):
         self.robot = HexapodRobot("src/resources/model.urdf")
-
-        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(18,))
-        self.action_space = gym.spaces.Box(low=-1, high=1, shape=(6,))
-
-        self.setup_simulation()
-        self.load_terrain(terrain_type)
-        self.gui = GUI(self.robot.robot_id)
-
-        self.env_start_state = p.saveState()
+        self.load_terrain(self.terrain_type)
+        p.setGravity(0, 0, -9.8)
+        p.setTimeStep(1 / 240)
+        if self.render_mode == "human":
+            self.gui = GUI(self.robot.robot_id)
+        else:
+            self.gui = None
 
     def load_terrain(self, terrain_type: TerrainType):
         if terrain_type == TerrainType.FLAT:
@@ -89,31 +109,58 @@ class HexapodEnv(gym.Env):
             maze = p.createMultiBody(0, terrainShape)
             self.terrain = [p.loadURDF("plane.urdf"), maze]
             p.changeVisualShape(self.terrain[1], -1, textureUniqueId = textureId)
-    def setup_simulation(self):
-        p.resetBasePositionAndOrientation(self.robot.robot_id, [0, 0, 1], [0, 0, 0, 1])
-        p.setGravity(0, 0, -9.8)
-        p.setTimeStep(1 / 240)
 
-    def reset(self):
-        p.restoreState(self.env_start_state)
-        return self.robot.get_observation()
+    def reset(self, *, seed: int | None = None):
+        super().reset(seed=seed)
+        if self.render_mode == "human":
+            p.restoreState(self.env_start_state)
+        else:
+            p.resetSimulation()
+            self._setup_world()
+        self.current_step = 0
+        return self.robot.get_observation(), {}
     
     def step(self, action):
-        self.gui.update()
+        self.current_step += 1
+        if self.gui:
+            self.gui.update()
         self.robot.apply_action(action)
         p.stepSimulation()
+        
         obs = self.robot.get_observation()
         reward = self.calculate_reward(obs)
         done = self.is_done(obs)
-        return obs, reward, done
+        truncated = self.current_step >= self.max_steps
+        
+        return obs, reward, done, truncated, {}
     
     def close(self):
-        p.disconnect()
+        pass
+        # p.disconnect()
 
     def calculate_reward(self, obs):
-        reward = 0
-        return reward
+        position = obs[:3]
+        velocity = obs[6:9]
+        angular_velocity = obs[9:12]
+        
+        forward_velocity = velocity[0]
+        velocity_reward = -abs(forward_velocity - self.target_velocity)
+        
+        height_penalty = -abs(position[2] - 0.3)
+        
+        angular_penalty = -np.sum(np.square(angular_velocity))
+        
+        total_reward = velocity_reward + 0.1 * height_penalty + 0.01 * angular_penalty
+        return total_reward
 
     def is_done(self, obs):
-        done = False
-        return done
+        position = obs[:3]
+        orientation = obs[3:6]
+        return self._is_fallen(orientation) or self._is_distance_limit_exceeded(position)
+    
+    def _is_distance_limit_exceeded(self, position):
+        distance = np.hypot(position[0], position[1])
+        return distance > self._distance_limit
+
+    def _is_fallen(self, orientation):
+        return abs(orientation[0]) > 0.85 or abs(orientation[1]) > 0.85
