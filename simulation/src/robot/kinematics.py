@@ -1,4 +1,3 @@
-import math
 import numpy as np
 from typing import TypedDict, List
 
@@ -100,7 +99,7 @@ def gen_posture(j2_angle, j3_angle, config=config):
     posture[:, 2] = j2_j3 * np.cos(j2_rad) - j3_tip * np.sin(j3_rad)
     return posture
 
-def inverse_kinematics(dest, body_state, config):
+def inverse_kinematics(body_state, config):
     mount_x = np.array(config["legMountX"])
     mount_y = np.array(config["legMountY"])
     root_j1 = config["legRootToJoint1"]
@@ -115,14 +114,14 @@ def inverse_kinematics(dest, body_state, config):
 
     transformation = get_transformation_matrix(body_state)
     
-    rotated_dest = np.zeros_like(dest)
+    rotated_dest = np.zeros_like(body_state["feet"])
     for i in range(6):
-        point = np.append(dest[i], 1)
+        point = np.append(body_state["feet"][i], 1)
         transformed = transformation @ point
         rotated_dest[i] = transformed[:3]
     
     temp_dest = rotated_dest - mount_position
-    local_dest = np.zeros_like(dest)
+    local_dest = np.zeros_like(body_state["feet"])
     local_dest[:, 0] = temp_dest[:, 0] * np.cos(mount_angle) + temp_dest[:, 1] * np.sin(mount_angle)
     local_dest[:, 1] = temp_dest[:, 0] * np.sin(mount_angle) - temp_dest[:, 1] * np.cos(mount_angle)
     local_dest[:, 2] = temp_dest[:, 2]
