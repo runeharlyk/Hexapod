@@ -6,11 +6,7 @@
     import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
     import type { URDFRobot } from 'urdf-loader';
     import { degToRad, lerp } from 'three/src/math/MathUtils';
-    import Kinematics, {
-        computeDefaultPosition,
-        type body_state_t,
-        type HexapodConfig
-    } from '$lib/kinematic';
+    import Kinematics, { gen_posture, type body_state_t, type HexapodConfig } from '$lib/kinematic';
     import { config } from './config';
 
     interface Props {
@@ -33,7 +29,7 @@
     // [90, 90, 220, 90, 90, 220, 90, 90, 90, 90, 90, 90, 90, 90, 220, 90, 90, 220];
     const dir = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
 
-    const posture = computeDefaultPosition(config);
+    const posture = gen_posture(60, 75, config);
 
     const kinematics = new Kinematics(config);
 
@@ -166,7 +162,6 @@
         const j3tip = config.legJoint3ToTip;
         const mountAngle = config.legMountAngle.map(a => (a * Math.PI) / 180);
         const mountPosition = Array.from({ length: 6 }, (_, i) => [mountX[i], mountY[i], 0]);
-        const legScale = config.legScale;
 
         const tempDest = dest.map((d, i) => d.map((v, j) => v - mountPosition[i][j]));
 
@@ -184,7 +179,7 @@
         for (let i = 0; i < 6; i++) {
             let x = localDest[i][0] - rootJ1;
             let y = localDest[i][1];
-            angles[i][0] = (-Math.atan2(y, x) * 180) / Math.PI + 90;
+            angles[i][0] = (-Math.atan2(y, x) * 180) / Math.PI;
 
             x = Math.sqrt(x * x + y * y) - j1j2;
             y = localDest[i][2];
@@ -194,8 +189,8 @@
             const a1 = Math.acos((lr2 + j2j3 * j2j3 - j3tip * j3tip) / (2 * j2j3 * lr));
             const a2 = Math.acos((lr2 - j2j3 * j2j3 + j3tip * j3tip) / (2 * j3tip * lr));
 
-            angles[i][1] = 90 - (((ar + a1) * 180) / Math.PI) * legScale[i][1];
-            angles[i][2] = (90 - ((a1 + a2) * 180) / Math.PI) * legScale[i][1] + 90;
+            angles[i][1] = ((ar + a1) * 180) / Math.PI;
+            angles[i][2] = 90 - ((a1 + a2) * 180) / Math.PI - 90;
         }
 
         return angles;
