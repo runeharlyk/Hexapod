@@ -131,7 +131,7 @@ class Kinematics {
             float a2 = acosf(c2);
 
             ang[i * 3 + 0] = RAD_TO_DEG_F(a0);
-            ang[i * 3 + 1] = RAD_TO_DEG_F(base + a1) - 90;
+            ang[i * 3 + 1] = RAD_TO_DEG_F(base + a1);
             ang[i * 3 + 2] = RAD_TO_DEG_F(-(a1 + a2)) + 90;
         }
     }

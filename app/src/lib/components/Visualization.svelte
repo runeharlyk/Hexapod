@@ -111,7 +111,9 @@
             gait_state.step_x = data[1];
             gait_state.step_z = data[2];
             gait_state.step_angle = data[3] / 150;
+
             body_state.omega = data[4] / 500;
+            body_state.zm = data[5] / 2.4;
         });
     });
 

@@ -119,32 +119,26 @@ class MotionService {
                 // kinematics.calculate_inverse_kinematics(body_state, new_angles);
                 break;
             case MOTION_STATE::CRAWL: {
+                body_state.xm = command.lx / 2.4;
+                body_state.ym = command.ly / 2.4;
+                body_state.zm = command.h / 2.4;
+                body_state.psi = command.rx / 500;
+                body_state.omega = command.ry / 500;
+
                 kinematics.genPosture(DEG_TO_RAD_F(60), DEG_TO_RAD_F(75), body_state.feet);
                 kinematics.inverseKinematics(body_state, new_angles);
 
-                float reorderedAngles[18];
-                for (int i = 0; i < 6; i++) {
-                    for (int j = 0; j < 3; j++) {
-                        reorderedAngles[i * 3 + j] = new_angles[leg_order[i] * 3 + j];
-                    }
-                }
-
-                int8_t l_dir[3] = {1, 1, 1};
-                int8_t r_dir[3] = {1, -1, -1};
+                int8_t l_dir[3] = {1, -1, 1};
+                int8_t r_dir[3] = {1, 1, -1};
                 int16_t center_pwm = 307;
 
                 for (int leg_idx = 0; leg_idx < 3; leg_idx++) {
                     for (int joint_idx = 0; joint_idx < 3; joint_idx++) {
                         int pin = leg_idx * 3 + joint_idx;
                         left_pwm_values[pin] =
-                            (reorderedAngles[leg_idx * 3 + joint_idx] * l_dir[joint_idx]) * 2 + center_pwm;
+                            (new_angles[leg_idx * 3 + joint_idx] * l_dir[joint_idx]) * 2 + center_pwm;
                         right_pwm_values[pin] =
-                            (reorderedAngles[leg_idx * 3 + joint_idx + 9] * r_dir[joint_idx]) * 2 + center_pwm;
-
-                        if (right_pwm_values[pin] > 400) right_pwm_values[pin] = 400;
-                        if (right_pwm_values[pin] < 200) right_pwm_values[pin] = 200;
-                        if (left_pwm_values[pin] > 400) left_pwm_values[pin] = 400;
-                        if (left_pwm_values[pin] < 200) left_pwm_values[pin] = 200;
+                            (new_angles[leg_idx * 3 + joint_idx + 9] * r_dir[joint_idx]) * 2 + center_pwm;
                     }
                 }
                 // crawlGait->step(body_state, command);
@@ -159,18 +153,6 @@ class MotionService {
         return true; // update_angles(new_angles, angles);
     }
 
-    bool update_angles(float new_angles[12], float angles[12], bool useLerp = true) {
-        bool updated = false;
-        for (int i = 0; i < 12; i++) {
-            float new_angle = useLerp ? lerp(angles[i], new_angles[i] * dir[i], 0.3) : new_angles[i] * dir[i];
-            if (!isEqual(new_angle, angles[i], 0.1)) {
-                angles[i] = new_angle;
-                updated = true;
-            }
-        }
-        return updated;
-    }
-
     float *getAngles() { return angles; }
 
     uint16_t *getLeftPwm() { return left_pwm_values; }
@@ -181,8 +163,6 @@ class MotionService {
     int step_count = 0;
     Kinematics kinematics;
     ControllerCommand command = {0, 0, 0, 0, 0, 0, 0, 0};
-
-    int leg_order[6] = {3, 0, 4, 1, 5, 2};
 
     friend class GaitState;
 
