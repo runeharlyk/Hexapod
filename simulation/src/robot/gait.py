@@ -75,33 +75,44 @@ def bezier_curve(length, angle, height, phase):
 
 
 class GaitController:
-    def __init__(self, default_pos: np.ndarray):
-        self.default_pos = default_pos
-        self.num_legs = len(default_pos)
-        self.t = 0.0
+    def __init__(self, default_position: np.ndarray):
+        self.default_position = default_position
+        self.phase = 0.0
 
-    def step(self, s: GaitStateT, b: BodyStateT, dt: float):
-        L = np.hypot(s["step_x"], s["step_z"])
-        self.step_length = -L if s["step_x"] < 0 else L
-        self.t = (self.t + dt * s["step_velocity"]) % 1
+    def step(self, gait: GaitStateT, body: BodyStateT, dt: float):
+        step_x, step_z, angle = gait["step_x"], gait["step_z"], gait["step_angle"]
+        if not any((step_x, step_z, angle)):
+            body["feet"] = body["feet"] + (self.default_position - body["feet"]) * dt * 10
+            self.phase = 0.0
+            return
 
-        new_feet = np.zeros((self.num_legs, 3))
+        self._advance_phase(dt, gait["step_velocity"])
 
-        for i, p in enumerate(self.default_pos):
-            ph = (self.t + s["offset"][i]) % 1
+        stand_fraction = gait["stand_frac"]
+        depth = gait["step_depth"]
+        height = gait["step_height"]
+        offsets = gait["offset"]
 
-            if s["step_x"] or s["step_z"] or s["step_angle"]:
-                if ph < s["stand_frac"]:
-                    ph0, curve, amp = ph / s["stand_frac"], sine_curve, -s["step_depth"]
-                else:
-                    ph0, curve, amp = (ph - s["stand_frac"]) / (1 - s["stand_frac"]), bezier_curve, s["step_height"]
+        length = np.hypot(step_x, step_z)
+        if step_x < 0:
+            length = -length
+        turn_amplitude = np.arctan2(step_z, length) * 2
 
-                x = curve(self.step_length / 2, np.arctan2(s["step_z"], self.step_length) * 2, amp, ph0)
+        new_feet = np.zeros_like(self.default_position)
 
-                r = curve(np.rad2deg(s["step_angle"]), yaw_arc(p, b["feet"][i]), amp, ph0)
+        for i, (default_foot, current_foot) in enumerate(zip(self.default_position, body["feet"])):
+            phase = (self.phase + offsets[i]) % 1
+            ph_norm, curve_fn, amp = self._phase_params(phase, stand_fraction, depth, height)
+            delta_pos = curve_fn(length / 2, turn_amplitude, amp, ph_norm)
+            delta_rot = curve_fn(np.rad2deg(angle), yaw_arc(default_foot, current_foot), amp, ph_norm)
+            new_feet[i] = default_foot + delta_pos + delta_rot
 
-                new_feet[i] = p + x + r
-            else:
-                new_feet[i] = p
+        body["feet"] = new_feet
 
-        b["feet"] = new_feet
+    def _advance_phase(self, dt: float, velocity: float):
+        self.phase = (self.phase + dt * velocity) % 1
+
+    def _phase_params(self, phase: float, stand_frac: float, depth: float, height: float):
+        if phase < stand_frac:
+            return phase / stand_frac, sine_curve, -depth
+        return (phase - stand_frac) / (1 - stand_frac), bezier_curve, height
