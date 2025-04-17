@@ -32,48 +32,6 @@ export interface HexapodConfig {
     legJoint2ToJoint3: number;
     legJoint3ToTip: number;
     legMountAngle: number[];
-    legScale: number[][];
-}
-
-export function computeDefaultPosition(config: HexapodConfig): number[][] {
-    const footPositions: number[][] = Array(6)
-        .fill(0)
-        .map(() => Array(3).fill(0));
-
-    const l1 = config.legRootToJoint1;
-    const l2 = config.legJoint1ToJoint2;
-    const l3 = config.legJoint2ToJoint3;
-    const l4 = config.legJoint3ToTip;
-
-    const forward = l2 + l3 * sin(30) + l4 * sin(15);
-    const down = l3 * cos(30) + l4 * cos(15);
-
-    const spreadScale = 1;
-    const localTip: number[] = [(l1 + forward) * spreadScale, 0, -down];
-
-    for (let i = 0; i < 6; i++) {
-        const angle = (config.legMountAngle[i] * Math.PI) / 180;
-        const rot = [
-            [Math.cos(angle), -Math.sin(angle), 0],
-            [Math.sin(angle), Math.cos(angle), 0],
-            [0, 0, 1]
-        ];
-
-        // Matrix multiplication (rot @ local_tip)
-        const rotated = [
-            rot[0][0] * localTip[0] + rot[0][1] * localTip[1] + rot[0][2] * localTip[2],
-            rot[1][0] * localTip[0] + rot[1][1] * localTip[1] + rot[1][2] * localTip[2],
-            rot[2][0] * localTip[0] + rot[2][1] * localTip[1] + rot[2][2] * localTip[2]
-        ];
-
-        footPositions[i] = [
-            config.legMountX[i] + rotated[0],
-            config.legMountY[i] + rotated[1],
-            rotated[2]
-        ];
-    }
-
-    return footPositions;
 }
 
 export function gen_posture(j2_angle: number, j3_angle: number, config: HexapodConfig): number[][] {
@@ -114,17 +72,17 @@ export default class Kinematics {
     T_hip: number[][][] = [];
 
     constructor(config: HexapodConfig) {
-        this.l1 = config.legRootToJoint1 / 100; // Convert to meters if necessary
-        this.l2 = config.legJoint1ToJoint2 / 100;
-        this.l3 = config.legJoint2ToJoint3 / 100;
-        this.l4 = config.legJoint3ToTip / 100;
+        this.l1 = config.legRootToJoint1; // Convert to meters if necessary
+        this.l2 = config.legJoint1ToJoint2;
+        this.l3 = config.legJoint2ToJoint3;
+        this.l4 = config.legJoint3ToTip;
 
-        this.legMountX = config.legMountX.map((val: number) => val / 100); // Convert to meters
-        this.legMountY = config.legMountY.map((val: number) => val / 100);
-        this.legMountAngle = config.legMountAngle;
+        this.legMountX = config.legMountX.map((val: number) => val); // Convert to meters
+        this.legMountY = config.legMountY.map((val: number) => val);
+        this.legMountAngle = config.legMountAngle.map(a => (a / 180) * Math.PI); // Convert to radians
 
         for (let i = 0; i < 6; i++) {
-            const angleRad = this.legMountAngle[i] * this.DEG2RAD;
+            const angleRad = this.legMountAngle[i];
             this.T_hip[i] = [
                 [cos(angleRad), -sin(angleRad), 0, this.legMountX[i]],
                 [sin(angleRad), cos(angleRad), 0, this.legMountY[i]],
@@ -132,6 +90,50 @@ export default class Kinematics {
                 [0, 0, 0, 1]
             ];
         }
+    }
+
+    inverseKinematics(body_state: body_state_t): number[][] {
+        const mountPosition = Array.from({ length: 6 }, (_, i) => [
+            this.legMountX[i],
+            this.legMountY[i],
+            0
+        ]);
+
+        const tempDest = body_state.feet.map((d, i) => d.map((v, j) => v - mountPosition[i][j]));
+
+        const localDest = tempDest.map((t, i) => {
+            const angle = this.legMountAngle[i];
+            return [
+                t[0] * Math.cos(angle) + t[1] * Math.sin(angle),
+                t[0] * Math.sin(angle) - t[1] * Math.cos(angle),
+                t[2]
+            ];
+        });
+
+        const angles = Array.from({ length: 6 }, () => [0, 0, 0]);
+
+        for (let i = 0; i < 6; i++) {
+            let x = localDest[i][0] - this.l1;
+            let y = localDest[i][1];
+            angles[i][0] = (-Math.atan2(y, x) * 180) / Math.PI;
+
+            x = Math.sqrt(x * x + y * y) - this.l2;
+            y = localDest[i][2];
+            const ar = Math.atan2(y, x);
+            const lr2 = x * x + y * y;
+            const lr = Math.sqrt(lr2);
+            const a1 = Math.acos(
+                (lr2 + this.l3 * this.l3 - this.l4 * this.l4) / (2 * this.l3 * lr)
+            );
+            const a2 = Math.acos(
+                (lr2 - this.l3 * this.l3 + this.l4 * this.l4) / (2 * this.l4 * lr)
+            );
+
+            angles[i][1] = ((ar + a1) * 180) / Math.PI;
+            angles[i][2] = 90 - ((a1 + a2) * 180) / Math.PI - 90;
+        }
+
+        return angles;
     }
 
     public calcIK(body_state: body_state_t): number[] {
@@ -207,25 +209,9 @@ export default class Kinematics {
 
     public legIK(point: number[]): number[] {
         const [x, y, z] = point;
-
-        // Assuming the first joint rotates around Z, the next two around Y in their local frames
-        const theta1 = atan2(y, x); // Hip/Coxa angle
-
-        const effectiveX = sqrt(x ** 2 + y ** 2) - this.l1 * cos(theta1);
-        const targetDistSq = effectiveX ** 2 + z ** 2;
-        const targetDist = sqrt(targetDistSq);
-
-        const cosTheta3Num = targetDistSq - this.l2 ** 2 - this.l3 ** 2;
-        const cosTheta3Den = 2 * this.l2 * this.l3;
-        const cosTheta3 = cosTheta3Num / cosTheta3Den;
-
-        // Clamp cosTheta3 to avoid NaN from acos
-        const clampedCosTheta3 = Math.max(-1, Math.min(1, cosTheta3));
-        const theta3 = atan2(-sqrt(1 - clampedCosTheta3 ** 2), clampedCosTheta3); // Knee/Femur angle (assuming downward bend is negative)
-
-        const theta2 =
-            atan2(z, effectiveX) - atan2(this.l3 * sin(theta3), this.l2 + this.l3 * cos(theta3)); // Ankle/Tibia angle
-
+        const theta1 = atan2(y, x);
+        const theta2 = atan2(z, sqrt(x * x + y * y) - this.l1);
+        const theta3 = atan2(y, x) - atan2(z, sqrt(x * x + y * y) - this.l1);
         return [theta1, theta2, theta3];
     }
 

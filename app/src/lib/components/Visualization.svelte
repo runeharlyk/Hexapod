@@ -73,7 +73,7 @@
         {}
     );
 
-    const kinematics_state: body_state_t = {
+    const body_state: body_state_t = {
         omega: 0,
         phi: 0,
         psi: 0,
@@ -105,9 +105,9 @@
         general.add(settings, 'Auto orient robot');
 
         const kin = gui_panel.addFolder('Kinematics');
-        for (const name of Object.keys(kinematics_state)) {
+        for (const name of Object.keys(body_state)) {
             if (name === 'feet') continue;
-            kin.add(kinematics_state, name as any, -100, 100, 1)
+            kin.add(body_state, name as any, -100, 100, 1)
                 .onChange(updateInverseKinematics)
                 .listen();
         }
@@ -148,53 +148,11 @@
     };
 
     const updateInverseKinematics = () => {
-        const newAngles = inverseKinematics(posture, config).flat();
+        const newAngles = kinematics.inverseKinematics(body_state).flat();
         setTargetAngles(newAngles);
     };
 
     updateInverseKinematics();
-    function inverseKinematics(dest: number[][], config: HexapodConfig): number[][] {
-        const mountX = config.legMountX;
-        const mountY = config.legMountY;
-        const rootJ1 = config.legRootToJoint1;
-        const j1j2 = config.legJoint1ToJoint2;
-        const j2j3 = config.legJoint2ToJoint3;
-        const j3tip = config.legJoint3ToTip;
-        const mountAngle = config.legMountAngle.map(a => (a * Math.PI) / 180);
-        const mountPosition = Array.from({ length: 6 }, (_, i) => [mountX[i], mountY[i], 0]);
-
-        const tempDest = dest.map((d, i) => d.map((v, j) => v - mountPosition[i][j]));
-
-        const localDest = tempDest.map((t, i) => {
-            const angle = mountAngle[i];
-            return [
-                t[0] * Math.cos(angle) + t[1] * Math.sin(angle),
-                t[0] * Math.sin(angle) - t[1] * Math.cos(angle),
-                t[2]
-            ];
-        });
-
-        const angles = Array.from({ length: 6 }, () => [0, 0, 0]);
-
-        for (let i = 0; i < 6; i++) {
-            let x = localDest[i][0] - rootJ1;
-            let y = localDest[i][1];
-            angles[i][0] = (-Math.atan2(y, x) * 180) / Math.PI;
-
-            x = Math.sqrt(x * x + y * y) - j1j2;
-            y = localDest[i][2];
-            const ar = Math.atan2(y, x);
-            const lr2 = x * x + y * y;
-            const lr = Math.sqrt(lr2);
-            const a1 = Math.acos((lr2 + j2j3 * j2j3 - j3tip * j3tip) / (2 * j2j3 * lr));
-            const a2 = Math.acos((lr2 - j2j3 * j2j3 + j3tip * j3tip) / (2 * j3tip * lr));
-
-            angles[i][1] = ((ar + a1) * 180) / Math.PI;
-            angles[i][2] = 90 - ((a1 + a2) * 180) / Math.PI - 90;
-        }
-
-        return angles;
-    }
 
     const createScene = async () => {
         if (!canvas) return;
