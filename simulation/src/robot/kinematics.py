@@ -63,22 +63,16 @@ class Kinematics:
         self.j1_j2 = config["legJoint1ToJoint2"]
         self.j2_j3 = config["legJoint2ToJoint3"]
         self.j3_tip = config["legJoint3ToTip"]
-        self.mount_angle = np.array(config["legMountAngle"]) / 180 * np.pi
-        self.mount_position = np.zeros((6, 3))
-        self.mount_position[:, 0] = self.mount_x
-        self.mount_position[:, 1] = self.mount_y
+        self.mount_angle = np.deg2rad(config["legMountAngle"])
+        self.mount_position = np.column_stack([self.mount_x, self.mount_y, np.zeros_like(self.mount_x)])
 
-    def gen_posture(self, j2_angle, j3_angle):
-        posture = np.zeros((6, 3))
-
-        posture[:, 0] = self.mount_x + (
-            self.root_j1 + self.j1_j2 + (self.j2_j3 * np.sin(j2_angle)) + self.j3_tip * np.cos(j3_angle)
-        ) * np.cos(self.mount_angle)
-        posture[:, 1] = self.mount_y + (
-            self.root_j1 + self.j1_j2 + (self.j2_j3 * np.sin(j2_angle)) + self.j3_tip * np.cos(j3_angle)
-        ) * np.sin(self.mount_angle)
-        posture[:, 2] = self.j2_j3 * np.cos(j2_angle) - self.j3_tip * np.sin(j3_angle)
-        return posture
+    def gen_posture(self, j2, j3):
+        ca, sa = np.cos(self.mount_angle), np.sin(self.mount_angle)
+        ext = self.root_j1 + self.j1_j2 + (self.j2_j3 * np.sin(j2)) + self.j3_tip * np.cos(j3)
+        x = self.mount_x + ext * ca
+        y = self.mount_y + ext * sa
+        z = self.j2_j3 * np.cos(j2) - self.j3_tip * np.sin(j3) * np.ones_like(x)
+        return np.column_stack([x, y, z])
 
     def inverse_kinematics(self, body_state):
         T = get_transformation_matrix(body_state)
