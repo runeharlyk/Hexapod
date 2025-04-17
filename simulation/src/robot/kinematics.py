@@ -81,19 +81,18 @@ class Kinematics:
         return posture
 
     def inverse_kinematics(self, body_state):
-        transformation = get_transformation_matrix(body_state)
+        T = get_transformation_matrix(body_state)
 
-        rotated_dest = np.zeros_like(body_state["feet"])
-        for i in range(6):
-            point = np.append(body_state["feet"][i], 1)
-            transformed = transformation @ point
-            rotated_dest[i] = transformed[:3]
+        feet = body_state["feet"]
+        pts = np.hstack([feet, np.ones((6, 1))])
+        world = (T @ pts.T).T[:, :3] - self.mount_position
 
-        temp_dest = rotated_dest - self.mount_position
+        ca, sa = np.cos(self.mount_angle), np.sin(self.mount_angle)
+
         local_dest = np.zeros_like(body_state["feet"])
-        local_dest[:, 0] = temp_dest[:, 0] * np.cos(self.mount_angle) + temp_dest[:, 1] * np.sin(self.mount_angle)
-        local_dest[:, 1] = temp_dest[:, 0] * np.sin(self.mount_angle) - temp_dest[:, 1] * np.cos(self.mount_angle)
-        local_dest[:, 2] = temp_dest[:, 2]
+        local_dest[:, 0] = world[:, 0] * ca + world[:, 1] * sa
+        local_dest[:, 1] = world[:, 0] * sa - world[:, 1] * ca
+        local_dest[:, 2] = world[:, 2]
 
         angles = np.zeros((6, 3))
         x = local_dest[:, 0] - self.root_j1
@@ -126,6 +125,6 @@ class Kinematics:
             a2[valid_legs] = np.arccos(cos_a2)
 
         angles[:, 1] = ar + a1
-        angles[:, 2] = 90 - ((a1 + a2)) - 90
+        angles[:, 2] = -(a1 + a2)
 
         return angles
