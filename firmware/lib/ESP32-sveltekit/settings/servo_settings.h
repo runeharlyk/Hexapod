@@ -16,11 +16,11 @@ class ServoSettings {
   public:
     servo_settings_t servos[18] = {
         {306, 1, 8, 2, "left_1_1"},  {306, 1, 9, 2, "left_1_2"},   {306, 1, 10, 2, "left_1_3"},
-        {306, 1, 2, 2, "left_2_1"},  {306, -1, 3, 2, "left_2_2"},  {306, 1, 4, 2, "left_2_3"},
-        {306, 1, 5, 2, "left_3_1"},  {306, 1, 6, 2, "left_3_2"},   {306, 1, 7, 2, "left_3_3"},
+        {306, 1, 2, 2, "left_2_1"},  {306, -1, 3, 2, "left_2_2"},  {306, -1, 4, 2, "left_2_3"},
+        {306, 1, 5, 2, "left_3_1"},  {306, -1, 6, 2, "left_3_2"},  {306, -1, 7, 2, "left_3_3"},
         {306, 1, 8, 2, "right_1_1"}, {306, 1, 9, 2, "right_1_2"},  {306, 1, 10, 2, "right_1_3"},
-        {306, 1, 2, 2, "right_2_1"}, {306, -1, 3, 2, "right_2_2"}, {306, 1, 4, 2, "right_2_3"},
-        {306, 1, 5, 2, "right_3_1"}, {306, 1, 6, 2, "right_3_2"},  {306, 1, 7, 2, "right_3_3"}};
+        {306, 1, 2, 2, "right_2_1"}, {306, -1, 3, 2, "right_2_2"}, {306, -1, 4, 2, "right_2_3"},
+        {306, 1, 5, 2, "right_3_1"}, {306, -1, 6, 2, "right_3_2"}, {306, -1, 7, 2, "right_3_3"}};
     static void read(ServoSettings &settings, JsonObject &root) {
         JsonArray servos = root["servos"].to<JsonArray>();
         for (auto &servo : settings.servos) {

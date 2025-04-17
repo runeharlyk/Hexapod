@@ -38,7 +38,7 @@ class MotionService {
         socket.onSubscribe(ANGLES_EVENT,
                            std::bind(&MotionService::syncAngles, this, std::placeholders::_1, std::placeholders::_2));
 
-        body_state.updateFeet(default_feet_positions);
+        kinematics.genPosture(60, 75, body_state.feet);
     }
 
     void anglesEvent(JsonObject &root, int originId) {
@@ -77,7 +77,7 @@ class MotionService {
                 body_state.psi = command.ry / 8;
                 body_state.xm = command.ly / 2 / 100;
                 body_state.zm = command.lx / 2 / 100;
-                body_state.updateFeet(default_feet_positions);
+                kinematics.genPosture(60, 75, body_state.feet);
                 break;
             }
         }
@@ -119,10 +119,33 @@ class MotionService {
             case MOTION_STATE::STAND:
                 // kinematics.calculate_inverse_kinematics(body_state, new_angles);
                 break;
-            case MOTION_STATE::CRAWL:
+            case MOTION_STATE::CRAWL: {
+                kinematics.genPosture(60, 75, body_state.feet);
+                kinematics.inverseKinematics(body_state, new_angles);
+
+                float reorderedAngles[18];
+                for (int i = 0; i < 6; i++) {
+                    for (int j = 0; j < 3; j++) {
+                        reorderedAngles[i * 3 + j] = new_angles[leg_order[i] * 3 + j];
+                    }
+                }
+
+                for (int leg_idx = 0; leg_idx < 3; leg_idx++) {
+                    for (int joint_idx = 0; joint_idx < 3; joint_idx++) {
+                        int pin = leg_idx * 3 + joint_idx;
+                        right_pwm_values[pin] = new_angles[leg_idx * 3 + joint_idx] * 2;
+                        left_pwm_values[pin] = new_angles[leg_idx * 3 + joint_idx + 9] * 2;
+
+                        if (right_pwm_values[pin] > 400) right_pwm_values[pin] = 400;
+                        if (right_pwm_values[pin] < 200) right_pwm_values[pin] = 200;
+                        if (left_pwm_values[pin] > 400) left_pwm_values[pin] = 400;
+                        if (left_pwm_values[pin] < 200) left_pwm_values[pin] = 200;
+                    }
+                }
                 // crawlGait->step(body_state, command);
                 // kinematics.calculate_inverse_kinematics(body_state, new_angles);
                 break;
+            }
             case MOTION_STATE::WALK:
                 walk(command);
                 // walkGait->step(body_state, command);
@@ -208,8 +231,10 @@ class MotionService {
   private:
     ServoController *_servoController;
     int step_count = 0;
-    // Kinematics kinematics;
+    Kinematics kinematics;
     ControllerCommand command = {0, 0, 0, 0, 0, 0, 0, 0};
+
+    int leg_order[6] = {3, 0, 4, 1, 5, 2};
 
     friend class GaitState;
 
@@ -223,15 +248,12 @@ class MotionService {
     unsigned long _lastUpdate;
 
     body_state_t body_state = {0, 0, 0, 0, 0, 0};
-    float new_angles[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-    float angles[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    float new_angles[18] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    float angles[18] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
-    float dir[12] = {1, -1, -1, -1, -1, -1, 1, -1, -1, -1, -1, -1};
-    float default_feet_positions[4][4] = {
-        {1.0375, -1, 0.7, 1}, {1.0375, -1, -0.7, 1}, {-1.0375, -1, 0.7, 1}, {-1.0375, -1, -0.7, 1}};
-
-    float rest_angles[12] = {0, 90, -145, 0, 90, -145, 0, 90, -145, 0, 90, -145};
-    float calibration_angles[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    float dir[18] = {
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    };
 };
 
 #endif
