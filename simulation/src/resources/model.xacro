@@ -20,6 +20,8 @@
     <xacro:property name="shoulder_width" value="0.038" />
 
     <xacro:property name="leg_length" value="0.1075" />
+    <xacro:property name="leg_width" value="0.1075" />
+    <xacro:property name="leg_height" value="0.1075" />
     <xacro:property name="foot_length" value="0.130" />
 
     <xacro:property name="toe_radius" value="0.1" />
@@ -74,6 +76,16 @@
                 <origin rpy="0 0 0" xyz="-1.7142 0 -0.011" />
                 <material name="body_color" />
             </visual>
+            <collision>
+                <geometry>
+                    <box size="${leg_length} ${leg_width} ${leg_height}" />
+                </geometry>
+                <origin rpy="0 0 0" xyz="0 0 0.6" />
+            </collision>
+            <inertial>
+                <mass value="0.01" />
+                <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001" />
+            </inertial>
         </link>
     </xacro:macro>
 
