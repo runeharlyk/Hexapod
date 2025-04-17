@@ -1,3 +1,5 @@
+import { inverse, matrixMultiply, multiplyVector, rot_translation } from './math';
+
 export interface body_state_t {
     omega: number;
     phi: number;
@@ -50,7 +52,8 @@ export function gen_posture(j2_angle: number, j3_angle: number, config: HexapodC
         posture.push([
             mountX[i] + expr * Math.cos(mountAngle[i]),
             mountY[i] + expr * Math.sin(mountAngle[i]),
-            j2_j3 * Math.cos(j2_rad) - j3_tip * Math.sin(j3_rad)
+            j2_j3 * Math.cos(j2_rad) - j3_tip * Math.sin(j3_rad),
+            1
         ]);
     }
     return posture;
@@ -92,16 +95,32 @@ export default class Kinematics {
         }
     }
 
-    inverseKinematics(body_state: body_state_t): number[][] {
+    leg_ik(body_state: body_state_t): number[][] {
         const mountPosition = Array.from({ length: 6 }, (_, i) => [
             this.legMountX[i],
             this.legMountY[i],
             0
         ]);
 
-        const tempDest = body_state.feet.map((d, i) => d.map((v, j) => v - mountPosition[i][j]));
+        const transformation = rot_translation(
+            body_state.omega,
+            body_state.phi,
+            body_state.psi,
+            body_state.xm,
+            body_state.ym,
+            body_state.zm
+        );
 
-        const localDest = tempDest.map((t, i) => {
+        const rotated_dest = Array.from({ length: 6 }, () => [0, 0, 0]);
+        for (let i = 0; i < 6; i++) {
+            const point = [...body_state.feet[i], 1];
+            const transformed = multiplyVector(transformation, point);
+            rotated_dest[i] = transformed.slice(0, 3);
+        }
+
+        const temp_dest = rotated_dest.map((d, i) => d.map((v, j) => v - mountPosition[i][j]));
+
+        const localDest = temp_dest.map((t, i) => {
             const angle = this.legMountAngle[i];
             return [
                 t[0] * Math.cos(angle) + t[1] * Math.sin(angle),
@@ -143,11 +162,11 @@ export default class Kinematics {
         for (let i = 0; i < 6; i++) {
             const footInBodyFrame = body_state.feet[i];
             // Transform the foot position from the body frame to the hip frame
-            const hipFrameInverse = this.inverse(this.T_hip[i]);
-            const footInHipFrame = this.multiplyVector(hipFrameInverse, [
-                ...footInBodyFrame,
-                1
-            ]).slice(0, 3);
+            const hipFrameInverse = inverse(this.T_hip[i]);
+            const footInHipFrame = multiplyVector(hipFrameInverse, [...footInBodyFrame, 1]).slice(
+                0,
+                3
+            );
             jointAngles.push(...this.legIK(footInHipFrame));
         }
         return jointAngles;
@@ -186,7 +205,7 @@ export default class Kinematics {
                 this.T_hip[i][2][3],
                 this.T_hip[i][3][3]
             ];
-            const rotatedOffset = this.multiplyVector(Tm, hipOffset).slice(0, 3);
+            const rotatedOffset = multiplyVector(Tm, hipOffset).slice(0, 3);
             const angleRad = this.legMountAngle[i] * this.DEG2RAD;
             this.T_hip[i] = [
                 [
@@ -213,97 +232,5 @@ export default class Kinematics {
         const theta2 = atan2(z, sqrt(x * x + y * y) - this.l1);
         const theta3 = atan2(y, x) - atan2(z, sqrt(x * x + y * y) - this.l1);
         return [theta1, theta2, theta3];
-    }
-
-    matrixMultiply(a: number[][], b: number[][]): number[][] {
-        const result: number[][] = [];
-        for (let i = 0; i < a.length; i++) {
-            result[i] = [];
-            for (let j = 0; j < b[0].length; j++) {
-                let sum = 0;
-                for (let k = 0; k < a[i].length; k++) {
-                    sum += a[i][k] * b[k][j];
-                }
-                result[i][j] = sum;
-            }
-        }
-        return result;
-    }
-
-    multiplyVector(matrix: number[][], vector: number[]): number[] {
-        const result: number[] = [];
-        for (let i = 0; i < matrix.length; i++) {
-            let sum = 0;
-            for (let j = 0; j < matrix[0].length; j++) {
-                sum += matrix[i][j] * vector[j];
-            }
-            result[i] = sum;
-        }
-        return result;
-    }
-
-    private inverse(matrix: number[][]): number[][] {
-        const det = this.determinant(matrix);
-        if (det === 0) {
-            throw new Error('Matrix is singular and has no inverse.');
-        }
-        const adjugate = this.adjugate(matrix);
-        const scalar = 1 / det;
-        const inverse: number[][] = [];
-        for (let i = 0; i < matrix.length; i++) {
-            inverse[i] = [];
-            for (let j = 0; j < matrix[i].length; j++) {
-                inverse[i][j] = adjugate[i][j] * scalar;
-            }
-        }
-        return inverse;
-    }
-
-    private determinant(matrix: number[][]): number {
-        const n = matrix.length;
-        if (n === 1) {
-            return matrix[0][0];
-        } else if (n === 2) {
-            return matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0];
-        } else {
-            let det = 0;
-            for (let i = 0; i < n; i++) {
-                const subMatrix = matrix
-                    .slice(1)
-                    .map(row => row.slice(0, i).concat(row.slice(i + 1)));
-                det += (i % 2 === 0 ? 1 : -1) * matrix[0][i] * this.determinant(subMatrix);
-            }
-            return det;
-        }
-    }
-
-    private adjugate(matrix: number[][]): number[][] {
-        const n = matrix.length;
-        const adjugate: number[][] = [];
-        for (let i = 0; i < n; i++) {
-            adjugate[i] = [];
-            for (let j = 0; j < n; j++) {
-                const subMatrix = matrix
-                    .slice(0, i)
-                    .concat(matrix.slice(i + 1))
-                    .map(row => row.slice(0, j).concat(row.slice(j + 1)));
-                const cofactor = (i + j) % 2 === 0 ? 1 : -1 * this.determinant(subMatrix);
-                adjugate[i][j] = cofactor;
-            }
-        }
-        return this.transpose(adjugate);
-    }
-
-    private transpose(matrix: number[][]): number[][] {
-        const rows = matrix.length;
-        const cols = matrix[0].length;
-        const transposed: number[][] = [];
-        for (let j = 0; j < cols; j++) {
-            transposed[j] = [];
-            for (let i = 0; i < rows; i++) {
-                transposed[j][i] = matrix[i][j];
-            }
-        }
-        return transposed;
     }
 }

@@ -148,7 +148,7 @@
     };
 
     const updateInverseKinematics = () => {
-        const newAngles = kinematics.inverseKinematics(body_state).flat();
+        const newAngles = kinematics.leg_ik(body_state).flat();
         setTargetAngles(newAngles);
     };
 
