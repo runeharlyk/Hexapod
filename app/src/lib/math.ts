@@ -1,6 +1,6 @@
 import type { body_state_t } from './kinematic';
 
-type Matrix = number[][];
+export type Matrix = number[][];
 
 export const rot_x = (theta: number): Matrix => {
     const c = Math.cos(theta),
