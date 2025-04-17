@@ -26,7 +26,7 @@ class GUI:
         self.step_x_slider = p.addUserDebugParameter("Step x", -50, 50, 0)
         self.step_z_slider = p.addUserDebugParameter("Step z", -50, 50, 0)
         self.angle_slider = p.addUserDebugParameter("Angle", -np.pi / 4, np.pi / 4, 0)
-        self.step_height_slider = p.addUserDebugParameter("Step height", 0, 50, 30)
+        self.step_height_slider = p.addUserDebugParameter("Step height", 0, 50, 15)
         self.step_depth_slider = p.addUserDebugParameter("Step depth", 0, 0.01, 0.002)
         self.speed_slider = p.addUserDebugParameter("Speed", 0, 2, 1)
         self.stand_frac_slider = p.addUserDebugParameter("Stand frac", 0, 1, 0.5)

@@ -63,9 +63,9 @@ class Kinematics:
         self.j1_j2 = config["legJoint1ToJoint2"]
         self.j2_j3 = config["legJoint2ToJoint3"]
         self.j3_tip = config["legJoint3ToTip"]
-        self.mount_angle = np.deg2rad(config["legMountAngle"])
+        self.mount_angles = np.deg2rad(config["legMountAngle"])
         self.mount_position = np.column_stack([self.mount_x, self.mount_y, np.zeros_like(self.mount_x)])
-        self.ca, self.sa = np.cos(self.mount_angle), np.sin(self.mount_angle)
+        self.ca, self.sa = np.cos(self.mount_angles), np.sin(self.mount_angles)
 
     def gen_posture(self, j2, j3):
         ext = self.root_j1 + self.j1_j2 + self.j2_j3 * np.sin(j2) + self.j3_tip * np.cos(j3)
