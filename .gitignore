@@ -4,3 +4,4 @@
 .vscode/launch.json
 .vscode/ipch
 simulation/__pycache__
+**/__pycache__
