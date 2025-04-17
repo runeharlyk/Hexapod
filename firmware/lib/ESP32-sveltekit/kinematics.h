@@ -98,31 +98,41 @@ class Kinematics {
 
     void inverseKinematics(const body_state_t &b, float ang[18]) {
         float T[4][4], w[4], dx, dy, radial, vertical, base, lr2, lr, c1, c2;
+
         get_transformation_matrix(b, T);
+
         for (int i = 0; i < 6; i++) {
             MAT_MULT(T, b.feet[i], w, 4, 4, 1);
+
             float wx = w[0] - mountPos[i][0];
             float wy = w[1] - mountPos[i][1];
             float wz = w[2] - mountPos[i][2];
+
             float lx = wx * ca[i] + wy * sa[i];
             float ly = wx * sa[i] - wy * ca[i];
+            float lz = wz;
+
             dx = lx - rootJ1;
             dy = ly;
             float a0 = -atan2f(dy, dx);
+
             radial = hypotf(dx, dy) - j1J2;
-            vertical = wz;
+            vertical = lz;
             base = atan2f(vertical, radial);
             lr2 = radial * radial + vertical * vertical;
             lr = sqrtf(lr2);
+
             c1 = (lr2 + j2J3 * j2J3 - j3Tip * j3Tip) / (2 * j2J3 * lr);
             c2 = (lr2 - j2J3 * j2J3 + j3Tip * j3Tip) / (2 * j3Tip * lr);
             c1 = fmaxf(-1, fminf(1, c1));
             c2 = fmaxf(-1, fminf(1, c2));
+
             float a1 = acosf(c1);
             float a2 = acosf(c2);
+
             ang[i * 3 + 0] = RAD_TO_DEG_F(a0);
-            ang[i * 3 + 1] = RAD_TO_DEG_F(base + a1);
-            ang[i * 3 + 2] = RAD_TO_DEG_F(-(a1 + a2));
+            ang[i * 3 + 1] = RAD_TO_DEG_F(base + a1) - 90;
+            ang[i * 3 + 2] = RAD_TO_DEG_F(-(a1 + a2)) + 90;
         }
     }
 };

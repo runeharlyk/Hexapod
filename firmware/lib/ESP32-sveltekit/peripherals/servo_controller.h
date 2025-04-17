@@ -116,12 +116,6 @@ class ServoController : public StatefulService<ServoSettings> {
             left_pwm[servoLeft.pin] = left_current_pwm[i];
             right_pwm[servoRight.pin] = right_current_pwm[i];
 
-            if (servoLeft.direction == -1) {
-                left_pwm[servoLeft.pin] = servoLeft.centerPwm - (left_pwm[servoLeft.pin] - servoLeft.centerPwm);
-            }
-            if (servoRight.direction == -1) {
-                right_pwm[servoRight.pin] = servoRight.centerPwm - (right_pwm[servoRight.pin] - servoRight.centerPwm);
-            }
 
             if (servoLeft.pin > max_pin_used) {
                 max_pin_used = servoLeft.pin;

@@ -38,7 +38,22 @@ class MotionService {
         socket.onSubscribe(ANGLES_EVENT,
                            std::bind(&MotionService::syncAngles, this, std::placeholders::_1, std::placeholders::_2));
 
-        kinematics.genPosture(60, 75, body_state.feet);
+        kinematics.genPosture(DEG_TO_RAD_F(60), DEG_TO_RAD_F(75), body_state.feet);
+
+        Serial.println("feet");
+        for (int i = 0; i < 6; i++) {
+            Serial.printf("feet[%d]: %f, %f, %f, %f\n", i, body_state.feet[i][0], body_state.feet[i][1],
+                          body_state.feet[i][2], body_state.feet[i][3]);
+        }
+        Serial.println("feet_end");
+
+        kinematics.inverseKinematics(body_state, new_angles);
+
+        Serial.println("new_angles");
+        for (int i = 0; i < 18; i++) {
+            Serial.printf("new_angles[%d]: %f\n", i, new_angles[i]);
+        }
+        Serial.println("new_angles_end");
     }
 
     void anglesEvent(JsonObject &root, int originId) {
@@ -77,7 +92,7 @@ class MotionService {
                 body_state.psi = command.ry / 8;
                 body_state.xm = command.ly / 2 / 100;
                 body_state.zm = command.lx / 2 / 100;
-                kinematics.genPosture(60, 75, body_state.feet);
+                kinematics.genPosture(DEG_TO_RAD_F(60), DEG_TO_RAD_F(75), body_state.feet);
                 break;
             }
         }
@@ -120,7 +135,7 @@ class MotionService {
                 // kinematics.calculate_inverse_kinematics(body_state, new_angles);
                 break;
             case MOTION_STATE::CRAWL: {
-                kinematics.genPosture(60, 75, body_state.feet);
+                kinematics.genPosture(DEG_TO_RAD_F(60), DEG_TO_RAD_F(75), body_state.feet);
                 kinematics.inverseKinematics(body_state, new_angles);
 
                 float reorderedAngles[18];
@@ -130,11 +145,17 @@ class MotionService {
                     }
                 }
 
+                int8_t l_dir[3] = {1, 1, 1};
+                int8_t r_dir[3] = {1, -1, -1};
+                int16_t center_pwm = 307;
+
                 for (int leg_idx = 0; leg_idx < 3; leg_idx++) {
                     for (int joint_idx = 0; joint_idx < 3; joint_idx++) {
                         int pin = leg_idx * 3 + joint_idx;
-                        right_pwm_values[pin] = new_angles[leg_idx * 3 + joint_idx] * 2;
-                        left_pwm_values[pin] = new_angles[leg_idx * 3 + joint_idx + 9] * 2;
+                        left_pwm_values[pin] =
+                            (reorderedAngles[leg_idx * 3 + joint_idx] * l_dir[joint_idx]) * 2 + center_pwm;
+                        right_pwm_values[pin] =
+                            (reorderedAngles[leg_idx * 3 + joint_idx + 9] * r_dir[joint_idx]) * 2 + center_pwm;
 
                         if (right_pwm_values[pin] > 400) right_pwm_values[pin] = 400;
                         if (right_pwm_values[pin] < 200) right_pwm_values[pin] = 200;
@@ -247,7 +268,7 @@ class MotionService {
     MOTION_STATE motionState = MOTION_STATE::DEACTIVATED;
     unsigned long _lastUpdate;
 
-    body_state_t body_state = {0, 0, 0, 0, 0, 0};
+    body_state_t body_state = {0, 0, 0, 0, 0, 15};
     float new_angles[18] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     float angles[18] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
