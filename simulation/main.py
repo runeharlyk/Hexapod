@@ -14,12 +14,12 @@ env = HexapodEnv()
 leg_order = [3, 0, 4, 1, 5, 2]
 standby = gen_posture(60, 75, config)
 
-body_state = BodyStateT(omega=0, phi=0, psi=0, x=0, y=0, z=0, feet=standby, default_feet=standby)
+body_state = BodyStateT(omega=0, phi=0, psi=0, xm=0, ym=0, zm=0, px=0, py=0, pz=0, feet=standby, default_feet=standby)
 gait_state = GaitStateT(step_height=30, step_x=0, step_z=0, step_angle=0, step_velocity=1, step_depth=0.002)
 
 gait = GaitController(standby)
 
-dt = 1./240
+dt = 1.0 / 240
 while True:
     env.gui.update_gait_state(gait_state)
     env.gui.update_body_state(body_state)
