@@ -64,26 +64,23 @@ class Kinematics:
         self.j2_j3 = config["legJoint2ToJoint3"]
         self.j3_tip = config["legJoint3ToTip"]
         self.mount_angle = np.array(config["legMountAngle"]) / 180 * np.pi
+        self.mount_position = np.zeros((6, 3))
+        self.mount_position[:, 0] = self.mount_x
+        self.mount_position[:, 1] = self.mount_y
 
     def gen_posture(self, j2_angle, j3_angle):
-        j2_rad = j2_angle / 180 * np.pi
-        j3_rad = j3_angle / 180 * np.pi
         posture = np.zeros((6, 3))
 
         posture[:, 0] = self.mount_x + (
-            self.root_j1 + self.j1_j2 + (self.j2_j3 * np.sin(j2_rad)) + self.j3_tip * np.cos(j3_rad)
+            self.root_j1 + self.j1_j2 + (self.j2_j3 * np.sin(j2_angle)) + self.j3_tip * np.cos(j3_angle)
         ) * np.cos(self.mount_angle)
         posture[:, 1] = self.mount_y + (
-            self.root_j1 + self.j1_j2 + (self.j2_j3 * np.sin(j2_rad)) + self.j3_tip * np.cos(j3_rad)
+            self.root_j1 + self.j1_j2 + (self.j2_j3 * np.sin(j2_angle)) + self.j3_tip * np.cos(j3_angle)
         ) * np.sin(self.mount_angle)
-        posture[:, 2] = self.j2_j3 * np.cos(j2_rad) - self.j3_tip * np.sin(j3_rad)
+        posture[:, 2] = self.j2_j3 * np.cos(j2_angle) - self.j3_tip * np.sin(j3_angle)
         return posture
 
     def inverse_kinematics(self, body_state):
-        mount_position = np.zeros((6, 3))
-        mount_position[:, 0] = self.mount_x
-        mount_position[:, 1] = self.mount_y
-
         transformation = get_transformation_matrix(body_state)
 
         rotated_dest = np.zeros_like(body_state["feet"])
@@ -92,7 +89,7 @@ class Kinematics:
             transformed = transformation @ point
             rotated_dest[i] = transformed[:3]
 
-        temp_dest = rotated_dest - mount_position
+        temp_dest = rotated_dest - self.mount_position
         local_dest = np.zeros_like(body_state["feet"])
         local_dest[:, 0] = temp_dest[:, 0] * np.cos(self.mount_angle) + temp_dest[:, 1] * np.sin(self.mount_angle)
         local_dest[:, 1] = temp_dest[:, 0] * np.sin(self.mount_angle) - temp_dest[:, 1] * np.cos(self.mount_angle)
@@ -102,7 +99,7 @@ class Kinematics:
         x = local_dest[:, 0] - self.root_j1
         y = local_dest[:, 1]
 
-        angles[:, 0] = -(np.arctan2(y, x) * 180 / np.pi)
+        angles[:, 0] = -np.arctan2(y, x)
 
         x = np.sqrt(x * x + y * y) - self.j1_j2
         y = local_dest[:, 2]
@@ -128,7 +125,7 @@ class Kinematics:
             a1[valid_legs] = np.arccos(cos_a1)
             a2[valid_legs] = np.arccos(cos_a2)
 
-        angles[:, 1] = (ar + a1) * 180 / np.pi
-        angles[:, 2] = (90 - ((a1 + a2) * 180 / np.pi)) - 90
+        angles[:, 1] = ar + a1
+        angles[:, 2] = 90 - ((a1 + a2)) - 90
 
         return angles

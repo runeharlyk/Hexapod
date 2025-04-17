@@ -15,7 +15,7 @@ leg_order = [3, 0, 4, 1, 5, 2]
 
 kinematics = Kinematics(config)
 
-standby = kinematics.gen_posture(60, 75)
+standby = kinematics.gen_posture(np.deg2rad(60), np.deg2rad(75))
 
 body_state = BodyStateT(omega=0, phi=0, psi=0, xm=0, ym=0, zm=0, px=0, py=0, pz=0, feet=standby, default_feet=standby)
 gait_state = GaitStateT(step_height=30, step_x=0, step_z=0, step_angle=0, step_velocity=1, step_depth=0.002)
@@ -30,7 +30,7 @@ while True:
 
     gait.step(gait_state, body_state, dt)
     angles = kinematics.inverse_kinematics(body_state).flatten().round(2)
-    joints = np.deg2rad(angles).reshape(6, 3)[leg_order].flatten()
+    joints = angles.reshape(6, 3)[leg_order].flatten()
 
     _, _, done, truncated, _ = env.step(joints)
     if done or truncated:
