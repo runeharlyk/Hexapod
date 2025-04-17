@@ -111,7 +111,6 @@ def inverse_kinematics(body_state, config):
     mount_position = np.zeros((6, 3))
     mount_position[:, 0] = mount_x
     mount_position[:, 1] = mount_y
-    leg_scale = np.array(config["legScale"])
 
     transformation = get_transformation_matrix(body_state)
 
@@ -153,7 +152,7 @@ def inverse_kinematics(body_state, config):
         a1[valid_legs] = np.arccos(cos_a1)
         a2[valid_legs] = np.arccos(cos_a2)
 
-    angles[:, 1] = ((ar + a1) * 180 / np.pi) * leg_scale[:, 1]
-    angles[:, 2] = (90 - ((a1 + a2) * 180 / np.pi)) * leg_scale[:, 1] - 90
+    angles[:, 1] = (ar + a1) * 180 / np.pi
+    angles[:, 2] = (90 - ((a1 + a2) * 180 / np.pi)) - 90
 
     return angles
