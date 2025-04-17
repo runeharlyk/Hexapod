@@ -65,12 +65,12 @@ class Kinematics:
         self.j3_tip = config["legJoint3ToTip"]
         self.mount_angle = np.deg2rad(config["legMountAngle"])
         self.mount_position = np.column_stack([self.mount_x, self.mount_y, np.zeros_like(self.mount_x)])
+        self.ca, self.sa = np.cos(self.mount_angle), np.sin(self.mount_angle)
 
     def gen_posture(self, j2, j3):
-        ca, sa = np.cos(self.mount_angle), np.sin(self.mount_angle)
-        ext = self.root_j1 + self.j1_j2 + (self.j2_j3 * np.sin(j2)) + self.j3_tip * np.cos(j3)
-        x = self.mount_x + ext * ca
-        y = self.mount_y + ext * sa
+        ext = self.root_j1 + self.j1_j2 + self.j2_j3 * np.sin(j2) + self.j3_tip * np.cos(j3)
+        x = self.mount_x + ext * self.ca
+        y = self.mount_y + ext * self.sa
         z = self.j2_j3 * np.cos(j2) - self.j3_tip * np.sin(j3) * np.ones_like(x)
         return np.column_stack([x, y, z])
 
@@ -81,44 +81,31 @@ class Kinematics:
         pts = np.hstack([feet, np.ones((6, 1))])
         world = (T @ pts.T).T[:, :3] - self.mount_position
 
-        ca, sa = np.cos(self.mount_angle), np.sin(self.mount_angle)
+        lx = world[:, 0] * self.ca + world[:, 1] * self.sa
+        ly = world[:, 0] * self.sa - world[:, 1] * self.ca
+        lz = world[:, 2]
 
-        local_dest = np.zeros_like(body_state["feet"])
-        local_dest[:, 0] = world[:, 0] * ca + world[:, 1] * sa
-        local_dest[:, 1] = world[:, 0] * sa - world[:, 1] * ca
-        local_dest[:, 2] = world[:, 2]
-
+        dx = lx - self.root_j1
+        dy = ly
         angles = np.zeros((6, 3))
-        x = local_dest[:, 0] - self.root_j1
-        y = local_dest[:, 1]
+        angles[:, 0] = -np.arctan2(dy, dx)
 
-        angles[:, 0] = -np.arctan2(y, x)
-
-        x = np.sqrt(x * x + y * y) - self.j1_j2
-        y = local_dest[:, 2]
-        ar = np.arctan2(y, x)
-        lr2 = x * x + y * y
+        radial = np.hypot(dx, dy) - self.j1_j2
+        vertical = lz
+        base = np.arctan2(vertical, radial)
+        lr2 = radial * radial + vertical * vertical
         lr = np.sqrt(lr2)
 
-        valid_legs = lr > 1e-6
-        a1 = np.zeros_like(lr)
-        a2 = np.zeros_like(lr)
+        cos_a1 = (lr2 + self.j2_j3 * self.j2_j3 - self.j3_tip * self.j3_tip) / (2 * self.j2_j3 * lr)
+        cos_a2 = (lr2 - self.j2_j3 * self.j2_j3 + self.j3_tip * self.j3_tip) / (2 * self.j3_tip * lr)
 
-        if np.any(valid_legs):
-            cos_a1 = (lr2[valid_legs] + self.j2_j3 * self.j2_j3 - self.j3_tip * self.j3_tip) / (
-                2 * self.j2_j3 * lr[valid_legs]
-            )
-            cos_a2 = (lr2[valid_legs] - self.j2_j3 * self.j2_j3 + self.j3_tip * self.j3_tip) / (
-                2 * self.j3_tip * lr[valid_legs]
-            )
+        cos_a1 = np.clip(cos_a1, -1.0, 1.0)
+        cos_a2 = np.clip(cos_a2, -1.0, 1.0)
 
-            cos_a1 = np.clip(cos_a1, -1.0, 1.0)
-            cos_a2 = np.clip(cos_a2, -1.0, 1.0)
+        a1 = np.arccos(cos_a1)
+        a2 = np.arccos(cos_a2)
 
-            a1[valid_legs] = np.arccos(cos_a1)
-            a2[valid_legs] = np.arccos(cos_a2)
-
-        angles[:, 1] = ar + a1
+        angles[:, 1] = base + a1
         angles[:, 2] = -(a1 + a2)
 
         return angles
