@@ -6,7 +6,7 @@
     import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
     import type { URDFRobot } from 'urdf-loader';
     import { degToRad, lerp } from 'three/src/math/MathUtils';
-    import Kinematics, { gen_posture, type body_state_t, type HexapodConfig } from '$lib/kinematic';
+    import Kinematics, { type body_state_t } from '$lib/kinematic';
     import { config } from './config';
 
     interface Props {
@@ -29,9 +29,9 @@
     // [90, 90, 220, 90, 90, 220, 90, 90, 90, 90, 90, 90, 90, 90, 220, 90, 90, 220];
     const dir = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
 
-    const posture = gen_posture(60, 75, config);
-
     const kinematics = new Kinematics(config);
+
+    const posture = kinematics.genPosture(60, 75);
 
     let gui_panel: GUI;
 
@@ -78,8 +78,8 @@
         phi: 0,
         psi: 0,
         xm: 0,
-        ym: 0.7,
-        zm: 0,
+        ym: 0,
+        zm: -35,
         feet: posture
     };
 
@@ -105,17 +105,22 @@
         general.add(settings, 'Auto orient robot');
 
         const kin = gui_panel.addFolder('Kinematics');
-        for (const name of Object.keys(body_state)) {
-            if (name === 'feet') continue;
-            kin.add(body_state, name as any, -100, 100, 1)
+        for (const name of ['omega', 'phi', 'psi']) {
+            kin.add(body_state, name as any, -Math.PI / 10, Math.PI / 10, 0.01)
                 .onChange(updateInverseKinematics)
                 .listen();
         }
+        kin.add(body_state, 'xm', -60, 60, 0.01).onChange(updateInverseKinematics).listen();
+        kin.add(body_state, 'ym', -60, 60, 0.01).onChange(updateInverseKinematics).listen();
+        kin.add(body_state, 'zm', -60, 60, 0.01).onChange(updateInverseKinematics).listen();
 
         const limbs = gui_panel.addFolder('limbs');
         limbs.add({ center: resetLimbs }, 'center');
         for (const name of $jointNames) {
-            limbs.add(jointAngles, name, -150, 150).onChange(updateLimbs).listen();
+            limbs
+                .add(jointAngles, name, -Math.PI / 1.2, Math.PI / 1.2)
+                .onChange(updateLimbs)
+                .listen();
         }
 
         const visibility = gui_panel.addFolder('Visualization');
@@ -148,8 +153,11 @@
     };
 
     const updateInverseKinematics = () => {
-        const newAngles = kinematics.leg_ik(body_state).flat();
-        setTargetAngles(newAngles);
+        const newAngles = kinematics.inverseKinematics(body_state).flat();
+        const leg_order = [3, 0, 4, 1, 5, 2];
+        const reorderedAngles = leg_order.flatMap(i => newAngles.slice(i * 3, i * 3 + 3));
+
+        setTargetAngles(reorderedAngles);
     };
 
     updateInverseKinematics();
@@ -182,18 +190,26 @@
         sceneManager.orbit.target = robot.position.clone();
     };
 
+    const orient_robot = (robot: URDFRobot) => {
+        if (settings['Robot transform controls'] || !settings['Auto orient robot']) return;
+
+        robot.position.z = smooth(robot.position.z, -body_state.xm / 12, 0.1);
+        robot.position.x = smooth(robot.position.x, -body_state.ym / 12, 0.1);
+
+        robot.rotation.z = smooth(robot.rotation.z, -body_state.psi + Math.PI / 2, 0.1);
+        robot.rotation.y = smooth(robot.rotation.y, body_state.omega, 0.1);
+        robot.rotation.x = smooth(robot.rotation.x, -body_state.phi - Math.PI / 2, 0.1);
+    };
+
     const render = () => {
         const robot = sceneManager.model;
         if (!robot) return;
         update_camera(robot);
+        orient_robot(robot);
 
         for (let i = 0; i < $jointNames.length; i++) {
-            angles[i] = smooth(
-                (robot.joints[$jointNames[i]].angle as number) * (180 / Math.PI),
-                targetAngles[i],
-                0.1
-            );
-            robot.joints[$jointNames[i]].setJointValue(degToRad(angles[i]));
+            angles[i] = smooth(robot.joints[$jointNames[i]].angle as number, targetAngles[i], 0.1);
+            robot.joints[$jointNames[i]].setJointValue(angles[i]);
         }
     };
 </script>

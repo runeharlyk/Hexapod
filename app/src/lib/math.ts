@@ -1,3 +1,5 @@
+import type { body_state_t } from './kinematic';
+
 type Matrix = number[][];
 
 export const rot_x = (theta: number): Matrix => {
@@ -46,7 +48,7 @@ export const translation = (x: number, y: number, z: number): Matrix => {
     ];
 };
 
-export const rot_translation = (
+export const transformation = (
     omega: number,
     phi: number,
     psi: number,
@@ -57,6 +59,16 @@ export const rot_translation = (
     const T: Matrix = translation(x, y, z);
     const R: Matrix = rot(omega, phi, psi);
     return matrixMultiply(R, T);
+};
+
+export const get_transformation_matrix = (body_state: body_state_t): Matrix => {
+    const omega = body_state.omega;
+    const phi = body_state.phi;
+    const psi = body_state.psi;
+    const xm = body_state.xm;
+    const ym = body_state.ym;
+    const zm = body_state.zm;
+    return transformation(omega, phi, psi, xm, ym, zm);
 };
 
 export const matrixMultiply = (a: Matrix, b: Matrix): Matrix => {

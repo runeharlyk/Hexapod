@@ -59,19 +59,11 @@ export const angleLimitation: [number, number][] = [
 ];
 
 export const config: HexapodConfig = {
-    legMountX: [37, 0.51, 37, -37, -0.51, -37],
-    legMountY: [69, 0, -69, 69, 0, -69],
+    legMountX: [44.82, 61.03, 44.82, -44.82, -61.03, -44.82],
+    legMountY: [74.82, 0, -74.82, 74.82, 0, -74.82],
     legMountAngle: [45, 0, -45, -225, -180, -135],
     legRootToJoint1: 0,
     legJoint1ToJoint2: 38.0,
     legJoint2ToJoint3: 54.06,
-    legJoint3ToTip: 97.0,
-    legScale: [
-        [1, -1, -1],
-        [1, 1, 1],
-        [1, 1, 1],
-        [1, 1, 1],
-        [1, -1, -1],
-        [1, -1, -1]
-    ]
+    legJoint3ToTip: 97.0
 };
