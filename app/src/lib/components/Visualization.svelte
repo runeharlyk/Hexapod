@@ -34,10 +34,9 @@
     const angles = new Array(18).fill(0);
     const targetAngles = new Array(18).fill(0);
 
-
     const kinematics = new Kinematics(config);
 
-    const defaultPosition = kinematics.genPosture(60, 75);
+    const defaultPosition = kinematics.genPosture(degToRad(60), degToRad(75));
 
     const gait = new GaitController(defaultPosition);
 
@@ -87,7 +86,7 @@
         psi: 0,
         xm: 0,
         ym: 0,
-        zm: -35,
+        zm: 15,
         feet: defaultPosition
     };
 
@@ -132,6 +131,7 @@
         general.add(settings, 'Auto orient robot');
 
         const gait = gui_panel.addFolder('Gait');
+        gait.add(gait_state, 'step_height', 0, 50, 0.01).name('Step Height');
         gait.add(gait_state, 'step_x', -50, 50, 0.01).name('Step X');
         gait.add(gait_state, 'step_z', -50, 50, 0.01).name('Step Z');
         gait.add(gait_state, 'step_angle', -Math.PI / 4, Math.PI / 4, 0.01).name('Step Angle');
@@ -178,6 +178,7 @@
             jointAngles[name] = 0;
         }
         updateLimbs();
+        gait_state.gait_type = GaitType.NONE;
     };
 
     const updateLimbs = () => {

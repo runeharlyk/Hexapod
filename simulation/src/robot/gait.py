@@ -105,7 +105,8 @@ class GaitController:
             ph_norm, curve_fn, amp = self._phase_params(phase, stand_fraction, depth, height)
             delta_pos = curve_fn(length / 2, turn_amplitude, amp, ph_norm)
             delta_rot = curve_fn(np.rad2deg(angle), yaw_arc(default_foot, current_foot), amp, ph_norm)
-            new_feet[i] = default_foot + delta_pos + delta_rot
+            new_feet[i][:3] = default_foot[:3] + delta_pos + delta_rot
+            new_feet[i][3] = 1
 
         body["feet"] = new_feet
 

@@ -11,7 +11,6 @@
 #include <gait/crawl_state.h>
 #include <gait/bezier_state.h>
 
-#include "motion_table.h"
 #include "config.h"
 
 #define DEFAULT_STATE false
@@ -39,21 +38,6 @@ class MotionService {
                            std::bind(&MotionService::syncAngles, this, std::placeholders::_1, std::placeholders::_2));
 
         kinematics.genPosture(DEG_TO_RAD_F(60), DEG_TO_RAD_F(75), body_state.feet);
-
-        Serial.println("feet");
-        for (int i = 0; i < 6; i++) {
-            Serial.printf("feet[%d]: %f, %f, %f, %f\n", i, body_state.feet[i][0], body_state.feet[i][1],
-                          body_state.feet[i][2], body_state.feet[i][3]);
-        }
-        Serial.println("feet_end");
-
-        kinematics.inverseKinematics(body_state, new_angles);
-
-        Serial.println("new_angles");
-        for (int i = 0; i < 18; i++) {
-            Serial.printf("new_angles[%d]: %f\n", i, new_angles[i]);
-        }
-        Serial.println("new_angles_end");
     }
 
     void anglesEvent(JsonObject &root, int originId) {
@@ -168,68 +152,11 @@ class MotionService {
                 break;
             }
             case MOTION_STATE::WALK:
-                walk(command);
                 // walkGait->step(body_state, command);
                 // kinematics.calculate_inverse_kinematics(body_state, new_angles);
                 break;
         }
         return true; // update_angles(new_angles, angles);
-    }
-
-    void walk(ControllerCommand command) {
-        float abs_lx = abs(command.lx);
-        float abs_ly = abs(command.ly);
-
-        if (abs_ly > abs_lx && abs_ly > 30) {
-            if (command.ly > 0) {
-                if (abs(command.lx) < 30) {
-                    exec_motion(lut_fast_forward_length, lut_fast_forward);
-                } else if (command.lx > 30) {
-                    exec_motion(lut_walk_r45_length, lut_walk_r45);
-                } else if (command.lx < -30) {
-                    exec_motion(lut_walk_l45_length, lut_walk_l45);
-                }
-            } else {
-                if (abs(command.lx) < 30) {
-                    exec_motion(lut_fast_backward_length, lut_fast_backward);
-                } else if (command.lx > 30) {
-                    exec_motion(lut_walk_r135_length, lut_walk_r135);
-                } else if (command.lx < -30) {
-                    exec_motion(lut_walk_l135_length, lut_walk_l135);
-                }
-            }
-        } else if (abs_lx > abs_ly && abs_lx > 30) {
-            if (command.lx > 0) {
-                exec_motion(lut_walk_r90_length, lut_walk_r90);
-            } else {
-                exec_motion(lut_walk_l90_length, lut_walk_l90);
-            }
-        } else if (abs_lx <= 30 && abs_ly <= 30) {
-            if (command.rx > 30) {
-                exec_motion(lut_turn_right_length, lut_turn_right);
-            } else if (command.rx < -30) {
-                exec_motion(lut_turn_left_length, lut_turn_left);
-            } else if (command.ry > 30) {
-                exec_motion(lut_rotate_x_length, lut_rotate_x);
-            } else if (command.ry < -30) {
-                exec_motion(lut_rotate_y_length, lut_rotate_y);
-            }
-        } else if (command.s > 100) {
-            exec_motion(lut_twist_length, lut_twist);
-        } else if (command.s1 > 100) {
-            exec_motion(lut_climb_forward_length, lut_climb_forward);
-        }
-    }
-
-    void exec_motion(int lut_size, int lut[][6][3]) {
-        for (int leg_idx = 0; leg_idx < 3; leg_idx++) {
-            for (int joint_idx = 0; joint_idx < 3; joint_idx++) {
-                int pin = leg_idx * 3 + joint_idx;
-                right_pwm_values[pin] = lut[step_count / 2][leg_idx][joint_idx];
-                left_pwm_values[pin] = lut[step_count / 2][leg_idx + 3][joint_idx];
-            }
-        }
-        step_count = (step_count + 1) % (lut_size * 2);
     }
 
     bool update_angles(float new_angles[12], float angles[12], bool useLerp = true) {
@@ -262,7 +189,6 @@ class MotionService {
     uint16_t right_pwm_values[9] = {SERVOMID};
     uint16_t left_pwm_values[9] = {SERVOMID};
 
-    // std::unique_ptr<GaitState> crawlGait = std::make_unique<EightPhaseWalkState>();
     // std::unique_ptr<GaitState> walkGait = std::make_unique<BezierState>();
 
     MOTION_STATE motionState = MOTION_STATE::DEACTIVATED;
@@ -271,10 +197,6 @@ class MotionService {
     body_state_t body_state = {0, 0, 0, 0, 0, 15};
     float new_angles[18] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     float angles[18] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-
-    float dir[18] = {
-        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    };
 };
 
 #endif

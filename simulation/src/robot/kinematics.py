@@ -72,14 +72,12 @@ class Kinematics:
         x = self.mount_x + ext * self.ca
         y = self.mount_y + ext * self.sa
         z = self.j2_j3 * np.cos(j2) - self.j3_tip * np.sin(j3) * np.ones_like(x)
-        return np.column_stack([x, y, z])
+        return np.column_stack([x, y, z, np.ones_like(x)])
 
     def inverse_kinematics(self, body_state):
         T = get_transformation_matrix(body_state)
 
-        feet = body_state["feet"]
-        pts = np.hstack([feet, np.ones((6, 1))])
-        world = (T @ pts.T).T[:, :3] - self.mount_position
+        world = (T @ body_state["feet"].T).T[:, :3] - self.mount_position
 
         lx = world[:, 0] * self.ca + world[:, 1] * self.sa
         ly = world[:, 0] * self.sa - world[:, 1] * self.ca

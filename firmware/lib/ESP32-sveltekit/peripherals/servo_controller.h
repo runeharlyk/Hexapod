@@ -116,13 +116,8 @@ class ServoController : public StatefulService<ServoSettings> {
             left_pwm[servoLeft.pin] = left_current_pwm[i];
             right_pwm[servoRight.pin] = right_current_pwm[i];
 
-
-            if (servoLeft.pin > max_pin_used) {
-                max_pin_used = servoLeft.pin;
-            }
-            if (servoRight.pin > max_pin_used) {
-                max_pin_used = servoRight.pin;
-            }
+            if (servoLeft.pin > max_pin_used) max_pin_used = servoLeft.pin;
+            if (servoRight.pin > max_pin_used) max_pin_used = servoRight.pin;
         }
         _left_pca.setMultiplePWM(left_pwm, max_pin_used + 1);
         _right_pca.setMultiplePWM(right_pwm, max_pin_used + 1);

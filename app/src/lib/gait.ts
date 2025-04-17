@@ -99,6 +99,7 @@ export class GaitController {
                 phNorm
             );
             newFeet[i] = defaultFoot.map((v, j) => v + deltaPos[j] + deltaRot[j]);
+            newFeet[i][3] = 1;
         }
 
         body.feet = newFeet;

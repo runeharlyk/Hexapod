@@ -10,18 +10,6 @@ export interface body_state_t {
     feet: number[][];
 }
 
-export interface position {
-    x: number;
-    y: number;
-    z: number;
-}
-
-export interface target_position {
-    x: number;
-    z: number;
-    yaw: number;
-}
-
 export interface HexapodConfig {
     legMountX: number[];
     legMountY: number[];
@@ -80,13 +68,13 @@ export default class Kinematics {
         this.sa = this.mountAngles.map(Math.sin);
     }
 
-    genPosture(j2: number, j3: number): [number, number, number][] {
+    genPosture(j2: number, j3: number): [number, number, number, number][] {
         const ext = this.rootJ1 + this.j1J2 + this.j2J3 * Math.sin(j2) + this.j3Tip * Math.cos(j3);
         return this.mountX.map((mx, i) => {
             const x = mx + ext * this.ca[i];
             const y = this.mountY[i] + ext * this.sa[i];
             const z = this.j2J3 * Math.cos(j2) - this.j3Tip * Math.sin(j3);
-            return [x, y, z] as [number, number, number];
+            return [x, y, z, 1] as [number, number, number, number];
         });
     }
 
@@ -95,8 +83,7 @@ export default class Kinematics {
         const angles: [number, number, number][] = [];
 
         for (let i = 0; i < bodyState.feet.length; i++) {
-            const [fx, fy, fz] = bodyState.feet[i];
-            const [wx, wy, wz] = multiplyVector(T, [fx, fy, fz, 1])
+            const [wx, wy, wz] = multiplyVector(T, bodyState.feet[i])
                 .slice(0, 3)
                 .map((v, idx) => v - this.mountPosition[i][idx]);
 
