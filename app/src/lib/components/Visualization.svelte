@@ -5,17 +5,9 @@
     import SceneBuilder from '$lib/sceneBuilder';
     import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
     import type { URDFRobot } from 'urdf-loader';
-    import { degToRad, lerp } from 'three/src/math/MathUtils';
-    import Kinematics, { type body_state_t } from '$lib/kinematic';
-    import { config } from './config';
-    import {
-        default_offset,
-        default_stand_frac,
-        GaitController,
-        GaitLabels,
-        GaitType,
-        type gait_state_t
-    } from '$lib/gait';
+    import { lerp } from 'three/src/math/MathUtils';
+    import { default_offset, default_stand_frac, GaitLabels, GaitType } from '$lib/gait';
+    import Motion from '$lib/motion';
 
     interface Props {
         sky?: boolean;
@@ -30,15 +22,10 @@
     let sceneManager = $state(new SceneBuilder());
     let canvas: HTMLCanvasElement | null = $state(null);
 
-    let lastTick = 0;
     const angles = new Array(18).fill(0);
     const targetAngles = new Array(18).fill(0);
 
-    const kinematics = new Kinematics(config);
-
-    const defaultPosition = kinematics.genPosture(degToRad(60), degToRad(75));
-
-    const gait = new GaitController(defaultPosition);
+    const motion = new Motion();
 
     let gui_panel: GUI;
 
@@ -80,41 +67,12 @@
         {}
     );
 
-    const body_state: body_state_t = {
-        omega: 0,
-        phi: 0,
-        psi: 0,
-        xm: 0,
-        ym: 0,
-        zm: 15,
-        feet: defaultPosition
-    };
-
-    const gait_state: gait_state_t = {
-        step_height: 15,
-        step_x: 0,
-        step_z: 0,
-        step_angle: 0,
-        step_speed: 1,
-        step_depth: 0.002,
-        stand_frac: default_stand_frac[GaitType.TRI_GATE],
-        offset: default_offset[GaitType.TRI_GATE],
-        gait_type: GaitType.TRI_GATE
-    };
-
     onMount(async () => {
         await populateModelCache();
         await createScene();
         if (panel) createPanel();
 
-        outControllerData.subscribe(data => {
-            gait_state.step_x = data[1];
-            gait_state.step_z = data[2];
-            gait_state.step_angle = data[3] / 150;
-
-            body_state.omega = data[4] / 500;
-            body_state.zm = data[5] / 2.4;
-        });
+        outControllerData.subscribe(data => motion.handleCommand(data));
     });
 
     onDestroy(() => {
@@ -133,30 +91,30 @@
         general.add(settings, 'Auto orient robot');
 
         const gait = gui_panel.addFolder('Gait');
-        gait.add(gait_state, 'step_height', 0, 50, 0.01).name('Step Height');
-        gait.add(gait_state, 'step_x', -50, 50, 0.01).name('Step X');
-        gait.add(gait_state, 'step_z', -50, 50, 0.01).name('Step Z');
-        gait.add(gait_state, 'step_angle', -Math.PI / 4, Math.PI / 4, 0.01).name('Step Angle');
-        gait.add(gait_state, 'step_speed', 0, 2, 0.01).name('Step Speed');
-        gait.add(gait_state, 'step_depth', 0, 0.01, 0.001).name('Step Depth');
-        gait.add(gait_state, 'stand_frac', 0, 1, 0.01).name('Stand Fraction');
-        gait.add(gait_state, 'gait_type', GaitLabels)
+        gait.add(motion.gait_state, 'step_height', 0, 50, 0.01).name('Step Height');
+        gait.add(motion.gait_state, 'step_x', -50, 50, 0.01).name('Step X');
+        gait.add(motion.gait_state, 'step_z', -50, 50, 0.01).name('Step Z');
+        gait.add(motion.gait_state, 'step_angle', -Math.PI / 4, Math.PI / 4, 0.01).name(
+            'Step Angle'
+        );
+        gait.add(motion.gait_state, 'step_speed', 0, 2, 0.01).name('Step Speed');
+        gait.add(motion.gait_state, 'step_depth', 0, 0.01, 0.001).name('Step Depth');
+        gait.add(motion.gait_state, 'stand_frac', 0, 1, 0.01).name('Stand Fraction');
+        gait.add(motion.gait_state, 'gait_type', GaitLabels)
             .name('Gait Type')
             .onChange((value: GaitType) => {
-                gait_state.gait_type = value;
-                gait_state.offset = default_offset[value];
-                gait_state.stand_frac = default_stand_frac[value];
+                motion.gait_state.gait_type = value;
+                motion.gait_state.offset = default_offset[value];
+                motion.gait_state.stand_frac = default_stand_frac[value];
             });
 
         const kin = gui_panel.addFolder('Kinematics');
         for (const name of ['omega', 'phi', 'psi']) {
-            kin.add(body_state, name as any, -Math.PI / 10, Math.PI / 10, 0.01)
-                .onChange(updateInverseKinematics)
-                .listen();
+            kin.add(motion.body_state, name as any, -Math.PI / 10, Math.PI / 10, 0.01);
         }
-        kin.add(body_state, 'xm', -60, 60, 0.01).onChange(updateInverseKinematics).listen();
-        kin.add(body_state, 'ym', -60, 60, 0.01).onChange(updateInverseKinematics).listen();
-        kin.add(body_state, 'zm', -60, 60, 0.01).onChange(updateInverseKinematics).listen();
+        kin.add(motion.body_state, 'xm', -60, 60, 0.01);
+        kin.add(motion.body_state, 'ym', -60, 60, 0.01);
+        kin.add(motion.body_state, 'zm', -60, 60, 0.01);
 
         const limbs = gui_panel.addFolder('Limbs');
         limbs.add({ center: resetLimbs }, 'center');
@@ -180,7 +138,7 @@
             jointAngles[name] = 0;
         }
         updateLimbs();
-        gait_state.gait_type = GaitType.NONE;
+        motion.gait_state.gait_type = GaitType.NONE;
     };
 
     const updateLimbs = () => {
@@ -195,16 +153,6 @@
             jointAngles[$jointNames[i]] = targetAngles[i];
         }
     };
-
-    const updateInverseKinematics = () => {
-        const newAngles = kinematics.inverseKinematics(body_state).flat();
-        const leg_order = [3, 0, 4, 1, 5, 2];
-        const reorderedAngles = leg_order.flatMap(i => newAngles.slice(i * 3, i * 3 + 3));
-
-        setTargetAngles(reorderedAngles);
-    };
-
-    updateInverseKinematics();
 
     const createScene = async () => {
         if (!canvas) return;
@@ -234,30 +182,24 @@
         sceneManager.orbit.target = robot.position.clone();
     };
 
-    const update_gait = () => {
-        const delta = performance.now() - lastTick;
-        lastTick = performance.now();
-        gait.step(gait_state, body_state, delta / 1000);
-        updateInverseKinematics();
-    };
-
     const orient_robot = (robot: URDFRobot) => {
         if (settings['Robot transform controls'] || !settings['Auto orient robot']) return;
 
-        robot.position.z = smooth(robot.position.z, -body_state.xm / 12, 0.1);
-        robot.position.x = smooth(robot.position.x, -body_state.ym / 12, 0.1);
+        robot.position.z = smooth(robot.position.z, -motion.body_state.xm / 12, 0.1);
+        robot.position.x = smooth(robot.position.x, -motion.body_state.ym / 12, 0.1);
 
-        robot.rotation.z = smooth(robot.rotation.z, -body_state.psi + Math.PI / 2, 0.1);
-        robot.rotation.y = smooth(robot.rotation.y, body_state.omega, 0.1);
-        robot.rotation.x = smooth(robot.rotation.x, -body_state.phi - Math.PI / 2, 0.1);
+        robot.rotation.z = smooth(robot.rotation.z, -motion.body_state.psi + Math.PI / 2, 0.1);
+        robot.rotation.y = smooth(robot.rotation.y, motion.body_state.omega, 0.1);
+        robot.rotation.x = smooth(robot.rotation.x, -motion.body_state.phi - Math.PI / 2, 0.1);
     };
 
     const render = () => {
         const robot = sceneManager.model;
         if (!robot) return;
+        const updated = motion.step();
+        if (updated) setTargetAngles(motion.targetAngles);
         update_camera(robot);
         orient_robot(robot);
-        if (gait_state.gait_type !== GaitType.NONE) update_gait();
 
         for (let i = 0; i < $jointNames.length; i++) {
             angles[i] = smooth(robot.joints[$jointNames[i]].angle as number, targetAngles[i], 0.1);
