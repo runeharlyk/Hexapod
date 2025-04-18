@@ -19,7 +19,7 @@ export const default_offset: Record<GaitType, number[]> = {
     [GaitType.TRI_GATE]: [0, 0.5, 0, 0.5, 0, 0.5],
     [GaitType.BI_GATE]: [0, 1 / 3, 2 / 3, 2 / 3, 1 / 3, 0],
     [GaitType.WAVE]: [0, (1 / 6) * 1, (1 / 6) * 2, (1 / 6) * 5, (1 / 6) * 4, (1 / 6) * 3],
-    [GaitType.RIPPLE]: [0, (1 / 6) * 1, (1 / 6) * 2, (1 / 6) * 5, (1 / 6) * 4, (1 / 6) * 3]
+    [GaitType.RIPPLE]: [0, (1 / 6) * 4, (1 / 6) * 2, (1 / 6) * 5, (1 / 6) * 1, (1 / 6) * 3]
 };
 
 export const default_stand_frac: Record<GaitType, number> = {

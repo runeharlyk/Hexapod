@@ -6,7 +6,7 @@
     import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
     import type { URDFRobot } from 'urdf-loader';
     import { lerp } from 'three/src/math/MathUtils';
-    import { default_offset, default_stand_frac, GaitLabels, GaitType } from '$lib/gait';
+    import { GaitLabels, GaitType } from '$lib/gait';
     import Motion, { MotionModes } from '$lib/motion';
 
     interface Props {
