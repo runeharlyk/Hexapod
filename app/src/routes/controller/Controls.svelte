@@ -7,6 +7,8 @@
     import { VerticalSlider } from '$lib/components/input';
     import { MotionModes } from '$lib/motion';
     import { GaitType } from '$lib/gait';
+    import { notifications } from '$lib/components/toasts/notifications';
+    import { gamepadAxes, gamepadButtons, hasGamepad } from '$lib/stores/gamepad';
 
     let throttle = new throttler();
     let left: nipplejs.JoystickManager;
@@ -14,6 +16,31 @@
 
     let throttle_timing = 40;
     let data = new Array(8);
+
+    $effect(() => {
+        if ($hasGamepad) {
+            notifications.success('🎮 Gamepad connected', 3000);
+        }
+    });
+
+    $effect(() => {
+        handleJoyMove('left', { x: $gamepadAxes[0], y: $gamepadAxes[1] });
+        handleJoyMove('right', { x: $gamepadAxes[2], y: $gamepadAxes[3] });
+    });
+
+    $effect(() => {
+        if ($gamepadButtons.length === 0) return;
+
+        if ($gamepadButtons[0].pressed) {
+            mode.set(MotionModes.DEACTIVATED);
+        } else if ($gamepadButtons[1].pressed) {
+            mode.set(MotionModes.IDLE);
+        } else if ($gamepadButtons[2].pressed) {
+            mode.set(MotionModes.STAND);
+        } else if ($gamepadButtons[3].pressed) {
+            mode.set(MotionModes.WALK);
+        }
+    });
 
     onMount(() => {
         left = nipplejs.create({
@@ -72,7 +99,7 @@
     };
 
     const handleRange = (event: Event, key: 'speed' | 'height' | 's1') => {
-        const value: number = event.target?.value;
+        const value: number = Number((event.target as HTMLInputElement).value);
 
         input.update(inputData => {
             inputData[key] = value;

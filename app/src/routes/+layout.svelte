@@ -21,7 +21,7 @@
         useFeatureFlags
     } from '$lib/stores';
     import type { Analytics, DownloadOTA } from '$lib/types/models';
-    import type { MotionModes } from '$lib/motion';
+    import { MotionModes } from '$lib/motion';
     interface Props {
         children?: import('svelte').Snippet;
     }
@@ -35,9 +35,10 @@
         socket.init(`ws://${ws}/api/ws/events`);
 
         addEventListeners();
-
         outControllerData.subscribe(data => socket.sendEvent('input', { data }));
-        mode.subscribe(data => socket.sendEvent('mode', { data }));
+        mode.subscribe(data =>
+            socket.sendEvent('mode', { data: Object.values(MotionModes).indexOf(data) })
+        );
         servoAnglesOut.subscribe(data => socket.sendEvent('angles', { data }));
         kinematicData.subscribe(data => socket.sendEvent('position', { data }));
     });
