@@ -9,12 +9,12 @@ import {
     type gait_state_t
 } from './gait';
 
-enum MotionModes {
-    DEACTIVATED,
-    IDLE,
-    POSE,
-    STAND,
-    WALK
+export enum MotionModes {
+    DEACTIVATED = 'deactivated',
+    IDLE = 'idle',
+    POSE = 'pose',
+    STAND = 'stand',
+    WALK = 'walk'
 }
 
 export default class Motion {
@@ -57,6 +57,16 @@ export default class Motion {
             offset: default_offset[GaitType.TRI_GATE],
             gait_type: GaitType.TRI_GATE
         };
+    }
+
+    setMode(mode: MotionModes) {
+        this.mode = mode;
+    }
+
+    setGait(gait: GaitType) {
+        this.gait_state.gait_type = gait;
+        this.gait_state.offset = default_offset[gait];
+        this.gait_state.stand_frac = default_stand_frac[gait];
     }
 
     handleCommand(command: number[]) {

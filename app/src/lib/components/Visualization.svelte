@@ -1,13 +1,13 @@
 <script lang="ts">
     import { onDestroy, onMount } from 'svelte';
-    import { jointNames, model, outControllerData } from '$lib/stores';
+    import { gait, jointNames, mode, model, outControllerData } from '$lib/stores';
     import { populateModelCache } from '$lib/utilities';
     import SceneBuilder from '$lib/sceneBuilder';
     import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
     import type { URDFRobot } from 'urdf-loader';
     import { lerp } from 'three/src/math/MathUtils';
     import { default_offset, default_stand_frac, GaitLabels, GaitType } from '$lib/gait';
-    import Motion from '$lib/motion';
+    import Motion, { MotionModes } from '$lib/motion';
 
     interface Props {
         sky?: boolean;
@@ -73,6 +73,8 @@
         if (panel) createPanel();
 
         outControllerData.subscribe(data => motion.handleCommand(data));
+        mode.subscribe(mode => motion.setMode(mode));
+        gait.subscribe(gait => motion.setGait(gait));
     });
 
     onDestroy(() => {
@@ -90,22 +92,21 @@
         general.add(settings, 'Robot transform controls');
         general.add(settings, 'Auto orient robot');
 
-        const gait = gui_panel.addFolder('Gait');
-        gait.add(motion.gait_state, 'step_height', 0, 50, 0.01).name('Step Height');
-        gait.add(motion.gait_state, 'step_x', -50, 50, 0.01).name('Step X');
-        gait.add(motion.gait_state, 'step_z', -50, 50, 0.01).name('Step Z');
-        gait.add(motion.gait_state, 'step_angle', -Math.PI / 4, Math.PI / 4, 0.01).name(
-            'Step Angle'
-        );
-        gait.add(motion.gait_state, 'step_speed', 0, 2, 0.01).name('Step Speed');
-        gait.add(motion.gait_state, 'step_depth', 0, 0.01, 0.001).name('Step Depth');
-        gait.add(motion.gait_state, 'stand_frac', 0, 1, 0.01).name('Stand Fraction');
-        gait.add(motion.gait_state, 'gait_type', GaitLabels)
+        const gait_gui = gui_panel.addFolder('Gait');
+        gait_gui.add(motion.gait_state, 'step_height', 0, 50, 0.01).name('Step Height');
+        gait_gui.add(motion.gait_state, 'step_x', -50, 50, 0.01).name('Step X');
+        gait_gui.add(motion.gait_state, 'step_z', -50, 50, 0.01).name('Step Z');
+        gait_gui
+            .add(motion.gait_state, 'step_angle', -Math.PI / 4, Math.PI / 4, 0.01)
+            .name('Step Angle');
+        gait_gui.add(motion.gait_state, 'step_speed', 0, 2, 0.01).name('Step Speed');
+        gait_gui.add(motion.gait_state, 'step_depth', 0, 0.01, 0.001).name('Step Depth');
+        gait_gui.add(motion.gait_state, 'stand_frac', 0, 1, 0.01).name('Stand Fraction');
+        gait_gui
+            .add(motion.gait_state, 'gait_type', GaitLabels)
             .name('Gait Type')
             .onChange((value: GaitType) => {
-                motion.gait_state.gait_type = value;
-                motion.gait_state.offset = default_offset[value];
-                motion.gait_state.stand_frac = default_stand_frac[value];
+                gait.set(value);
             });
 
         const kin = gui_panel.addFolder('Kinematics');
@@ -125,20 +126,20 @@
                 .listen();
         }
 
-        const visibility = gui_panel.addFolder('Visualization');
-        visibility.add(settings, 'Trace feet');
-        visibility.add(settings, 'Trace points', 1, 1000, 1);
-        visibility.add(settings, 'Target position');
-        visibility.add(settings, 'Smooth motion');
-        visibility.addColor(settings, 'Background');
+        const visualization = gui_panel.addFolder('Visualization');
+        visualization.add(settings, 'Trace feet');
+        visualization.add(settings, 'Trace points', 1, 1000, 1);
+        visualization.add(settings, 'Target position');
+        visualization.add(settings, 'Smooth motion');
+        visualization.addColor(settings, 'Background');
     };
 
     const resetLimbs = () => {
         for (const name of $jointNames) {
             jointAngles[name] = 0;
         }
+        mode.set(MotionModes.IDLE);
         updateLimbs();
-        motion.gait_state.gait_type = GaitType.NONE;
     };
 
     const updateLimbs = () => {

@@ -2,14 +2,13 @@ import type { body_state_t } from './kinematic';
 import type { Matrix } from './math';
 
 export enum GaitType {
-    NONE = -1,
-    TRI_GATE = 0,
-    BI_GATE = 1,
-    WAVE = 2,
-    RIPPLE = 3
+    TRI_GATE = 'Tri Gate',
+    BI_GATE = 'Bi Gate',
+    WAVE = 'Wave',
+    RIPPLE = 'Ripple'
 }
 
-export const GaitLabels: Record<string, number> = {
+export const GaitLabels: Record<string, GaitType> = {
     'Tri Gate': GaitType.TRI_GATE,
     'Bi Gate': GaitType.BI_GATE,
     Wave: GaitType.WAVE,
@@ -17,7 +16,6 @@ export const GaitLabels: Record<string, number> = {
 };
 
 export const default_offset: Record<GaitType, number[]> = {
-    [GaitType.NONE]: [],
     [GaitType.TRI_GATE]: [0, 0.5, 0, 0.5, 0, 0.5],
     [GaitType.BI_GATE]: [0, 1 / 3, 2 / 3, 2 / 3, 1 / 3, 0],
     [GaitType.WAVE]: [0, (1 / 6) * 1, (1 / 6) * 2, (1 / 6) * 5, (1 / 6) * 4, (1 / 6) * 3],
@@ -25,7 +23,6 @@ export const default_offset: Record<GaitType, number[]> = {
 };
 
 export const default_stand_frac: Record<GaitType, number> = {
-    [GaitType.NONE]: 0,
     [GaitType.TRI_GATE]: 3.1 / 6,
     [GaitType.BI_GATE]: 2.1 / 6,
     [GaitType.WAVE]: 5 / 6,

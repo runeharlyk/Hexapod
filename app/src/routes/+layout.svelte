@@ -11,7 +11,6 @@
     import {
         telemetry,
         analytics,
-        ModesEnum,
         kinematicData,
         mode,
         outControllerData,
@@ -22,6 +21,7 @@
         useFeatureFlags
     } from '$lib/stores';
     import type { Analytics, DownloadOTA } from '$lib/types/models';
+    import type { MotionModes } from '$lib/motion';
     interface Props {
         children?: import('svelte').Snippet;
     }
@@ -51,7 +51,7 @@
         socket.on('close', handleClose);
         socket.on('error', handleError);
         socket.on('rssi', handleNetworkStatus);
-        socket.on('mode', (data: ModesEnum) => mode.set(data));
+        socket.on('mode', (data: MotionModes) => mode.set(data));
         socket.on('analytics', handleAnalytics);
         socket.on('angles', (angles: number[]) => {
             if (angles.length) servoAngles.set(angles);

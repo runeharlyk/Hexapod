@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { mode, modes } from "$lib/stores";
+    import { MotionModes } from '$lib/motion';
+    import { mode } from '$lib/stores';
 
     const deactivate = async () => {
-		mode.set(modes.indexOf('deactivated'));
-	};
+        mode.set(MotionModes.DEACTIVATED);
+    };
 </script>
-
 
 <button onclick={deactivate} class="bg-error text-white btn rounded-none">STOP</button>
