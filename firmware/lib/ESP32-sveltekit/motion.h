@@ -128,8 +128,8 @@ class MotionService {
                 kinematics.genPosture(DEG_TO_RAD_F(60), DEG_TO_RAD_F(75), body_state.feet);
                 kinematics.inverseKinematics(body_state, new_angles);
 
-                int8_t l_dir[3] = {1, -1, 1};
-                int8_t r_dir[3] = {1, 1, -1};
+                int8_t l_dir[3] = {-1, -1, 1};
+                int8_t r_dir[3] = {-1, 1, -1};
                 int16_t center_pwm = 307;
 
                 for (int leg_idx = 0; leg_idx < 3; leg_idx++) {
@@ -142,15 +142,13 @@ class MotionService {
                     }
                 }
                 // crawlGait->step(body_state, command);
-                // kinematics.calculate_inverse_kinematics(body_state, new_angles);
                 break;
             }
             case MOTION_STATE::WALK:
                 // walkGait->step(body_state, command);
-                // kinematics.calculate_inverse_kinematics(body_state, new_angles);
                 break;
         }
-        return true; // update_angles(new_angles, angles);
+        return true;
     }
 
     float *getAngles() { return angles; }
