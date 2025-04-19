@@ -51,10 +51,10 @@ class GaitController {
     void stanceCurve(const float length, const float angle, const float* depth, const float phase, float* point) {
         float step = length * (1.0f - 2.0f * phase);
         point[0] += step * std::cos(angle);
-        point[2] += step * std::sin(angle);
+        point[1] += step * std::sin(angle);
 
         if (length != 0.0f) {
-            point[1] = -*depth * std::cos((M_PI * (point[0] + point[2])) / (2.f * length));
+            point[2] = -*depth * std::cos((M_PI * (point[0] + point[2])) / (2.f * length));
         }
     }
 
@@ -69,8 +69,8 @@ class GaitController {
         for (int i = 0; i < 12; i++) {
             float b = COMBINATORIAL_VALUES[i] * phase_power * inv_phase_power;
             point[0] += b * BEZIER_STEPS[i] * length * X_POLAR;
-            point[1] += b * BEZIER_HEIGHTS[i] * *height;
-            point[2] += b * BEZIER_STEPS[i] * length * Z_POLAR;
+            point[1] += b * BEZIER_STEPS[i] * length * Z_POLAR;
+            point[2] += b * BEZIER_HEIGHTS[i] * *height;
 
             phase_power *= phase;
             inv_phase_power /= one_minus_phase;
@@ -78,11 +78,11 @@ class GaitController {
     }
 
     float yawArc(const float feet_pos[4], const float* current_pos) {
-        const float foot_mag = std::hypot(feet_pos[0], feet_pos[2]);
-        const float foot_dir = std::atan2(feet_pos[2], feet_pos[0]);
-        const float offsets[] = {current_pos[0] - feet_pos[0], current_pos[1] - feet_pos[1],
-                                 current_pos[2] - feet_pos[2]};
-        const float offset_mag = std::hypot(offsets[0], offsets[2]);
+        const float foot_mag = std::hypot(feet_pos[0], feet_pos[1]);
+        const float foot_dir = std::atan2(feet_pos[1], feet_pos[0]);
+        const float offsets[] = {current_pos[0] - feet_pos[0], current_pos[2] - feet_pos[2],
+                                 current_pos[1] - feet_pos[1]};
+        const float offset_mag = std::hypot(offsets[0], offsets[1]);
         const float offset_mod = std::atan2(offset_mag, foot_mag);
 
         return M_PI_2 + foot_dir + offset_mod;
@@ -107,7 +107,7 @@ class GaitController {
     }
 
   public:
-    GaitController(const float defaultPos[6][4]) { COPY_2D_ARRAY_4x4(defaultPosition, defaultPos); }
+    GaitController(const float defaultPos[6][4]) { COPY_2D_ARRAY_6x4(defaultPosition, defaultPos); }
 
     void step(gait_state_t& gait, body_state_t& body, float dt) {
         const float step_x = gait.step_x;
