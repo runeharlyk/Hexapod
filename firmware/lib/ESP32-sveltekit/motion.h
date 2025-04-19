@@ -34,7 +34,6 @@ class MotionService {
         socket.onSubscribe(ANGLES_EVENT,
                            std::bind(&MotionService::syncAngles, this, std::placeholders::_1, std::placeholders::_2));
 
-        kinematics.genPosture(DEG_TO_RAD_F(60), DEG_TO_RAD_F(75), default_feet_pos);
         body_state.updateFeet(default_feet_pos);
     }
 
@@ -98,6 +97,7 @@ class MotionService {
         char output[2];
         itoa((int)motionState, output, 10);
         motionState == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
+        if (motionState == MOTION_STATE::STAND) body_state.updateFeet(default_feet_pos);
         socket.emit(MODE_EVENT, output, String(originId).c_str());
     }
 
@@ -124,6 +124,7 @@ class MotionService {
                 update_pwm();
                 break;
             case MOTION_STATE::WALK: {
+                gait.step(gait_state, body_state, 5.f / 1000.f);
                 kinematics.inverseKinematics(body_state, new_angles);
                 update_pwm();
                 break;
@@ -155,15 +156,14 @@ class MotionService {
     ServoController *_servoController;
     int step_count = 0;
     Kinematics kinematics;
-    // GaitController gait(default_feet_pos);
+    GaitController gait;
 
     ControllerCommand command = {0, 0, 0, 0, 0, 0, 0, 0};
     body_state_t body_state = {0, 0, 0, 0, 0, 15};
     gait_state_t gait_state = {15, 0, 0, 0, 1, 0.002, default_stand_frac, GaitType::TRI_GATE, {0, 0.5, 0, 0.5, 0, 0.5}};
 
-    float default_feet_pos[6][4];
-
-    friend class GaitState;
+    float default_feet_pos[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
+                                    {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
 
     uint16_t right_pwm_values[9] = {SERVOMID};
     uint16_t left_pwm_values[9] = {SERVOMID};

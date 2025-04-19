@@ -120,21 +120,22 @@ export class GaitController {
 }
 
 export function sine_curve(length: number, angle: number, height: number, phase: number): number[] {
-    const x = length * (1 - 2 * phase) * Math.cos(angle);
-    const z = length * (1 - 2 * phase) * Math.sin(angle);
+    const step = length * (1 - 2 * phase);
+    const x = step * Math.cos(angle);
+    const z = step * Math.sin(angle);
     const y = length ? height * Math.cos((Math.PI * (x + z)) / (2 * length)) : 0;
     return [x, z, y];
 }
 
 const yawArc = (default_foot_pos: number[], current_foot_pos: number[]): number => {
-    const foot_mag = Math.sqrt(default_foot_pos[0] ** 2 + default_foot_pos[1] ** 2);
+    const foot_mag = Math.hypot(default_foot_pos[0] + default_foot_pos[1]);
     const foot_dir = Math.atan2(default_foot_pos[1], default_foot_pos[0]);
     const offsets = [
         current_foot_pos[0] - default_foot_pos[0],
         current_foot_pos[2] - default_foot_pos[2],
         current_foot_pos[1] - default_foot_pos[1]
     ];
-    const offset_mag = Math.sqrt(offsets[0] ** 2 + offsets[1] ** 2);
+    const offset_mag = Math.hypot(offsets[0] + offsets[1]);
     const offset_mod = Math.atan2(offset_mag, foot_mag);
 
     return Math.PI / 2.0 + foot_dir + offset_mod;

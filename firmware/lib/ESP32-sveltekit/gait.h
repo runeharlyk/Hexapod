@@ -24,7 +24,8 @@ struct ControllerCommand {
 class GaitController {
   private:
     float phase = 0.0f;
-    float defaultPosition[6][4];
+    float defaultPosition[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
+                                   {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
 
     static constexpr uint8_t BEZIER_POINTS = 12;
     static constexpr std::array<float, BEZIER_POINTS> COMBINATORIAL_VALUES = {
@@ -51,10 +52,10 @@ class GaitController {
     void stanceCurve(const float length, const float angle, const float* depth, const float phase, float* point) {
         float step = length * (1.0f - 2.0f * phase);
         point[0] += step * std::cos(angle);
-        point[2] += step * std::sin(angle);
+        point[1] += step * std::sin(angle);
 
         if (length != 0.0f) {
-            point[1] = -*depth * std::cos((M_PI * (point[0] + point[2])) / (2.f * length));
+            point[2] = *depth * std::cos((M_PI * (point[0] + point[1])) / (2.f * length));
         }
     }
 
@@ -69,20 +70,20 @@ class GaitController {
         for (int i = 0; i < 12; i++) {
             float b = COMBINATORIAL_VALUES[i] * phase_power * inv_phase_power;
             point[0] += b * BEZIER_STEPS[i] * length * X_POLAR;
-            point[1] += b * BEZIER_HEIGHTS[i] * *height;
-            point[2] += b * BEZIER_STEPS[i] * length * Z_POLAR;
+            point[1] += b * BEZIER_STEPS[i] * length * Z_POLAR;
+            point[2] += b * BEZIER_HEIGHTS[i] * *height;
 
             phase_power *= phase;
             inv_phase_power /= one_minus_phase;
         }
     }
 
-    float yawArc(const float feet_pos[4], const float* current_pos) {
-        const float foot_mag = std::hypot(feet_pos[0], feet_pos[2]);
-        const float foot_dir = std::atan2(feet_pos[2], feet_pos[0]);
-        const float offsets[] = {current_pos[0] - feet_pos[0], current_pos[1] - feet_pos[1],
-                                 current_pos[2] - feet_pos[2]};
-        const float offset_mag = std::hypot(offsets[0], offsets[2]);
+    float yawArc(const float default_foot_pos[4], const float* current_pos) {
+        const float foot_mag = std::hypot(default_foot_pos[0], default_foot_pos[1]);
+        const float foot_dir = std::atan2(default_foot_pos[1], default_foot_pos[0]);
+        const float offsets[] = {current_pos[0] - default_foot_pos[0], current_pos[2] - default_foot_pos[2],
+                                 current_pos[1] - default_foot_pos[1]};
+        const float offset_mag = std::hypot(offsets[0], offsets[1]);
         const float offset_mod = std::atan2(offset_mag, foot_mag);
 
         return M_PI_2 + foot_dir + offset_mod;
@@ -107,7 +108,7 @@ class GaitController {
     }
 
   public:
-    GaitController(const float defaultPos[6][4]) { COPY_2D_ARRAY_4x4(defaultPosition, defaultPos); }
+    GaitController() {}
 
     void step(gait_state_t& gait, body_state_t& body, float dt) {
         const float step_x = gait.step_x;
@@ -117,7 +118,7 @@ class GaitController {
         if (!step_x && !step_z && !angle) {
             for (int i = 0; i < 6; i++) {
                 for (int j = 0; j < 4; j++) {
-                    body.feet[i][j] += (defaultPosition[i][j] - body.feet[i][j]) * dt * 10;
+                    body.feet[i][j] += (defaultPosition[i][j] - body.feet[i][j]) * dt * 10.0f;
                 }
             }
             phase = 0;
@@ -134,7 +135,6 @@ class GaitController {
         COPY_2D_ARRAY_6x4(newFeet, defaultPosition);
 
         for (int i = 0; i < 6; i++) {
-            const float* defaultFoot = defaultPosition[i];
             const float* currentFoot = body.feet[i];
             const float phase = std::fmod(this->phase + gait.offset[i], 1.0f);
 
@@ -144,10 +144,10 @@ class GaitController {
             curveFn(length / 2, turnAmplitude, &amp, phNorm, deltaPos);
 
             float deltaRot[3] = {0, 0, 0};
-            curveFn((angle * 180) / M_PI, yawArc(defaultFoot, currentFoot), &amp, phNorm, deltaRot);
+            curveFn((angle * 180) / M_PI, yawArc(defaultPosition[i], currentFoot), &amp, phNorm, deltaRot);
 
             for (int j = 0; j < 3; j++) {
-                newFeet[i][j] = defaultFoot[j] + deltaPos[j] + deltaRot[j];
+                newFeet[i][j] = defaultPosition[i][j] + deltaPos[j] + deltaRot[j];
             }
             newFeet[i][3] = 1;
         }
