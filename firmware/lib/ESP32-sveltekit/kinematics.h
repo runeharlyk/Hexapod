@@ -77,17 +77,17 @@ class Kinematics {
             mountX[i] = c.mountX[i];
             mountY[i] = c.mountY[i];
             float a = c.mountAngle[i] * M_PI / 180;
-            ca[i] = cosf(a);
-            sa[i] = sinf(a);
+            ca[i] = std::cos(a);
+            sa[i] = std::sin(a);
             mountPos[i][0] = mountX[i];
             mountPos[i][1] = mountY[i];
             mountPos[i][2] = 0;
         }
     }
 
-    void genPosture(float j2, float j3, float p[6][4]) {
-        float ext = rootJ1 + j1J2 + j2J3 * sinf(j2) + j3Tip * cosf(j3);
-        float z = j2J3 * cosf(j2) - j3Tip * sinf(j3);
+    constexpr void genPosture(float j2, float j3, float p[6][4]) {
+        float ext = rootJ1 + j1J2 + j2J3 * std::sin(j2) + j3Tip * std::cos(j3);
+        float z = j2J3 * std::cos(j2) - j3Tip * std::sin(j3);
         for (int i = 0; i < 6; i++) {
             p[i][0] = mountX[i] + ext * ca[i];
             p[i][1] = mountY[i] + ext * sa[i];
