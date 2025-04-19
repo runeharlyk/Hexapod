@@ -28,6 +28,34 @@
         (dest)[3][3] = (src)[3][3];  \
     } while (0)
 
+#define COPY_2D_ARRAY_6x4(dest, src) \
+    do {                             \
+        (dest)[0][0] = (src)[0][0];  \
+        (dest)[0][1] = (src)[0][1];  \
+        (dest)[0][2] = (src)[0][2];  \
+        (dest)[0][3] = (src)[0][3];  \
+        (dest)[1][0] = (src)[1][0];  \
+        (dest)[1][1] = (src)[1][1];  \
+        (dest)[1][2] = (src)[1][2];  \
+        (dest)[1][3] = (src)[1][3];  \
+        (dest)[2][0] = (src)[2][0];  \
+        (dest)[2][1] = (src)[2][1];  \
+        (dest)[2][2] = (src)[2][2];  \
+        (dest)[2][3] = (src)[2][3];  \
+        (dest)[3][0] = (src)[3][0];  \
+        (dest)[3][1] = (src)[3][1];  \
+        (dest)[3][2] = (src)[3][2];  \
+        (dest)[3][3] = (src)[3][3];  \
+        (dest)[4][0] = (src)[4][0];  \
+        (dest)[4][1] = (src)[4][1];  \
+        (dest)[4][2] = (src)[4][2];  \
+        (dest)[4][3] = (src)[4][3];  \
+        (dest)[5][0] = (src)[5][0];  \
+        (dest)[5][1] = (src)[5][1];  \
+        (dest)[5][2] = (src)[5][2];  \
+        (dest)[5][3] = (src)[5][3];  \
+    } while (0)
+
 #define MAT_MULT(A, B, result, rows, cols, result_cols) \
     dspm_mult_f32_ae32((float *)(A), (float *)(B), (float *)(result), (rows), (cols), (result_cols))
 

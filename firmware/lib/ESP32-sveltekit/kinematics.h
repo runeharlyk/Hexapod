@@ -7,7 +7,7 @@ struct body_state_t {
     float omega, phi, psi, xm, ym, zm;
     float feet[6][4];
 
-    void updateFeet(const float newFeet[6][4]) { COPY_2D_ARRAY_4x4(feet, newFeet); }
+    void updateFeet(const float newFeet[6][4]) { COPY_2D_ARRAY_6x4(feet, newFeet); }
 
     bool operator==(const body_state_t &other) const {
         if (!IS_ALMOST_EQUAL(omega, other.omega) || !IS_ALMOST_EQUAL(phi, other.phi) ||
@@ -20,24 +20,24 @@ struct body_state_t {
 };
 
 struct HexapodConfig {
-    float legMountX[6];
-    float legMountY[6];
-    float legMountAngle[6];
-    float legRootToJoint1;
-    float legJoint1ToJoint2;
-    float legJoint2ToJoint3;
-    float legJoint3ToTip;
+    const float mountX[6];
+    const float mountY[6];
+    const float mountAngle[6];
+    const float rootToJoint1;
+    const float joint1ToJoint2;
+    const float joint2ToJoint3;
+    const float joint3ToTip;
 };
 
-static HexapodConfig hexapodConfig = {{44.82, 61.03, 44.82, -44.82, -61.03, -44.82},
-                                      {74.82, 0, -74.82, 74.82, 0, -74.82},
-                                      {45, 0, -45, -225, -180, -135},
-                                      0,
-                                      38,
-                                      54.06,
-                                      97};
+constexpr HexapodConfig hexapodConfig = {{44.82, 61.03, 44.82, -44.82, -61.03, -44.82},
+                                         {74.82, 0, -74.82, 74.82, 0, -74.82},
+                                         {45, 0, -45, -225, -180, -135},
+                                         0,
+                                         38,
+                                         54.06,
+                                         97};
 
-inline void get_transformation_matrix(const body_state_t &b, float T[4][4]) {
+constexpr void get_transformation_matrix(const body_state_t &b, float T[4][4]) {
     float co = cosf(b.omega), so = sinf(b.omega);
     float cp = cosf(b.phi), sp = sinf(b.phi);
     float cs = cosf(b.psi), ss = sinf(b.psi);
@@ -69,14 +69,14 @@ class Kinematics {
 
   public:
     Kinematics(const HexapodConfig &c = hexapodConfig) {
-        rootJ1 = c.legRootToJoint1;
-        j1J2 = c.legJoint1ToJoint2;
-        j2J3 = c.legJoint2ToJoint3;
-        j3Tip = c.legJoint3ToTip;
+        rootJ1 = c.rootToJoint1;
+        j1J2 = c.joint1ToJoint2;
+        j2J3 = c.joint2ToJoint3;
+        j3Tip = c.joint3ToTip;
         for (int i = 0; i < 6; i++) {
-            mountX[i] = c.legMountX[i];
-            mountY[i] = c.legMountY[i];
-            float a = c.legMountAngle[i] * M_PI / 180;
+            mountX[i] = c.mountX[i];
+            mountY[i] = c.mountY[i];
+            float a = c.mountAngle[i] * M_PI / 180;
             ca[i] = cosf(a);
             sa[i] = sinf(a);
             mountPos[i][0] = mountX[i];
