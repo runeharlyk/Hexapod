@@ -83,7 +83,7 @@ export default class Motion {
                 this.gait_state.step_z = command[2];
                 this.gait_state.step_angle = command[3] / 150;
                 this.gait_state.step_speed = command[6] / 128 + 1;
-                this.gait_state.step_height = command[7] / 2.4;
+                this.gait_state.step_height = command[7] / 4 + 35;
 
                 this.body_state.omega = command[4] / 500;
                 break;
