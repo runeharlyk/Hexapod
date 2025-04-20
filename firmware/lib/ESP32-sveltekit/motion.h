@@ -130,39 +130,18 @@ class MotionService {
         switch (motionState) {
             case MOTION_STATE::DEACTIVATED: return false;
             case MOTION_STATE::IDLE: return false;
-            case MOTION_STATE::POSE: _servoController->getCalibrationPWM(left_pwm_values, right_pwm_values); break;
-            case MOTION_STATE::STAND:
-                kinematics.inverseKinematics(body_state, new_angles);
-                update_pwm();
-                break;
+            case MOTION_STATE::POSE: _servoController->setCenterPwm(); return false;
+            case MOTION_STATE::STAND: kinematics.inverseKinematics(body_state, angles); break;
             case MOTION_STATE::WALK: {
                 gait.step(gait_state, body_state, 5.f / 1000.f);
-                kinematics.inverseKinematics(body_state, new_angles);
-                update_pwm();
+                kinematics.inverseKinematics(body_state, angles);
                 break;
             }
         }
         return true;
     }
 
-    void update_pwm() {
-        int8_t l_dir[3] = {-1, -1, 1};
-        int8_t r_dir[3] = {-1, 1, -1};
-        int16_t center_pwm = 307;
-
-        for (int leg_idx = 0; leg_idx < 3; leg_idx++) {
-            for (int joint_idx = 0; joint_idx < 3; joint_idx++) {
-                int pin = leg_idx * 3 + joint_idx;
-                left_pwm_values[pin] = (new_angles[leg_idx * 3 + joint_idx] * l_dir[joint_idx]) * 2 + center_pwm;
-                right_pwm_values[pin] = (new_angles[leg_idx * 3 + joint_idx + 9] * r_dir[joint_idx]) * 2 + center_pwm;
-            }
-        }
-    }
-
     float *getAngles() { return angles; }
-
-    uint16_t *getLeftPwm() { return left_pwm_values; }
-    uint16_t *getRightPwm() { return right_pwm_values; }
 
   private:
     ServoController *_servoController;
@@ -177,13 +156,9 @@ class MotionService {
     float default_feet_pos[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
                                     {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
 
-    uint16_t right_pwm_values[9] = {SERVOMID};
-    uint16_t left_pwm_values[9] = {SERVOMID};
-
     MOTION_STATE motionState = MOTION_STATE::DEACTIVATED;
     unsigned long _lastUpdate;
 
-    float new_angles[18] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     float angles[18] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 };
 

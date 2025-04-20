@@ -60,12 +60,11 @@ class Spot {
 
     // act
     void updateActuators() {
-        // if (updatedMotion)
-        _servoController.updateLeftPwm(_motionService.getLeftPwm());
-        _servoController.updateRightPwm(_motionService.getRightPwm());
-        // _servoController.setAngles(_motionService.getAngles());
+        if (updatedMotion) {
+            _servoController.setAngles(_motionService.getAngles());
+            _servoController.updateServoState();
+        }
 
-        _servoController.updateServoState();
 #if FT_ENABLED(USE_WS2812)
         _ledService.loop();
 #endif
@@ -75,7 +74,6 @@ class Spot {
     void emitTelemetry() {
         if (updatedMotion) EXECUTE_EVERY_N_MS(100, { _motionService.emitAngles(); });
         EXECUTE_EVERY_N_MS(1000, { _peripherals.emitIMU(); });
-        // _peripherals.emitSonar();
     }
 
   private:

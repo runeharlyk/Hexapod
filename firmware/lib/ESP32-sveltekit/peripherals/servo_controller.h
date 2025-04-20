@@ -99,17 +99,24 @@ class ServoController : public StatefulService<ServoSettings> {
 
     void updateActiveState() { is_active ? activate() : deactivate(); }
 
-    void setAngles(float new_angles[12]) {
+    void setAngles(float new_angles[18]) {
         control_state = SERVO_CONTROL_STATE::ANGLE;
-        for (int i = 0; i < 12; i++) {
+        for (int i = 0; i < 18; i++) {
             target_angles[i] = new_angles[i];
         }
     }
 
     void calculatePWM() {
+        int8_t l_dir[3] = {-1, -1, 1};
+        int8_t r_dir[3] = {-1, 1, -1};
+
         for (int i = 0; i < 9; i++) {
             auto servoLeft = state().servos[i];
             auto servoRight = state().servos[i + 9];
+
+            left_target_pwms[i] = (target_angles[i] * l_dir[i % 3]) * servoLeft.conversion + servoLeft.centerPwm;
+            right_target_pwms[i] = (target_angles[i + 9] * r_dir[i % 3]) * servoRight.conversion + servoRight.centerPwm;
+
             left_current_pwm[i] = lerp(left_current_pwm[i], left_target_pwms[i], 0.05);
             right_current_pwm[i] = lerp(right_current_pwm[i], right_target_pwms[i], 0.05);
 
@@ -123,22 +130,20 @@ class ServoController : public StatefulService<ServoSettings> {
         _right_pca.setMultiplePWM(right_pwm, max_pin_used + 1);
     }
 
-    void getCalibrationPWM(uint16_t left[9], uint16_t right[9]) {
+    void setCenterPwm() {
         for (int i = 0; i < 9; i++) {
             auto servoLeft = state().servos[i];
             auto servoRight = state().servos[i + 9];
-            left[i] = servoLeft.centerPwm;
-            right[i] = servoRight.centerPwm;
+            left_pwm[servoLeft.pin] = servoLeft.centerPwm;
+            left_pwm[servoRight.pin] = servoRight.centerPwm;
         }
+        _left_pca.setMultiplePWM(left_pwm, max_pin_used + 1);
+        _right_pca.setMultiplePWM(right_pwm, max_pin_used + 1);
     }
 
     void updateServoState() {
         if (control_state == SERVO_CONTROL_STATE::ANGLE) calculatePWM();
     }
-
-    void updateLeftPwm(uint16_t pwm[9]) { memcpy(left_target_pwms, pwm, sizeof(uint16_t) * 9); }
-
-    void updateRightPwm(uint16_t pwm[9]) { memcpy(right_target_pwms, pwm, sizeof(uint16_t) * 9); }
 
     StatefulHttpEndpoint<ServoSettings> endpoint;
 
@@ -170,8 +175,7 @@ class ServoController : public StatefulService<ServoSettings> {
     SERVO_CONTROL_STATE control_state = SERVO_CONTROL_STATE::DEACTIVATED;
 
     bool is_active {false};
-    // float angles[12] = {0, 90, -145, 0, 90, -145, 0, 90, -145, 0, 90, -145};
-    float target_angles[12] = {0, 90, -145, 0, 90, -145, 0, 90, -145, 0, 90, -145};
+    float target_angles[18] = {0};
 };
 
 #endif
