@@ -18,10 +18,12 @@
         servoAnglesOut,
         socket,
         location,
-        useFeatureFlags
+        useFeatureFlags,
+        gait
     } from '$lib/stores';
     import type { Analytics, DownloadOTA } from '$lib/types/models';
     import { MotionModes } from '$lib/motion';
+    import { GaitType } from '$lib/gait';
     interface Props {
         children?: import('svelte').Snippet;
     }
@@ -38,6 +40,9 @@
         outControllerData.subscribe(data => socket.sendEvent('input', { data }));
         mode.subscribe(data =>
             socket.sendEvent('mode', { data: Object.values(MotionModes).indexOf(data) })
+        );
+        gait.subscribe(data =>
+            socket.sendEvent('gait', { data: Object.values(GaitType).indexOf(data) })
         );
         servoAnglesOut.subscribe(data => socket.sendEvent('angles', { data }));
         kinematicData.subscribe(data => socket.sendEvent('position', { data }));

@@ -15,6 +15,7 @@
 #define INPUT_EVENT "input"
 #define POSITION_EVENT "position"
 #define MODE_EVENT "mode"
+#define GAIT_EVENT "gait"
 
 enum class MOTION_STATE { DEACTIVATED, IDLE, POSE, STAND, WALK };
 
@@ -30,6 +31,8 @@ class MotionService {
         socket.onEvent(ANGLES_EVENT, [&](JsonObject &root, int originId) { anglesEvent(root, originId); });
 
         socket.onEvent(POSITION_EVENT, [&](JsonObject &root, int originId) { positionEvent(root, originId); });
+
+        socket.onEvent(GAIT_EVENT, [&](JsonObject &root, int originId) { gaitEvent(root, originId); });
 
         socket.onSubscribe(ANGLES_EVENT,
                            std::bind(&MotionService::syncAngles, this, std::placeholders::_1, std::placeholders::_2));
@@ -78,12 +81,12 @@ class MotionService {
                 break;
             }
             case MOTION_STATE::WALK: {
-                gait_state.step_x = command.lx / 2.4;
-                gait_state.step_z = command.ly / 2.4;
+                gait_state.step_x = command.lx;
+                gait_state.step_z = command.ly;
                 gait_state.step_angle = command.rx / 150;
+                gait_state.step_speed = command.s / 128 + 1;
+                gait_state.step_height = command.s1 / 2.4;
                 gait_state.step_depth = 0.002;
-                // gait_state.step_speed = command.ry / 128 + 1;
-                // gait_state.step_height = command.h / 2.4;
 
                 body_state.omega = command.ry / 500;
                 break;
@@ -99,6 +102,15 @@ class MotionService {
         motionState == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
         if (motionState == MOTION_STATE::STAND) body_state.updateFeet(default_feet_pos);
         socket.emit(MODE_EVENT, output, String(originId).c_str());
+    }
+
+    void gaitEvent(JsonObject &root, int originId) {
+        gait_state.gait_type = (GaitType)root["data"].as<int>();
+        ESP_LOGI("MotionService", "Gait %d", gait_state.gait_type);
+        gait.setGait(gait_state);
+        char output[2];
+        itoa((int)gait_state.gait_type, output, 10);
+        socket.emit(GAIT_EVENT, output, String(originId).c_str());
     }
 
     void emitAngles(const String &originId = "", bool sync = false) {

@@ -110,6 +110,48 @@ class GaitController {
   public:
     GaitController() {}
 
+    void setGait(gait_state_t& gait) {
+        switch (gait.gait_type) {
+            case GaitType::TRI_GATE:
+                gait.offset[0] = 0.0f;
+                gait.offset[1] = 0.5f;
+                gait.offset[2] = 0.0f;
+                gait.offset[3] = 0.5f;
+                gait.offset[4] = 0.0f;
+                gait.offset[5] = 0.5f;
+                gait.stand_frac = 3.1f / 6.0f;
+                break;
+            case GaitType::BI_GATE:
+                gait.offset[0] = 0.0f;
+                gait.offset[1] = 1.0f / 3.0f;
+                gait.offset[2] = 2.0f / 3.0f;
+                gait.offset[3] = 2.0f / 3.0f;
+                gait.offset[4] = 1.0f / 3.0f;
+                gait.offset[5] = 0.0f;
+                gait.stand_frac = 2.1f / 6.0f;
+                break;
+            case GaitType::WAVE:
+                gait.offset[0] = 0.0f;
+                gait.offset[1] = 1.0f / 6.0f;
+                gait.offset[2] = 2.0f / 6.0f;
+                gait.offset[3] = 5.0f / 6.0f;
+                gait.offset[4] = 4.0f / 6.0f;
+                gait.offset[5] = 3.0f / 6.0f;
+                gait.stand_frac = 5.0f / 6.0f;
+                break;
+            case GaitType::RIPPLE:
+                gait.offset[0] = 0.0f;
+                gait.offset[1] = 4.0f / 6.0f;
+                gait.offset[2] = 2.0f / 6.0f;
+                gait.offset[3] = 5.0f / 6.0f;
+                gait.offset[4] = 1.0f / 6.0f;
+                gait.offset[5] = 3.0f / 6.0f;
+                gait.stand_frac = 5.0f / 6.0f;
+                break;
+            default: break;
+        }
+    }
+
     void step(gait_state_t& gait, body_state_t& body, float dt) {
         const float step_x = gait.step_x;
         const float step_z = gait.step_z;

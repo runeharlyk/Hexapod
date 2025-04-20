@@ -80,8 +80,8 @@
         data[3] = toInt8($input.right.x, -1, 1);
         data[4] = toInt8($input.right.y, -1, 1);
         data[5] = toInt8($input.height, 0, 100);
-        data[6] = toInt8($input.speed, 0, 100);
-        data[7] = toInt8($input.s1, 0, 100);
+        data[6] = toInt8($input.speed, 0, 25);
+        data[7] = toInt8($input.s1, 0, 25);
 
         outControllerData.set(data);
     };
