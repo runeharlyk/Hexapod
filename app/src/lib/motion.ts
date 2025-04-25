@@ -75,7 +75,7 @@ export default class Motion {
             case MotionModes.STAND:
                 this.body_state.xm = command[1] / 2.4;
                 this.body_state.ym = command[2] / 2.4;
-                this.body_state.psi = command[3] / 500;
+                this.body_state.phi = command[3] / 500;
                 this.body_state.omega = command[4] / 500;
                 break;
             case MotionModes.WALK:
@@ -83,8 +83,7 @@ export default class Motion {
                 this.gait_state.step_z = command[2];
                 this.gait_state.step_angle = command[3] / 150;
                 this.gait_state.step_speed = command[6] / 128 + 1;
-                this.gait_state.step_height = command[7] / 4 + 35;
-
+                this.gait_state.step_height = command[7] / 15 + 15;
                 this.body_state.omega = command[4] / 500;
                 break;
         }

@@ -62,7 +62,7 @@ export class GaitController {
 
     step(gait: gait_state_t, body: body_state_t, dt: number) {
         const { step_x, step_z, step_angle: angle } = gait;
-        if (!step_x && !step_z && !angle) {
+        if (Math.abs(step_x) < 2 && Math.abs(step_z) < 2 && !angle) {
             body.feet = body.feet.map((f, i) =>
                 f.map((v, j) => v + (this.defaultPosition[i][j] - v) * dt * 10)
             );
@@ -70,11 +70,14 @@ export class GaitController {
             return;
         }
 
-        this.advancePhase(dt, gait.step_speed);
-
         const lengthRaw = Math.hypot(step_x, step_z);
         const length = step_x < 0 ? -lengthRaw : lengthRaw;
+        const speed =
+            gait.step_speed *
+            Math.min(1.5, Math.max(0.75, Math.abs(length) / 25, Math.abs(angle * 1.5)));
         const turnAmplitude = Math.atan2(step_z, length) * 2;
+
+        this.advancePhase(dt, speed);
 
         const newFeet = this.defaultPosition.map(fp => fp.map(() => 0));
 

@@ -75,7 +75,7 @@ class MotionService {
                 body_state.xm = command.lx / 2.4;
                 body_state.ym = command.ly / 2.4;
                 body_state.zm = command.h / 2.4;
-                body_state.psi = command.rx / 500;
+                body_state.phi = command.rx / 500;
                 body_state.omega = command.ry / 500;
                 body_state.updateFeet(default_feet_pos);
                 break;
@@ -85,7 +85,7 @@ class MotionService {
                 gait_state.step_z = command.ly;
                 gait_state.step_angle = command.rx / 150;
                 gait_state.step_speed = command.s / 128 + 1;
-                gait_state.step_height = command.s1 / 4 + 35;
+                gait_state.step_height = command.s1 / 15 + 15;
                 gait_state.step_depth = 0.002;
 
                 body_state.omega = command.ry / 500;

@@ -157,7 +157,7 @@ class GaitController {
         const float step_z = gait.step_z;
         const float angle = gait.step_angle;
 
-        if (!step_x && !step_z && !angle) {
+        if (std::fabs(step_x) < 2 && std::fabs(step_z) < 2 && !angle) {
             for (int i = 0; i < 6; i++) {
                 for (int j = 0; j < 4; j++) {
                     body.feet[i][j] += (defaultPosition[i][j] - body.feet[i][j]) * dt * 10.0f;
@@ -167,11 +167,13 @@ class GaitController {
             return;
         }
 
-        advancePhase(dt, gait.step_speed);
-
-        const float lengthRaw = std::hypot(step_x, step_z);
-        const float length = step_x < 0 ? -lengthRaw : lengthRaw;
+        const float length = std::hypot(step_x, step_z) * (gait.step_x < 0 ? -1 : 1);
         const float turnAmplitude = std::atan2(step_z, length) * 2;
+
+        const float speed_factor = std::max(std::abs(length) / 25.f, std::abs(angle) * 1.5f);
+        const float speed = gait.step_speed * CLIP(speed_factor, 0.75, 1.5);
+
+        advancePhase(dt, speed);
 
         float newFeet[6][4];
         COPY_2D_ARRAY_6x4(newFeet, defaultPosition);
