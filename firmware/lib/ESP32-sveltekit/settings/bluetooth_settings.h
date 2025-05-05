@@ -14,9 +14,9 @@ typedef struct {
     void serialize(JsonObject &json) const { json["device_name"] = deviceName; }
 
     bool deserialize(const JsonObject &json) {
-        deviceName = json["device_name"] | FACTORY_BT_DEVICE_NAME;
+        deviceName = json["device_name"].as<String>();
         if (deviceName.length() < 1 || deviceName.length() > 31) {
-            ESP_LOGE("BluetoothSettings", "Device name length is invalid");
+            ESP_LOGE("BluetoothSettings", "Device name length is invalid: %s", deviceName.c_str());
             return false;
         }
         return true;

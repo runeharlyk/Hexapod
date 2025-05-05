@@ -6,23 +6,22 @@
     import BluetoothIconButton from '$lib/components/input/BluetoothIconButton.svelte';
     import { onMount } from 'svelte';
 
-    type BluetoothSettings = {
-        deviceName: string;
-    };
+    type BluetoothSettings = { bluetooth: { device_name: string } };
 
     let bluetoothSettings = $state<BluetoothSettings>({
-        deviceName: ''
+        bluetooth: { device_name: '' }
     });
 
     const getBluetoothSettings = async () => {
         const result = await api.get<BluetoothSettings>('/api/bluetooth/settings');
         if (result.isOk()) {
             bluetoothSettings = result.inner;
+            console.log(bluetoothSettings);
         }
     };
 
     const updateBluetoothSettings = async () => {
-        const result = await api.put<BluetoothSettings>(
+        const result = await api.post<BluetoothSettings>(
             '/api/bluetooth/settings',
             bluetoothSettings
         );
@@ -52,7 +51,7 @@
 
     <div class="flex">
         <label class="label w-32" for="server">Device Name:</label>
-        <input class="input" bind:value={bluetoothSettings.deviceName} />
+        <input class="input" bind:value={bluetoothSettings.bluetooth.device_name} />
     </div>
 
     <div class="flex">
