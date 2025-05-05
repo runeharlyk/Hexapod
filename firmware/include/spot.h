@@ -15,6 +15,7 @@
 #include <peripherals/led_service.h>
 #include <peripherals/camera_service.h>
 #include <event_socket.h>
+#include <bluetooth_service.h>
 #include <features.h>
 #include <motion.h>
 #include <task_manager.h>
@@ -81,6 +82,7 @@ class Spot {
     WiFiService _wifiService;
     APService _apService;
     EventSocket _socket;
+    BluetoothService _bluetooth;
     MDNSService _mdnsService;
 #if FT_ENABLED(USE_UPLOAD_FIRMWARE)
     FirmwareUploadService _uploadFirmwareService;

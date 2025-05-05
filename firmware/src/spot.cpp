@@ -11,6 +11,7 @@ void Spot::initialize() {
 
     ESPFS.begin(true);
     g_taskManager.begin();
+    _bluetooth.begin();
 #if FT_ENABLED(USE_WS2812)
     _ledService.loop();
 #endif
