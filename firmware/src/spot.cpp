@@ -51,6 +51,13 @@ void Spot::setupServer() {
         return _apService.endpoint.handleStateUpdate(request, json);
     });
 
+    // BLUETOOTH
+    _server.on("/api/bluetooth/settings", HTTP_GET,
+               [this](PsychicRequest *request) { return _bluetooth.endpoint.getState(request); });
+    _server.on("/api/bluetooth/settings", HTTP_POST, [this](PsychicRequest *request, JsonVariant &json) {
+        return _bluetooth.endpoint.handleStateUpdate(request, json);
+    });
+
     // CAMERA
     _server.on("/api/camera/still", HTTP_GET,
                [this](PsychicRequest *request) { return _cameraService.cameraStill(request); });

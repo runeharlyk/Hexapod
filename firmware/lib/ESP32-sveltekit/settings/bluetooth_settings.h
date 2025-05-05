@@ -11,7 +11,7 @@
 typedef struct {
     String deviceName;
 
-    void serialize(JsonObject &json) const { json["device_name"] = deviceName || FACTORY_BT_DEVICE_NAME; }
+    void serialize(JsonObject &json) const { json["device_name"] = deviceName; }
 
     bool deserialize(const JsonObject &json) {
         deviceName = json["device_name"] | FACTORY_BT_DEVICE_NAME;
