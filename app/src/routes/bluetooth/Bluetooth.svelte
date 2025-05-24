@@ -1,6 +1,6 @@
 <script lang="ts">
     import { api } from '$lib/api';
-    import { connect, disconnect, isConnected, send, SERVICE_UUID } from '$lib/bluetooth';
+    import { bluetooth, SERVICE_UUID } from '$lib/stores/bluetooth';
     import SettingsCard from '$lib/components/SettingsCard.svelte';
     import { BluetoothConnected, BluetoothDisconnected, WiFi } from '$lib/components/icons';
     import BluetoothIconButton from '$lib/components/input/BluetoothIconButton.svelte';
@@ -32,10 +32,14 @@
 
     onMount(() => {
         getBluetoothSettings();
+
+        bluetooth.on('telemetry', data => {
+            console.log('Telemetry:', data);
+        });
     });
 
     const testBluetooth = async () => {
-        send('hello');
+        bluetooth.sendEvent('test', { message: 'hello' });
     };
 </script>
 

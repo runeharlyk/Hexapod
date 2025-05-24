@@ -1,12 +1,12 @@
 <script lang="ts">
-    import { isConnected, connect, disconnect } from '$lib/bluetooth';
+    import { bluetooth } from '$lib/stores/bluetooth';
     import { BluetoothConnected, BluetoothDisconnected } from '../icons';
 </script>
 
-{#if $isConnected}
+{#if $bluetooth}
     <button
         class="btn btn-ghost btn-circle btn-sm"
-        onclick={() => disconnect()}
+        onclick={() => bluetooth.disconnect()}
         title="Disconnect Bluetooth"
     >
         <BluetoothConnected class="h-6 w-auto text-success" />
@@ -14,7 +14,7 @@
 {:else}
     <button
         class="btn btn-ghost btn-circle btn-sm"
-        onclick={() => connect()}
+        onclick={() => bluetooth.init()}
         title="Connect Bluetooth"
     >
         <BluetoothDisconnected class="h-6 w-auto text-error" />
