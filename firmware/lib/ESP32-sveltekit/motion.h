@@ -7,6 +7,7 @@
 #include <utils/timing.h>
 #include <utils/math_utils.h>
 #include <gait.h>
+#include <event_bus.h>
 
 #include "config.h"
 
@@ -17,13 +18,17 @@
 #define MODE_EVENT "mode"
 #define GAIT_EVENT "gait"
 
-enum class MOTION_STATE { DEACTIVATED, IDLE, POSE, STAND, WALK };
-
 class MotionService {
+    void *_tempSubHandle;
+    void *_modeSubHandle;
+
   public:
     MotionService(ServoController *servoController) : _servoController(servoController) {}
 
     void begin() {
+        _tempSubHandle = EventBus::subscribe<Command>([&](Command const &c) { handleCommand(c); });
+        _modeSubHandle = EventBus::subscribe<Mode>([&](Mode const &c) { handleInputMode(c); });
+
         socket.onEvent(INPUT_EVENT, [&](JsonObject &root, int originId) { handleInput(root, originId); });
 
         socket.onEvent(MODE_EVENT, [&](JsonObject &root, int originId) { handleMode(root, originId); });
@@ -68,27 +73,38 @@ class MotionService {
         command.s = array[6];
         command.s1 = array[7];
 
-        body_state.zm = command.h / 2.4;
+        handleCommand(command);
+    }
 
+    void handleInputMode(Mode const &m) {
+        ESP_LOGI("MotionService", "Mode %d", m.mode);
+        motionState = m.mode;
+        motionState == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
+        if (motionState == MOTION_STATE::STAND) body_state.updateFeet(default_feet_pos);
+    }
+
+    void handleCommand(Command const &c) {
+        Serial.println("handleCommand");
+        body_state.zm = c.h * 50;
         switch (motionState) {
             case MOTION_STATE::STAND: {
-                body_state.xm = command.lx / 2.4;
-                body_state.ym = command.ly / 2.4;
-                body_state.zm = command.h / 2.4;
-                body_state.phi = command.rx / 500;
-                body_state.omega = command.ry / 500;
+                body_state.xm = c.lx * 50.f;
+                body_state.ym = c.ly * 50.f;
+                body_state.zm = c.h * 50.f;
+                body_state.phi = c.rx * 0.254f;
+                body_state.omega = c.ry * 0.254f;
                 body_state.updateFeet(default_feet_pos);
                 break;
             }
             case MOTION_STATE::WALK: {
-                gait_state.step_x = command.lx;
-                gait_state.step_z = command.ly;
-                gait_state.step_angle = command.rx / 150;
-                gait_state.step_speed = command.s / 128 + 1;
-                gait_state.step_height = command.s1 / 15 + 15;
-                gait_state.step_depth = 0.002;
+                gait_state.step_x = c.lx * 100;
+                gait_state.step_z = c.ly * 100;
+                gait_state.step_angle = c.rx * 0.8;
+                gait_state.step_speed = c.s + 1.f;
+                gait_state.step_height = (c.s1 + 1.f) * 10.f;
+                gait_state.step_depth = 0.002f;
 
-                body_state.omega = command.ry / 500;
+                body_state.omega = c.ry * 0.254f;
                 break;
             }
         }
@@ -149,7 +165,7 @@ class MotionService {
     Kinematics kinematics;
     GaitController gait;
 
-    ControllerCommand command = {0, 0, 0, 0, 0, 0, 0, 0};
+    Command command = {0, 0, 0, 0, 0, 0, 0};
     body_state_t body_state = {0, 0, 0, 0, 0, 15};
     gait_state_t gait_state = {15, 0, 0, 0, 1, 0.002, default_stand_frac, GaitType::TRI_GATE, {0, 0.5, 0, 0.5, 0, 0.5}};
 

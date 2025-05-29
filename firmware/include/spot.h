@@ -22,6 +22,7 @@
 #include <wifi_service.h>
 #include <ap_service.h>
 #include <mdns_service.h>
+#include <event_bus.h>
 
 #ifdef EMBED_WWW
 #include <WWWData.h>

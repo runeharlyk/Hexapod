@@ -8,11 +8,15 @@ BluetoothService::BluetoothService()
       _server(nullptr),
       _txCharacteristic(nullptr),
       _rxCharacteristic(nullptr),
-      _deviceConnected(false) {
-    addUpdateHandler([&](const String& originId) { restartBLE(); }, false);
+      _deviceConnected(false),
+      _cmdSubHandle(nullptr),
+      _tempSubHandle(nullptr) {
+    addUpdateHandler([&](const String& originId) { restart(); }, false);
 }
 
 BluetoothService::~BluetoothService() {
+    EventBus::unsubscribe<Command>(_cmdSubHandle);
+    EventBus::unsubscribe<Temp>(_tempSubHandle);
     if (_server) {
         BLEDevice::deinit(true);
     }
@@ -20,10 +24,19 @@ BluetoothService::~BluetoothService() {
 
 void BluetoothService::begin() {
     _persistence.readFromFS();
-    setupBLE();
+
+    _cmdSubHandle = EventBus::subscribe<Command>([this](Command const& c) {
+        if (_deviceConnected) emit(COMMAND, c);
+    });
+
+    _tempSubHandle = EventBus::subscribe<Temp>([this](Temp const& t) {
+        if (_deviceConnected) emit(TEMP, t);
+    });
+
+    setup();
 }
 
-void BluetoothService::setupBLE() {
+void BluetoothService::setup() {
     const std::string& deviceName = state().settings.deviceName.c_str();
     ESP_LOGI("BluetoothService", "Initializing BLE with device name: %s", deviceName.c_str());
 
@@ -45,7 +58,7 @@ void BluetoothService::setupBLE() {
     ESP_LOGI("BluetoothService", "BLE UART service started, advertising as %s", deviceName.c_str());
 }
 
-void BluetoothService::restartBLE() {
+void BluetoothService::restart() {
     ESP_LOGI("BluetoothService", "Restarting BLE service due to settings update.");
     if (_server) {
         BLEDevice::deinit(true);
@@ -53,7 +66,7 @@ void BluetoothService::restartBLE() {
         _txCharacteristic = nullptr;
         _rxCharacteristic = nullptr;
     }
-    setupBLE();
+    setup();
 }
 
 void BluetoothService::ServerCallbacks::onConnect(BLEServer* pServer) {
@@ -76,10 +89,69 @@ void BluetoothService::RXCallbacks::onWrite(BLECharacteristic* characteristic) {
 }
 
 void BluetoothService::handleReceivedData(const std::string& data) {
-    ESP_LOGI("BluetoothService", "Received: %s", data.c_str());
+    // CALLS_PER_SECOND(new_message);
 
-    std::string response = "ACK: " + data;
-    sendData(response);
+    JsonDocument doc;
+#if USE_MSGPACK
+    DeserializationError error = deserializeMsgPack(doc, data);
+#else
+    DeserializationError error = deserializeJson(doc, data);
+#endif
+    if (error) {
+        throw std::runtime_error(error.c_str());
+    }
+
+    serializeJson(doc, Serial);
+    Serial.println();
+    JsonArray obj = doc.as<JsonArray>();
+
+    message_type_t type = obj[0].as<message_type_t>();
+
+    int cid = 0;
+
+    switch (type) {
+        case CONNECT: {
+            message_topic_t topic = obj[1].as<message_topic_t>();
+            ESP_LOGI("BluetoothService", "Connecting to topic: %d", topic);
+            subscribe(topic, cid);
+            break;
+        }
+        case DISCONNECT: {
+            message_topic_t topic = obj[1].as<message_topic_t>();
+            ESP_LOGI("BluetoothService", "Disconnecting to topic: %d", topic);
+            unsubscribe(topic, cid);
+            break;
+        }
+
+        case EVENT: {
+            message_topic_t topic = obj[1].as<message_topic_t>();
+            if (topic == TEMP) {
+                Temp payload;
+                payload.fromJson(obj[2]);
+                EventBus::publish<Temp>(payload, _tempSubHandle);
+            } else if (topic == COMMAND) {
+                Command payload;
+                payload.fromJson(obj[2]);
+                EventBus::publish<Command>(payload, _tempSubHandle);
+            } else if (topic == MODE) {
+                Mode payload;
+                payload.fromJson(obj[2]);
+                EventBus::publish<Mode>(payload, _tempSubHandle);
+            };
+
+            ESP_LOGD("BluetoothService", "Got payload for topic: %d", topic);
+            break;
+        }
+
+        default: ESP_LOGW("BluetoothService", "Unknown message type: %d", type); break;
+    }
+}
+
+void BluetoothService::send(const char* data) {
+    if (_deviceConnected) {
+        _txCharacteristic->setValue((uint8_t*)data, strlen(data));
+        _txCharacteristic->notify();
+    }
 }
 
 void BluetoothService::sendData(const std::string& data) {
@@ -105,6 +177,5 @@ void BluetoothService::sendData(uint8_t* data, size_t length) {
 esp_err_t BluetoothService::getStatus(PsychicRequest* request) {
     PsychicJsonResponse response = PsychicJsonResponse(request, false);
     JsonObject root = response.getRoot();
-
     return response.send();
 }
