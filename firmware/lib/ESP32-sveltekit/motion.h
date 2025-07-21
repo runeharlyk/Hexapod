@@ -88,11 +88,10 @@ class MotionService {
         body_state.zm = c.h * 50;
         switch (motionState) {
             case MOTION_STATE::STAND: {
-                body_state.xm = c.lx * 50.f;
-                body_state.ym = c.ly * 50.f;
-                body_state.zm = c.h * 50.f;
-                body_state.phi = c.rx * 0.254f;
-                body_state.omega = c.ry * 0.254f;
+                target_body_state.xm = c.lx * 50.f;
+                target_body_state.ym = c.ly * 50.f;
+                target_body_state.phi = c.rx * 0.254f;
+                target_body_state.omega = c.ry * 0.254f;
                 body_state.updateFeet(default_feet_pos);
                 break;
             }
@@ -147,7 +146,14 @@ class MotionService {
             case MOTION_STATE::DEACTIVATED: return false;
             case MOTION_STATE::IDLE: return false;
             case MOTION_STATE::POSE: _servoController->setCenterPwm(); return false;
-            case MOTION_STATE::STAND: kinematics.inverseKinematics(body_state, angles); break;
+            case MOTION_STATE::STAND: {
+                body_state.xm = lerp(body_state.xm, target_body_state.xm, 0.05);
+                body_state.ym = lerp(body_state.ym, target_body_state.ym, 0.05);
+                body_state.phi = lerp(body_state.phi, target_body_state.phi, 0.05);
+                body_state.omega = lerp(body_state.omega, target_body_state.omega, 0.05);
+                kinematics.inverseKinematics(body_state, angles);
+                break;
+            }
             case MOTION_STATE::WALK: {
                 gait.step(gait_state, body_state, 5.f / 1000.f);
                 kinematics.inverseKinematics(body_state, angles);
@@ -167,6 +173,7 @@ class MotionService {
 
     Command command = {0, 0, 0, 0, 0, 0, 0};
     body_state_t body_state = {0, 0, 0, 0, 0, 15};
+    body_state_t target_body_state = {0, 0, 0, 0, 0, 15};
     gait_state_t gait_state = {15, 0, 0, 0, 1, 0.002, default_stand_frac, GaitType::TRI_GATE, {0, 0.5, 0, 0.5, 0, 0.5}};
 
     float default_feet_pos[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
