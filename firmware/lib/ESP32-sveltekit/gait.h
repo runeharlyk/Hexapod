@@ -16,11 +16,6 @@ struct gait_state_t {
     float offset[6];
 };
 
-struct ControllerCommand {
-    int stop;
-    float lx, ly, rx, ry, h, s, s1;
-};
-
 class GaitController {
   private:
     float phase = 0.0f;

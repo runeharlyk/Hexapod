@@ -15,9 +15,6 @@ export default defineConfig({
         viteLittleFS(),
         EnvCaster()
     ],
-    test: {
-        include: ['src/**/*.{test,spec}.{js,ts}']
-    },
     server: {
         proxy: {
             '/api': {

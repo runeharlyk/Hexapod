@@ -1,131 +1,142 @@
 <script lang="ts">
-    import { onDestroy, onMount } from 'svelte';
-    import { page } from '$app/state';
-    import { Modals, modals } from 'svelte-modals';
-    import Toast from '$lib/components/toasts/Toast.svelte';
-    import { notifications } from '$lib/components/toasts/notifications';
-    import { fade } from 'svelte/transition';
-    import '../app.css';
-    import Menu from '../lib/components/menu/Menu.svelte';
-    import Statusbar from '../lib/components/statusbar/statusbar.svelte';
-    import {
-        telemetry,
-        analytics,
-        kinematicData,
-        mode,
-        outControllerData,
-        servoAngles,
-        servoAnglesOut,
-        socket,
-        location,
-        useFeatureFlags,
-        gait
-    } from '$lib/stores';
-    import type { Analytics, DownloadOTA } from '$lib/types/models';
-    import { MotionModes } from '$lib/motion';
-    import { GaitType } from '$lib/gait';
-    interface Props {
-        children?: import('svelte').Snippet;
-    }
+  import { onDestroy, onMount } from 'svelte'
+  import { page } from '$app/state'
+  import { Modals, modals } from 'svelte-modals'
+  import Toast from '$lib/components/toasts/Toast.svelte'
+  import { notifications } from '$lib/components/toasts/notifications'
+  import { fade } from 'svelte/transition'
+  import '../app.css'
+  import Menu from '../lib/components/menu/Menu.svelte'
+  import Statusbar from '../lib/components/statusbar/statusbar.svelte'
+  import {
+    telemetry,
+    analytics,
+    kinematicData,
+    mode,
+    outControllerData,
+    servoAngles,
+    servoAnglesOut,
+    socket,
+    location,
+    useFeatureFlags,
+    gait
+  } from '$lib/stores'
+  import type { Analytics, DownloadOTA } from '$lib/types/models'
+  import { MotionModes } from '$lib/motion'
+  import { GaitType } from '$lib/gait'
+  import { dataBroker } from '$lib/transport/databroker'
+  import { ble } from '$lib/transport/ble-adapter'
+  import { MessageTopic } from '$lib/interfaces/transport.interface'
+  interface Props {
+    children?: import('svelte').Snippet
+  }
 
-    let { children }: Props = $props();
+  dataBroker.addTransport(ble)
 
-    const features = useFeatureFlags();
+  let { children }: Props = $props()
 
-    onMount(async () => {
-        const ws = $location ? $location : window.location.host;
-        socket.init(`ws://${ws}/api/ws/events`);
+  const features = useFeatureFlags()
 
-        addEventListeners();
-        outControllerData.subscribe(data => socket.sendEvent('input', { data }));
-        mode.subscribe(data =>
-            socket.sendEvent('mode', { data: Object.values(MotionModes).indexOf(data) })
-        );
-        gait.subscribe(data =>
-            socket.sendEvent('gait', { data: Object.values(GaitType).indexOf(data) })
-        );
-        servoAnglesOut.subscribe(data => socket.sendEvent('angles', { data }));
-        kinematicData.subscribe(data => socket.sendEvent('position', { data }));
-    });
+  onMount(async () => {
+    const ws = $location ? $location : window.location.host
+    // socket.init(`ws://${ws}/api/ws/events`);
 
-    onDestroy(() => {
-        removeEventListeners();
-    });
+    // addEventListeners();
+    // outControllerData.subscribe(data => socket.sendEvent('input', { data }));
 
-    const addEventListeners = () => {
-        socket.on('open', handleOpen);
-        socket.on('close', handleClose);
-        socket.on('error', handleError);
-        socket.on('rssi', handleNetworkStatus);
-        socket.on('mode', (data: MotionModes) => mode.set(data));
-        socket.on('analytics', handleAnalytics);
-        socket.on('angles', (angles: number[]) => {
-            if (angles.length) servoAngles.set(angles);
-        });
-        features.subscribe(data => {
-            if (data?.download_firmware) socket.on('otastatus', handleOAT);
-            if (data?.sonar) socket.on('sonar', data => console.log(data));
-        });
-    };
+    outControllerData.subscribe(data => dataBroker.emit(MessageTopic.COMMAND, data))
 
-    const removeEventListeners = () => {
-        socket.off('analytics', handleAnalytics);
-        socket.off('open', handleOpen);
-        socket.off('close', handleClose);
-        socket.off('rssi', handleNetworkStatus);
-        socket.off('otastatus', handleOAT);
-    };
+    mode.subscribe(data => {
+      dataBroker.emit(MessageTopic.MODE, Object.values(MotionModes).indexOf(data))
+      // socket.sendEvent('mode', { data: Object.values(MotionModes).indexOf(data) })
+    })
+    gait.subscribe(data => {
+      // socket.sendEvent('gait', { data: Object.values(GaitType).indexOf(data) })
+    })
+    servoAnglesOut.subscribe(data => {
+      // socket.sendEvent('angles', { data })
+    })
+    kinematicData.subscribe(data => socket.sendEvent('position', { data }))
+  })
 
-    const handleOpen = () => {
-        notifications.success('Connection to device established', 5000);
-    };
+  onDestroy(() => {
+    removeEventListeners()
+  })
 
-    const handleClose = () => {
-        notifications.error('Connection to device lost', 5000);
-        telemetry.setRSSI(0);
-    };
+  const addEventListeners = () => {
+    socket.on('open', handleOpen)
+    socket.on('close', handleClose)
+    socket.on('error', handleError)
+    socket.on('rssi', handleNetworkStatus)
+    socket.on('mode', (data: MotionModes) => mode.set(data))
+    socket.on('analytics', handleAnalytics)
+    socket.on('angles', (angles: number[]) => {
+      if (angles.length) servoAngles.set(angles)
+    })
+    features.subscribe(data => {
+      if (data?.download_firmware) socket.on('otastatus', handleOAT)
+      if (data?.sonar) socket.on('sonar', data => console.log(data))
+    })
+  }
 
-    const handleError = (data: any) => console.error(data);
+  const removeEventListeners = () => {
+    socket.off('analytics', handleAnalytics)
+    socket.off('open', handleOpen)
+    socket.off('close', handleClose)
+    socket.off('rssi', handleNetworkStatus)
+    socket.off('otastatus', handleOAT)
+  }
 
-    const handleAnalytics = (data: Analytics) => analytics.addData(data);
+  const handleOpen = () => {
+    notifications.success('Connection to device established', 5000)
+  }
 
-    const handleNetworkStatus = (data: number) => telemetry.setRSSI(data);
+  const handleClose = () => {
+    notifications.error('Connection to device lost', 5000)
+    telemetry.setRSSI(0)
+  }
 
-    const handleOAT = (data: DownloadOTA) => telemetry.setDownloadOTA(data);
+  const handleError = (data: any) => console.error(data)
 
-    let menuOpen = $state(false);
+  const handleAnalytics = (data: Analytics) => analytics.addData(data)
+
+  const handleNetworkStatus = (data: number) => telemetry.setRSSI(data)
+
+  const handleOAT = (data: DownloadOTA) => telemetry.setDownloadOTA(data)
+
+  let menuOpen = $state(false)
 </script>
 
 <svelte:head>
-    <title>{page.data.title}</title>
+  <title>{page.data.title}</title>
 </svelte:head>
 
 <div class="drawer">
-    <input id="main-menu" type="checkbox" class="drawer-toggle" bind:checked={menuOpen} />
-    <div class="drawer-content flex flex-col">
-        <!-- Status bar content here -->
-        <Statusbar />
+  <input id="main-menu" type="checkbox" class="drawer-toggle" bind:checked={menuOpen} />
+  <div class="drawer-content flex flex-col">
+    <!-- Status bar content here -->
+    <Statusbar />
 
-        <!-- Main page content here -->
-        {@render children?.()}
-    </div>
-    <!-- Side Navigation -->
-    <div class="drawer-side z-30 shadow-lg">
-        <label for="main-menu" class="drawer-overlay"></label>
-        <Menu menuClicked={() => (menuOpen = false)} />
-    </div>
+    <!-- Main page content here -->
+    {@render children?.()}
+  </div>
+  <!-- Side Navigation -->
+  <div class="drawer-side z-30 shadow-lg">
+    <label for="main-menu" class="drawer-overlay"></label>
+    <Menu menuClicked={() => (menuOpen = false)} />
+  </div>
 </div>
 
 <Modals>
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    {#snippet backdrop()}
-        <div
-            class="fixed inset-0 z-40 max-h-full max-w-full bg-black/20 backdrop-blur-sm"
-            transition:fade
-            onclick={modals.closeAll}
-        ></div>
-    {/snippet}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  {#snippet backdrop()}
+    <div
+      class="fixed inset-0 z-40 max-h-full max-w-full bg-black/20 backdrop-blur-sm"
+      transition:fade
+      onclick={modals.closeAll}>
+    </div>
+  {/snippet}
 </Modals>
 
 <Toast />

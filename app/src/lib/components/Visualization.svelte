@@ -37,7 +37,7 @@
         'Target position': false,
         'Trace points': 30,
         'Fix camera on robot': true,
-        'Smooth motion': true,
+        'Smooth motion': false,
         Background: 'black'
     };
 

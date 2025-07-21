@@ -20,7 +20,8 @@
         AP,
         Copyright,
         Metrics,
-        DNS
+        DNS,
+        Bluetooth
     } from '$lib/components/icons';
     import appEnv from 'app-env';
 
@@ -112,6 +113,12 @@
                         feature: true
                     }
                 ]
+            },
+            {
+                title: 'Bluetooth',
+                icon: Bluetooth,
+                href: '/bluetooth',
+                feature: true
             },
             {
                 title: 'System',

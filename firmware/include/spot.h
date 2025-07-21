@@ -15,12 +15,14 @@
 #include <peripherals/led_service.h>
 #include <peripherals/camera_service.h>
 #include <event_socket.h>
+#include <bluetooth_service.h>
 #include <features.h>
 #include <motion.h>
 #include <task_manager.h>
 #include <wifi_service.h>
 #include <ap_service.h>
 #include <mdns_service.h>
+#include <event_bus.h>
 
 #ifdef EMBED_WWW
 #include <WWWData.h>
@@ -81,6 +83,7 @@ class Spot {
     WiFiService _wifiService;
     APService _apService;
     EventSocket _socket;
+    BluetoothService _bluetooth;
     MDNSService _mdnsService;
 #if FT_ENABLED(USE_UPLOAD_FIRMWARE)
     FirmwareUploadService _uploadFirmwareService;
@@ -101,7 +104,7 @@ class Spot {
     bool updatedMotion = false;
 
     const char *_appName = APP_NAME;
-    const u_int16_t _numberEndpoints = 120;
+    const u_int16_t _numberEndpoints = 126;
     const u_int32_t _maxFileUpload = 2300000; // 2.3 MB
     const uint16_t _port = 80;
 

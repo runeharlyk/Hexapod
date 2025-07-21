@@ -13,6 +13,7 @@
 #define WIFI_SETTINGS_FILE "/config/wifiSettings.json"
 #define SERVO_SETTINGS_FILE "/config/servoSettings.json"
 #define MDNS_SETTINGS_FILE "/config/mdnsSettings.json"
+#define BLUETOOTH_SETTINGS_FILE "/config/bluetoothSettings.json"
 
 namespace FileSystem {
 extern PsychicUploadHandler *uploadHandler;
