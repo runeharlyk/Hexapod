@@ -117,8 +117,8 @@ class ServoController : public StatefulService<ServoSettings> {
             left_target_pwms[i] = (target_angles[i] * l_dir[i % 3]) * servoLeft.conversion + servoLeft.centerPwm;
             right_target_pwms[i] = (target_angles[i + 9] * r_dir[i % 3]) * servoRight.conversion + servoRight.centerPwm;
 
-            left_current_pwm[i] = lerp(left_current_pwm[i], left_target_pwms[i], 0.05);
-            right_current_pwm[i] = lerp(right_current_pwm[i], right_target_pwms[i], 0.05);
+            left_current_pwm[i] = left_target_pwms[i];
+            right_current_pwm[i] = right_target_pwms[i];
 
             left_pwm[servoLeft.pin] = left_current_pwm[i];
             right_pwm[servoRight.pin] = right_current_pwm[i];
