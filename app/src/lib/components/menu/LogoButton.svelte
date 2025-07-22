@@ -6,7 +6,7 @@
 </script>
 
 <a
-	href="/"
+	href="./"
 	class="rounded-box mb-4 flex items-center hover:scale-[1.02] active:scale-[0.98]"
 >
 	<img src={logo} alt="Logo" class="h-12 w-12" />

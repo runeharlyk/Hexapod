@@ -21,7 +21,7 @@ jobs:
       run:
         working-directory: ./app
     env:
-      BASE_PATH: /Hexapod
+      BASE_PATH: '/${{ github.event.repository.name }}'
 
     steps:
       - uses: actions/checkout@v4

@@ -1,4 +1,4 @@
-import msgpack from 'msgpack-lite'
+import { encode, decode } from '@msgpack/msgpack'
 import { writable } from 'svelte/store'
 import { MessageTopic, MessageType, type ITransport } from '../interfaces/transport.interface'
 import type { DataBrokerCallback } from './databroker'
@@ -6,6 +6,8 @@ import type { DataBrokerCallback } from './databroker'
 const SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e'
 const CHARACTERISTIC_TX_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'
 const CHARACTERISTIC_RX_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'
+
+type Message = [MessageType, MessageTopic?, unknown?]
 
 function createBLEAdapter(): ITransport {
   const dataCallbacks: DataBrokerCallback<unknown>[] = []
@@ -39,10 +41,9 @@ function createBLEAdapter(): ITransport {
     await tx?.startNotifications()
 
     tx?.addEventListener('characteristicvaluechanged', e => {
-      const data = msgpack.decode(new Uint8Array(e.target.value.buffer))
+      const data = decode(new Uint8Array(e.target.value.buffer)) as Message
       const [type, topic, payload] = data
-
-      dataCallbacks.forEach(cb => cb(type, topic, payload))
+      if (topic && payload) dataCallbacks.forEach(cb => cb(type, topic, payload))
     })
 
     connected.set(true)
@@ -68,8 +69,8 @@ function createBLEAdapter(): ITransport {
 
   const send = async <T>(data: T) => {
     console.log('BLE send', data)
-    const payload = msgpack.encode(data)
-    const decoded = msgpack.decode(payload)
+    const payload = encode(data)
+    const decoded = decode(payload)
     console.log('BLE send decoded', decoded)
     await rx?.writeValue(payload)
   }
