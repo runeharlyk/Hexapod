@@ -2,7 +2,7 @@
 
 static const char *TAG = "Spot";
 
-Spot::Spot() : _motionService(&_servoController) {}
+Spot::Spot() : _motionService(&_servoController, &_peripherals) {}
 
 void Spot::initialize() {
     ESP_LOGI(TAG, "Running Firmware Version: %s", APP_VERSION);

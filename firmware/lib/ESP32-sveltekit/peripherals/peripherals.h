@@ -176,6 +176,9 @@ class Peripherals : public StatefulService<PeripheralsConfiguration> {
     float leftDistance() { return _left_distance; }
     float rightDistance() { return _right_distance; }
 
+    float angleX() { return _imu.getAngleX(); }
+    float angleZ() { return _imu.getAngleZ(); }
+
     StatefulHttpEndpoint<PeripheralsConfiguration> endpoint;
 
     void emitIMU() {

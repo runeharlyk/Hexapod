@@ -12,7 +12,8 @@ export enum MessageType {
 export enum MessageTopic {
   TEMP = 1,
   COMMAND = 2,
-  MODE = 3
+  MODE = 3,
+  GAIT = 4
 }
 
 export type Temp = {

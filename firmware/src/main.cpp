@@ -7,7 +7,7 @@ void IRAM_ATTR SpotControlLoopEntry(void *) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
     const TickType_t xFrequency = 5 / portTICK_PERIOD_MS;
     for (;;) {
-        // spot.readSensors();
+        spot.readSensors();
         spot.planMotion();
         spot.updateActuators();
         // spot.emitTelemetry();

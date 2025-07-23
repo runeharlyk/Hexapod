@@ -52,7 +52,7 @@ class Spot {
 
     // sense
     void readSensors() {
-        _peripherals.readIMU();
+        EXECUTE_EVERY_N_MS(20, { _peripherals.readIMU(); });
         // _peripherals.readMag();
         // _peripherals.readBMP();
     }

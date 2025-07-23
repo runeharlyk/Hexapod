@@ -21,13 +21,16 @@
 class MotionService {
     void *_tempSubHandle;
     void *_modeSubHandle;
+    void *_gaitSubHandle;
 
   public:
-    MotionService(ServoController *servoController) : _servoController(servoController) {}
+    MotionService(ServoController *servoController, Peripherals *peripherals)
+        : _servoController(servoController), _peripherals(peripherals) {}
 
     void begin() {
         _tempSubHandle = EventBus::subscribe<Command>([&](Command const &c) { handleCommand(c); });
         _modeSubHandle = EventBus::subscribe<Mode>([&](Mode const &c) { handleInputMode(c); });
+        _gaitSubHandle = EventBus::subscribe<Gait>([&](Gait const &c) { handleInputGait(c); });
 
         socket.onEvent(INPUT_EVENT, [&](JsonObject &root, int originId) { handleInput(root, originId); });
 
@@ -76,6 +79,11 @@ class MotionService {
         handleCommand(command);
     }
 
+    void handleInputGait(Gait const &g) {
+        ESP_LOGI("MotionService", "Gait %d", g.gait);
+        gait_state.gait_type = g.gait;
+    }
+
     void handleInputMode(Mode const &m) {
         ESP_LOGI("MotionService", "Mode %d", m.mode);
         motionState = m.mode;
@@ -90,14 +98,14 @@ class MotionService {
             case MOTION_STATE::STAND: {
                 target_body_state.xm = c.lx * 50.f;
                 target_body_state.ym = c.ly * 50.f;
-                target_body_state.phi = c.rx * 0.254f;
-                target_body_state.omega = c.ry * 0.254f;
+                target_body_state.phi = -_peripherals->angleX() + c.rx * 0.254f;
+                target_body_state.omega = -_peripherals->angleZ() + c.ry * 0.254f;
                 body_state.updateFeet(default_feet_pos);
                 break;
             }
             case MOTION_STATE::WALK: {
                 gait_state.step_x = c.lx * 100;
-                gait_state.step_z = c.ly * 100;
+                gait_state.step_z = -c.ly * 100;
                 gait_state.step_angle = c.rx * 0.8;
                 gait_state.step_speed = c.s + 1.f;
                 gait_state.step_height = (c.s1 + 1.f) * 10.f;
@@ -167,6 +175,7 @@ class MotionService {
 
   private:
     ServoController *_servoController;
+    Peripherals *_peripherals;
     int step_count = 0;
     Kinematics kinematics;
     GaitController gait;

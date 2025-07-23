@@ -10,7 +10,9 @@ BluetoothService::BluetoothService()
       _rxCharacteristic(nullptr),
       _deviceConnected(false),
       _cmdSubHandle(nullptr),
-      _tempSubHandle(nullptr) {
+      _tempSubHandle(nullptr),
+      _modeSubHandle(nullptr),
+      _gaitSubHandle(nullptr) {
     addUpdateHandler([&](const String& originId) { restart(); }, false);
 }
 
@@ -31,6 +33,14 @@ void BluetoothService::begin() {
 
     _tempSubHandle = EventBus::subscribe<Temp>([this](Temp const& t) {
         if (_deviceConnected) emit(TEMP, t);
+    });
+
+    _modeSubHandle = EventBus::subscribe<Mode>([this](Mode const& t) {
+        if (_deviceConnected) emit(MODE, t);
+    });
+
+    _gaitSubHandle = EventBus::subscribe<Gait>([this](Gait const& t) {
+        if (_deviceConnected) emit(GAIT, t);
     });
 
     setup();
@@ -132,11 +142,15 @@ void BluetoothService::handleReceivedData(const std::string& data) {
             } else if (topic == COMMAND) {
                 Command payload;
                 payload.fromJson(obj[2]);
-                EventBus::publish<Command>(payload, _tempSubHandle);
+                EventBus::publish<Command>(payload, _cmdSubHandle);
             } else if (topic == MODE) {
                 Mode payload;
                 payload.fromJson(obj[2]);
-                EventBus::publish<Mode>(payload, _tempSubHandle);
+                EventBus::publish<Mode>(payload, _modeSubHandle);
+            } else if (topic == GAIT) {
+                Gait payload;
+                payload.fromJson(obj[2]);
+                EventBus::publish<Gait>(payload, _gaitSubHandle);
             };
 
             ESP_LOGD("BluetoothService", "Got payload for topic: %d", topic);

@@ -4,8 +4,7 @@
 #include <array>
 #include <functional>
 #include <kinematics.h>
-
-enum class GaitType { TRI_GATE, BI_GATE, WAVE, RIPPLE };
+#include <message_types.h>
 
 static constexpr float default_offset[6] = {0, 0.5, 0, 0.5, 0, 0.5};
 static constexpr float default_stand_frac = 3.1 / 6;

@@ -94,6 +94,8 @@ class BluetoothService : public StatefulService<BluetoothSettings>, public CommA
     bool _deviceConnected;
     void* _cmdSubHandle;
     void* _tempSubHandle;
+    void* _modeSubHandle;
+    void* _gaitSubHandle;
 
     class ServerCallbacks : public BLEServerCallbacks {
         BluetoothService* _service;

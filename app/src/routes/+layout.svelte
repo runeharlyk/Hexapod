@@ -51,6 +51,7 @@
       // socket.sendEvent('mode', { data: Object.values(MotionModes).indexOf(data) })
     })
     gait.subscribe(data => {
+      dataBroker.emit(MessageTopic.GAIT, data)
       // socket.sendEvent('gait', { data: Object.values(GaitType).indexOf(data) })
     })
     servoAnglesOut.subscribe(data => {
