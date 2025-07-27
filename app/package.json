@@ -1,5 +1,5 @@
 {
-  "name": "spot_micro_controller",
+  "name": "hexapod_controller",
   "version": "0.0.1",
   "private": true,
   "scripts": {
@@ -54,7 +54,6 @@
     "compare-versions": "^6.1.0",
     "cross-env": "^7.0.3",
     "daisyui": "^5.0.0",
-    "jwt-decode": "^4.0.0",
     "nipplejs": "^0.10.1",
     "svelte-dnd-list": "^0.1.8",
     "svelte-modals": "^2.0.0",
@@ -62,6 +61,5 @@
     "urdf-loader": "^0.12.1",
     "uzip": "^0.20201231.0",
     "xacro-parser": "^0.3.9"
-  },
-  "packageManager": "pnpm@9.15.3+sha512.1f79bc245a66eb0b07c5d4d83131240774642caaa86ef7d0434ab47c0d16f66b04e21e0c086eb61e62c77efc4d7f7ec071afad3796af64892fae66509173893a"
+  }
 }

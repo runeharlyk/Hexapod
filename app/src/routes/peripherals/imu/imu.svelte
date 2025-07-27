@@ -15,13 +15,12 @@
 
   Chart.register(...registerables)
 
-  let angleChartElement: HTMLCanvasElement = $state()
+  let angleChartElement: HTMLCanvasElement
+  let tempChartElement: HTMLCanvasElement
+  let altitudeChartElement: HTMLCanvasElement
+
   let angleChart: Chart
-
-  let tempChartElement: HTMLCanvasElement = $state()
   let tempChart: Chart
-
-  let altitudeChartElement: HTMLCanvasElement = $state()
   let altitudeChart: Chart
 
   const handleImu = (data: IMU) => {
