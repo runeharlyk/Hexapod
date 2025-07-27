@@ -2,7 +2,6 @@
 #define ServoController_h
 
 #include <Adafruit_PWMServoDriver.h>
-#include <event_socket.h>
 #include <template/stateful_persistence.h>
 #include <template/stateful_service.h>
 #include <template/stateful_endpoint.h>
@@ -34,16 +33,16 @@ class ServoController : public StatefulService<ServoSettings> {
           _right_pca {0x41} {}
 
     void begin() {
-        socket.onEvent(EVENT_SERVO_CONFIGURATION_SETTINGS,
-                       [&](JsonObject &root, int originId) { servoEvent(root, originId); });
-        socket.onEvent(EVENT_SERVO_STATE, [&](JsonObject &root, int originId) { stateUpdate(root, originId); });
+        // socket.onEvent(EVENT_SERVO_CONFIGURATION_SETTINGS,
+        //                [&](JsonObject &root, int originId) { servoEvent(root, originId); });
+        // socket.onEvent(EVENT_SERVO_STATE, [&](JsonObject &root, int originId) { stateUpdate(root, originId); });
         _persistence.readFromFS();
 
         initializePCA();
-        socket.onEvent(EVENT_SERVO_STATE, [&](JsonObject &root, int originId) {
-            is_active = root["active"] | false;
-            is_active ? activate() : deactivate();
-        });
+        // socket.onEvent(EVENT_SERVO_STATE, [&](JsonObject &root, int originId) {
+        //     is_active = root["active"] | false;
+        //     is_active ? activate() : deactivate();
+        // });
     }
 
     void pcaWrite(int index, int value) {

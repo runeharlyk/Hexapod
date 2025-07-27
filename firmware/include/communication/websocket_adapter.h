@@ -1,20 +1,19 @@
-#ifndef Socket_h
-#define Socket_h
+#pragma once
 
 #include <PsychicHttp.h>
-#include <template/stateful_service.h>
 #include <list>
 #include <map>
 #include <vector>
 
-enum message_type_t { CONNECT = 0, DISCONNECT = 1, EVENT = 2, PING = 3, PONG = 4, BINARY_EVENT = 5 };
+#include <template/stateful_service.h>
+#include <communication/comm_base.h>
 
 typedef std::function<void(JsonObject &root, int originId)> EventCallback;
 typedef std::function<void(const String &originId, bool sync)> SubscribeCallback;
 
-class EventSocket {
+class Websocket {
   public:
-    EventSocket();
+    Websocket();
 
     PsychicWebSocketHandler *getHandler() { return &_socket; }
 
@@ -41,7 +40,3 @@ class EventSocket {
     void onWSClose(PsychicWebSocketClient *client);
     esp_err_t onFrame(PsychicWebSocketRequest *request, httpd_ws_frame *frame);
 };
-
-extern EventSocket socket;
-
-#endif

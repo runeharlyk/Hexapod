@@ -72,15 +72,6 @@ void sleep() {
                 delay(100);
                 WiFi.disconnect(true);
                 delay(500);
-
-                uint64_t bitmask = (uint64_t)1 << (WAKEUP_PIN_NUMBER);
-
-#ifdef CONFIG_IDF_TARGET_ESP32C3
-                esp_deep_sleep_enable_gpio_wakeup(bitmask, (esp_deepsleep_gpio_wake_up_mode_t)WAKEUP_SIGNAL);
-#else
-                esp_sleep_enable_ext1_wakeup(bitmask, (esp_sleep_ext1_wakeup_mode_t)WAKEUP_SIGNAL);
-                esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_OFF);
-#endif
                 esp_deep_sleep_start();
             }
         },
@@ -136,12 +127,12 @@ void metrics(JsonObject &root) {
 }
 
 void emitMetrics() {
-    if (!socket.hasSubscribers(EVENT_ANALYTICS)) return;
+    // if (!socket.hasSubscribers(EVENT_ANALYTICS)) return;
     analyticsDoc.clear();
     JsonObject root = analyticsDoc.to<JsonObject>();
     system_service::metrics(root);
     serializeJson(analyticsDoc, analyticsMessage);
-    socket.emit(EVENT_ANALYTICS, analyticsMessage);
+    // socket.emit(EVENT_ANALYTICS, analyticsMessage);
 }
 
 const char *resetReason(esp_reset_reason_t reason) {
@@ -173,7 +164,7 @@ const char *resetReason(esp_reset_reason_t reason) {
         case ESP_RST_CPU_LOCKUP: return "Reset due to CPU lock up (double exception)";
 #endif
         default:
-            char buffer[50];
+            static char buffer[50];
             snprintf(buffer, sizeof(buffer), "Unknown reset reason (%d)", reason);
             return buffer;
     }

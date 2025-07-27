@@ -18,7 +18,6 @@
 #include <NewPing.h>
 #include <peripherals/imu.h>
 #include <peripherals/magnetometer.h>
-#include <peripherals/barometer.h>
 
 #define EVENT_CONFIGURATION_SETTINGS "peripheralSettings"
 
@@ -55,15 +54,15 @@ class Peripherals : public StatefulService<PeripheralsConfiguration> {
         _eventEndpoint.begin();
         _persistence.readFromFS();
 
-        socket.onEvent(EVENT_I2C_SCAN, [&](JsonObject &root, int originId) {
-            scanI2C();
-            emitI2C();
-        });
+        // socket.onEvent(EVENT_I2C_SCAN, [&](JsonObject &root, int originId) {
+        //     scanI2C();
+        //     emitI2C();
+        // });
 
-        socket.onSubscribe(EVENT_I2C_SCAN, [&](const String &originId, bool sync) {
-            scanI2C();
-            emitI2C(originId, sync);
-        });
+        // socket.onSubscribe(EVENT_I2C_SCAN, [&](const String &originId, bool sync) {
+        //     scanI2C();
+        //     emitI2C(originId, sync);
+        // });
 
         updatePins();
 
@@ -72,9 +71,6 @@ class Peripherals : public StatefulService<PeripheralsConfiguration> {
 #endif
 #if FT_ENABLED(USE_MAG)
         if (!_mag.initialize()) ESP_LOGE("IMUService", "MAG initialize failed");
-#endif
-#if FT_ENABLED(USE_BMP)
-        if (!_bmp.initialize()) ESP_LOGE("IMUService", "BMP initialize failed");
 #endif
 #if FT_ENABLED(USE_USS)
         _left_sonar = new NewPing(USS_LEFT_PIN, USS_LEFT_PIN, MAX_DISTANCE);
@@ -115,7 +111,7 @@ class Peripherals : public StatefulService<PeripheralsConfiguration> {
         }
         serializeJson(root, output);
         ESP_LOGI("Peripherals", "Emitting I2C scan results, %s %d", originId.c_str(), sync);
-        socket.emit(EVENT_I2C_SCAN, output, originId.c_str(), sync);
+        // socket.emit(EVENT_I2C_SCAN, output, originId.c_str(), sync);
     }
 
     void scanI2C(uint8_t lower = 1, uint8_t higher = 127) {
@@ -176,6 +172,9 @@ class Peripherals : public StatefulService<PeripheralsConfiguration> {
     float leftDistance() { return _left_distance; }
     float rightDistance() { return _right_distance; }
 
+    float angleX() { return _imu.getAngleX(); }
+    float angleZ() { return _imu.getAngleZ(); }
+
     StatefulHttpEndpoint<PeripheralsConfiguration> endpoint;
 
     void emitIMU() {
@@ -191,7 +190,7 @@ class Peripherals : public StatefulService<PeripheralsConfiguration> {
         _bmp.readBarometer(root);
 #endif
         serializeJson(doc, message);
-        socket.emit(EVENT_IMU, message);
+        // socket.emit(EVENT_IMU, message);
     }
 
     void emitSonar() {
@@ -219,9 +218,6 @@ class Peripherals : public StatefulService<PeripheralsConfiguration> {
 #endif
 #if FT_ENABLED(USE_MAG)
     Magnetometer _mag;
-#endif
-#if FT_ENABLED(USE_BMP)
-    Barometer _bmp;
 #endif
 #if FT_ENABLED(USE_USS)
     NewPing *_left_sonar;

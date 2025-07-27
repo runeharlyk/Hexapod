@@ -1,27 +1,89 @@
-#include <spot.h>
+#include <Arduino.h>
+#include <ESPmDNS.h>
+#include <WiFi.h>
+#include <Wire.h>
+#include <ArduinoJson.h>
+#include <PsychicHttp.h>
 
-DRAM_ATTR Spot spot;
+#include <hexapod.h>
+#include <wifi_service.h>
+#include <ap_service.h>
+#include <mdns_service.h>
+#include <filesystem.h>
+#include <features.h>
+#include <communication/ble_adapter.h>
+#include <communication/websocket_adapter.h>
 
-void IRAM_ATTR SpotControlLoopEntry(void *) {
-    ESP_LOGI("main", "Setup complete now running tsk");
+// Variables
+#define APP_NAME "Hexapod"
+#define APP_VERSION "v0.0.1"
+
+// Communication
+PsychicHttpServer server;
+Websocket socket;
+Bluetooth bluetooth;
+
+// Service
+WiFiService wifiService;
+APService apService;
+
+DRAM_ATTR Hexapod robot;
+
+void setupServer() {
+    server.config.max_uri_handlers = 126;
+    server.maxUploadSize = 2300000; // 2.3 MB;
+    server.listen(80);
+    server.on("/api/ws/events", socket.getHandler());
+    server.serveStatic("/api/config/", ESPFS, "/config/");
+    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
+    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Accept, Content-Type, Authorization");
+    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Credentials", "true");
+    DefaultHeaders::Instance().addHeader("Server", APP_NAME);
+}
+
+void IRAM_ATTR controlLoopEntry(void *) {
+    ESP_LOGI("main", "Control task starting");
+    robot.initialize();
     TickType_t xLastWakeTime = xTaskGetTickCount();
     const TickType_t xFrequency = 5 / portTICK_PERIOD_MS;
+    ESP_LOGI("main", "Control task started");
     for (;;) {
-        // spot.readSensors();
-        spot.planMotion();
-        spot.updateActuators();
-        // spot.emitTelemetry();
+        // robot.readSensors();
+        robot.planMotion();
+        robot.updateActuators();
+        // robot.emitTelemetry();
 
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
 }
 
+void IRAM_ATTR serviceLoopEntry(void *) {
+    ESP_LOGI("main", "Service control task starting");
+    wifiService.begin();
+    apService.begin();
+
+    setupServer();
+    bluetooth.begin();
+
+    ESP_LOGI("main", "Service control task started");
+    for (;;) {
+        wifiService.loop();
+        apService.loop();
+
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
+}
+
 void setup() {
     Serial.begin(115200);
+    ESPFS.begin(true);
+    ESP_LOGI("main", "Booting robot");
 
-    spot.initialize();
+    feature_service::printFeatureConfiguration();
 
-    g_taskManager.createTask(SpotControlLoopEntry, "Control task", 4096, nullptr, 5);
+    xTaskCreate(serviceLoopEntry, "Service task", 4096, nullptr, 2, nullptr);
+
+    xTaskCreatePinnedToCore(controlLoopEntry, "Control task", 4096, nullptr, 5, nullptr, 1);
 
     ESP_LOGI("main", "Setup finished");
 }

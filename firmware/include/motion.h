@@ -20,24 +20,22 @@
 class MotionService {
     void *_cmdSubHandle;
     void *_modeSubHandle;
+    void *_gaitSubHandle;
 
   public:
-    MotionService(ServoController *servoController) : _servoController(servoController) {}
+    MotionService(ServoController *servoController, Peripherals *peripherals)
+        : _servoController(servoController), _peripherals(peripherals) {}
 
     void begin() {
         _cmdSubHandle = EventBus::subscribe<Command>([&](Command const &c) { handleCommand(c); });
         _modeSubHandle = EventBus::subscribe<Mode>([&](Mode const &c) { handleInputMode(c); });
+        _gaitSubHandle = EventBus::subscribe<Gait>([&](Gait const &c) { handleInputGait(c); });
 
         // socket.onEvent(INPUT_EVENT, [&](JsonObject &root, int originId) { handleInput(root, originId); });
-
         // socket.onEvent(MODE_EVENT, [&](JsonObject &root, int originId) { handleMode(root, originId); });
-
         // socket.onEvent(ANGLES_EVENT, [&](JsonObject &root, int originId) { anglesEvent(root, originId); });
-
         // socket.onEvent(POSITION_EVENT, [&](JsonObject &root, int originId) { positionEvent(root, originId); });
-
         // socket.onEvent(GAIT_EVENT, [&](JsonObject &root, int originId) { gaitEvent(root, originId); });
-
         // socket.onSubscribe(ANGLES_EVENT,
         //                    std::bind(&MotionService::syncAngles, this, std::placeholders::_1,
         //                    std::placeholders::_2));
@@ -76,6 +74,11 @@ class MotionService {
         handleCommand(command);
     }
 
+    void handleInputGait(Gait const &g) {
+        ESP_LOGI("MotionService", "Gait %d", g.gait);
+        gait_state.gait_type = g.gait;
+    }
+
     void handleInputMode(Mode const &m) {
         ESP_LOGI("MotionService", "Mode %d", m.mode);
         motionState = m.mode;
@@ -89,14 +92,14 @@ class MotionService {
         switch (motionState) {
             case MOTION_STATE::STAND: {
                 target_body_state.xm = c.lx * 50.f;
-                target_body_state.ym = c.ly * 50.f;
+                target_body_state.ym = -c.ly * 50.f;
                 target_body_state.phi = c.rx * 0.254f;
                 target_body_state.omega = c.ry * 0.254f;
                 body_state.updateFeet(default_feet_pos);
                 break;
             }
             case MOTION_STATE::WALK: {
-                gait_state.step_x = c.lx * 100;
+                gait_state.step_x = -c.lx * 100;
                 gait_state.step_z = c.ly * 100;
                 gait_state.step_angle = c.rx * 0.8;
                 gait_state.step_speed = c.s + 1.f;
@@ -167,6 +170,7 @@ class MotionService {
 
   private:
     ServoController *_servoController;
+    Peripherals *_peripherals;
     int step_count = 0;
     Kinematics kinematics;
     GaitController gait;

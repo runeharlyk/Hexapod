@@ -1,8 +1,7 @@
 #pragma once
-#include "event_bus.h"
 
 // TODO: Find a way to match a topic with the data type
-enum message_topic_t { TEMP = 1, COMMAND = 2, MODE = 3 };
+enum message_topic_t { TEMP = 1, COMMAND = 2, MODE = 3, GAIT = 4, IMU = 5, ANGLE = 6, BODY = 7 };
 
 struct Temp {
     float value;
@@ -14,12 +13,20 @@ enum class MOTION_STATE { DEACTIVATED, IDLE, POSE, STAND, WALK };
 
 struct Mode {
     MOTION_STATE mode;
-    friend void toJson(JsonVariant v, MOTION_STATE const &m) { v.set((int)m); }
+    friend void toJson(JsonVariant v, Mode const &m) { v.set((int)m.mode); }
     void fromJson(JsonVariantConst o) { mode = (MOTION_STATE)o.as<int>(); }
 };
 
+enum class GaitType { TRI_GATE, BI_GATE, WAVE, RIPPLE };
+
+struct Gait {
+    GaitType gait;
+    friend void toJson(JsonVariant v, Gait const &g) { v.set((int)g.gait); }
+    void fromJson(JsonVariantConst o) { gait = (GaitType)o.as<int>(); }
+};
+
 struct ServoAngles {
-    float angles[12];
+    float angles[18];
     friend void toJson(JsonVariant v, ServoAngles const &a) {
         JsonArray arr = v.to<JsonArray>();
         for (int i = 0; i < 12; i++) {
@@ -30,6 +37,22 @@ struct ServoAngles {
         JsonArrayConst arr = o.as<JsonArrayConst>();
         for (int i = 0; i < 12; i++) {
             angles[i] = arr[i].as<float>();
+        }
+    }
+};
+
+struct IMUAngles {
+    float rpy[3];
+    friend void toJson(JsonVariant v, IMUAngles const &a) {
+        JsonArray arr = v.to<JsonArray>();
+        for (int i = 0; i < 3; i++) {
+            arr.add(a.rpy[i]);
+        }
+    }
+    void fromJson(JsonVariantConst o) {
+        JsonArrayConst arr = o.as<JsonArrayConst>();
+        for (int i = 0; i < 3; i++) {
+            rpy[i] = arr[i].as<float>();
         }
     }
 };

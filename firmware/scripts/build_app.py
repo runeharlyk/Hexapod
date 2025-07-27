@@ -27,16 +27,14 @@ project_dir = env["PROJECT_DIR"]
 buildFlags = env.ParseFlags(env["BUILD_FLAGS"])
 
 interface_dir = project_dir + "/app"
-output_file = project_dir + "/firmware/lib/ESP32-sveltekit/WWWData.h"
+output_file = project_dir + "/firmware/include/WWWData.h"
 source_www_dir = interface_dir + "/src"
 build_dir = interface_dir + "/build"
 filesystem_dir = project_dir + "/data/www"
 
 
 def find_latest_timestamp_for_app():
-    return max(
-        (getmtime(f) for f in glob.glob(f"{source_www_dir}/**/*", recursive=True))
-    )
+    return max((getmtime(f) for f in glob.glob(f"{source_www_dir}/**/*", recursive=True)))
 
 
 def should_regenerate_output_file():
@@ -83,9 +81,7 @@ def build_webapp():
         env.Execute(f"{package_manager} run build:embedded")
         os.chdir("..")
     else:
-        raise Exception(
-            "No lock-file found. Please install dependencies for interface (eg. npm install)"
-        )
+        raise Exception("No lock-file found. Please install dependencies for interface (eg. npm install)")
 
 
 def embed_webapp():
@@ -106,9 +102,7 @@ def build_progmem():
 
         for idx, path in enumerate(Path(build_dir).rglob("*.*")):
             asset_path = path.relative_to(build_dir).as_posix()
-            asset_mime = (
-                mimetypes.guess_type(asset_path)[0] or "application/octet-stream"
-            )
+            asset_mime = mimetypes.guess_type(asset_path)[0] or "application/octet-stream"
             print(f"Converting {asset_path}")
 
             asset_var = f"ESP_SVELTEKIT_DATA_{idx}"
@@ -133,14 +127,10 @@ def build_progmem():
         )
         progmem.write("class WWWData {\n")
         progmem.write("\tpublic:\n")
-        progmem.write(
-            "\t\tstatic void registerRoutes(RouteRegistrationHandler handler) {\n"
-        )
+        progmem.write("\t\tstatic void registerRoutes(RouteRegistrationHandler handler) {\n")
 
         for asset_path, asset in assetMap.items():
-            progmem.write(
-                f'\t\t\thandler("/{asset_path}", "{asset["mime"]}", {asset["name"]}, {asset["size"]});\n'
-            )
+            progmem.write(f'\t\t\thandler("/{asset_path}", "{asset["mime"]}", {asset["name"]}, {asset["size"]});\n')
 
         progmem.write("\t\t}\n")
         progmem.write("};\n\n")

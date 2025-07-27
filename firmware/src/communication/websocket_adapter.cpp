@@ -1,4 +1,4 @@
-#include <event_socket.h>
+#include <communication/websocket_adapter.h>
 
 SemaphoreHandle_t clientSubscriptionsMutex = xSemaphoreCreateMutex();
 
@@ -9,7 +9,6 @@ message_type_t char_to_message_type(char c) {
         case '2': return EVENT;
         case '3': return PING;
         case '4': return PONG;
-        case '5': return BINARY_EVENT;
         default: throw std::invalid_argument("Invalid message type");
     }
 }
@@ -42,17 +41,17 @@ const char *getEventPayload(const char *msg) {
     return payload;
 }
 
-EventSocket::EventSocket() {
-    _socket.onOpen((std::bind(&EventSocket::onWSOpen, this, std::placeholders::_1)));
-    _socket.onClose(std::bind(&EventSocket::onWSClose, this, std::placeholders::_1));
-    _socket.onFrame(std::bind(&EventSocket::onFrame, this, std::placeholders::_1, std::placeholders::_2));
+Websocket::Websocket() {
+    _socket.onOpen((std::bind(&Websocket::onWSOpen, this, std::placeholders::_1)));
+    _socket.onClose(std::bind(&Websocket::onWSClose, this, std::placeholders::_1));
+    _socket.onFrame(std::bind(&Websocket::onFrame, this, std::placeholders::_1, std::placeholders::_2));
 }
 
-void EventSocket::onWSOpen(PsychicWebSocketClient *client) {
+void Websocket::onWSOpen(PsychicWebSocketClient *client) {
     ESP_LOGI("EventSocket", "ws[%s][%u] connect", client->remoteIP().toString().c_str(), client->socket());
 }
 
-void EventSocket::onWSClose(PsychicWebSocketClient *client) {
+void Websocket::onWSClose(PsychicWebSocketClient *client) {
     xSemaphoreTake(clientSubscriptionsMutex, portMAX_DELAY);
     for (auto &event_subscriptions : client_subscriptions) {
         event_subscriptions.second.remove(client->socket());
@@ -61,7 +60,7 @@ void EventSocket::onWSClose(PsychicWebSocketClient *client) {
     ESP_LOGI("EventSocket", "ws[%s][%u] disconnect", client->remoteIP().toString().c_str(), client->socket());
 }
 
-esp_err_t EventSocket::onFrame(PsychicWebSocketRequest *request, httpd_ws_frame *frame) {
+esp_err_t Websocket::onFrame(PsychicWebSocketRequest *request, httpd_ws_frame *frame) {
     ESP_LOGV("EventSocket", "ws[%s][%u] opcode[%d]", request->client()->remoteIP().toString().c_str(),
              request->client()->socket(), frame->type);
 
@@ -117,9 +116,9 @@ esp_err_t EventSocket::onFrame(PsychicWebSocketRequest *request, httpd_ws_frame 
     return ESP_OK;
 }
 
-bool EventSocket::hasSubscribers(const char *event) { return !client_subscriptions[event].empty(); }
+bool Websocket::hasSubscribers(const char *event) { return !client_subscriptions[event].empty(); }
 
-void EventSocket::emit(const char *event, const char *payload, const char *originId, bool onlyToSameOrigin) {
+void Websocket::emit(const char *event, const char *payload, const char *originId, bool onlyToSameOrigin) {
     int originSubscriptionId = originId[0] ? atoi(originId) : -1;
     xSemaphoreTake(clientSubscriptionsMutex, portMAX_DELAY);
     auto &subscriptions = client_subscriptions[event];
@@ -155,24 +154,20 @@ void EventSocket::emit(const char *event, const char *payload, const char *origi
     xSemaphoreGive(clientSubscriptionsMutex);
 }
 
-void EventSocket::handleEventCallbacks(String event, JsonObject &jsonObject, int originId) {
+void Websocket::handleEventCallbacks(String event, JsonObject &jsonObject, int originId) {
     for (auto &callback : event_callbacks[event]) {
         callback(jsonObject, originId);
     }
 }
 
-void EventSocket::handleSubscribeCallbacks(String event, const String &originId) {
+void Websocket::handleSubscribeCallbacks(String event, const String &originId) {
     for (auto &callback : subscribe_callbacks[event]) {
         callback(originId, true);
     }
 }
 
-void EventSocket::onEvent(String event, EventCallback callback) {
-    event_callbacks[event].push_back(std::move(callback));
-}
+void Websocket::onEvent(String event, EventCallback callback) { event_callbacks[event].push_back(std::move(callback)); }
 
-void EventSocket::onSubscribe(String event, SubscribeCallback callback) {
+void Websocket::onSubscribe(String event, SubscribeCallback callback) {
     subscribe_callbacks[event].push_back(std::move(callback));
 }
-
-EventSocket socket;
