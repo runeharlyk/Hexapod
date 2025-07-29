@@ -14,9 +14,9 @@ const registerFetchIntercept = async () => {
 export const load = async () => {
   await registerFetchIntercept()
   return {
-    title: 'Spot micro controller',
-    github: 'runeharlyk/SpotMicroESP32-Leika',
-    app_name: 'Spot Micro Controller',
+    title: 'Hexapod controller',
+    github: 'runeharlyk/Hexapod',
+    app_name: 'Hexapod Controller',
     copyright: '2025 Rune Harlyk'
   }
 }

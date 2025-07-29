@@ -1,11 +1,13 @@
 <script lang="ts">
   import { goto } from '$app/navigation'
   import Visualization from '$lib/components/Visualization.svelte'
-  import { socket } from '$lib/stores'
+  import { websocket } from '$lib/transport/websocket-adapter'
   import { onMount } from 'svelte'
 
+  const connected = websocket.connected
+
   onMount(() => {
-    socket.subscribe(isConnected => {
+    connected.subscribe(isConnected => {
       if (isConnected) {
         goto('/controller')
       }
@@ -21,7 +23,7 @@
     <div class="card-body w-80">
       <h2 class="card-title text-center text-2xl">Begin you journey</h2>
       <p class="py-6 text-center"></p>
-      <a class="btn btn-primary" href={$socket ? '/controller' : '/connection'}>
+      <a class="btn btn-primary" href={$connected ? '/controller' : '/connection'}>
         Connect to robot
       </a>
     </div>

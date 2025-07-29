@@ -48,7 +48,7 @@ class Bluetooth : public CommAdapterBase {
 
     void restart();
     void setup();
-    void send(const char* data) override;
+    void send(const char* data, int cid = -1) override;
 
   public:
     Bluetooth() {};

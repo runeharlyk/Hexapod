@@ -30,15 +30,15 @@ APService apService;
 DRAM_ATTR Hexapod robot;
 
 void setupServer() {
-    server.config.max_uri_handlers = 126;
-    server.maxUploadSize = 2300000; // 2.3 MB;
+    server.config.max_uri_handlers = 10;
+    server.maxUploadSize = 1000000; // 1 MB;
     server.listen(80);
     server.on("/api/ws/events", socket.getHandler());
     server.serveStatic("/api/config/", ESPFS, "/config/");
+    DefaultHeaders::Instance().addHeader("Server", APP_NAME);
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Accept, Content-Type, Authorization");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Credentials", "true");
-    DefaultHeaders::Instance().addHeader("Server", APP_NAME);
 }
 
 void IRAM_ATTR controlLoopEntry(void *) {
@@ -60,10 +60,13 @@ void IRAM_ATTR controlLoopEntry(void *) {
 void IRAM_ATTR serviceLoopEntry(void *) {
     ESP_LOGI("main", "Service control task starting");
     wifiService.begin();
+    MDNS.begin(APP_NAME);
+    MDNS.setInstanceName(APP_NAME);
     apService.begin();
 
     setupServer();
     bluetooth.begin();
+    socket.begin();
 
     ESP_LOGI("main", "Service control task started");
     for (;;) {

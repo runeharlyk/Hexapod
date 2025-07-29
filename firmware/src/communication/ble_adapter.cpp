@@ -57,7 +57,7 @@ void Bluetooth::RXCallbacks::onWrite(BLECharacteristic* characteristic) {
     }
 }
 
-void Bluetooth::send(const char* data) {
+void Bluetooth::send(const char* data, int cid) {
     if (_deviceConnected) {
         _txCharacteristic->setValue((uint8_t*)data, strlen(data));
         _txCharacteristic->notify();

@@ -73,7 +73,7 @@ class CommAdapterBase {
         return r;
     }
 
-    virtual void send(const char* data) = 0;
+    virtual void send(const char* data, int cid = -1) = 0;
 
     virtual void handleIncoming(const std::string& data, int cid = 0) {
         JsonDocument doc;
@@ -128,6 +128,15 @@ class CommAdapterBase {
                 } else {
                     ESP_LOGI("MESSAGE", "Could not parse topic: %d", topic);
                 };
+                break;
+            }
+            case PING: {
+                ESP_LOGI("BluetoothService", "Ping");
+                send("[4]", cid);
+                break;
+            }
+            case PONG: {
+                ESP_LOGI("BluetoothService", "Pong");
                 break;
             }
 

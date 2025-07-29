@@ -1,15 +1,16 @@
 <script lang="ts">
   import SettingsCard from '$lib/components/SettingsCard.svelte'
   import { BluetoothConnected, BluetoothDisconnected, WiFi } from '$lib/components/icons'
-  import { location, socket } from '$lib/stores'
+  import { location } from '$lib/stores'
   import { ble, SERVICE_UUID } from '$lib/transport/ble-adapter'
+  import { websocket } from '$lib/transport/websocket-adapter'
 
   const update = () => {
-    const ws = $location ? $location : window.location.host
-    socket.init(`ws://${ws}/api/ws/events`)
+    websocket.connect()
   }
 
   let isConnected = ble.connected
+  let isWebSocketConnected = websocket.connected
 </script>
 
 <SettingsCard collapsible={false}>
@@ -23,11 +24,26 @@
   <h2>WebSocket</h2>
 
   <div class="flex">
-    <label class="label w-32" for="server">Address:</label>
-    <input class="input" bind:value={$location} />
+    <label class="label w-32" for="server">Status:</label>
+    <div>{$isWebSocketConnected ? 'Connected' : 'Disconnected'}</div>
+    {#if $isWebSocketConnected}
+      <button
+        class="btn btn-ghost btn-circle btn-sm"
+        onclick={() => websocket.disconnect()}
+        title="Disconnect WebSocket">
+        <WiFi class="h-6 w-auto text-success" />
+      </button>
+    {:else}
+      <button
+        class="btn btn-ghost btn-circle btn-sm"
+        onclick={() => websocket.connect()}
+        title="Connect WebSocket">
+        <WiFi class="h-6 w-auto text-error" />
+      </button>
+    {/if}
   </div>
 
-  <button class="btn btn-primary" onclick={update}>Update</button>
+  <button class="btn btn-primary" onclick={update}>Connect</button>
 
   <h2>Bluetooth</h2>
 
