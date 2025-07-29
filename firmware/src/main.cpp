@@ -21,7 +21,7 @@
 // Communication
 PsychicHttpServer server;
 Websocket socket;
-Bluetooth bluetooth;
+BLE ble;
 
 // Service
 WiFiService wifiService;
@@ -65,7 +65,7 @@ void IRAM_ATTR serviceLoopEntry(void *) {
     apService.begin();
 
     setupServer();
-    bluetooth.begin();
+    ble.begin();
     socket.begin();
 
     ESP_LOGI("main", "Service control task started");

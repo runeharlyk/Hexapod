@@ -22,7 +22,7 @@
 #define CHARACTERISTIC_TX "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 #define CHARACTERISTIC_RX "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 
-class Bluetooth : public CommAdapterBase {
+class BLE : public CommAdapterBase {
   private:
     BLEServer* _server {nullptr};
     BLECharacteristic* _txCharacteristic {nullptr};
@@ -30,19 +30,19 @@ class Bluetooth : public CommAdapterBase {
     bool _deviceConnected {false};
 
     class ServerCallbacks : public BLEServerCallbacks {
-        Bluetooth* _service;
+        BLE* _service;
 
       public:
-        ServerCallbacks(Bluetooth* service) : _service(service) {}
+        ServerCallbacks(BLE* service) : _service(service) {}
         void onConnect(BLEServer* pServer) override;
         void onDisconnect(BLEServer* pServer) override;
     };
 
     class RXCallbacks : public BLECharacteristicCallbacks {
-        Bluetooth* _service;
+        BLE* _service;
 
       public:
-        RXCallbacks(Bluetooth* service) : _service(service) {}
+        RXCallbacks(BLE* service) : _service(service) {}
         void onWrite(BLECharacteristic* characteristic) override;
     };
 
@@ -51,8 +51,8 @@ class Bluetooth : public CommAdapterBase {
     void send(const char* data, int cid = -1) override;
 
   public:
-    Bluetooth() {};
-    ~Bluetooth() {
+    BLE() {};
+    ~BLE() {
         if (_server) BLEDevice::deinit(true);
     };
 

@@ -1,12 +1,12 @@
 #include <communication/ble_adapter.h>
 
-void Bluetooth::begin() {
+void BLE::begin() {
     CommAdapterBase::begin();
 
     setup();
 }
 
-void Bluetooth::setup() {
+void BLE::setup() {
     ESP_LOGI("BluetoothService", "Initializing BLE with device name: %s", "Hexapod");
 
     BLEDevice::init("Hexapod");
@@ -27,7 +27,7 @@ void Bluetooth::setup() {
     ESP_LOGI("BluetoothService", "BLE UART service started, advertising as %s", "Hexapod");
 }
 
-void Bluetooth::restart() {
+void BLE::restart() {
     ESP_LOGI("BluetoothService", "Restarting BLE service due to settings update.");
     if (_server) {
         BLEDevice::deinit(true);
@@ -38,26 +38,26 @@ void Bluetooth::restart() {
     setup();
 }
 
-void Bluetooth::ServerCallbacks::onConnect(BLEServer* pServer) {
+void BLE::ServerCallbacks::onConnect(BLEServer* pServer) {
     _service->_deviceConnected = true;
     ESP_LOGI("BluetoothService", "Client connected");
 }
 
-void Bluetooth::ServerCallbacks::onDisconnect(BLEServer* pServer) {
+void BLE::ServerCallbacks::onDisconnect(BLEServer* pServer) {
     _service->_deviceConnected = false;
     ESP_LOGI("BluetoothService", "Client disconnected");
     pServer->startAdvertising();
     ESP_LOGI("BluetoothService", "Restarting advertising");
 }
 
-void Bluetooth::RXCallbacks::onWrite(BLECharacteristic* characteristic) {
+void BLE::RXCallbacks::onWrite(BLECharacteristic* characteristic) {
     std::string value = characteristic->getValue();
     if (!value.empty()) {
         _service->handleIncoming(value);
     }
 }
 
-void Bluetooth::send(const char* data, int cid) {
+void BLE::send(const char* data, int cid) {
     if (_deviceConnected) {
         _txCharacteristic->setValue((uint8_t*)data, strlen(data));
         _txCharacteristic->notify();
