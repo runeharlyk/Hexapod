@@ -48,7 +48,7 @@ void IRAM_ATTR controlLoopEntry(void *) {
     const TickType_t xFrequency = 5 / portTICK_PERIOD_MS;
     ESP_LOGI("main", "Control task started");
     for (;;) {
-        // robot.readSensors();
+        robot.readSensors();
         robot.planMotion();
         robot.updateActuators();
         // robot.emitTelemetry();

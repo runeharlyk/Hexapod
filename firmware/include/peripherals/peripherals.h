@@ -174,6 +174,7 @@ class Peripherals : public StatefulService<PeripheralsConfiguration> {
 
     float angleX() { return _imu.getAngleX(); }
     float angleZ() { return _imu.getAngleZ(); }
+    float angleY() { return _imu.getAngleY(); }
 
     StatefulHttpEndpoint<PeripheralsConfiguration> endpoint;
 

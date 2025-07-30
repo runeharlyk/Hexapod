@@ -18,13 +18,13 @@ class CommAdapterBase {
     // }
 
     virtual void begin() {
-        _cmdSubHandle = EventBus::subscribe<Command>([this](Command const& c) { emit(COMMAND, c); });
+        _cmdSubHandle = EventBus::subscribe<CommandMsg>([this](CommandMsg const& c) { emit(COMMAND, c); });
 
-        _tempSubHandle = EventBus::subscribe<Temp>([this](Temp const& t) { emit(TEMP, t); });
+        _tempSubHandle = EventBus::subscribe<TempMsg>([this](TempMsg const& t) { emit(TEMP, t); });
 
-        _modeSubHandle = EventBus::subscribe<Mode>([this](Mode const& t) { emit(MODE, t); });
+        _modeSubHandle = EventBus::subscribe<ModeMsg>([this](ModeMsg const& t) { emit(MODE, t); });
 
-        _gaitSubHandle = EventBus::subscribe<Gait>([this](Gait const& t) { emit(GAIT, t); });
+        _gaitSubHandle = EventBus::subscribe<GaitMsg>([this](GaitMsg const& t) { emit(GAIT, t); });
     }
 
     template <typename T>
@@ -110,21 +110,21 @@ class CommAdapterBase {
                 message_topic_t topic = obj[1].as<message_topic_t>();
                 ESP_LOGI("BluetoothService", "Got payload for topic: %d", topic);
                 if (topic == TEMP) {
-                    Temp payload;
+                    TempMsg payload;
                     payload.fromJson(obj[2]);
-                    EventBus::publish<Temp>(payload, _tempSubHandle);
+                    EventBus::publish<TempMsg>(payload, _tempSubHandle);
                 } else if (topic == COMMAND) {
-                    Command payload;
+                    CommandMsg payload;
                     payload.fromJson(obj[2]);
-                    EventBus::publish<Command>(payload, _cmdSubHandle);
+                    EventBus::publish<CommandMsg>(payload, _cmdSubHandle);
                 } else if (topic == MODE) {
-                    Mode payload;
+                    ModeMsg payload;
                     payload.fromJson(obj[2]);
-                    EventBus::publish<Mode>(payload, _modeSubHandle);
+                    EventBus::publish<ModeMsg>(payload, _modeSubHandle);
                 } else if (topic == GAIT) {
-                    Gait payload;
+                    GaitMsg payload;
                     payload.fromJson(obj[2]);
-                    EventBus::publish<Gait>(payload, _gaitSubHandle);
+                    EventBus::publish<GaitMsg>(payload, _gaitSubHandle);
                 } else {
                     ESP_LOGI("MESSAGE", "Could not parse topic: %d", topic);
                 };

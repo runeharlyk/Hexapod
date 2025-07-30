@@ -17,7 +17,7 @@ class Hexapod {
 
     // sense
     void readSensors() {
-        // EXECUTE_EVERY_N_MS(20, { _peripherals.readIMU(); });
+        EXECUTE_EVERY_N_MS(25, { _peripherals.readIMU(); });
         // _peripherals.readMag();
     }
 

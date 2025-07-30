@@ -3,31 +3,31 @@
 // TODO: Find a way to match a topic with the data type
 enum message_topic_t { TEMP = 1, COMMAND = 2, MODE = 3, GAIT = 4, IMU = 5, ANGLE = 6, BODY = 7 };
 
-struct Temp {
+struct TempMsg {
     float value;
-    friend void toJson(JsonVariant v, Temp const &t) { v["value"] = t.value; }
+    friend void toJson(JsonVariant v, TempMsg const &t) { v["value"] = t.value; }
     void fromJson(JsonObjectConst o) { value = o["value"].as<float>(); }
 };
 
 enum class MOTION_STATE { DEACTIVATED, IDLE, POSE, STAND, WALK };
 
-struct Mode {
+struct ModeMsg {
     MOTION_STATE mode;
-    friend void toJson(JsonVariant v, Mode const &m) { v.set((int)m.mode); }
+    friend void toJson(JsonVariant v, ModeMsg const &m) { v.set((int)m.mode); }
     void fromJson(JsonVariantConst o) { mode = (MOTION_STATE)o.as<int>(); }
 };
 
 enum class GaitType { TRI_GATE, BI_GATE, WAVE, RIPPLE };
 
-struct Gait {
+struct GaitMsg {
     GaitType gait;
-    friend void toJson(JsonVariant v, Gait const &g) { v.set((int)g.gait); }
+    friend void toJson(JsonVariant v, GaitMsg const &g) { v.set((int)g.gait); }
     void fromJson(JsonVariantConst o) { gait = (GaitType)o.as<int>(); }
 };
 
-struct ServoAngles {
+struct ServoAnglesMsg {
     float angles[18];
-    friend void toJson(JsonVariant v, ServoAngles const &a) {
+    friend void toJson(JsonVariant v, ServoAnglesMsg const &a) {
         JsonArray arr = v.to<JsonArray>();
         for (int i = 0; i < 12; i++) {
             arr.add(a.angles[i]);
@@ -41,9 +41,22 @@ struct ServoAngles {
     }
 };
 
-struct IMUAngles {
+struct ServoSignalMsg {
+    int8_t id;
+    uint16_t pwm;
+    friend void toJson(JsonVariant v, ServoSignalMsg const &s) {
+        v["id"] = s.id;
+        v["pwm"] = s.pwm;
+    }
+    void fromJson(JsonVariantConst o) {
+        id = o["id"].as<int8_t>();
+        pwm = o["pwm"].as<uint16_t>();
+    }
+};
+
+struct IMUAnglesMsg {
     float rpy[3];
-    friend void toJson(JsonVariant v, IMUAngles const &a) {
+    friend void toJson(JsonVariant v, IMUAnglesMsg const &a) {
         JsonArray arr = v.to<JsonArray>();
         for (int i = 0; i < 3; i++) {
             arr.add(a.rpy[i]);
@@ -57,9 +70,9 @@ struct IMUAngles {
     }
 };
 
-struct Command {
+struct CommandMsg {
     float lx, ly, rx, ry, h, s, s1;
-    friend void toJson(JsonVariant v, Command const &c) {
+    friend void toJson(JsonVariant v, CommandMsg const &c) {
         JsonArray arr = v.to<JsonArray>();
         arr.add(static_cast<int8_t>(c.lx * 127));
         arr.add(static_cast<int8_t>(c.ly * 127));

@@ -23,6 +23,8 @@ class IMU {
         imu_success = _imu.testConnection();
         devStatus = _imu.dmpInitialize();
         if (!imu_success) return false;
+        _imu.CalibrateAccel(6);
+        _imu.CalibrateGyro(6);
         _imu.setDMPEnabled(true);
         _imu.setI2CMasterModeEnabled(false);
         _imu.setI2CBypassEnabled(true);
@@ -58,11 +60,11 @@ class IMU {
 
     float getTemperature() { return imu_success ? imu_temperature : -1; }
 
-    float getAngleX() { return imu_success ? ypr[0] * 180 / M_PI : 0; }
+    float getAngleX() { return imu_success ? ypr[2] : 0; }
 
-    float getAngleY() { return imu_success ? ypr[1] * 180 / M_PI : 0; }
+    float getAngleY() { return imu_success ? ypr[1] : 0; }
 
-    float getAngleZ() { return imu_success ? ypr[2] * 180 / M_PI : 0; }
+    float getAngleZ() { return imu_success ? ypr[0] : 0; }
 
     void readIMU(JsonObject& root) {
         if (!imu_success) return;

@@ -25,8 +25,8 @@ class MotionService {
     MotionService(ServoController *servoController) : _servoController(servoController) {}
 
     void begin() {
-        _cmdSubHandle = EventBus::subscribe<Command>([&](Command const &c) { handleCommand(c); });
-        _modeSubHandle = EventBus::subscribe<Mode>([&](Mode const &c) { handleInputMode(c); });
+        _cmdSubHandle = EventBus::subscribe<CommandMsg>([&](CommandMsg const &c) { handleCommand(c); });
+        _modeSubHandle = EventBus::subscribe<ModeMsg>([&](ModeMsg const &c) { handleInputMode(c); });
 
         // socket.onEvent(INPUT_EVENT, [&](JsonObject &root, int originId) { handleInput(root, originId); });
 
@@ -76,14 +76,14 @@ class MotionService {
         handleCommand(command);
     }
 
-    void handleInputMode(Mode const &m) {
+    void handleInputMode(ModeMsg const &m) {
         ESP_LOGI("MotionService", "Mode %d", m.mode);
         motionState = m.mode;
         motionState == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
         if (motionState == MOTION_STATE::STAND) body_state.updateFeet(default_feet_pos);
     }
 
-    void handleCommand(Command const &c) {
+    void handleCommand(CommandMsg const &c) {
         Serial.println("handleCommand");
         body_state.zm = c.h * 50;
         switch (motionState) {
@@ -171,7 +171,7 @@ class MotionService {
     Kinematics kinematics;
     GaitController gait;
 
-    Command command = {0, 0, 0, 0, 0, 0, 0};
+    CommandMsg command = {0, 0, 0, 0, 0, 0, 0};
     body_state_t body_state = {0, 0, 0, 0, 0, 15};
     body_state_t target_body_state = {0, 0, 0, 0, 0, 15};
     gait_state_t gait_state = {15, 0, 0, 0, 1, 0.002, default_stand_frac, GaitType::TRI_GATE, {0, 0.5, 0, 0.5, 0, 0.5}};
