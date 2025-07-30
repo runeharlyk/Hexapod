@@ -70,7 +70,7 @@ class MotionService {
 
     void handleCommand(CommandMsg const &c) {
         Serial.println("handleCommand");
-        body_state.zm = c.h * 50;
+        target_body_state.zm = c.h * 50;
         ESP_LOGI("imu", "%.2f \t %.2f \t %.2f \t %.2f", _peripherals->angleZ(), _peripherals->angleY(),
                  _peripherals->angleX(), c.rx * 0.254f);
         switch (motionState) {
@@ -90,7 +90,7 @@ class MotionService {
                 gait_state.step_height = (c.s1 + 1.f) * 10.f;
                 gait_state.step_depth = 0.002f;
 
-                body_state.omega = c.ry * 0.254f;
+                target_body_state.omega = c.ry * 0.254f;
                 break;
             }
         }
@@ -102,14 +102,17 @@ class MotionService {
             case MOTION_STATE::IDLE: return false;
             case MOTION_STATE::POSE: _servoController->setCenterPwm(); return false;
             case MOTION_STATE::STAND: {
-                body_state.xm = lerp(body_state.xm, target_body_state.xm, 0.05);
-                body_state.ym = lerp(body_state.ym, target_body_state.ym, 0.05);
-                body_state.phi = lerp(body_state.phi, target_body_state.phi + _peripherals->angleY(), 0.05);
-                body_state.omega = lerp(body_state.omega, target_body_state.omega + _peripherals->angleX(), 0.05);
+                body_state.xm = lerp(body_state.xm, target_body_state.xm, 0.06);
+                body_state.ym = lerp(body_state.ym, target_body_state.ym, 0.06);
+                body_state.zm = lerp(body_state.zm, target_body_state.zm, 0.06);
+                body_state.phi = lerp(body_state.phi, target_body_state.phi + _peripherals->angleY(), 0.06);
+                body_state.omega = lerp(body_state.omega, target_body_state.omega + _peripherals->angleX(), 0.06);
                 kinematics.inverseKinematics(body_state, angles);
                 break;
             }
             case MOTION_STATE::WALK: {
+                body_state.phi = lerp(body_state.phi, target_body_state.phi + _peripherals->angleY(), 0.06);
+                body_state.omega = lerp(body_state.omega, target_body_state.omega + _peripherals->angleX(), 0.06);
                 gait.step(gait_state, body_state, 5.f / 1000.f);
                 kinematics.inverseKinematics(body_state, angles);
                 break;
