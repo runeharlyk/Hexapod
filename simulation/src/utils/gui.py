@@ -30,7 +30,7 @@ class GUI:
         self.step_depth_slider = p.addUserDebugParameter("Step depth", 0, 0.01, 0.002)
         self.stand_frac_slider = p.addUserDebugParameter("Stand frac", 0, 1, 0.5)
 
-        self.gait_type_slider = p.addUserDebugParameter("Gait Type", 0, len(GaitType) - 1, 0)
+        self.gait_type_slider = p.addUserDebugParameter("Gait Type", 0, len(GaitType) - 1, 4)
 
         # self.gait_type_slider = p.addUserDebugParameter("Gait Type", 0, len(GaitType) - 1, 0, paramType=p.GUI_ENUM,
         #                               enumNames=[g.value for g in GaitType])
