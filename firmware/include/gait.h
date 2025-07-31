@@ -6,7 +6,7 @@
 #include <kinematics.h>
 #include <message_types.h>
 
-static constexpr float default_offset[6] = {0, 0.5, 0, 0.5, 0, 0.5};
+static constexpr float default_offset[6] = {0, 0.52, 0.08, 0.58, 0.16, 0.66};
 static constexpr float default_stand_frac = 3.1 / 6;
 
 struct gait_state_t {
@@ -108,11 +108,11 @@ class GaitController {
         switch (gait.gait_type) {
             case GaitType::TRI_GATE:
                 gait.offset[0] = 0.0f;
-                gait.offset[1] = 0.5f;
-                gait.offset[2] = 0.0f;
-                gait.offset[3] = 0.5f;
-                gait.offset[4] = 0.0f;
-                gait.offset[5] = 0.5f;
+                gait.offset[1] = 0.52f;
+                gait.offset[2] = 0.08f;
+                gait.offset[3] = 0.58f;
+                gait.offset[4] = 0.16f;
+                gait.offset[5] = 0.66f;
                 gait.stand_frac = 3.1f / 6.0f;
                 break;
             case GaitType::BI_GATE:
@@ -137,8 +137,8 @@ class GaitController {
                 gait.offset[0] = 0.0f;
                 gait.offset[1] = 4.0f / 6.0f;
                 gait.offset[2] = 2.0f / 6.0f;
-                gait.offset[3] = 5.0f / 6.0f;
-                gait.offset[4] = 1.0f / 6.0f;
+                gait.offset[3] = 1.0f / 6.0f;
+                gait.offset[4] = 5.0f / 6.0f;
                 gait.offset[5] = 3.0f / 6.0f;
                 gait.stand_frac = 5.0f / 6.0f;
                 break;

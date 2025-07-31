@@ -14,10 +14,10 @@ class GaitType(Enum):
 
 
 default_offset = {
-    GaitType.TRI_GATE: [0, 0.5, 0, 0.5, 0, 0.5],
+    GaitType.TRI_GATE: [0.00, 0.52, 0.08, 0.58, 0.16, 0.66],
     GaitType.BI_GATE: [0, 1 / 3, 2 / 3, 2 / 3, 1 / 3, 0],
-    GaitType.WAVE: [0, 1 / 6 * 1, 1 / 6 * 2, 1 / 6 * 5, 1 / 6 * 4, 1 / 6 * 3],
-    GaitType.RIPPLE: [0, 1 / 6 * 4, 1 / 6 * 2, 1 / 6 * 5, 1 / 6 * 1, 1 / 6 * 3],
+    GaitType.WAVE: [0, 1 / 6, 2 / 6, 5 / 6, 4 / 6, 3 / 6],
+    GaitType.RIPPLE: [0, 4 / 6, 2 / 6, 1 / 6, 5 / 6, 3 / 6],
 }
 
 default_stand_frac = {
