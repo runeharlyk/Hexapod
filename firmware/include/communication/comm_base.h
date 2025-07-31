@@ -19,12 +19,9 @@ class CommAdapterBase {
 
     virtual void begin() {
         _cmdSubHandle = EventBus::subscribe<CommandMsg>([this](CommandMsg const& c) { emit(COMMAND, c); });
-
-        _tempSubHandle = EventBus::subscribe<TempMsg>([this](TempMsg const& t) { emit(TEMP, t); });
-
         _modeSubHandle = EventBus::subscribe<ModeMsg>([this](ModeMsg const& t) { emit(MODE, t); });
-
         _gaitSubHandle = EventBus::subscribe<GaitMsg>([this](GaitMsg const& t) { emit(GAIT, t); });
+        _servoSubHandle = EventBus::subscribe<ServoSignalMsg>([this](ServoSignalMsg const& t) { emit(SERVO, t); });
     }
 
     template <typename T>
@@ -53,6 +50,7 @@ class CommAdapterBase {
     void* _tempSubHandle {nullptr};
     void* _modeSubHandle {nullptr};
     void* _gaitSubHandle {nullptr};
+    void* _servoSubHandle {nullptr};
 
     void subscribe(message_topic_t t, int cid) {
         xSemaphoreTake(mutex_, portMAX_DELAY);
@@ -109,10 +107,10 @@ class CommAdapterBase {
             case EVENT: {
                 message_topic_t topic = obj[1].as<message_topic_t>();
                 ESP_LOGI("BluetoothService", "Got payload for topic: %d", topic);
-                if (topic == TEMP) {
-                    TempMsg payload;
+                if (topic == SERVO) {
+                    ServoSignalMsg payload;
                     payload.fromJson(obj[2]);
-                    EventBus::publish<TempMsg>(payload, _tempSubHandle);
+                    EventBus::publish<ServoSignalMsg>(payload, _servoSubHandle);
                 } else if (topic == COMMAND) {
                     CommandMsg payload;
                     payload.fromJson(obj[2]);

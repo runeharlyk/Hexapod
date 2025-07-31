@@ -7,9 +7,6 @@ void printFeatureConfiguration() {
     ESP_LOGI("Features", "====================== FEATURE FLAGS ======================");
     ESP_LOGI("Features", "Firmware version: %s, name: %s, target: %s", APP_VERSION, APP_NAME, BUILD_TARGET);
 
-    // Core features
-    ESP_LOGI("Features", "USE_CAMERA: %s", USE_CAMERA ? "enabled" : "disabled");
-
     // Sensors
     ESP_LOGI("Features", "USE_MPU6050: %s", USE_MPU6050 ? "enabled" : "disabled");
     ESP_LOGI("Features", "USE_MAG: %s", USE_MAG ? "enabled" : "disabled");

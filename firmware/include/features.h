@@ -12,6 +12,11 @@
 #define USE_MPU6050 1
 #endif
 
+// ESP32 CAMERA off by default
+#ifndef USE_CAMERA
+#define USE_CAMERA 0
+#endif
+
 // ESP32 IMU on by default
 #ifndef USE_BNO055
 #define USE_BNO055 0

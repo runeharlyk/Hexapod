@@ -7,6 +7,8 @@
 #include <template/stateful_endpoint.h>
 #include <utils/math_utils.h>
 #include <settings/servo_settings.h>
+#include <event_bus.h>
+#include <message_types.h>
 
 /*
  * Servo Settings
@@ -19,9 +21,6 @@
 #define FACTORY_SERVO_OSCILLATOR_FREQUENCY 27000000
 #endif
 
-#define EVENT_SERVO_CONFIGURATION_SETTINGS "servoPWM"
-#define EVENT_SERVO_STATE "servoState"
-
 enum class SERVO_CONTROL_STATE { DEACTIVATED, PWM, ANGLE };
 
 class ServoController : public StatefulService<ServoSettings> {
@@ -33,16 +32,9 @@ class ServoController : public StatefulService<ServoSettings> {
           _right_pca {0x41} {}
 
     void begin() {
-        // socket.onEvent(EVENT_SERVO_CONFIGURATION_SETTINGS,
-        //                [&](JsonObject &root, int originId) { servoEvent(root, originId); });
-        // socket.onEvent(EVENT_SERVO_STATE, [&](JsonObject &root, int originId) { stateUpdate(root, originId); });
+        EventBus::subscribe<ServoSignalMsg>([&](ServoSignalMsg const &msg) { servoEvent(msg); });
         _persistence.readFromFS();
-
         initializePCA();
-        // socket.onEvent(EVENT_SERVO_STATE, [&](JsonObject &root, int originId) {
-        //     is_active = root["active"] | false;
-        //     is_active ? activate() : deactivate();
-        // });
     }
 
     void pcaWrite(int index, int value) {
@@ -80,12 +72,10 @@ class ServoController : public StatefulService<ServoSettings> {
         active ? activate() : deactivate();
     }
 
-    void servoEvent(JsonObject &root, int originId) {
+    void servoEvent(ServoSignalMsg const &msg) {
         control_state = SERVO_CONTROL_STATE::PWM;
-        uint8_t servo_id = root["servo_id"];
-        int pwm = root["pwm"].as<int>();
-        pcaWrite(servo_id, pwm);
-        ESP_LOGI("SERVO_CONTROLLER", "Setting servo %d to %d", servo_id, pwm);
+        pcaWrite(msg.id, msg.pwm);
+        ESP_LOGI("SERVO_CONTROLLER", "Setting servo %d to %d", msg.id, msg.pwm);
     }
 
     void syncAngles(const String &originId) {

@@ -1,13 +1,7 @@
 #pragma once
 
 // TODO: Find a way to match a topic with the data type
-enum message_topic_t { TEMP = 1, COMMAND = 2, MODE = 3, GAIT = 4, IMU = 5, ANGLE = 6, BODY = 7 };
-
-struct TempMsg {
-    float value;
-    friend void toJson(JsonVariant v, TempMsg const &t) { v["value"] = t.value; }
-    void fromJson(JsonObjectConst o) { value = o["value"].as<float>(); }
-};
+enum message_topic_t { SERVO = 1, COMMAND = 2, MODE = 3, GAIT = 4, IMU = 5, ANGLE = 6, BODY = 7 };
 
 enum class MOTION_STATE { DEACTIVATED, IDLE, POSE, STAND, WALK };
 
