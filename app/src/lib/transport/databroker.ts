@@ -24,7 +24,6 @@ export class DataBroker {
     })
 
     transport.onData((type: MessageType, topic: MessageTopic, payload: unknown) => {
-      console.log('data', type, topic, payload)
       this.emit(topic, payload, transportId)
     })
   }
@@ -38,8 +37,14 @@ export class DataBroker {
 
   on<T>(topic: MessageTopic, callback: (data: T) => void): string {
     const subscriptionId = `sub_${this.subscriptionCounter++}`
-    const topicSubscriptions = this.subscriptions.get(topic) || new Map()
-    topicSubscriptions.set(subscriptionId, (data: unknown) => callback(data as T))
+
+    const topicSubscriptions =
+      this.subscriptions.get(topic) || new Map<string, DataBrokerCallback<unknown>>()
+
+    topicSubscriptions.set(subscriptionId, (_t, _tp, payload) => {
+      callback(payload as T)
+    })
+
     this.subscriptions.set(topic, topicSubscriptions)
 
     this.transports.forEach((_, transport) => {

@@ -1,7 +1,22 @@
 #pragma once
 
 // TODO: Find a way to match a topic with the data type
-enum message_topic_t { SERVO = 1, COMMAND = 2, MODE = 3, GAIT = 4, IMU = 5, ANGLE = 6, BODY = 7 };
+enum message_topic_t {
+    SERVO_SIGNAL = 1,
+    COMMAND = 2,
+    MODE = 3,
+    GAIT = 4,
+    IMU = 5,
+    ANGLE = 6,
+    BODY = 7,
+    WIFI = 8,
+    SERVO_SETTINGS = 9,
+    BLUETOOTH = 10,
+    CAMERA = 11,
+    AP = 12,
+    DEVICE = 13,
+    PERIPHERAL = 14
+};
 
 enum class MOTION_STATE { DEACTIVATED, IDLE, POSE, STAND, WALK };
 
@@ -86,5 +101,49 @@ struct CommandMsg {
         h = arr[4].as<int8_t>() / 127.0f;
         s = arr[5].as<int8_t>() / 127.0f;
         s1 = arr[6].as<int8_t>() / 127.0f;
+    }
+};
+
+struct ServoSetting {
+    int16_t centerPwm;
+    int8_t direction;
+    uint8_t pin;
+    float conversion;
+    const char *name;
+};
+
+class ServoSettingsMsg {
+  public:
+    ServoSetting servos[NUM_SERVO] = {{306, 1, 8, 2, "LF1"},  {306, 1, 9, 2, "LF2"},   {306, 1, 10, 2, "LF3"},
+                                      {306, 1, 2, 2, "LC1"},  {306, -1, 3, 2, "LC2"},  {306, -1, 4, 2, "LC3"},
+                                      {306, 1, 5, 2, "LB1"},  {306, -1, 6, 2, "LB2"},  {306, -1, 7, 2, "LB3"},
+                                      {306, 1, 11, 2, "RF1"}, {306, 1, 12, 2, "RF2"},  {306, 1, 13, 2, "RF3"},
+                                      {306, 1, 14, 2, "RC1"}, {306, -1, 15, 2, "RC2"}, {306, -1, 16, 2, "RC3"},
+                                      {306, 1, 17, 2, "RB1"}, {306, -1, 18, 2, "RB2"}, {306, -1, 19, 2, "RB3"}};
+
+    friend void toJson(JsonVariant dst, ServoSettingsMsg const &src) {
+        JsonArray arr = dst.to<JsonArray>();
+        for (auto const &s : src.servos) {
+            JsonObject o = arr.add<JsonObject>();
+            o["center"] = s.centerPwm;
+            o["dir"] = s.direction;
+            o["pin"] = s.pin;
+            o["conv"] = s.conversion;
+            o["name"] = s.name;
+        }
+    }
+
+    void fromJson(JsonVariantConst src) {
+        JsonArrayConst arr = src.as<JsonArrayConst>();
+        size_t i = 0;
+        for (JsonObjectConst o : arr) {
+            if (i >= NUM_SERVO) break;
+            servos[i].centerPwm = o["center"] | servos[i].centerPwm;
+            servos[i].direction = o["dir"] | servos[i].direction;
+            servos[i].pin = o["pin"] | servos[i].pin;
+            servos[i].conversion = o["conv"] | servos[i].conversion;
+            servos[i].name = o["name"] | servos[i].name;
+            ++i;
+        }
     }
 };

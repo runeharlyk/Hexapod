@@ -17,6 +17,18 @@ class EventBus {
     };
 
     template <typename Msg>
+    struct Last {
+        Msg val;
+        bool valid {false};
+    };
+
+    template <typename Msg>
+    static Last<Msg>& last() {
+        static Last<Msg> l;
+        return l;
+    }
+
+    template <typename Msg>
     static std::vector<Sub<Msg>*>& subs() {
         static std::vector<Sub<Msg>*> v;
         static bool init = [] {
@@ -44,9 +56,7 @@ class EventBus {
     template <typename Msg, typename C>
     static void* subscribe(uint32_t ms, C&& cb) {
         auto* s = new Sub<Msg> {std::forward<C>(cb), pdMS_TO_TICKS(ms), 0, Msg {}, nullptr};
-        if (ms > 0) {
-            s->timer = xTimerCreate("t", s->interval, pdFALSE, s, timerCb<Msg>);
-        }
+        if (ms > 0) s->timer = xTimerCreate("t", s->interval, pdFALSE, s, timerCb<Msg>);
         auto& v = subs<Msg>();
         xSemaphoreTake(mtx<Msg>(), portMAX_DELAY);
         v.push_back(s);
@@ -81,6 +91,8 @@ class EventBus {
         std::vector<std::function<void(const Msg&)>> ready;
 
         xSemaphoreTake(lock, portMAX_DELAY);
+        last<Msg>().val = msg;
+        last<Msg>().valid = true;
         for (auto* s : v) {
             if (s == ex) continue;
             TickType_t elapsed = now - s->last;
@@ -98,5 +110,13 @@ class EventBus {
         xSemaphoreGive(lock);
 
         for (auto& fn : ready) fn(msg);
+    }
+
+    template <typename Msg>
+    static bool peek(Msg& out) {
+        auto& l = last<Msg>();
+        if (!l.valid) return false;
+        out = l.val;
+        return true;
     }
 };

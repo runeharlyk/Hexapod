@@ -1,92 +1,79 @@
 <script lang="ts">
-    import { api } from '$lib/api';
-    import { onMount } from 'svelte';
-    interface Props {
-        data?: any;
-        pwm: number;
-        servoId: number;
-    }
+  import { MessageTopic } from '$lib/interfaces/transport.interface'
+  import { dataBroker } from '$lib/transport/databroker'
+  import { onMount } from 'svelte'
 
-    let {
-        data = $bindable({
-            servos: []
-        }),
-        pwm = $bindable(306),
-        servoId = $bindable(0)
-    }: Props = $props();
+  interface Props {
+    data?: any
+    pwm: number
+    servoId: number
+  }
 
-    const updateValue = (event, index, key) => {
-        data.servos[index][key] = event.target.innerText;
-    };
+  let {
+    data = $bindable({
+      servos: []
+    }),
+    pwm = $bindable(306),
+    servoId = $bindable(0)
+  }: Props = $props()
 
-    const syncConfig = async () => {
-        await api.post('/api/servo/config', data);
-        console.log(data);
-    };
+  onMount(async () => dataBroker.on(MessageTopic.SERVO_SETTINGS, d => (data.servos = d)))
 
-    onMount(async () => {
-        const result = await api.get('/api/servo/config');
-        if (result.isOk()) {
-            data = result.inner;
-        }
-    });
-    const setServoCenter = () => {
-        data.servos[servoId]['center_pwm'] = pwm;
-    };
+  const updateValue = (event: Event, index: number, key: string) =>
+    (data.servos[index][key] = event.target?.innerText)
+
+  const syncConfig = async () => dataBroker.emit(MessageTopic.SERVO_SETTINGS, data.servos)
+
+  const setServoCenter = () => (data.servos[servoId]['center'] = pwm)
 </script>
 
 <div class="overflow-x-auto">
-    <button class="btn" onclick={setServoCenter}>Save servo center pwm</button>
-    <table class="table table-xs">
-        <thead>
-            <tr>
-                <!-- <th>Name</th> -->
-                <th>Center PWM</th>
-                <th>Pin</th>
-                <th>Direction</th>
-                <th>Conversion</th>
-            </tr>
-        </thead>
-        <tbody>
-            {#each data.servos as servo, index}
-                <tr>
-                    <!-- <td
-                        contenteditable="true"
-                        onblur={syncConfig}
-                        oninput={event => updateValue(event, index, 'name')}
-                    >
-                        {servo.name}
-                    </td> -->
-                    <td
-                        contenteditable="true"
-                        onblur={syncConfig}
-                        oninput={event => updateValue(event, index, 'center_pwm')}
-                    >
-                        {servo.center_pwm}
-                    </td>
-                    <td
-                        contenteditable="true"
-                        onblur={syncConfig}
-                        oninput={event => updateValue(event, index, 'pin')}
-                    >
-                        {servo.pin}
-                    </td>
-                    <td
-                        contenteditable="true"
-                        onblur={syncConfig}
-                        oninput={event => updateValue(event, index, 'direction')}
-                    >
-                        {servo.direction}
-                    </td>
-                    <td
-                        contenteditable="true"
-                        onblur={syncConfig}
-                        oninput={event => updateValue(event, index, 'conversion')}
-                    >
-                        {servo.conversion}
-                    </td>
-                </tr>
-            {/each}
-        </tbody>
-    </table>
+  <button class="btn" onclick={setServoCenter}>Save servo center pwm</button>
+  <table class="table table-xs">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Center PWM</th>
+        <th>Pin</th>
+        <th>Direction</th>
+        <th>Conversion</th>
+      </tr>
+    </thead>
+    <tbody>
+      {#each data.servos as servo, index}
+        <tr>
+          <td
+            contenteditable="true"
+            onblur={syncConfig}
+            oninput={event => updateValue(event, index, 'name')}>
+            {servo.name}
+          </td>
+          <td
+            contenteditable="true"
+            onblur={syncConfig}
+            oninput={event => updateValue(event, index, 'center')}>
+            {servo.center}
+          </td>
+          <td
+            contenteditable="true"
+            onblur={syncConfig}
+            oninput={event => updateValue(event, index, 'pin')}>
+            {servo.pin}
+          </td>
+          <td
+            contenteditable="true"
+            onblur={syncConfig}
+            oninput={event => updateValue(event, index, 'dir')}>
+            {servo.dir}
+          </td>
+          <td
+            contenteditable="true"
+            onblur={syncConfig}
+            oninput={event => updateValue(event, index, 'conv')}>
+            {servo.conv}
+          </td>
+        </tr>
+      {/each}
+    </tbody>
+  </table>
 </div>

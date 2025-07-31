@@ -57,9 +57,8 @@ void BLE::RXCallbacks::onWrite(BLECharacteristic* characteristic) {
     }
 }
 
-void BLE::send(const char* data, int cid) {
-    if (_deviceConnected) {
-        _txCharacteristic->setValue((uint8_t*)data, strlen(data));
-        _txCharacteristic->notify();
-    }
+void BLE::send(const uint8_t* data, size_t len, int cid) {
+    if (!_deviceConnected) return;
+    _txCharacteristic->setValue(const_cast<uint8_t*>(data), static_cast<uint16_t>(len));
+    _txCharacteristic->notify();
 }

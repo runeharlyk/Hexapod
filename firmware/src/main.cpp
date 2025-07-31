@@ -13,6 +13,7 @@
 #include <features.h>
 #include <communication/ble_adapter.h>
 #include <communication/websocket_adapter.h>
+#include <event_storage.h>
 
 // Variables
 #define APP_NAME "Hexapod"
@@ -26,6 +27,7 @@ BLE ble;
 // Service
 WiFiService wifiService;
 APService apService;
+EventStorage eventStorage;
 
 DRAM_ATTR Hexapod robot;
 
@@ -59,6 +61,8 @@ void IRAM_ATTR controlLoopEntry(void *) {
 
 void IRAM_ATTR serviceLoopEntry(void *) {
     ESP_LOGI("main", "Service control task starting");
+    eventStorage.begin();
+
     wifiService.begin();
     MDNS.begin(APP_NAME);
     MDNS.setInstanceName(APP_NAME);

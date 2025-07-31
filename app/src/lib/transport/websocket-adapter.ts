@@ -1,9 +1,36 @@
 import { encode, decode } from '@msgpack/msgpack'
 import { writable } from 'svelte/store'
-import { MessageTopic, MessageType, type ITransport } from '../interfaces/transport.interface'
+import {
+  MessageTopic,
+  MessageType,
+  type ITransport,
+  type ServerMessage
+} from '../interfaces/transport.interface'
 import type { DataBrokerCallback } from './databroker'
 
-type Message = [MessageType, MessageTopic?, unknown?]
+let useBinary = false
+
+const decodeMessage = (data: string | ArrayBuffer): ServerMessage | null => {
+  useBinary = data instanceof ArrayBuffer
+
+  try {
+    if (useBinary) {
+      return decode(new Uint8Array(data as ArrayBuffer)) as ServerMessage
+    }
+    return JSON.parse(data as string)
+  } catch (error) {
+    console.error(`Could not decode data: ${new Uint8Array(data as ArrayBuffer)} - ${error}`)
+  }
+  return null
+}
+
+const encodeMessage = (data: unknown) => {
+  try {
+    return useBinary ? encode(data) : JSON.stringify(data)
+  } catch (error) {
+    console.error(`Could not encode data: ${data} - ${error}`)
+  }
+}
 
 function createWebSocketAdapter(): ITransport {
   const dataCallbacks: DataBrokerCallback<unknown>[] = []
@@ -13,11 +40,15 @@ function createWebSocketAdapter(): ITransport {
   let ws: WebSocket | undefined
 
   const connect = async () => {
-    const location = '192.168.0.221'
-    const wsUrl = `ws://${location}/api/ws/events`
+    const location = window.location.host //'192.168.0.221'
+    const wsUrl = `ws://${window.location.host}/api/ws/events`
     ws = new WebSocket(wsUrl)
+    ws.binaryType = 'arraybuffer'
 
     ws.onopen = () => {
+      ping()
+      useBinary = true
+      ping()
       connected.set(true)
       connectCallbacks.forEach(cb => cb())
     }
@@ -27,20 +58,11 @@ function createWebSocketAdapter(): ITransport {
       disconnectCallbacks.forEach(cb => cb())
     }
 
-    ws.onmessage = event => {
-      if (event.data instanceof ArrayBuffer) {
-        const data = decode(new Uint8Array(event.data)) as Message
-        const [type, topic, payload] = data
-        if (topic && payload) dataCallbacks.forEach(cb => cb(type, topic, payload))
-      } else {
-        try {
-          const data = JSON.parse(event.data) as Message
-          const [type, topic, payload] = data
-          if (topic && payload) dataCallbacks.forEach(cb => cb(type, topic, payload))
-        } catch (error) {
-          console.error('Failed to parse websocket message:', error)
-        }
-      }
+    ws.onmessage = frame => {
+      const message = decodeMessage(frame.data)
+      if (!message) return
+      const [type, topic = undefined, payload = undefined] = message
+      if (topic && payload) dataCallbacks.forEach(cb => cb(type, topic, payload))
     }
 
     ws.onerror = error => {
@@ -67,9 +89,21 @@ function createWebSocketAdapter(): ITransport {
 
   const send = async <T>(data: T) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return
+    const serialized = encodeMessage(data)
+    if (!serialized) {
+      console.error('Could not serialize data:', data)
+      return
+    }
+    ws.send(serialized)
+  }
 
-    const payload = encode(data)
-    ws.send(payload)
+  function ping() {
+    const serialized = encodeMessage([3])
+    if (!serialized) {
+      console.error('Could not serialize message')
+      return
+    }
+    ws?.send(serialized)
   }
 
   const onData = (data: (type: MessageType, topic: MessageTopic, payload: unknown) => void) =>

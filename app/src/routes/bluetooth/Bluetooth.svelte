@@ -16,15 +16,9 @@
     log.push('rx: ' + JSON.stringify(data))
   }
 
-  const publish = () => {
-    const data = { value: 110 }
-    log.push('Publish: ' + JSON.stringify(data))
-    dataBroker.emit(MessageTopic.TEMP, data, subscriptionId)
-  }
-
   const subscribe = () => {
     log.push('Subscribe (temp)')
-    subscriptionId = dataBroker.on<Temp>(MessageTopic.TEMP, handleTemp)
+    subscriptionId = dataBroker.on<Temp>(MessageTopic.SERVO, handleTemp)
   }
 
   const unsubscribe = () => {
@@ -44,22 +38,9 @@
 
   <h2>Bluetooth Settings</h2>
 
-  <!-- <div class="flex">
-        <label class="label w-32" for="server">Service UUID: </label>
-        <div>{SERVICE_UUID}</div>
-    </div> -->
-
   <div class="my-2 flex gap-4">
     <button class="btn btn-primary" onclick={() => subscribe()}>Subscribe</button>
     <button class="btn btn-primary" onclick={() => unsubscribe()}>Unsubscribe</button>
-    <button class="btn btn-primary" onclick={() => publish()}>Publish</button>
-  </div>
-
-  <hr />
-
-  <div class="my-2 flex gap-4">
-    <input class="input" type="number" bind:value />
-    <button class="btn btn-primary" onclick={() => ble.send([2, 1, { value }])}>Send</button>
   </div>
 </SettingsCard>
 

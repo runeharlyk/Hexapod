@@ -21,28 +21,29 @@ class CommAdapterBase {
         _cmdSubHandle = EventBus::subscribe<CommandMsg>([this](CommandMsg const& c) { emit(COMMAND, c); });
         _modeSubHandle = EventBus::subscribe<ModeMsg>([this](ModeMsg const& t) { emit(MODE, t); });
         _gaitSubHandle = EventBus::subscribe<GaitMsg>([this](GaitMsg const& t) { emit(GAIT, t); });
-        _servoSubHandle = EventBus::subscribe<ServoSignalMsg>([this](ServoSignalMsg const& t) { emit(SERVO, t); });
+        _servoSubHandle =
+            EventBus::subscribe<ServoSignalMsg>([this](ServoSignalMsg const& t) { emit(SERVO_SIGNAL, t); });
     }
 
     template <typename T>
-    void emit(message_topic_t topic, T const& payload) {
+    void emit(message_topic_t topic, T const& payload, int cid = -1) {
         if (!hasSubscribers(topic)) return;
 
         JsonDocument doc;
         JsonArray array = doc.to<JsonArray>();
-        array.add((int)EVENT);
-        array.add((int)topic);
-        JsonObject obj = array.add<JsonObject>();
-        toJson(obj, payload);
+        array.add(static_cast<uint8_t>(EVENT));
+        array.add(static_cast<uint8_t>(topic));
+        toJson(array.add<JsonVariant>(), payload);
 
-        String out;
 #if USE_MSGPACK
-        serializeMsgPack(doc, out);
+        std::string bin;
+        serializeMsgPack(doc, bin);
+        send(reinterpret_cast<const uint8_t*>(bin.data()), bin.size(), cid);
 #else
+        String out;
         serializeJson(doc, out);
+        send(out.c_str(), cid);
 #endif
-
-        send(out.c_str());
     }
 
   protected:
@@ -51,6 +52,7 @@ class CommAdapterBase {
     void* _modeSubHandle {nullptr};
     void* _gaitSubHandle {nullptr};
     void* _servoSubHandle {nullptr};
+    void* _servoSettingsMsgSubHandle {nullptr};
 
     void subscribe(message_topic_t t, int cid) {
         xSemaphoreTake(mutex_, portMAX_DELAY);
@@ -71,7 +73,9 @@ class CommAdapterBase {
         return r;
     }
 
-    virtual void send(const char* data, int cid = -1) = 0;
+    void send(const char* data, int cid = -1) { send(reinterpret_cast<const uint8_t*>(data), strlen(data), cid); }
+
+    virtual void send(const uint8_t* data, size_t len, int cid = -1) = 0;
 
     virtual void handleIncoming(const std::string& data, int cid = 0) {
         JsonDocument doc;
@@ -95,6 +99,12 @@ class CommAdapterBase {
                 message_topic_t topic = obj[1].as<message_topic_t>();
                 ESP_LOGI("BluetoothService", "Connecting to topic: %d", topic);
                 subscribe(topic, cid);
+                switch (topic) {
+                    case SERVO_SETTINGS:
+                        ServoSettingsMsg m;
+                        if (EventBus::peek<ServoSettingsMsg>(m)) emit(SERVO_SETTINGS, m, cid);
+                        break;
+                }
                 break;
             }
             case DISCONNECT: {
@@ -107,7 +117,7 @@ class CommAdapterBase {
             case EVENT: {
                 message_topic_t topic = obj[1].as<message_topic_t>();
                 ESP_LOGI("BluetoothService", "Got payload for topic: %d", topic);
-                if (topic == SERVO) {
+                if (topic == SERVO_SIGNAL) {
                     ServoSignalMsg payload;
                     payload.fromJson(obj[2]);
                     EventBus::publish<ServoSignalMsg>(payload, _servoSubHandle);
@@ -123,6 +133,10 @@ class CommAdapterBase {
                     GaitMsg payload;
                     payload.fromJson(obj[2]);
                     EventBus::publish<GaitMsg>(payload, _gaitSubHandle);
+                } else if (topic == SERVO_SETTINGS) {
+                    ServoSettingsMsg payload;
+                    payload.fromJson(obj[2]);
+                    EventBus::publish<ServoSettingsMsg>(payload, _servoSettingsMsgSubHandle);
                 } else {
                     ESP_LOGI("MESSAGE", "Could not parse topic: %d", topic);
                 };
@@ -130,7 +144,12 @@ class CommAdapterBase {
             }
             case PING: {
                 ESP_LOGI("BluetoothService", "Ping");
+#if USE_MSGPACK
+                static const uint8_t pong[] = {0x91, 0x04}; // [4] in MsgPack
+                send(pong, sizeof(pong), cid);
+#else
                 send("[4]", cid);
+#endif
                 break;
             }
             case PONG: {

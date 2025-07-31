@@ -20,5 +20,5 @@ class Websocket : public CommAdapterBase {
     void onWSClose(PsychicWebSocketClient *client);
     esp_err_t onFrame(PsychicWebSocketRequest *request, httpd_ws_frame *frame);
 
-    void send(const char *data, int cid = -1) override;
+    void send(const uint8_t *data, size_t len, int cid = -1) override;
 };

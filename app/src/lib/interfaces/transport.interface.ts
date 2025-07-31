@@ -10,10 +10,11 @@ export enum MessageType {
 }
 
 export enum MessageTopic {
-  TEMP = 1,
+  SERVO = 1,
   COMMAND = 2,
   MODE = 3,
-  GAIT = 4
+  GAIT = 4,
+  SERVO_SETTINGS = 9
 }
 
 export type Temp = {

@@ -33,15 +33,23 @@ esp_err_t Websocket::onFrame(PsychicWebSocketRequest *request, httpd_ws_frame *f
     return ESP_OK;
 }
 
-void Websocket::send(const char *data, int cid) {
+void Websocket::send(const uint8_t *data, size_t len, int cid) {
     if (cid != -1) {
         auto *client = _socket.getClient(cid);
         if (client) {
             ESP_LOGV(TAG, "Sending to client %s: %s", client->remoteIP().toString().c_str(), data);
-            client->sendMessage(data);
+#if USE_MSGPACK
+            client->sendMessage(HTTPD_WS_TYPE_BINARY, data, len);
+#else
+            client->sendMessage(HTTPD_WS_TYPE_TEXT, data, len);
+#endif
         }
     } else {
         ESP_LOGV(TAG, "Sending to all clients: %s", data);
-        _socket.sendAll(data);
+#if USE_MSGPACK
+        _socket.sendAll(HTTPD_WS_TYPE_BINARY, data, len);
+#else
+        _socket.sendAll(HTTPD_WS_TYPE_TEXT, data, len);
+#endif
     }
 }

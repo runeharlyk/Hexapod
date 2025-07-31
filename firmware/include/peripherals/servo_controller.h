@@ -26,8 +26,7 @@ enum class SERVO_CONTROL_STATE { DEACTIVATED, PWM, ANGLE };
 class ServoController : public StatefulService<ServoSettings> {
   public:
     ServoController()
-        : endpoint(ServoSettings::read, ServoSettings::update, this),
-          _persistence(ServoSettings::read, ServoSettings::update, this, SERVO_SETTINGS_FILE),
+        : _persistence(ServoSettings::read, ServoSettings::update, this, SERVO_SETTINGS_FILE),
           _left_pca {0x40},
           _right_pca {0x41} {}
 
@@ -133,8 +132,6 @@ class ServoController : public StatefulService<ServoSettings> {
     void updateServoState() {
         if (control_state == SERVO_CONTROL_STATE::ANGLE) calculatePWM();
     }
-
-    StatefulHttpEndpoint<ServoSettings> endpoint;
 
   private:
     void initializePCA() {

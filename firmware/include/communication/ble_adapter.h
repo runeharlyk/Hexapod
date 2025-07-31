@@ -48,7 +48,7 @@ class BLE : public CommAdapterBase {
 
     void restart();
     void setup();
-    void send(const char* data, int cid = -1) override;
+    void send(const uint8_t* data, size_t len, int cid = -1) override;
 
   public:
     BLE() {};

@@ -9,7 +9,6 @@ typedef struct {
     uint8_t pin;
     float conversion;
     String name;
-    // bool enable;
 } servo_settings_t;
 
 class ServoSettings {
