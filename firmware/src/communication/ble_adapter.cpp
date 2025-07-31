@@ -51,9 +51,10 @@ void BLE::ServerCallbacks::onDisconnect(BLEServer* pServer) {
 }
 
 void BLE::RXCallbacks::onWrite(BLECharacteristic* characteristic) {
-    std::string value = characteristic->getValue();
-    if (!value.empty()) {
-        _service->handleIncoming(value);
+    uint8_t* data = characteristic->getData();
+    size_t len = characteristic->getLength();
+    if (len) {
+        _service->handleIncoming(data, len);
     }
 }
 

@@ -77,12 +77,12 @@ class CommAdapterBase {
 
     virtual void send(const uint8_t* data, size_t len, int cid = -1) = 0;
 
-    virtual void handleIncoming(const std::string& data, int cid = 0) {
+    virtual void handleIncoming(const uint8_t* data, size_t len, int cid = 0) {
         JsonDocument doc;
 #if USE_MSGPACK
-        DeserializationError error = deserializeMsgPack(doc, data);
+        DeserializationError error = deserializeMsgPack(doc, data, len);
 #else
-        DeserializationError error = deserializeJson(doc, data);
+        DeserializationError error = deserializeJson(doc, data, len);
 #endif
         if (error) {
             throw std::runtime_error(error.c_str());

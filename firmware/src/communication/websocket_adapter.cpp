@@ -27,8 +27,7 @@ esp_err_t Websocket::onFrame(PsychicWebSocketRequest *request, httpd_ws_frame *f
 
     ESP_LOGV(TAG, "Received message from client %d: %s", request->client()->socket(), (char *)frame->payload);
 
-    std::string data((char *)frame->payload, frame->len);
-    handleIncoming(data, request->client()->socket());
+    handleIncoming(frame->payload, frame->len, request->client()->socket());
 
     return ESP_OK;
 }
