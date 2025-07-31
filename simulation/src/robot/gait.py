@@ -86,17 +86,15 @@ class GaitController:
             self.phase = 0.0
             return
 
-        self._advance_phase(dt, gait["step_velocity"])
-
+        length = np.hypot(step_x, step_z) * (-1 if step_x < 0 else 1)
+        turn_amplitude = np.arctan2(step_z, length) * 2
+        speed_factor = np.max([np.abs(length) / 25, np.abs(angle) * 1.5])
+        speed = gait["step_velocity"] * np.clip(speed_factor, 0.75, 1.5)
+        self._advance_phase(dt, speed)
         stand_fraction = gait["stand_frac"]
         depth = gait["step_depth"]
         height = gait["step_height"]
         offsets = gait["offset"]
-
-        length = np.hypot(step_x, step_z)
-        if step_x < 0:
-            length = -length
-        turn_amplitude = np.arctan2(step_z, length) * 2
 
         new_feet = np.zeros_like(self.default_position)
 
