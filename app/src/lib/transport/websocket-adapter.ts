@@ -42,7 +42,12 @@ function createWebSocketAdapter(): ITransport {
   const connect = async () => {
     const location = window.location.host //'192.168.0.221'
     const wsUrl = `ws://${window.location.host}/api/ws/events`
-    ws = new WebSocket(wsUrl)
+    try {
+      ws = new WebSocket(wsUrl)
+    } catch (error) {
+      console.log(error)
+      return
+    }
     ws.binaryType = 'arraybuffer'
 
     ws.onopen = () => {
