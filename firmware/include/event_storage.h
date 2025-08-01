@@ -50,7 +50,6 @@ class EventStorage {
 
     template <typename T>
     esp_err_t save(const T& eventData, const char* filename) {
-        ESP_LOGI("EventStorage", "About to save");
         JsonDocument doc;
         toJson(doc, eventData);
 

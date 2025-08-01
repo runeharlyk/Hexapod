@@ -2,12 +2,9 @@
 #define ServoController_h
 
 #include <Adafruit_PWMServoDriver.h>
-#include <template/stateful_persistence.h>
-#include <template/stateful_service.h>
-#include <template/stateful_endpoint.h>
-#include <utils/math_utils.h>
-#include <settings/servo_settings.h>
+
 #include <event_bus.h>
+#include <utils/math_utils.h>
 #include <message_types.h>
 
 /*
@@ -23,16 +20,14 @@
 
 enum class SERVO_CONTROL_STATE { DEACTIVATED, PWM, ANGLE };
 
-class ServoController : public StatefulService<ServoSettings> {
+class ServoController {
   public:
-    ServoController()
-        : _persistence(ServoSettings::read, ServoSettings::update, this, SERVO_SETTINGS_FILE),
-          _left_pca {0x40},
-          _right_pca {0x41} {}
+    ServoController() : _left_pca {0x40}, _right_pca {0x41} {}
 
     void begin() {
         EventBus<ServoSignalMsg>::consume([&](ServoSignalMsg const &msg) { servoEvent(msg); });
-        _persistence.readFromFS();
+        EventBus<ServoSettingsMsg>::consume([](const ServoSettingsMsg &s) { cfg = s; });
+        EventBus<ServoSettingsMsg>::peek(cfg);
         initializePCA();
     }
 
@@ -41,7 +36,7 @@ class ServoController : public StatefulService<ServoSettings> {
             ESP_LOGE("Peripherals", "Invalid PWM value %d for %d :: Valid range 0-4096", value, index);
             return;
         }
-        int pin = state().servos[index].pin;
+        int pin = cfg.servos[index].pin;
         if (index < 9) {
             _left_pca.setPWM(pin, 0, value);
         } else {
@@ -91,8 +86,8 @@ class ServoController : public StatefulService<ServoSettings> {
         int8_t r_dir[3] = {-1, 1, -1};
 
         for (int i = 0; i < 9; i++) {
-            auto servoLeft = state().servos[i];
-            auto servoRight = state().servos[i + 9];
+            auto servoLeft = cfg.servos[i];
+            auto servoRight = cfg.servos[i + 9];
 
             left_target_pwms[i] = (target_angles[i] * l_dir[i % 3]) * servoLeft.conversion + servoLeft.centerPwm;
             right_target_pwms[i] = (target_angles[i + 9] * r_dir[i % 3]) * servoRight.conversion + servoRight.centerPwm;
@@ -112,8 +107,8 @@ class ServoController : public StatefulService<ServoSettings> {
 
     void setCenterPwm() {
         for (int i = 0; i < 9; i++) {
-            auto servoLeft = state().servos[i];
-            auto servoRight = state().servos[i + 9];
+            auto servoLeft = cfg.servos[i];
+            auto servoRight = cfg.servos[i + 9];
             left_pwm[servoLeft.pin] = servoLeft.centerPwm;
             left_pwm[servoRight.pin] = servoRight.centerPwm;
         }
@@ -136,7 +131,8 @@ class ServoController : public StatefulService<ServoSettings> {
         // _right_pca.setOscillatorFrequency(FACTORY_SERVO_OSCILLATOR_FREQUENCY);
         // _right_pca.sleep();
     }
-    FSPersistence<ServoSettings> _persistence;
+
+    inline static ServoSettingsMsg cfg;
 
     Adafruit_PWMServoDriver _left_pca;
     Adafruit_PWMServoDriver _right_pca;
