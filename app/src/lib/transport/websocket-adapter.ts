@@ -49,6 +49,7 @@ function createWebSocketAdapter(): ITransport {
       ping()
       useBinary = true
       ping()
+      useBinary = false
       connected.set(true)
       connectCallbacks.forEach(cb => cb())
     }
