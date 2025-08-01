@@ -31,7 +31,7 @@ class ServoController : public StatefulService<ServoSettings> {
           _right_pca {0x41} {}
 
     void begin() {
-        EventBus<ServoSignalMsg>::subscribe([&](ServoSignalMsg const &msg) { servoEvent(msg); });
+        EventBus<ServoSignalMsg>::consume([&](ServoSignalMsg const &msg) { servoEvent(msg); });
         _persistence.readFromFS();
         initializePCA();
     }
@@ -68,21 +68,13 @@ class ServoController : public StatefulService<ServoSettings> {
     void stateUpdate(JsonObject &root, int originId) {
         bool active = root["active"].as<bool>();
         ESP_LOGI("SERVOCONTROLLER", "Setting state %d", active);
-        active ? activate() : deactivate();
+        updateActiveState();
     }
 
     void servoEvent(ServoSignalMsg const &msg) {
         control_state = SERVO_CONTROL_STATE::PWM;
         pcaWrite(msg.id, msg.pwm);
         ESP_LOGI("SERVO_CONTROLLER", "Setting servo %d to %d", msg.id, msg.pwm);
-    }
-
-    void syncAngles(const String &originId) {
-        // char output[100];
-        // snprintf(output, sizeof(output), "[%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f]", angles[0],
-        //          angles[1], angles[2], angles[3], angles[4], angles[5], angles[6], angles[7], angles[8], angles[9],
-        //          angles[10], angles[11]);
-        // socket.emit("angles", output, String(originId).c_str());
     }
 
     void updateActiveState() { is_active ? activate() : deactivate(); }

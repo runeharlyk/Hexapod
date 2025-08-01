@@ -18,9 +18,8 @@ class EventStorage {
   private:
     template <typename T>
     void registerEvent(const char* filename) {
-        static typename EventBus<T>::Handle h;
         loadSettings<T>(filename);
-        if (!h.valid()) h = EventBus<T>::subscribe([this, filename](const T& t) { save(t, filename); });
+        EventBus<T>::consume([this, filename](const T& t) { save(t, filename); });
     }
 
     template <typename T>

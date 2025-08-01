@@ -181,6 +181,12 @@ class EventBus {
     }
 
     template <typename C>
+    static void consume(C fn) {
+        static Handle h = subscribe(std::forward<C>(fn));
+        (void)h;
+    }
+
+    template <typename C>
     static Handle subscribe(uint32_t ms, EmitMode mode, C fn) {
         ensureTask();
         portENTER_CRITICAL(&mux);
