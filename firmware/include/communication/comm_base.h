@@ -22,11 +22,14 @@ class CommAdapterBase {
     // }
 
     virtual void begin() {
-        _cmdSubHandle = EventBus::subscribe<CommandMsg>([this](CommandMsg const& c) { emit(COMMAND, c); });
-        _modeSubHandle = EventBus::subscribe<ModeMsg>([this](ModeMsg const& t) { emit(MODE, t); });
-        _gaitSubHandle = EventBus::subscribe<GaitMsg>([this](GaitMsg const& t) { emit(GAIT, t); });
+        _cmdSubHandle = EventBus<CommandMsg>::subscribe([this](const CommandMsg& c) { emit(COMMAND, c); });
+        _modeSubHandle = EventBus<ModeMsg>::subscribe([this](const ModeMsg& t) { emit(MODE, t); });
+        _gaitSubHandle = EventBus<GaitMsg>::subscribe([this](const GaitMsg& t) { emit(GAIT, t); });
+        _angleSubHandle = EventBus<ServoAnglesMsg>::subscribe([this](const ServoAnglesMsg& t) { emit(GAIT, t); });
         _servoSubHandle =
-            EventBus::subscribe<ServoSignalMsg>([this](ServoSignalMsg const& t) { emit(SERVO_SIGNAL, t); });
+            EventBus<ServoSignalMsg>::subscribe([this](const ServoSignalMsg& s) { emit(SERVO_SIGNAL, s); });
+        _servoSettingsMsgSubHandle =
+            EventBus<ServoSettingsMsg>::subscribe([this](const ServoSettingsMsg& s) { emit(SERVO_SETTINGS, s); });
     }
 
     template <typename T>
@@ -51,12 +54,12 @@ class CommAdapterBase {
     }
 
   protected:
-    void* _cmdSubHandle {nullptr};
-    void* _tempSubHandle {nullptr};
-    void* _modeSubHandle {nullptr};
-    void* _gaitSubHandle {nullptr};
-    void* _servoSubHandle {nullptr};
-    void* _servoSettingsMsgSubHandle {nullptr};
+    EventBus<CommandMsg>::Handle _cmdSubHandle;
+    EventBus<ModeMsg>::Handle _modeSubHandle;
+    EventBus<GaitMsg>::Handle _gaitSubHandle;
+    EventBus<ServoAnglesMsg>::Handle _angleSubHandle;
+    EventBus<ServoSignalMsg>::Handle _servoSubHandle;
+    EventBus<ServoSettingsMsg>::Handle _servoSettingsMsgSubHandle;
 
     void subscribe(message_topic_t t, int cid) {
         xSemaphoreTake(mutex_, portMAX_DELAY);
@@ -92,11 +95,9 @@ class CommAdapterBase {
             throw std::runtime_error(error.c_str());
         }
 
-        serializeJson(doc, Serial);
-        Serial.println();
-        JsonArray obj = doc.as<JsonArray>();
+        JsonArrayConst obj = doc.as<JsonArrayConst>();
 
-        MsgKind type = obj[0].as<MsgKind>();
+        MsgKind type = static_cast<MsgKind>(obj[0].as<uint8_t>());
 
         switch (type) {
             case MsgKind::CONNECT: {
@@ -106,7 +107,10 @@ class CommAdapterBase {
                 switch (topic) {
                     case SERVO_SETTINGS:
                         ServoSettingsMsg m;
-                        if (EventBus::peek<ServoSettingsMsg>(m)) emit(SERVO_SETTINGS, m, cid);
+                        if (EventBus<ServoSettingsMsg>::peek(m))
+                            emit(SERVO_SETTINGS, m, cid);
+                        else
+                            ESP_LOGE("Comm Base", "Could not peek last value for topic: %d", topic);
                         break;
                 }
                 break;
@@ -124,23 +128,23 @@ class CommAdapterBase {
                 if (topic == SERVO_SIGNAL) {
                     ServoSignalMsg payload;
                     payload.fromJson(obj[2]);
-                    EventBus::publish<ServoSignalMsg>(payload, _servoSubHandle);
+                    EventBus<ServoSignalMsg>::publish(payload, _servoSubHandle);
                 } else if (topic == COMMAND) {
                     CommandMsg payload;
                     payload.fromJson(obj[2]);
-                    EventBus::publish<CommandMsg>(payload, _cmdSubHandle);
+                    EventBus<CommandMsg>::publish(payload, _cmdSubHandle);
                 } else if (topic == MODE) {
                     ModeMsg payload;
                     payload.fromJson(obj[2]);
-                    EventBus::publish<ModeMsg>(payload, _modeSubHandle);
+                    EventBus<ModeMsg>::publish(payload, _modeSubHandle);
                 } else if (topic == GAIT) {
                     GaitMsg payload;
                     payload.fromJson(obj[2]);
-                    EventBus::publish<GaitMsg>(payload, _gaitSubHandle);
+                    EventBus<GaitMsg>::publish(payload, _gaitSubHandle);
                 } else if (topic == SERVO_SETTINGS) {
                     ServoSettingsMsg payload;
                     payload.fromJson(obj[2]);
-                    EventBus::publish<ServoSettingsMsg>(payload, _servoSettingsMsgSubHandle);
+                    EventBus<ServoSettingsMsg>::publish(payload, _servoSettingsMsgSubHandle);
                 } else {
                     ESP_LOGI("MESSAGE", "Could not parse topic: %d", topic);
                 };

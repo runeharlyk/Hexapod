@@ -109,7 +109,7 @@ struct ServoSetting {
     int8_t direction;
     uint8_t pin;
     float conversion;
-    const char *name;
+    String name;
 };
 
 class ServoSettingsMsg {

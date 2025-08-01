@@ -18,17 +18,18 @@ class EventStorage {
   private:
     template <typename T>
     void registerEvent(const char* filename) {
+        static typename EventBus<T>::Handle h;
         loadSettings<T>(filename);
-        EventBus::subscribe<T>([this, filename](T const& t) { save(t, filename); });
+        if (!h.valid()) h = EventBus<T>::subscribe([this, filename](const T& t) { save(t, filename); });
     }
 
     template <typename T>
-    void loadSettings(const char* filename) {
+    esp_err_t loadSettings(const char* filename) {
         File file = ESPFS.open(filename, "r");
         if (!file) {
             ESP_LOGE("EventStorage", "Failed to open file %s", filename);
             save(T(), filename);
-            return;
+            return ESP_FAIL;
         }
 
         JsonDocument doc;
@@ -38,29 +39,31 @@ class EventStorage {
         if (error) {
             ESP_LOGE("EventStorage", "Failed to parse JSON from %s: %s", filename, error.c_str());
             save(T(), filename);
-            return;
+            return ESP_FAIL;
         }
 
         T settings;
-        JsonObject root = doc.as<JsonObject>();
-        settings.fromJson(root);
-        EventBus::publish<T>(settings);
+        settings.fromJson(doc);
         ESP_LOGI("EventStorage", "Loaded settings from %s", filename);
+        EventBus<T>::store(settings);
+        return ESP_OK;
     }
 
     template <typename T>
-    void save(const T& eventData, const char* filename) {
+    esp_err_t save(const T& eventData, const char* filename) {
+        ESP_LOGI("EventStorage", "About to save");
         JsonDocument doc;
         toJson(doc, eventData);
 
         File file = ESPFS.open(filename, "w");
         if (!file) {
             ESP_LOGE("EventStorage", "Failed to open file %s for writing", filename);
-            return;
+            return ESP_FAIL;
         }
 
         serializeJson(doc, file);
         file.close();
         ESP_LOGI("EventStorage", "Saved settings to %s", filename);
+        return ESP_OK;
     }
 };

@@ -31,7 +31,7 @@ class ServoController : public StatefulService<ServoSettings> {
           _right_pca {0x41} {}
 
     void begin() {
-        EventBus::subscribe<ServoSignalMsg>([&](ServoSignalMsg const &msg) { servoEvent(msg); });
+        EventBus<ServoSignalMsg>::subscribe([&](ServoSignalMsg const &msg) { servoEvent(msg); });
         _persistence.readFromFS();
         initializePCA();
     }

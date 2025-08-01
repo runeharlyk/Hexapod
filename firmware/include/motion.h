@@ -18,21 +18,20 @@
 #define GAIT_EVENT "gait"
 
 class MotionService {
-    void *_cmdSubHandle;
-    void *_modeSubHandle;
-    void *_gaitSubHandle;
-    void *_anglesSubHandle;
-    void *_positionSubHandle;
+    EventBus<CommandMsg>::Handle _cmdSubHandle;
+    EventBus<ModeMsg>::Handle _modeSubHandle;
+    EventBus<GaitMsg>::Handle _gaitSubHandle;
+    EventBus<ServoAnglesMsg>::Handle _angleSubHandle;
 
   public:
     MotionService(ServoController *servoController, Peripherals *peripherals)
         : _servoController(servoController), _peripherals(peripherals) {}
 
     void begin() {
-        _cmdSubHandle = EventBus::subscribe<CommandMsg>([&](CommandMsg const &c) { handleCommand(c); });
-        _modeSubHandle = EventBus::subscribe<ModeMsg>([&](ModeMsg const &c) { handleInputMode(c); });
-        _gaitSubHandle = EventBus::subscribe<GaitMsg>([&](GaitMsg const &c) { handleInputGait(c); });
-        _anglesSubHandle = EventBus::subscribe<ServoAnglesMsg>([&](ServoAnglesMsg const &s) { handleAnglesEvent(s); });
+        _cmdSubHandle = EventBus<CommandMsg>::subscribe([&](CommandMsg const &c) { handleCommand(c); });
+        _modeSubHandle = EventBus<ModeMsg>::subscribe([&](ModeMsg const &c) { handleInputMode(c); });
+        _gaitSubHandle = EventBus<GaitMsg>::subscribe([&](GaitMsg const &c) { handleInputGait(c); });
+        _angleSubHandle = EventBus<ServoAnglesMsg>::subscribe([&](ServoAnglesMsg const &s) { handleAnglesEvent(s); });
         // TODO: Add body state
         // _positionSubHandle = EventBus::subscribe<Gait>([&](Gait const &c) { handleInputGait(c); });
 
