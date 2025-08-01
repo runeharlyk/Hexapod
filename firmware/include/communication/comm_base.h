@@ -97,7 +97,7 @@ class CommAdapterBase {
         switch (type) {
             case CONNECT: {
                 message_topic_t topic = obj[1].as<message_topic_t>();
-                ESP_LOGI("BluetoothService", "Connecting to topic: %d", topic);
+                ESP_LOGI("Comm Base", "Connecting to topic: %d", topic);
                 subscribe(topic, cid);
                 switch (topic) {
                     case SERVO_SETTINGS:
@@ -109,14 +109,14 @@ class CommAdapterBase {
             }
             case DISCONNECT: {
                 message_topic_t topic = obj[1].as<message_topic_t>();
-                ESP_LOGI("BluetoothService", "Disconnecting to topic: %d", topic);
+                ESP_LOGI("Comm Base", "Disconnecting to topic: %d", topic);
                 unsubscribe(topic, cid);
                 break;
             }
 
             case EVENT: {
                 message_topic_t topic = obj[1].as<message_topic_t>();
-                ESP_LOGI("BluetoothService", "Got payload for topic: %d", topic);
+                ESP_LOGI("Comm Base", "Got payload for topic: %d", topic);
                 if (topic == SERVO_SIGNAL) {
                     ServoSignalMsg payload;
                     payload.fromJson(obj[2]);
@@ -143,7 +143,7 @@ class CommAdapterBase {
                 break;
             }
             case PING: {
-                ESP_LOGI("BluetoothService", "Ping");
+                ESP_LOGI("Comm Base", "Ping");
 #if USE_MSGPACK
                 static const uint8_t pong[] = {0x91, 0x04}; // [4] in MsgPack
                 send(pong, sizeof(pong), cid);
@@ -153,11 +153,11 @@ class CommAdapterBase {
                 break;
             }
             case PONG: {
-                ESP_LOGI("BluetoothService", "Pong");
+                ESP_LOGI("Comm Base", "Pong");
                 break;
             }
 
-            default: ESP_LOGW("BluetoothService", "Unknown message type: %d", type); break;
+            default: ESP_LOGW("Comm Base", "Unknown message type: %d", type); break;
         }
     }
 

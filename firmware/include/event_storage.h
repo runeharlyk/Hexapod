@@ -51,8 +51,7 @@ class EventStorage {
     template <typename T>
     void save(const T& eventData, const char* filename) {
         JsonDocument doc;
-        JsonObject obj = doc.to<JsonObject>();
-        toJson(obj, eventData);
+        toJson(doc, eventData);
 
         File file = ESPFS.open(filename, "w");
         if (!file) {

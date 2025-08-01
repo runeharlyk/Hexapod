@@ -21,13 +21,25 @@ esp_err_t Websocket::onFrame(PsychicWebSocketRequest *request, httpd_ws_frame *f
              request->client()->socket(), frame->type);
 
     if (frame->type != HTTPD_WS_TYPE_TEXT && frame->type != HTTPD_WS_TYPE_BINARY) {
-        ESP_LOGE(TAG, "Unsupported frame type");
+        ESP_LOGE(TAG, "Unsupported frame type: %d", frame->type);
         return ESP_OK;
     }
 
     ESP_LOGV(TAG, "Received message from client %d: %s", request->client()->socket(), (char *)frame->payload);
 
-    handleIncoming(frame->payload, frame->len, request->client()->socket());
+#if USE_MSGPACK
+    if (frame->type == HTTPD_WS_TYPE_BINARY) {
+        handleIncoming(frame->payload, frame->len, request->client()->socket());
+    } else {
+        ESP_LOGE(TAG, "Expected binary, got text");
+    }
+#else
+    if (frame->type == HTTPD_WS_TYPE_TEXT) {
+        handleIncoming(frame->payload, frame->len, request->client()->socket());
+    } else {
+        ESP_LOGE(TAG, "Expected text, got binary");
+    }
+#endif
 
     return ESP_OK;
 }
