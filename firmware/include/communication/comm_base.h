@@ -92,7 +92,8 @@ class CommAdapterBase {
         DeserializationError error = deserializeJson(doc, data, len);
 #endif
         if (error) {
-            throw std::runtime_error(error.c_str());
+            ESP_LOGE("Comm Base", "Failed to deserialize incoming: (%s)", error.c_str());
+            return;
         }
 
         JsonArrayConst obj = doc.as<JsonArrayConst>();
