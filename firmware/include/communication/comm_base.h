@@ -6,7 +6,11 @@
 #include "event_bus.h"
 #include "message_types.h"
 
-enum message_type_t { CONNECT = 0, DISCONNECT = 1, EVENT = 2, PING = 3, PONG = 4 };
+#ifndef MAX_CID
+#define MAX_CID 64
+#endif
+
+enum class MsgKind : uint8_t { CONNECT = 0, DISCONNECT = 1, EVENT = 2, PING = 3, PONG = 4 };
 
 class CommAdapterBase {
   public:
@@ -31,7 +35,7 @@ class CommAdapterBase {
 
         JsonDocument doc;
         JsonArray array = doc.to<JsonArray>();
-        array.add(static_cast<uint8_t>(EVENT));
+        array.add(static_cast<uint8_t>(MsgKind::EVENT));
         array.add(static_cast<uint8_t>(topic));
         toJson(array.add<JsonVariant>(), payload);
 
@@ -92,10 +96,10 @@ class CommAdapterBase {
         Serial.println();
         JsonArray obj = doc.as<JsonArray>();
 
-        message_type_t type = obj[0].as<message_type_t>();
+        MsgKind type = obj[0].as<MsgKind>();
 
         switch (type) {
-            case CONNECT: {
+            case MsgKind::CONNECT: {
                 message_topic_t topic = obj[1].as<message_topic_t>();
                 ESP_LOGI("Comm Base", "Connecting to topic: %d", topic);
                 subscribe(topic, cid);
@@ -107,14 +111,14 @@ class CommAdapterBase {
                 }
                 break;
             }
-            case DISCONNECT: {
+            case MsgKind::DISCONNECT: {
                 message_topic_t topic = obj[1].as<message_topic_t>();
                 ESP_LOGI("Comm Base", "Disconnecting to topic: %d", topic);
                 unsubscribe(topic, cid);
                 break;
             }
 
-            case EVENT: {
+            case MsgKind::EVENT: {
                 message_topic_t topic = obj[1].as<message_topic_t>();
                 ESP_LOGI("Comm Base", "Got payload for topic: %d", topic);
                 if (topic == SERVO_SIGNAL) {
@@ -142,7 +146,7 @@ class CommAdapterBase {
                 };
                 break;
             }
-            case PING: {
+            case MsgKind::PING: {
                 ESP_LOGI("Comm Base", "Ping");
 #if USE_MSGPACK
                 static const uint8_t pong[] = {0x91, 0x04}; // [4] in MsgPack
@@ -152,7 +156,7 @@ class CommAdapterBase {
 #endif
                 break;
             }
-            case PONG: {
+            case MsgKind::PONG: {
                 ESP_LOGI("Comm Base", "Pong");
                 break;
             }
