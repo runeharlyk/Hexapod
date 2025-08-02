@@ -5,7 +5,7 @@ namespace feature_service {
 // New function to print all feature flags to log
 void printFeatureConfiguration() {
     ESP_LOGI("Features", "====================== FEATURE FLAGS ======================");
-    ESP_LOGI("Features", "Firmware version: %s, name: %s, target: %s", APP_VERSION, APP_NAME, BUILD_TARGET);
+    ESP_LOGI("Features", "Firmware version: %s, name: %s", APP_VERSION, APP_NAME);
 
     // Sensors
     ESP_LOGI("Features", "USE_MPU6050: %s", USE_MPU6050 ? "enabled" : "disabled");
@@ -25,7 +25,6 @@ void features(JsonObject &root) {
     root["servo"] = USE_SERVO;
     root["firmware_version"] = APP_VERSION;
     root["firmware_name"] = APP_NAME;
-    root["firmware_built_target"] = BUILD_TARGET;
 }
 
 esp_err_t getFeatures(PsychicRequest *request) {

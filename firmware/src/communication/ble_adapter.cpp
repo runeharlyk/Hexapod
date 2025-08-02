@@ -1,7 +1,26 @@
 #include <communication/ble_adapter.h>
+#include <cstring>
 
 void BLE::begin() {
     CommAdapterBase::begin();
+
+    _messageQueue = xQueueCreate(10, sizeof(BLEMessage));
+    if (!_messageQueue) {
+        ESP_LOGE("BluetoothService", "Failed to create message queue");
+        return;
+    }
+
+    _taskRunning = true;
+    BaseType_t result =
+        xTaskCreatePinnedToCore(messageProcessingTask, "BLE_Process", 8192, this, 5, &_processingTask, 0);
+
+    if (result != pdPASS) {
+        ESP_LOGE("BluetoothService", "Failed to create processing task");
+        _taskRunning = false;
+        vQueueDelete(_messageQueue);
+        _messageQueue = nullptr;
+        return;
+    }
 
     setup();
 }
@@ -53,8 +72,34 @@ void BLE::ServerCallbacks::onDisconnect(BLEServer* pServer) {
 void BLE::RXCallbacks::onWrite(BLECharacteristic* characteristic) {
     uint8_t* data = characteristic->getData();
     size_t len = characteristic->getLength();
-    if (len) {
-        _service->handleIncoming(data, len);
+    if (len && len <= 512) {
+        BLEMessage msg;
+        memcpy(msg.data, data, len);
+        msg.length = len;
+
+        if (xQueueSend(_service->_messageQueue, &msg, 0) != pdTRUE) {
+            ESP_LOGW("BluetoothService", "Message queue full, dropping message");
+        }
+    }
+}
+
+void BLE::messageProcessingTask(void* parameter) {
+    BLE* ble = static_cast<BLE*>(parameter);
+    BLEMessage msg;
+
+    while (ble->_taskRunning) {
+        if (xQueueReceive(ble->_messageQueue, &msg, pdMS_TO_TICKS(1000)) == pdTRUE) {
+            ble->processMessage(msg.data, msg.length);
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+
+    vTaskDelete(nullptr);
+}
+
+void BLE::processMessage(const uint8_t* data, size_t len) {
+    if (data && len > 0) {
+        handleIncoming(data, len);
     }
 }
 

@@ -125,7 +125,7 @@ class CommAdapterBase {
 
             case MsgKind::EVENT: {
                 message_topic_t topic = obj[1].as<message_topic_t>();
-                ESP_LOGI("Comm Base", "Got payload for topic: %d", topic);
+                ESP_LOGD("Comm Base", "Got payload for topic: %d", topic);
                 if (topic == SERVO_SIGNAL) {
                     ServoSignalMsg payload;
                     payload.fromJson(obj[2]);
