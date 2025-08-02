@@ -6,6 +6,7 @@
   import { websocket } from '$lib/transport/websocket-adapter'
 
   const update = () => {
+    websocket.disconnect()
     websocket.connect()
   }
 
@@ -41,6 +42,10 @@
         <WiFi class="h-6 w-auto text-error" />
       </button>
     {/if}
+  </div>
+  <div class="flex">
+    <label class="label w-32" for="server">Socket url:</label>
+    <input class="input" bind:value={$location} />
   </div>
 
   <button class="btn btn-primary" onclick={update}>Connect</button>

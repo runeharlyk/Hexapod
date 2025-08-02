@@ -1,5 +1,5 @@
 import { encode, decode } from '@msgpack/msgpack'
-import { writable } from 'svelte/store'
+import { get, writable } from 'svelte/store'
 import {
   MessageTopic,
   MessageType,
@@ -7,6 +7,7 @@ import {
   type ServerMessage
 } from '../interfaces/transport.interface'
 import type { DataBrokerCallback } from './databroker'
+import { location } from '$lib/stores'
 
 let useBinary = false
 
@@ -40,8 +41,8 @@ function createWebSocketAdapter(): ITransport {
   let ws: WebSocket | undefined
 
   const connect = async () => {
-    const location = window.location.host //'192.168.0.221'
-    const wsUrl = `ws://${window.location.host}/api/ws/events`
+    const wsLocation = get(location) ? get(location) : window.location.host
+    const wsUrl = `ws://${wsLocation}/api/ws/events`
     try {
       ws = new WebSocket(wsUrl)
     } catch (error) {
