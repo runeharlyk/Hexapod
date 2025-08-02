@@ -15,8 +15,6 @@
 
 ## 📜 Overview
 
-<img src="assets/spider_pose.jpg" width="440" align="right">
-
 This is my implementation of SmallpTsai hexapod.
 Its built with:
 
@@ -24,10 +22,11 @@ Its built with:
 - Two PCA9685
 - 18 MG92B servos
 - A MPU6050 + HMC5883L
-- Two 18650 in a 2s2p config
-- 6 buck converters
+- Two 18650 in a 2s2p configuration
+- 7 buck converters
 
-<br clear="right">
+
+![spider pose](assets/spider_pose.jpg)
 
 ### 🎮 Controller
 
