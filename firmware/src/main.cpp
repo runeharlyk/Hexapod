@@ -20,9 +20,14 @@
 #define APP_VERSION "v0.0.1"
 
 // Communication
-PsychicHttpServer server;
-Websocket socket;
 BLE ble;
+PsychicHttpServer server;
+Websocket socket {server, "/api/ws"};
+// TODO: Add a rest and sse option
+// Rest rest {server, "/api/{topic_id}"}
+// ServerSendEvent sse {server, "/api/sse"}
+// TODO: EspNowAdapter now;
+// TODO: Bluepad bluepad;
 
 // Service
 WiFiService wifiService;
@@ -35,12 +40,9 @@ void setupServer() {
     server.config.max_uri_handlers = 10;
     server.maxUploadSize = 1000000; // 1 MB;
     server.listen(80);
-    socket.attach(server, "/api/ws/events");
-    server.serveStatic("/api/config/", ESPFS, "/config/");
+    server.serveStatic("/api/config/", ESP_FS, "/config/");
     DefaultHeaders::Instance().addHeader("Server", APP_NAME);
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
-    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Accept, Content-Type, Authorization");
-    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Credentials", "true");
 }
 
 void IRAM_ATTR controlLoopEntry(void *) {
@@ -69,6 +71,7 @@ void IRAM_ATTR serviceLoopEntry(void *) {
     apService.begin();
 
     setupServer();
+
     ble.begin();
     socket.begin();
 

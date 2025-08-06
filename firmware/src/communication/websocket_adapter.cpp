@@ -2,13 +2,16 @@
 
 static const char *TAG = "Websocket";
 
-Websocket::Websocket() {
+Websocket::Websocket(PsychicHttpServer &server, const char *route) : _server(server), _route(route) {
     _socket.onOpen((std::bind(&Websocket::onWSOpen, this, std::placeholders::_1)));
     _socket.onClose(std::bind(&Websocket::onWSClose, this, std::placeholders::_1));
     _socket.onFrame(std::bind(&Websocket::onFrame, this, std::placeholders::_1, std::placeholders::_2));
 }
 
-void Websocket::attach(PsychicHttpServer &server, const char *route) { server.on(route, &_socket); }
+void Websocket::begin() {
+    _server.on(_route, &_socket);
+    CommAdapterBase::begin();
+}
 
 void Websocket::onWSOpen(PsychicWebSocketClient *client) {
     ESP_LOGI(TAG, "ws[%s][%u] connect", client->remoteIP().toString().c_str(), client->socket());

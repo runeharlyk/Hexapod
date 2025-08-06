@@ -12,6 +12,8 @@
 
 enum class MsgKind : uint8_t { CONNECT = 0, DISCONNECT = 1, EVENT = 2, PING = 3, PONG = 4 };
 
+// TODO: Make subscriptions to eventbus be dynamic.
+
 class CommAdapterBase {
   public:
     CommAdapterBase() { mutex_ = xSemaphoreCreateMutex(); }

@@ -9,12 +9,14 @@
 
 class Websocket : public CommAdapterBase {
   public:
-    Websocket();
+    Websocket(PsychicHttpServer &server, const char *route = "/api/ws");
 
-    void attach(PsychicHttpServer &server, const char *route);
+    void begin() override;
 
   private:
     PsychicWebSocketHandler _socket;
+    PsychicHttpServer &_server;
+    const char *_route;
 
     void onWSOpen(PsychicWebSocketClient *client);
     void onWSClose(PsychicWebSocketClient *client);
