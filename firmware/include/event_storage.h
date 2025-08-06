@@ -24,7 +24,7 @@ class EventStorage {
 
     template <typename T>
     esp_err_t loadSettings(const char* filename) {
-        File file = ESPFS.open(filename, "r");
+        File file = ESP_FS.open(filename, "r");
         if (!file) {
             ESP_LOGE("EventStorage", "Failed to open file %s", filename);
             save(T(), filename);
@@ -53,7 +53,7 @@ class EventStorage {
         JsonDocument doc;
         toJson(doc, eventData);
 
-        File file = ESPFS.open(filename, "w");
+        File file = ESP_FS.open(filename, "w");
         if (!file) {
             ESP_LOGE("EventStorage", "Failed to open file %s for writing", filename);
             return ESP_FAIL;
