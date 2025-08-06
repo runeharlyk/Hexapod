@@ -15,11 +15,15 @@ enum class MsgKind : uint8_t { CONNECT = 0, DISCONNECT = 1, EVENT = 2, PING = 3,
 class CommAdapterBase {
   public:
     CommAdapterBase() { mutex_ = xSemaphoreCreateMutex(); }
-    // ~CommAdapterBase() {
-    //     EventBus::unsubscribe<Command>(_cmdSubHandle);
-    //     EventBus::unsubscribe<Temp>(_tempSubHandle);
-    //     vSemaphoreDelete(mutex_);
-    // }
+    ~CommAdapterBase() {
+        _cmdSubHandle.unsubscribe();
+        _modeSubHandle.unsubscribe();
+        _gaitSubHandle.unsubscribe();
+        _angleSubHandle.unsubscribe();
+        _servoSubHandle.unsubscribe();
+        _servoSettingsMsgSubHandle.unsubscribe();
+        vSemaphoreDelete(mutex_);
+    }
 
     virtual void begin() {
         _cmdSubHandle = EventBus<CommandMsg>::subscribe([this](const CommandMsg& c) { emit(COMMAND, c); });
