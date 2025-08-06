@@ -35,7 +35,7 @@ void setupServer() {
     server.config.max_uri_handlers = 10;
     server.maxUploadSize = 1000000; // 1 MB;
     server.listen(80);
-    server.on("/api/ws/events", socket.getHandler());
+    socket.attach(server, "/api/ws/events");
     server.serveStatic("/api/config/", ESPFS, "/config/");
     DefaultHeaders::Instance().addHeader("Server", APP_NAME);
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");

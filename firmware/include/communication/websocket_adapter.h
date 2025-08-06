@@ -11,7 +11,7 @@ class Websocket : public CommAdapterBase {
   public:
     Websocket();
 
-    PsychicWebSocketHandler *getHandler() { return &_socket; }
+    void attach(PsychicHttpServer &server, const char *route);
 
   private:
     PsychicWebSocketHandler _socket;

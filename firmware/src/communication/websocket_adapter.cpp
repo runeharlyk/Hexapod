@@ -8,6 +8,8 @@ Websocket::Websocket() {
     _socket.onFrame(std::bind(&Websocket::onFrame, this, std::placeholders::_1, std::placeholders::_2));
 }
 
+void Websocket::attach(PsychicHttpServer &server, const char *route) { server.on(route, &_socket); }
+
 void Websocket::onWSOpen(PsychicWebSocketClient *client) {
     ESP_LOGI(TAG, "ws[%s][%u] connect", client->remoteIP().toString().c_str(), client->socket());
 }
