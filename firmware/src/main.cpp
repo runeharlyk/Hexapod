@@ -86,7 +86,7 @@ void IRAM_ATTR serviceLoopEntry(void *) {
 
 void setup() {
     Serial.begin(115200);
-    ESP_FS.begin(true);
+    ESP_FS.begin(true); // TODO: Log failure
     ESP_LOGI("main", "Booting robot");
 
     feature_service::printFeatureConfiguration();
