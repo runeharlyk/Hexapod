@@ -30,15 +30,16 @@ interface_dir = project_dir + "/app"
 output_file = project_dir + "/firmware/include/WWWData.h"
 source_www_dir = interface_dir + "/src"
 build_dir = interface_dir + "/build"
-filesystem_dir = project_dir + "/data/www"
+filesystem_dir = env["PROJECT_DIR"] + "/data"
 
+Path(filesystem_dir).mkdir(exist_ok=True)
 
 def find_latest_timestamp_for_app():
     return max((getmtime(f) for f in glob.glob(f"{source_www_dir}/**/*", recursive=True)))
 
 
 def should_regenerate_output_file():
-    if not flag_exists("EMBED_WWW") or not exists(output_file):
+    if not exists(output_file):
         return True
     last_source_change = find_latest_timestamp_for_app()
     last_build = getmtime(output_file)
@@ -84,15 +85,7 @@ def build_webapp():
         raise Exception("No lock-file found. Please install dependencies for interface (eg. npm install)")
 
 
-def embed_webapp():
-    if flag_exists("EMBED_WWW"):
-        print("Converting interface to PROGMEM")
-        build_progmem()
-        return
-    add_app_to_filesystem()
-
-
-def build_progmem():
+def write_progmem():
     mimetypes.init()
     with open(output_file, "w") as progmem:
         progmem.write("#include <functional>\n")
@@ -136,21 +129,7 @@ def build_progmem():
         progmem.write("};\n\n")
 
 
-def add_app_to_filesystem():
-    build_path = Path(build_dir)
-    www_path = Path(filesystem_dir)
-    if www_path.exists() and www_path.is_dir():
-        rmtree(www_path)
-    print("Copying and compress app to data directory")
-    copytree(build_path, www_path)
-    for current_path, _, files in os.walk(www_path):
-        for file in files:
-            gzip_file(os.path.join(current_path, file))
-    print("Build LittleFS file system image and upload to ESP32")
-    env.Execute("pio run --target uploadfs")
-
-
 print("running: build_app.py")
 if should_regenerate_output_file():
     build_webapp()
-    embed_webapp()
+    write_progmem()
