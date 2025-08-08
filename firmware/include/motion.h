@@ -63,10 +63,7 @@ class MotionService {
     }
 
     void handleCommand(CommandMsg const &c) {
-        Serial.println("handleCommand");
         target_body_state.zm = c.h * 50;
-        ESP_LOGI("imu", "%.2f \t %.2f \t %.2f \t %.2f", _peripherals->angleZ(), _peripherals->angleY(),
-                 _peripherals->angleX(), c.rx * 0.254f);
         switch (motionState) {
             case MOTION_STATE::STAND: {
                 target_body_state.xm = c.lx * 50.f;
