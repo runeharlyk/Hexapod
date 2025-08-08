@@ -15,6 +15,8 @@
 #include <communication/websocket_adapter.h>
 #include <event_storage.h>
 
+#include <WWWData.h>
+
 // Variables
 #define APP_NAME "Hexapod"
 #define APP_VERSION "v0.0.1"
@@ -41,11 +43,27 @@ void setupServer() {
     server.maxUploadSize = 1000000; // 1 MB;
     server.listen(80);
     server.serveStatic("/api/config/", ESP_FS, "/config/");
+    WWWData::registerRoutes([](const char* uri, const char* contentType, const uint8_t* content, size_t len) {
+        PsychicHttpRequestCallback requestHandler = [contentType, content, len](PsychicRequest* request) {
+            PsychicResponse response(request);
+            response.setCode(200);
+            response.setContentType(contentType);
+            response.addHeader("Content-Encoding", "gzip");
+            response.addHeader("Vary", "Accept-Encoding");
+            response.addHeader("Cache-Control", "public, immutable, max-age=31536000");
+            response.setContent(content, len);
+            return response.send();
+        };
+        auto* handler = new PsychicWebHandler();
+        handler->onRequest(requestHandler);
+        server.on(uri, HTTP_GET, handler);
+        if (strcmp(uri, "/index.html") == 0) server.defaultEndpoint->setHandler(handler);
+    });
     DefaultHeaders::Instance().addHeader("Server", APP_NAME);
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
 }
 
-void IRAM_ATTR controlLoopEntry(void *) {
+void IRAM_ATTR controlLoopEntry(void*) {
     ESP_LOGI("main", "Control task starting");
     robot.initialize();
     TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -61,7 +79,7 @@ void IRAM_ATTR controlLoopEntry(void *) {
     }
 }
 
-void IRAM_ATTR serviceLoopEntry(void *) {
+void IRAM_ATTR serviceLoopEntry(void*) {
     ESP_LOGI("main", "Service control task starting");
     eventStorage.begin();
 
