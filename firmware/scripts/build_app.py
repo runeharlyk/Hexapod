@@ -1,12 +1,10 @@
 from pathlib import Path
-from os.path import exists, getmtime
-import os, gzip, mimetypes, glob
+from os.path import exists, getmtime, splitext
+import os, gzip, mimetypes, glob, zlib
 
 Import("env")
 
 project_dir = env["PROJECT_DIR"]
-buildFlags = env.ParseFlags(env["BUILD_FLAGS"])
-
 interface_dir = f"{project_dir}/app"
 output_file = f"{project_dir}/firmware/include/WWWData.h"
 source_www_dir = f"{interface_dir}/src"
@@ -16,6 +14,11 @@ filesystem_dir = f"{project_dir}/data"
 Path(filesystem_dir).mkdir(exist_ok=True)
 Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 mimetypes.init()
+
+already_compressed_ext = {
+    ".gz",".br",".png",".jpg",".jpeg",".webp",".gif",".mp4",".m4v",".mov",".avi",".mkv",".mp3",".aac",".ogg",".wav",
+    ".wasm",".pdf",".ico",".woff",".woff2",".ttf",".otf",".7z",".zip",".rar",".bz2",".xz",".lz",".svgz"
+}
 
 def latest_ts():
     files = [p for p in glob.glob(f"{source_www_dir}/**/*", recursive=True) if os.path.isfile(p)]
@@ -46,30 +49,36 @@ def build_web():
     finally:
         os.chdir(cwd)
 
+def encode_asset_data(path):
+    ext = splitext(path.name)[1].lower()
+    raw = path.read_bytes()
+    if ext in already_compressed_ext:
+        return raw, 0, zlib.crc32(raw) & 0xFFFFFFFF
+    gz = gzip.compress(raw, mtime=0)
+    return gz, 1, zlib.crc32(gz) & 0xFFFFFFFF
+
 def write_header():
     assets = []
     for p in sorted(Path(build_dir).rglob("*.*"), key=lambda x: x.relative_to(build_dir).as_posix()):
-        rel = p.relative_to(build_dir).as_posix()
-        mime = mimetypes.guess_type(rel)[0] or "application/octet-stream"
-        data = gzip.compress(p.read_bytes(), mtime=0)
-        assets.append((rel, mime, data))
+        uri = "/" + p.relative_to(build_dir).as_posix()
+        mime = mimetypes.guess_type(uri)[0] or "application/octet-stream"
+        data, gz_flag, etag = encode_asset_data(p)
+        assets.append((uri, mime, data, gz_flag, etag))
 
-    offsets = []
-    cursor = 0
-    for _, _, data in assets:
+    offsets, cursor = [], 0
+    for _, _, data, _, _ in assets:
         offsets.append(cursor)
         cursor += len(data)
 
     with open(output_file, "w", newline="\n") as f:
         f.write("#pragma once\n")
-        f.write("#include <Arduino.h>\n")
-        f.write("#include <functional>\n\n")
-        f.write("typedef std::function<void(const char* uri, const char* contentType, const uint8_t* content, size_t len)> RouteRegistrationHandler;\n")
-        f.write("struct WWWAsset { const char* uri; const char* mime; uint32_t off; uint32_t len; };\n\n")
+        f.write("#include <Arduino.h>\n\n")
+        f.write("struct WebAsset { const char* uri; const char* mime; const uint8_t* data; uint32_t len; uint32_t etag; uint8_t gz; };\n")
+        f.write("struct WebOptions { const char* default_uri; uint32_t max_age; uint8_t add_vary; };\n\n")
 
         f.write("static const uint8_t WWW_BLOB[] PROGMEM = {\n")
         col = 0
-        for _, _, data in assets:
+        for _, _, data, _, _ in assets:
             for b in data:
                 if col == 0:
                     f.write("\t")
@@ -81,19 +90,20 @@ def write_header():
             f.write("\n")
         f.write("};\n\n")
 
-        for i,(rel,_,_) in enumerate(assets):
-            f.write(f'static const char WWW_URI_{i}[] = "/{rel}";\n')
-        for i,(_,mime,_) in enumerate(assets):
-            f.write(f'static const char WWW_MIME_{i}[] = "{mime}";\n')
+        for i,(uri,_,_,_,_) in enumerate(assets):
+            f.write(f'static const char WWW_URI_{i}[] PROGMEM = "{uri}";\n')
+        for i,(_,mime,_,_,_) in enumerate(assets):
+            f.write(f'static const char WWW_MIME_{i}[] PROGMEM = "{mime}";\n')
         f.write("\n")
 
-        f.write("static const WWWAsset WWW_ASSETS[] = {\n")
-        for i,(_,_,data) in enumerate(assets):
-            f.write(f"\t{{WWW_URI_{i}, WWW_MIME_{i}, {offsets[i]}, {len(data)}}},\n")
-        f.write("};\n")
-        f.write(f"static const size_t WWW_ASSETS_COUNT = {len(assets)};\n\n")
+        f.write("static const WebAsset WWW_ASSETS[] PROGMEM = {\n")
+        for i,(_,_,data,gz_flag,etag) in enumerate(assets):
+            f.write(f"\t{{WWW_URI_{i}, WWW_MIME_{i}, WWW_BLOB+{offsets[i]}, {len(data)}, 0x{etag:08X}, {gz_flag}}},\n")
+        f.write("};\n\n")
 
-        f.write("class WWWData { public: static void registerRoutes(RouteRegistrationHandler h) { for (size_t i = 0; i < WWW_ASSETS_COUNT; i++) { const WWWAsset& a = WWW_ASSETS[i]; h(a.uri, a.mime, WWW_BLOB + a.off, a.len); } } };\n")
+        f.write(f"static const size_t WWW_ASSETS_COUNT = {len(assets)};\n")
+        default_uri = "/index.html" if any(u == "/index.html" for u,_,_,_,_ in assets) else (assets[0][0] if assets else "/")
+        f.write(f'static const WebOptions WWW_OPT = {{ "{default_uri}", 31536000u, 1 }};\n')
 
 print("running: build_app.py")
 if needs_rebuild():

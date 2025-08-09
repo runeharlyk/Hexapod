@@ -15,7 +15,7 @@
 #include <communication/websocket_adapter.h>
 #include <event_storage.h>
 
-#include <WWWData.h>
+#include <www_mount.hpp>
 
 // Variables
 #define APP_NAME "Hexapod"
@@ -39,26 +39,11 @@ EventStorage eventStorage;
 DRAM_ATTR Hexapod robot;
 
 void setupServer() {
-    server.config.max_uri_handlers = 10;
+    server.config.max_uri_handlers = 5 + WWW_ASSETS_COUNT;
     server.maxUploadSize = 1000000; // 1 MB;
     server.listen(80);
     server.serveStatic("/api/config/", ESP_FS, "/config/");
-    WWWData::registerRoutes([](const char* uri, const char* contentType, const uint8_t* content, size_t len) {
-        PsychicHttpRequestCallback requestHandler = [contentType, content, len](PsychicRequest* request) {
-            PsychicResponse response(request);
-            response.setCode(200);
-            response.setContentType(contentType);
-            response.addHeader("Content-Encoding", "gzip");
-            response.addHeader("Vary", "Accept-Encoding");
-            response.addHeader("Cache-Control", "public, immutable, max-age=31536000");
-            response.setContent(content, len);
-            return response.send();
-        };
-        auto* handler = new PsychicWebHandler();
-        handler->onRequest(requestHandler);
-        server.on(uri, HTTP_GET, handler);
-        if (strcmp(uri, "/index.html") == 0) server.defaultEndpoint->setHandler(handler);
-    });
+    mountStaticAssets(server);
     DefaultHeaders::Instance().addHeader("Server", APP_NAME);
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
 }
