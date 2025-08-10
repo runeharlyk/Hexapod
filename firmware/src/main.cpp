@@ -13,6 +13,7 @@
 #include <features.h>
 #include <communication/ble_adapter.h>
 #include <communication/websocket_adapter.h>
+#include <communication/event_source_adapter.h>
 #include <event_storage.h>
 
 #include <www_mount.hpp>
@@ -25,9 +26,8 @@
 BLE ble;
 PsychicHttpServer server;
 Websocket socket {server, "/api/ws"};
-// TODO: Add a rest and sse option
-// Rest rest {server, "/api/{topic_id}"}
-// ServerSendEvent sse {server, "/api/sse"}
+EventSource eventSource {server, "/api/sse"};
+
 // TODO: EspNowAdapter now;
 // TODO: Bluepad bluepad;
 
@@ -77,6 +77,7 @@ void IRAM_ATTR serviceLoopEntry(void*) {
 
     ble.begin();
     socket.begin();
+    eventSource.begin();
 
     ESP_LOGI("main", "Service control task started");
     for (;;) {
