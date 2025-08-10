@@ -2,8 +2,6 @@
 #include <cstring>
 
 void BLE::begin() {
-    CommAdapterBase::begin();
-
     _messageQueue = xQueueCreate(10, sizeof(BLEMessage));
     if (!_messageQueue) {
         ESP_LOGE("BluetoothService", "Failed to create message queue");
