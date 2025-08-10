@@ -147,3 +147,21 @@ class ServoSettingsMsg {
         }
     }
 };
+
+struct WiFiSettingsMsg {
+    String ssid;
+    String password;
+    String hostname;
+
+    friend void toJson(JsonVariant dst, WiFiSettingsMsg const &src) {
+        dst["ssid"] = src.ssid;
+        dst["password"] = src.password;
+        dst["hostname"] = src.hostname;
+    }
+
+    void fromJson(JsonVariantConst src) {
+        ssid = src["ssid"] | ssid;
+        password = src["password"] | password;
+        hostname = src["hostname"] | hostname;
+    }
+};

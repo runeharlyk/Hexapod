@@ -7,13 +7,17 @@
 #include <settings/servo_settings.h>
 
 #define SERVO_SETTINGS_JSON_FILE "/config/ServoSettingsMsg.json"
+#define WIFI_SETTINGS_JSON_FILE "/config/WiFiSettingsMsg.json"
 
 class EventStorage {
   public:
     EventStorage() {}
     ~EventStorage() {}
 
-    void begin() { registerEvent<ServoSettingsMsg>(SERVO_SETTINGS_JSON_FILE); }
+    void begin() {
+        registerEvent<ServoSettingsMsg>(SERVO_SETTINGS_JSON_FILE);
+        registerEvent<WiFiSettingsMsg>(WIFI_SETTINGS_JSON_FILE);
+    }
 
   private:
     template <typename T>
