@@ -14,6 +14,7 @@ export enum MessageTopic {
   COMMAND = 2,
   MODE = 3,
   GAIT = 4,
+  ANGLE = 6,
   SERVO_SETTINGS = 9
 }
 

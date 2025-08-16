@@ -38,6 +38,7 @@ function createWebSocketAdapter(): ITransport {
   const connectCallbacks: (() => void)[] = []
   const disconnectCallbacks: (() => void)[] = []
   const connected = writable(false)
+  let hasEnabledProtocol = false
   let ws: WebSocket | undefined
 
   const connect = async () => {
@@ -57,7 +58,6 @@ function createWebSocketAdapter(): ITransport {
       ping()
       useBinary = false
       connected.set(true)
-      connectCallbacks.forEach(cb => cb())
     }
 
     ws.onclose = () => {
@@ -69,15 +69,21 @@ function createWebSocketAdapter(): ITransport {
       const message = decodeMessage(frame.data)
       if (!message) return
       const [type, topic = undefined, payload = undefined] = message
+      if (!hasEnabledProtocol) {
+        hasEnabledProtocol = true
+        connectCallbacks.forEach(cb => cb())
+      }
       if (topic && payload) dataCallbacks.forEach(cb => cb(type, topic, payload))
     }
 
     ws.onerror = error => {
       console.error('WebSocket error:', error)
+      hasEnabledProtocol = false
     }
   }
 
   const disconnect = async () => {
+    hasEnabledProtocol = false
     if (ws) {
       ws.close()
       connected.set(false)
