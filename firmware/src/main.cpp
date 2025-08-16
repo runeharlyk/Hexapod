@@ -46,6 +46,8 @@ void setupServer() {
     mountStaticAssets(server);
     DefaultHeaders::Instance().addHeader("Server", APP_NAME);
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
+    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Accept, Content-Type, Authorization");
+    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Credentials", "true");
 }
 
 void IRAM_ATTR controlLoopEntry(void*) {
