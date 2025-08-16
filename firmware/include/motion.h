@@ -27,7 +27,7 @@ class MotionService {
         EventBus<CommandMsg>::consume([&](CommandMsg const &c) { handleCommand(c); });
         EventBus<ModeMsg>::consume([&](ModeMsg const &c) { handleInputMode(c); });
         EventBus<GaitMsg>::consume([&](GaitMsg const &c) { handleInputGait(c); });
-        // _servoHandle = EventBus<ServoAnglesMsg>::subscribe([&](ServoAnglesMsg const &s) { handleAnglesEvent(s); });
+        _angleSubHandle = EventBus<ServoAnglesMsg>::subscribe([&](ServoAnglesMsg const &s) { handleAnglesEvent(s); });
         // TODO: Add body state
         // _positionSubHandle = EventBus::subscribe<Gait>([&](Gait const &c) { handleInputGait(c); });
 
@@ -120,7 +120,7 @@ class MotionService {
   private:
     ServoController *_servoController;
     Peripherals *_peripherals;
-    EventBus<ServoAnglesMsg>::Handle _servoHandle;
+    EventBus<ServoAnglesMsg>::Handle _angleSubHandle;
     int step_count = 0;
     Kinematics kinematics;
     GaitController gait;
