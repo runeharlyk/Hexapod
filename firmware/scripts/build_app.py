@@ -5,6 +5,8 @@ import os, gzip, mimetypes, glob, zlib
 Import("env")
 
 project_dir = env["PROJECT_DIR"]
+buildFlags = env.ParseFlags(env["BUILD_FLAGS"])
+
 interface_dir = f"{project_dir}/app"
 output_file = f"{project_dir}/firmware/include/WWWData.h"
 source_www_dir = f"{interface_dir}/src"
@@ -19,6 +21,15 @@ already_compressed_ext = {
     ".gz",".br",".png",".jpg",".jpeg",".webp",".gif",".mp4",".m4v",".mov",".avi",".mkv",".mp3",".aac",".ogg",".wav",
     ".wasm",".pdf",".ico",".woff",".woff2",".ttf",".otf",".7z",".zip",".rar",".bz2",".xz",".lz",".svgz"
 }
+
+
+def get_flag(flag, default=None):
+    for d in buildFlags.get("CPPDEFINES", []):
+        if d == flag:
+            return True
+        if isinstance(d, (list, tuple)) and d[0] == flag:
+            return d[1] if len(d) > 1 else True
+    return default
 
 def latest_ts():
     files = [p for p in glob.glob(f"{source_www_dir}/**/*", recursive=True) if os.path.isfile(p)]
@@ -105,7 +116,7 @@ def write_header():
         default_uri = "/index.html" if any(u == "/index.html" for u,_,_,_,_ in assets) else (assets[0][0] if assets else "/")
         f.write(f'static const WebOptions WWW_OPT = {{ "{default_uri}", 31536000u, 1 }};\n')
 
-print("running: build_app.py")
-if needs_rebuild():
+if get_flag("EMBED_WEBAPP") == 1 and needs_rebuild():
+    print("Building web app")
     build_web()
     write_header()
