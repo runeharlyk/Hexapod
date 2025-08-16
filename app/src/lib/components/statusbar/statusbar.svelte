@@ -3,7 +3,6 @@
   import { telemetry } from '$lib/stores/telemetry'
   import RssiIndicator from '$lib/components/statusbar/RSSIIndicator.svelte'
   import UpdateIndicator from '$lib/components/statusbar/UpdateIndicator.svelte'
-  import SleepButton from './SleepButton.svelte'
   import ThemeButton from './ThemeButton.svelte'
   import FullscreenButton from './FullscreenButton.svelte'
   import StopButton from './StopButton.svelte'
@@ -36,8 +35,6 @@
   <ThemeButton />
 
   <RssiIndicator rssi={$telemetry.rssi.rssi} />
-
-  <SleepButton />
 
   <StopButton />
 </div>
