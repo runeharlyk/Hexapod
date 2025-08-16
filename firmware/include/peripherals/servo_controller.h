@@ -124,12 +124,8 @@ class ServoController {
     void initializePCA() {
         _left_pca.begin();
         _left_pca.setPWMFreq(FACTORY_SERVO_PWM_FREQUENCY);
-        // _left_pca.setOscillatorFrequency(FACTORY_SERVO_OSCILLATOR_FREQUENCY);
-        // _left_pca.sleep();
         _right_pca.begin();
         _right_pca.setPWMFreq(FACTORY_SERVO_PWM_FREQUENCY);
-        // _right_pca.setOscillatorFrequency(FACTORY_SERVO_OSCILLATOR_FREQUENCY);
-        // _right_pca.sleep();
     }
 
     inline static ServoSettingsMsg cfg;
