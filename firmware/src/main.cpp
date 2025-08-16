@@ -110,6 +110,8 @@ void setup() {
 
     xTaskCreatePinnedToCore(controlLoopEntry, "Control task", 4096, nullptr, 5, nullptr, 1);
 
+    EventBus<ServoAnglesMsg>::subscribe([&](ServoAnglesMsg const &s) { ESP_LOGV("main", "New angles"); });
+
     ESP_LOGI("main", "Setup finished");
 }
 
