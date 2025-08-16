@@ -18,6 +18,7 @@ class EventSource : public CommAdapterBase {
     PsychicHttpServer &_server;
     const char *_route;
 
+    void send(const uint8_t *data, size_t len, int cid = -1) override;
     void onSSEOpen(PsychicEventSourceClient *client);
     void onSSEClose(PsychicEventSourceClient *client);
 };
