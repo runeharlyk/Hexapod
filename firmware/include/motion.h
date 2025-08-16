@@ -7,6 +7,7 @@
 #include <utils/math_utils.h>
 #include <gait.h>
 #include <event_bus.h>
+#include <message_types.h>
 
 #include "config.h"
 
@@ -26,7 +27,7 @@ class MotionService {
         EventBus<CommandMsg>::consume([&](CommandMsg const &c) { handleCommand(c); });
         EventBus<ModeMsg>::consume([&](ModeMsg const &c) { handleInputMode(c); });
         EventBus<GaitMsg>::consume([&](GaitMsg const &c) { handleInputGait(c); });
-        EventBus<ServoAnglesMsg>::consume([&](ServoAnglesMsg const &s) { handleAnglesEvent(s); });
+        // _servoHandle = EventBus<ServoAnglesMsg>::subscribe([&](ServoAnglesMsg const &s) { handleAnglesEvent(s); });
         // TODO: Add body state
         // _positionSubHandle = EventBus::subscribe<Gait>([&](Gait const &c) { handleInputGait(c); });
 
@@ -46,7 +47,7 @@ class MotionService {
 
     void handleAnglesEvent(ServoAnglesMsg const &s) {
         for (int i = 0; i < 12; i++) {
-            angles[i] = s.angles[i];
+            msgAngles.angles[i] = s.angles[i];
         }
     }
 
@@ -98,25 +99,28 @@ class MotionService {
                 body_state.zm = lerp(body_state.zm, target_body_state.zm, 0.06);
                 body_state.phi = lerp(body_state.phi, target_body_state.phi + _peripherals->angleY(), 0.06);
                 body_state.omega = lerp(body_state.omega, target_body_state.omega + _peripherals->angleX(), 0.06);
-                kinematics.inverseKinematics(body_state, angles);
+                kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
             }
             case MOTION_STATE::WALK: {
                 body_state.phi = lerp(body_state.phi, target_body_state.phi + _peripherals->angleY(), 0.06);
                 body_state.omega = lerp(body_state.omega, target_body_state.omega + _peripherals->angleX(), 0.06);
                 gait.step(gait_state, body_state, 5.f / 1000.f);
-                kinematics.inverseKinematics(body_state, angles);
+                kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
             }
         }
         return true;
     }
 
-    float *getAngles() { return angles; }
+    float *getAngles() { return msgAngles.angles; }
+
+    void publishState() { EventBus<ServoAnglesMsg>::publish(msgAngles); }
 
   private:
     ServoController *_servoController;
     Peripherals *_peripherals;
+    EventBus<ServoAnglesMsg>::Handle _servoHandle;
     int step_count = 0;
     Kinematics kinematics;
     GaitController gait;
@@ -132,7 +136,7 @@ class MotionService {
     MOTION_STATE motionState = MOTION_STATE::DEACTIVATED;
     unsigned long _lastUpdate;
 
-    float angles[18] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
 };
 
 #endif

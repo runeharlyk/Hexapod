@@ -34,8 +34,8 @@ class Hexapod {
 
     // communicate
     void emitTelemetry() {
-        // if (updatedMotion) EXECUTE_EVERY_N_MS(100, { _motionService.emitAngles(); });
         // EXECUTE_EVERY_N_MS(1000, { _peripherals.emitIMU(); });
+        if (updatedMotion) EXECUTE_EVERY_N_MS(20, { _motionService.publishState(); });
     }
 
   private:

@@ -35,16 +35,16 @@ struct GaitMsg {
 };
 
 struct ServoAnglesMsg {
-    float angles[18];
+    float angles[NUM_SERVO];
     friend void toJson(JsonVariant v, ServoAnglesMsg const &a) {
         JsonArray arr = v.to<JsonArray>();
-        for (int i = 0; i < 12; i++) {
+        for (int i = 0; i < NUM_SERVO; i++) {
             arr.add(a.angles[i]);
         }
     }
     void fromJson(JsonVariantConst o) {
         JsonArrayConst arr = o.as<JsonArrayConst>();
-        for (int i = 0; i < 12; i++) {
+        for (int i = 0; i < NUM_SERVO; i++) {
             angles[i] = arr[i].as<float>();
         }
     }

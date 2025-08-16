@@ -14,7 +14,9 @@
 #include <freertos/task.h>
 #include <freertos/queue.h>
 
-static_assert(!(USE_JSON == 1 && USE_MSGPACK == 1), "Cannot set both USE_JSON and USE_MSGPACK to 1 simultaneously");
+#if defined(USE_JSON) && USE_JSON && defined(USE_MSGPACK) && USE_MSGPACK
+#error "Cannot set both USE_JSON and USE_MSGPACK to 1 simultaneously"
+#endif
 
 template <typename Sig, size_t MaxSize>
 class FixedFn;
@@ -131,10 +133,12 @@ class EventBus {
         Item it;
         while (xQueueReceive(queue, &it, portMAX_DELAY) == pdTRUE) dispatch(it.payload, it.exclude);
     }
+
     static void ensureTask() {
         static bool once = (xTaskCreatePinnedToCore(worker, "evtbus", 4096, nullptr, 6, nullptr, 1), true);
         (void)once;
     }
+
     static bool push(const Msg& m, size_t ex = NO_EX, TickType_t to = 0) {
         ensureTask();
         Item it {m, ex};
@@ -231,6 +235,7 @@ class EventBus {
         store(m);
         return push(m);
     }
+
     static bool publish(const Msg& m, const Handle& h) {
         store(m);
         return push(m, h.valid() ? h.idx : NO_EX);
@@ -249,6 +254,7 @@ class EventBus {
         portEXIT_CRITICAL(&mux);
         return true;
     }
+
     static bool take(Msg& out) {
         if (!hasLatest.load(std::memory_order_acquire)) return false;
         portENTER_CRITICAL(&mux);
@@ -257,5 +263,6 @@ class EventBus {
         portEXIT_CRITICAL(&mux);
         return true;
     }
+
     static bool hasSubscribers() { return subCount.load(std::memory_order_acquire) > 0; }
 };
