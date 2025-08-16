@@ -5,9 +5,11 @@
   import SceneBuilder from '$lib/sceneBuilder'
   import { GUI } from 'three/addons/libs/lil-gui.module.min.js'
   import type { URDFRobot } from 'urdf-loader'
-  import { lerp } from 'three/src/math/MathUtils'
+  import { degToRad, lerp } from 'three/src/math/MathUtils'
   import { GaitLabels, GaitType } from '$lib/gait'
   import Motion, { MotionModes } from '$lib/motion'
+  import { dataBroker } from '$lib/transport/databroker'
+  import { MessageTopic } from '$lib/interfaces/transport.interface'
 
   interface Props {
     sky?: boolean
@@ -41,38 +43,24 @@
     Background: 'black'
   }
 
-  const _jointNames = [
-    'front_left_shoulder',
-    'front_left_leg',
-    'front_left_foot',
-    'middle_left_shoulder',
-    'middle_left_leg',
-    'middle_left_foot',
-    'back_left_shoulder',
-    'back_left_leg',
-    'back_left_foot',
-    'front_right_shoulder',
-    'front_right_leg',
-    'front_right_foot',
-    'middle_right_shoulder',
-    'middle_right_leg',
-    'middle_right_foot',
-    'back_right_shoulder',
-    'back_right_leg',
-    'back_right_foot'
-  ]
-
-  const jointAngles: Record<string, number> = _jointNames.reduce(
-    (prev, cur) => ({ ...prev, [cur]: 0 }),
-    {}
-  )
+  let jointAngles: Record<string, number> = {}
 
   onMount(async () => {
     await populateModelCache()
+
+    jointAngles = $jointNames.reduce((prev, cur) => ({ ...prev, [cur]: 0 }), {})
+
     await createScene()
     if (panel) createPanel()
 
     outControllerData.subscribe(data => motion.handleCommand(data))
+    dataBroker.on<number[]>(MessageTopic.ANGLE, data => {
+      settings['Internal kinematic'] = false
+      const correctedData = data.map((angle, index) => {
+        return index % 3 === 2 ? angle - 90 : angle
+      })
+      setTargetAngles(correctedData.map(degToRad))
+    })
     mode.subscribe(mode => motion.setMode(mode))
     gait.subscribe(gait => motion.setGait(gait))
   })
@@ -197,8 +185,10 @@
   const render = () => {
     const robot = sceneManager.model
     if (!robot) return
-    const updated = motion.step()
-    if (updated) setTargetAngles(motion.targetAngles)
+    if (settings['Internal kinematic']) {
+      const updated = motion.step()
+      if (updated) setTargetAngles(motion.targetAngles)
+    }
     update_camera(robot)
     orient_robot(robot)
 
