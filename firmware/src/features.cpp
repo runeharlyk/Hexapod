@@ -11,9 +11,6 @@ void printFeatureConfiguration() {
     ESP_LOGI("Features", "USE_MPU6050: %s", USE_MPU6050 ? "enabled" : "disabled");
     ESP_LOGI("Features", "USE_MAG: %s", USE_MAG ? "enabled" : "disabled");
 
-    // Peripherals
-    ESP_LOGI("Features", "USE_SERVO: %s", USE_SERVO ? "enabled" : "disabled");
-
     // Web services
     ESP_LOGI("Features", "USE_MDNS: %s", USE_MDNS ? "enabled" : "disabled");
     ESP_LOGI("Features", "==========================================================");
@@ -22,7 +19,11 @@ void printFeatureConfiguration() {
 void features(JsonObject &root) {
     root["imu"] = USE_MPU6050;
     root["mag"] = USE_MAG;
-    root["servo"] = USE_SERVO;
+#if defined(USE_CAMERA) && USE_CAMERA
+    root["camera"] = true;
+#else
+    root["camera"] = false;
+#endif
     root["firmware_version"] = APP_VERSION;
     root["firmware_name"] = APP_NAME;
 }

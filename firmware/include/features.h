@@ -7,29 +7,34 @@
 
 #define FT_ENABLED(feature) feature
 
-// ESP32 IMU on by default
-#ifndef USE_MPU6050
-#define USE_MPU6050 1
-#endif
-
-// ESP32 CAMERA off by default
+// CAMERA off by default
 #ifndef USE_CAMERA
 #define USE_CAMERA 0
 #endif
 
-// ESP32 IMU on by default
+// IMU (MPU6050) on by default
+#ifndef USE_MPU6050
+#define USE_MPU6050 1
+#endif
+
+// IMU (BNO055) off by default
 #ifndef USE_BNO055
 #define USE_BNO055 0
 #endif
 
-// ESP32 magnetometer on by default
+// Magnetometer off by default
 #ifndef USE_MAG
 #define USE_MAG 0
 #endif
 
-// ESP32 MDNS on by default
+// MDNS on by default
 #ifndef USE_MDNS
 #define USE_MDNS 1
+#endif
+
+// WEBAPP not embedded by default
+#ifndef EMBED_WEBAPP
+#define EMBED_WEBAPP 0
 #endif
 
 namespace feature_service {

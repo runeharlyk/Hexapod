@@ -43,14 +43,23 @@ void setupServer() {
     server.maxUploadSize = 1000000; // 1 MB;
     server.listen(80);
     server.serveStatic("/api/config/", ESP_FS, "/config/");
+    server.on("/api/features", feature_service::getFeatures);
+#if EMBED_WEBAPP
     mountStaticAssets(server);
+#endif
+    server.on("/*", HTTP_OPTIONS, [](PsychicRequest *request) { // CORS handling
+        PsychicResponse response(request);
+        response.setCode(200);
+        return response.send();
+    });
     DefaultHeaders::Instance().addHeader("Server", APP_NAME);
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Origin", "*");
     DefaultHeaders::Instance().addHeader("Access-Control-Allow-Headers", "Accept, Content-Type, Authorization");
-    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Credentials", "true");
+    DefaultHeaders::Instance().addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    DefaultHeaders::Instance().addHeader("Access-Control-Max-Age", "86400");
 }
 
-void IRAM_ATTR controlLoopEntry(void*) {
+void IRAM_ATTR controlLoopEntry(void *) {
     ESP_LOGI("main", "Control task starting");
     robot.initialize();
     TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -66,7 +75,7 @@ void IRAM_ATTR controlLoopEntry(void*) {
     }
 }
 
-void IRAM_ATTR serviceLoopEntry(void*) {
+void IRAM_ATTR serviceLoopEntry(void *) {
     ESP_LOGI("main", "Service control task starting");
     eventStorage.begin();
 
