@@ -20,7 +20,8 @@ import {
   MathUtils,
   Group,
   MeshBasicMaterial,
-  RepeatWrapping
+  RepeatWrapping,
+  SphereGeometry
 } from 'three'
 import { Sky } from 'three/addons/objects/Sky.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
@@ -69,6 +70,8 @@ export default class SceneBuilder {
   sky!: Sky
   transformControl: TransformControls
   public modelGroup!: Group
+  public footMarkers: Mesh[] = []
+  public footTargetMarkers: Mesh[] = []
 
   constructor() {
     this.scene = new Scene()
@@ -375,5 +378,95 @@ export default class SceneBuilder {
     const intervalId = setInterval(() => this.model?.traverse(c => (c.castShadow = true)), 10)
     setTimeout(() => clearInterval(intervalId), 1000)
     this.isLoaded = true
+  }
+
+  public addFootMarkers = () => {
+    const footGeometry = new SphereGeometry(0.3, 8, 6)
+    const workspaceGeometry = new SphereGeometry(8, 16, 12)
+
+    const footColors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff, 0x00ffff]
+
+    for (let i = 0; i < 6; i++) {
+      const footMaterial = new MeshBasicMaterial({
+        color: footColors[i],
+        transparent: true,
+        opacity: 0.9
+      })
+      const workspaceMaterial = new MeshBasicMaterial({
+        color: footColors[i],
+        transparent: true,
+        opacity: 0.1,
+        wireframe: true
+      })
+
+      const footMarker = new Mesh(footGeometry, footMaterial)
+      const workspaceMarker = new Mesh(workspaceGeometry, workspaceMaterial)
+
+      footMarker.visible = false
+      workspaceMarker.visible = false
+
+      this.footMarkers.push(footMarker)
+      this.footTargetMarkers.push(workspaceMarker)
+
+      this.scene.add(footMarker)
+      this.scene.add(workspaceMarker)
+    }
+
+    return this
+  }
+
+  public updateFootMarkers = (
+    feet: number[][],
+    mountPositions?: number[][],
+    zOffset: number = 0
+  ) => {
+    if (!this.model) return this
+
+    for (let i = 0; i < Math.min(feet.length, this.footMarkers.length); i++) {
+      const foot = feet[i]
+      if (foot && foot.length >= 3) {
+        const x = foot[0] / 12
+        const y = foot[1] / 12
+        const z = -foot[2] / 12
+
+        const robotRot = this.model.rotation
+
+        const cosZ = Math.cos(robotRot.z)
+        const sinZ = Math.sin(robotRot.z)
+
+        const rotatedX = x * cosZ + y * sinZ
+        const rotatedY = -x * sinZ + y * cosZ
+
+        this.footMarkers[i].position.set(rotatedX, -z + zOffset, -rotatedY)
+      }
+
+      if (mountPositions && mountPositions[i] && mountPositions[i].length >= 3) {
+        const mountPos = mountPositions[i]
+        const x = mountPos[0] / 12
+        const y = mountPos[1] / 12
+        const z = mountPos[2] / 12
+
+        const robotRot = this.model.rotation
+
+        const cosZ = Math.cos(robotRot.z)
+        const sinZ = Math.sin(robotRot.z)
+
+        const rotatedX = x * cosZ + y * sinZ
+        const rotatedY = -x * sinZ + y * cosZ
+
+        this.footTargetMarkers[i].position.set(rotatedX, -z, -rotatedY)
+      }
+    }
+    return this
+  }
+
+  public setFootMarkersVisible = (visible: boolean) => {
+    this.footMarkers.forEach(marker => (marker.visible = visible))
+    return this
+  }
+
+  public setFootTargetMarkersVisible = (visible: boolean) => {
+    this.footTargetMarkers.forEach(marker => (marker.visible = visible))
+    return this
   }
 }

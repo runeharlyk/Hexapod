@@ -40,7 +40,9 @@
     'Target position': false,
     'Trace points': 30,
     'Fix camera on robot': true,
-    'Smooth motion': true,
+    'Smooth motion': false,
+    'Show foot positions': true,
+    'Show workspace': true,
     Background: 'black'
   }
 
@@ -117,6 +119,12 @@
     visualization.add(settings, 'Trace points', 1, 1000, 1)
     visualization.add(settings, 'Target position')
     visualization.add(settings, 'Smooth motion')
+    visualization.add(settings, 'Show foot positions').onChange((value: boolean) => {
+      sceneManager.setFootMarkersVisible(value)
+    })
+    visualization.add(settings, 'Show workspace').onChange((value: boolean) => {
+      sceneManager.setFootTargetMarkersVisible(value)
+    })
     visualization.addColor(settings, 'Background')
   }
 
@@ -151,6 +159,7 @@
       .addAmbientLight({ color: 0xffffff, intensity: 0.5 })
       .addFogExp2(0xcccccc, 0.015)
       .addModel($model)
+      .addFootMarkers()
       .fillParent()
       .addRenderCb(render)
       .startRenderLoop()
@@ -186,6 +195,21 @@
     return -bodyHeight + 0.5 + feetDepth
   }
 
+  const calculateStaticFootOffset = () => {
+    const feet = motion.body_state.feet
+    if (!feet || feet.length === 0) return 0.5
+
+    let minZ = feet[0][2]
+    for (let i = 1; i < feet.length; i++) {
+      if (feet[i][2] < minZ) {
+        minZ = feet[i][2]
+      }
+    }
+
+    const feetDepth = minZ / 12
+    return 0.5 + feetDepth
+  }
+
   const orient_robot = (robot: URDFRobot) => {
     if (settings['Robot transform controls'] || !settings['Auto orient robot']) return
 
@@ -207,6 +231,12 @@
     }
     update_camera(robot)
     orient_robot(robot)
+
+    sceneManager.updateFootMarkers(
+      motion.body_state.feet,
+      settings['Show workspace'] ? motion.kinematics.mountPosition : undefined,
+      calculateStaticFootOffset()
+    )
 
     for (let i = 0; i < $jointNames.length; i++) {
       angles[i] = smooth(robot.joints[$jointNames[i]].angle as number, targetAngles[i], 0.1)
