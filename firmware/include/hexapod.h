@@ -17,7 +17,11 @@ class Hexapod {
 
     // sense
     void readSensors() {
-        EXECUTE_EVERY_N_MS(25, { _peripherals.readIMU(); });
+        EXECUTE_EVERY_N_MS(25, {
+            if (_peripherals.readIMU()) {
+                EventBus<IMUAnglesMsg>::publish(_peripherals.getIMUAngles());
+            }
+        });
         // _peripherals.readMag();
     }
 
@@ -34,7 +38,7 @@ class Hexapod {
 
     // communicate
     void emitTelemetry() {
-        // EXECUTE_EVERY_N_MS(1000, { _peripherals.emitIMU(); });
+        EXECUTE_EVERY_N_MS(250, { _peripherals.emitIMU(); });
         if (updatedMotion) EXECUTE_EVERY_N_MS(20, { _motionService.publishState(); });
     }
 

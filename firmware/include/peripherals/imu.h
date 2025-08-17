@@ -9,6 +9,8 @@
 #include <MPU6050_6Axis_MotionApps612.h>
 #include <Adafruit_BNO055.h>
 
+#include <message_types.h>
+
 class IMU {
   public:
     IMU()
@@ -20,9 +22,9 @@ class IMU {
     bool initialize() {
 #if FT_ENABLED(USE_MPU6050)
         _imu.initialize();
-        imu_success = _imu.testConnection();
+        imuMsg.success = _imu.testConnection();
         devStatus = _imu.dmpInitialize();
-        if (!imu_success) return false;
+        if (!imuMsg.success) return false;
         _imu.CalibrateAccel(6);
         _imu.CalibrateGyro(6);
         _imu.setDMPEnabled(true);
@@ -31,20 +33,20 @@ class IMU {
         _imu.setSleepEnabled(false);
 #endif
 #if FT_ENABLED(USE_BNO055)
-        imu_success = _imu.begin();
-        if (!imu_success) return false;
+        imuMsg.success = _imu.begin();
+        if (!imuMsg.success) return false;
         _imu.setExtCrystalUse(true);
 #endif
         return true;
     }
 
     bool readIMU() {
-        if (!imu_success) return false;
+        if (!imuMsg.success) return false;
 #if FT_ENABLED(USE_MPU6050)
         bool updated = _imu.dmpGetCurrentFIFOPacket(fifoBuffer);
         _imu.dmpGetQuaternion(&q, fifoBuffer);
         _imu.dmpGetGravity(&gravity, &q);
-        _imu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+        _imu.dmpGetYawPitchRoll(imuMsg.rpy, &q, &gravity);
         return updated;
 #endif
 #if FT_ENABLED(USE_BNO055)
@@ -58,22 +60,17 @@ class IMU {
         return true;
     }
 
-    float getTemperature() { return imu_success ? imu_temperature : -1; }
+    float getTemperature() { return imuMsg.temperature; }
 
-    float getAngleX() { return imu_success ? ypr[2] : 0; }
+    float getAngleX() { return imuMsg.rpy[2]; }
 
-    float getAngleY() { return imu_success ? ypr[1] : 0; }
+    float getAngleY() { return imuMsg.rpy[1]; }
 
-    float getAngleZ() { return imu_success ? ypr[0] : 0; }
+    float getAngleZ() { return imuMsg.rpy[0]; }
 
-    void readIMU(JsonObject& root) {
-        if (!imu_success) return;
-        root["x"] = round2(getAngleX());
-        root["y"] = round2(getAngleY());
-        root["z"] = round2(getAngleZ());
-    }
+    bool active() { return imuMsg.success; }
 
-    bool active() { return imu_success; }
+    IMUAnglesMsg getIMUAngles() { return imuMsg; }
 
   private:
 #if FT_ENABLED(USE_MPU6050)
@@ -86,7 +83,5 @@ class IMU {
 #if FT_ENABLED(USE_BNO055)
     Adafruit_BNO055 _imu;
 #endif
-    bool imu_success {false};
-    float ypr[3];
-    float imu_temperature {-1};
+    IMUAnglesMsg imuMsg;
 };

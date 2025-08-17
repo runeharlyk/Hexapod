@@ -1,12 +1,12 @@
 #pragma once
 
 // TODO: Find a way to match a topic with the data type
-enum message_topic_t {
+enum message_topic_t { // enum class
     SERVO_SIGNAL = 1,
     COMMAND = 2,
     MODE = 3,
     GAIT = 4,
-    IMU = 5,
+    IMUData = 5,
     ANGLE = 6,
     BODY = 7,
     WIFI = 8,
@@ -64,18 +64,26 @@ struct ServoSignalMsg {
 };
 
 struct IMUAnglesMsg {
-    float rpy[3];
+    float rpy[3] {0, 0, 0};
+    float temperature {-1};
+    bool success {false};
+
     friend void toJson(JsonVariant v, IMUAnglesMsg const &a) {
         JsonArray arr = v.to<JsonArray>();
-        for (int i = 0; i < 3; i++) {
-            arr.add(a.rpy[i]);
-        }
+        arr.add(a.rpy[0]);
+        arr.add(a.rpy[1]);
+        arr.add(a.rpy[2]);
+        arr.add(a.temperature);
+        arr.add(a.success);
     }
+
     void fromJson(JsonVariantConst o) {
         JsonArrayConst arr = o.as<JsonArrayConst>();
-        for (int i = 0; i < 3; i++) {
-            rpy[i] = arr[i].as<float>();
-        }
+        rpy[0] = arr[0].as<float>();
+        rpy[1] = arr[1].as<float>();
+        rpy[2] = arr[2].as<float>();
+        temperature = arr[3].as<float>();
+        success = arr[4].as<bool>();
     }
 };
 

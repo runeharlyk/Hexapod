@@ -176,22 +176,20 @@ class Peripherals : public StatefulService<PeripheralsConfiguration> {
     float angleZ() { return _imu.getAngleZ(); }
     float angleY() { return _imu.getAngleY(); }
 
+    IMUAnglesMsg getIMUAngles() { return _imu.getIMUAngles(); }
+
     StatefulHttpEndpoint<PeripheralsConfiguration> endpoint;
 
     void emitIMU() {
-        doc.clear();
-        JsonObject root = doc.to<JsonObject>();
 #if FT_ENABLED(USE_MPU6050)
-        _imu.readIMU(root);
+        _imu.readIMU();
 #endif
 #if FT_ENABLED(USE_MAG)
-        _mag.readMagnetometer(root);
+        _mag.readMagnetometer();
 #endif
 #if FT_ENABLED(USE_BMP)
-        _bmp.readBarometer(root);
+        _bmp.readBarometer();
 #endif
-        serializeJson(doc, message);
-        // socket.emit(EVENT_IMU, message);
     }
 
     void emitSonar() {
@@ -212,8 +210,6 @@ class Peripherals : public StatefulService<PeripheralsConfiguration> {
 
     inline void endTransaction() { xSemaphoreGiveRecursive(_accessMutex); }
 
-    JsonDocument doc;
-    char message[MAX_ESP_IMU_SIZE];
 #if FT_ENABLED(USE_MPU6050)
     IMU _imu;
 #endif
