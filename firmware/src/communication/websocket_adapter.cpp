@@ -12,6 +12,7 @@ void Websocket::begin() { _server.on(_route, &_socket); }
 
 void Websocket::onWSOpen(PsychicWebSocketClient *client) {
     ESP_LOGI(TAG, "ws[%s][%u] connect", client->remoteIP().toString().c_str(), client->socket());
+    ping(client->socket());
 }
 
 void Websocket::onWSClose(PsychicWebSocketClient *client) {

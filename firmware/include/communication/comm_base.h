@@ -261,4 +261,13 @@ class CommAdapterBase {
             default: break;
         }
     }
+
+    void ping(int cid) {
+#if USE_MSGPACK
+        static const uint8_t pong[] = {0x91, 0x03};
+        send(pong, sizeof(pong), cid);
+#else
+        send("[3]", cid);
+#endif
+    }
 };
