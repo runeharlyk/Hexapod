@@ -56,10 +56,7 @@
     outControllerData.subscribe(data => motion.handleCommand(data))
     dataBroker.on<number[]>(MessageTopic.ANGLE, data => {
       settings['Internal kinematic'] = false
-      const correctedData = data.map((angle, index) => {
-        return index % 3 === 2 ? angle - 90 : angle
-      })
-      setTargetAngles(correctedData.map(degToRad))
+      setTargetAngles(data.map(degToRad))
     })
     mode.subscribe(mode => motion.setMode(mode))
     gait.subscribe(gait => motion.setGait(gait))
