@@ -132,7 +132,7 @@ class Kinematics {
 
             ang[i * 3 + 0] = RAD_TO_DEG_F(a0);
             ang[i * 3 + 1] = RAD_TO_DEG_F(base + a1);
-            ang[i * 3 + 2] = RAD_TO_DEG_F(-(a1 + a2)) + 90;
+            ang[i * 3 + 2] = RAD_TO_DEG_F(-(a1 + a2));
         }
     }
 };

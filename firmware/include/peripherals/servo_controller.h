@@ -77,7 +77,7 @@ class ServoController {
     void setAngles(float new_angles[18]) {
         control_state = SERVO_CONTROL_STATE::ANGLE;
         for (int i = 0; i < 18; i++) {
-            target_angles[i] = new_angles[i];
+            target_angles[i] = new_angles[i] + (i % 3 == 2 ? 90.0f : 0.0f);
         }
     }
 
