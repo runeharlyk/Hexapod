@@ -20,7 +20,6 @@ void WiFiService::begin() {
     WiFi.onEvent(onStationModeGotIP, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_GOT_IP);
 
     reconfigureWiFiConnection();
-
 }
 
 void WiFiService::reconfigureWiFiConnection() {

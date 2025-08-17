@@ -69,7 +69,7 @@ void IRAM_ATTR controlLoopEntry(void *) {
         robot.readSensors();
         robot.planMotion();
         robot.updateActuators();
-        robot.emitTelemetry();
+        // robot.emitTelemetry();
 
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
