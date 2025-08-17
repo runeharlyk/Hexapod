@@ -169,11 +169,29 @@
     sceneManager.orbit.target = robot.position.clone()
   }
 
+  const calculateGroundHeight = () => {
+    const feet = motion.body_state.feet
+    if (!feet || feet.length === 0) return 0
+
+    let minZ = feet[0][2]
+    for (let i = 1; i < feet.length; i++) {
+      if (feet[i][2] < minZ) {
+        minZ = feet[i][2]
+      }
+    }
+
+    const feetDepth = Math.max(0, motion.defaultPosition[0][2] - minZ)
+
+    const bodyHeight = motion.body_state.zm / 12
+    return -bodyHeight + 0.5 + feetDepth
+  }
+
   const orient_robot = (robot: URDFRobot) => {
     if (settings['Robot transform controls'] || !settings['Auto orient robot']) return
 
     robot.position.z = smooth(robot.position.z, -motion.body_state.xm / 12, 0.1)
     robot.position.x = smooth(robot.position.x, -motion.body_state.ym / 12, 0.1)
+    robot.position.y = smooth(robot.position.y, calculateGroundHeight(), 0.1)
 
     robot.rotation.z = smooth(robot.rotation.z, -motion.body_state.psi + Math.PI / 2, 0.1)
     robot.rotation.y = smooth(robot.rotation.y, motion.body_state.omega, 0.1)
