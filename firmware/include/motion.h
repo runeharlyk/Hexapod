@@ -15,25 +15,15 @@ class MotionService {
         : _servoController(servoController), _peripherals(peripherals) {}
 
     void begin() {
-        EventBus<CommandMsg>::consume([&](CommandMsg const &c) { handleCommand(c); });
-        EventBus<ModeMsg>::consume([&](ModeMsg const &c) { handleInputMode(c); });
-        EventBus<GaitMsg>::consume([&](GaitMsg const &c) { handleInputGait(c); });
+        _cmdSubHandle = EventBus<CommandMsg>::subscribe([&](CommandMsg const &c) { handleCommand(c); });
+        _modeSubHandle = EventBus<ModeMsg>::subscribe([&](ModeMsg const &c) { handleInputMode(c); });
+        _gaitSubHandle = EventBus<GaitMsg>::subscribe([&](GaitMsg const &c) { handleInputGait(c); });
         _angleSubHandle = EventBus<ServoAnglesMsg>::subscribe([&](ServoAnglesMsg const &s) { handleAnglesEvent(s); });
         // TODO: Add body state
         // _positionSubHandle = EventBus::subscribe<Gait>([&](Gait const &c) { handleInputGait(c); });
 
         // TODO: Send joint angles on subscribe
         body_state.updateFeet(default_feet_pos);
-    }
-
-    void positionEvent(JsonObject &root, int originId) {
-        JsonArray array = root["data"].as<JsonArray>();
-        body_state.omega = array[0];
-        body_state.phi = array[1];
-        body_state.psi = array[2];
-        body_state.xm = array[3];
-        body_state.ym = array[4];
-        body_state.zm = array[5];
     }
 
     void handleAnglesEvent(ServoAnglesMsg const &s) {
@@ -45,6 +35,7 @@ class MotionService {
     void handleInputGait(GaitMsg const &g) {
         ESP_LOGI("MotionService", "Gait %d", g.gait);
         gait_state.gait_type = g.gait;
+        gait.setGait(gait_state);
     }
 
     void handleInputMode(ModeMsg const &m) {
@@ -111,8 +102,10 @@ class MotionService {
   private:
     ServoController *_servoController;
     Peripherals *_peripherals;
+    EventBus<CommandMsg>::Handle _cmdSubHandle;
+    EventBus<ModeMsg>::Handle _modeSubHandle;
+    EventBus<GaitMsg>::Handle _gaitSubHandle;
     EventBus<ServoAnglesMsg>::Handle _angleSubHandle;
-    int step_count = 0;
     Kinematics kinematics;
     GaitController gait;
 
@@ -127,7 +120,6 @@ class MotionService {
                                     {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
 
     MOTION_STATE motionState = MOTION_STATE::DEACTIVATED;
-    unsigned long _lastUpdate;
 
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
 };

@@ -24,7 +24,7 @@ class FixedFn;
 template <typename R, typename... A, size_t MaxSize>
 class FixedFn<R(A...), MaxSize> {
     alignas(void*) std::byte buf[MaxSize];
-    void (*call)(void*, A&&...) {};
+    R (*call)(void*, A&&...) {};
     void (*moveFn)(void*, void*) {};
     void (*destroy)(void*) {};
 
@@ -33,7 +33,7 @@ class FixedFn<R(A...), MaxSize> {
     void set(Fun&& f) {
         static_assert(sizeof(Fun) <= MaxSize);
         new (buf) Fun(std::forward<Fun>(f));
-        call = [](void* p, A&&... as) { (*reinterpret_cast<Fun*>(p))(std::forward<A>(as)...); };
+        call = [](void* p, A&&... as) -> R { return (*reinterpret_cast<Fun*>(p))(std::forward<A>(as)...); };
         moveFn = [](void* d, void* s) { new (d) Fun(std::move(*reinterpret_cast<Fun*>(s))); };
         destroy = [](void* p) { reinterpret_cast<Fun*>(p)->~Fun(); };
     }
@@ -41,24 +41,21 @@ class FixedFn<R(A...), MaxSize> {
         return call(const_cast<void*>(static_cast<const void*>(buf)), std::forward<A>(as)...);
     }
     FixedFn() = default;
-    FixedFn(FixedFn&& o) {
+    FixedFn(FixedFn&& o) noexcept {
         if (o.moveFn) o.moveFn(buf, o.buf);
         call = o.call;
         moveFn = o.moveFn;
         destroy = o.destroy;
+        o.call = nullptr;
+        o.moveFn = nullptr;
         o.destroy = nullptr;
     }
-    FixedFn(const FixedFn& o) {
-        std::memcpy(buf, o.buf, MaxSize);
-        call = o.call;
-        moveFn = o.moveFn;
-        destroy = o.destroy;
-    }
+    FixedFn(const FixedFn&) = delete;
+    FixedFn& operator=(const FixedFn&) = delete;
+    FixedFn& operator=(FixedFn&&) = delete;
     ~FixedFn() {
         if (destroy) destroy(buf);
     }
-    FixedFn& operator=(const FixedFn&) = delete;
-    FixedFn& operator=(FixedFn&&) = delete;
 };
 
 enum class EmitMode { Latest, Batch };
@@ -77,6 +74,8 @@ class EventBus {
         EmitMode mode;
         std::array<Msg, BatchSize> buf;
         size_t cnt;
+        std::atomic<bool> enabled;
+        std::atomic<uint32_t> running;
     };
     inline static StaticQueue_t qbuf;
     inline static Item qStorage[QueueDepth];
@@ -87,6 +86,7 @@ class EventBus {
     inline static Msg latest {};
     inline static std::atomic<bool> hasLatest {false};
     inline static std::atomic<size_t> subCount {0};
+    inline static std::atomic<bool> taskStarted {false};
 
     static void storeISR(const Msg& m) {
         UBaseType_t s = portSET_INTERRUPT_MASK_FROM_ISR();
@@ -105,18 +105,27 @@ class EventBus {
             auto& opt = subs[i];
             if (!opt || i == ex) continue;
             Sub& s = *opt;
+            if (!s.enabled.load(std::memory_order_acquire)) continue;
+
             TickType_t dt = now - s.last;
 
             if (s.interval && dt < s.interval) {
-                if (s.mode == EmitMode::Batch && s.cnt < BatchSize)
-                    s.buf[s.cnt++] = m;
-                else if (s.mode == EmitMode::Latest) {
+                if (s.mode == EmitMode::Batch) {
+                    if (s.cnt < BatchSize)
+                        s.buf[s.cnt++] = m;
+                    else
+                        s.buf[BatchSize - 1] = m;
+                } else {
                     s.buf[0] = m;
                     s.cnt = 1;
                 }
             } else {
-                s.buf[s.cnt++] = m;
+                if (s.cnt < BatchSize)
+                    s.buf[s.cnt++] = m;
+                else
+                    s.buf[BatchSize - 1] = m;
                 s.last = now;
+                s.running.fetch_add(1, std::memory_order_acq_rel);
                 ready[readyCnt++] = &s;
             }
         }
@@ -126,6 +135,7 @@ class EventBus {
             Sub* s = ready[i];
             s->cb(s->buf.data(), s->cnt);
             s->cnt = 0;
+            s->running.fetch_sub(1, std::memory_order_acq_rel);
         }
     }
 
@@ -135,8 +145,12 @@ class EventBus {
     }
 
     static void ensureTask() {
-        static bool once = (xTaskCreatePinnedToCore(worker, "evtbus", 4096, nullptr, 6, nullptr, 1), true);
-        (void)once;
+        if (!taskStarted.load(std::memory_order_acquire)) {
+            bool expected = false;
+            if (taskStarted.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+                xTaskCreatePinnedToCore(worker, "evtbus", 4096, nullptr, 6, nullptr, 1);
+            }
+        }
     }
 
     static bool push(const Msg& m, size_t ex = NO_EX, TickType_t to = 0) {
@@ -167,10 +181,20 @@ class EventBus {
         ~Handle() { unsubscribe(); }
         void unsubscribe() {
             if (idx < MaxSubs) {
+                Sub* s = nullptr;
                 portENTER_CRITICAL(&mux);
-                subs[idx].reset();
+                if (subs[idx]) {
+                    s = &*subs[idx];
+                    s->enabled.store(false, std::memory_order_release);
+                }
                 portEXIT_CRITICAL(&mux);
-                subCount.fetch_sub(1, std::memory_order_acq_rel);
+                if (s) {
+                    while (s->running.load(std::memory_order_acquire) != 0) taskYIELD();
+                    portENTER_CRITICAL(&mux);
+                    subs[idx].reset();
+                    portEXIT_CRITICAL(&mux);
+                    subCount.fetch_sub(1, std::memory_order_acq_rel);
+                }
                 idx = NO_EX;
             }
         }
@@ -200,9 +224,11 @@ class EventBus {
                 Sub& s = *subs[i];
                 s.cb.set(std::move(fn));
                 s.interval = pdMS_TO_TICKS(ms);
-                s.last = xTaskGetTickCount();
+                s.last = xTaskGetTickCount() - s.interval;
                 s.mode = mode;
                 s.cnt = 0;
+                s.enabled.store(true, std::memory_order_release);
+                s.running.store(0, std::memory_order_release);
                 subCount.fetch_add(1, std::memory_order_acq_rel);
                 portEXIT_CRITICAL(&mux);
                 return Handle(i);

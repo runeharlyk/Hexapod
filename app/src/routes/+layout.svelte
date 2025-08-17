@@ -13,6 +13,7 @@
   import { ble } from '$lib/transport/ble-adapter'
   import { websocket } from '$lib/transport/websocket-adapter'
   import { MessageTopic } from '$lib/interfaces/transport.interface'
+  import { GaitType } from '$lib/gait'
 
   interface Props {
     children?: import('svelte').Snippet
@@ -31,7 +32,9 @@
     mode.subscribe(data =>
       dataBroker.emit(MessageTopic.MODE, Object.values(MotionModes).indexOf(data))
     )
-    gait.subscribe(data => dataBroker.emit(MessageTopic.GAIT, data))
+    gait.subscribe(data =>
+      dataBroker.emit(MessageTopic.GAIT, Object.values(GaitType).indexOf(data))
+    )
   })
 
   let menuOpen = $state(false)
