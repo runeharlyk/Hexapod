@@ -43,7 +43,7 @@ export default class Motion {
       psi: 0,
       xm: 0,
       ym: 0,
-      zm: 15,
+      zm: 0,
       feet: this.defaultPosition
     }
     this.gait_state = {
@@ -70,22 +70,21 @@ export default class Motion {
   }
 
   handleCommand(command: number[]) {
-    this.body_state.zm = command[4] / 2.4
-    this.body_state.omega = command[3] / 500
+    this.body_state.zm = command[4] * 50
+    this.body_state.omega = command[3] * 0.254
     switch (this.mode) {
       case MotionModes.STAND:
-        this.body_state.xm = -command[0] / 2.4
-        this.body_state.ym = -command[1] / 2.4
-        this.body_state.phi = -command[2] / 500
+        this.body_state.xm = command[0] * 50
+        this.body_state.ym = -command[1] * 50
+        this.body_state.phi = command[2] * 0.254
         break
       case MotionModes.WALK:
-        this.gait_state.step_x = command[0]
-        this.gait_state.step_z = command[1]
-        this.gait_state.step_angle = command[2] / 150
-        this.gait_state.step_speed = command[5] / 128 + 1
-        this.gait_state.step_height = command[6] / 15 + 15
+        this.gait_state.step_x = -command[0] * 100
+        this.gait_state.step_z = command[1] * 100
+        this.gait_state.step_angle = command[2] * 0.8
+        this.gait_state.step_speed = command[5] + 1
+        this.gait_state.step_height = (command[6] + 1) * 20
         this.gait_state.step_depth = 0.002
-
         break
     }
   }
@@ -113,7 +112,7 @@ export default class Motion {
     return true
   }
 
-  private order(a: number[]) {
+  order(a: number[]) {
     return [3, 0, 4, 1, 5, 2].flatMap(i => a.slice(i * 3, i * 3 + 3))
   }
 }

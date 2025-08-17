@@ -7,7 +7,7 @@
   import '../app.css'
   import Menu from '../lib/components/menu/Menu.svelte'
   import Statusbar from '../lib/components/statusbar/statusbar.svelte'
-  import { kinematicData, mode, outControllerData, servoAnglesOut, gait } from '$lib/stores'
+  import { mode, outControllerData, gait } from '$lib/stores'
   import { MotionModes } from '$lib/motion'
   import { dataBroker } from '$lib/transport/databroker'
   import { ble } from '$lib/transport/ble-adapter'
@@ -32,8 +32,6 @@
       dataBroker.emit(MessageTopic.MODE, Object.values(MotionModes).indexOf(data))
     )
     gait.subscribe(data => dataBroker.emit(MessageTopic.GAIT, data))
-    servoAnglesOut.subscribe(data => {})
-    kinematicData.subscribe(data => dataBroker.emit(MessageTopic.COMMAND, data))
   })
 
   let menuOpen = $state(false)

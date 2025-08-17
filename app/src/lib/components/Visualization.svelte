@@ -10,6 +10,7 @@
   import Motion, { MotionModes } from '$lib/motion'
   import { dataBroker } from '$lib/transport/databroker'
   import { MessageTopic } from '$lib/interfaces/transport.interface'
+  import Kinematics from '$lib/kinematic'
 
   interface Props {
     sky?: boolean
@@ -56,7 +57,7 @@
     outControllerData.subscribe(data => motion.handleCommand(data))
     dataBroker.on<number[]>(MessageTopic.ANGLE, data => {
       settings['Internal kinematic'] = false
-      setTargetAngles(data.map(degToRad))
+      setTargetAngles(motion.order(data.map(degToRad)))
     })
     mode.subscribe(mode => motion.setMode(mode))
     gait.subscribe(gait => motion.setGait(gait))

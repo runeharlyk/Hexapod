@@ -9,15 +9,6 @@
 #include <event_bus.h>
 #include <message_types.h>
 
-#include "config.h"
-
-#define DEFAULT_STATE false
-#define ANGLES_EVENT "angles"
-#define INPUT_EVENT "input"
-#define POSITION_EVENT "position"
-#define MODE_EVENT "mode"
-#define GAIT_EVENT "gait"
-
 class MotionService {
   public:
     MotionService(ServoController *servoController, Peripherals *peripherals)
@@ -65,12 +56,12 @@ class MotionService {
 
     void handleCommand(CommandMsg const &c) {
         target_body_state.zm = c.h * 50;
+        target_body_state.omega = c.ry * 0.254f;
         switch (motionState) {
             case MOTION_STATE::STAND: {
                 target_body_state.xm = c.lx * 50.f;
                 target_body_state.ym = -c.ly * 50.f;
                 target_body_state.phi = c.rx * 0.254f;
-                target_body_state.omega = c.ry * 0.254f;
                 body_state.updateFeet(default_feet_pos);
                 break;
             }
@@ -79,10 +70,8 @@ class MotionService {
                 gait_state.step_z = c.ly * 100;
                 gait_state.step_angle = c.rx * 0.8;
                 gait_state.step_speed = c.s + 1.f;
-                gait_state.step_height = (c.s1 + 1.f) * 10.f;
+                gait_state.step_height = (c.s1 + 1.f) * 20.f;
                 gait_state.step_depth = 0.002f;
-
-                target_body_state.omega = c.ry * 0.254f;
                 break;
             }
         }
@@ -94,17 +83,19 @@ class MotionService {
             case MOTION_STATE::IDLE: return false;
             case MOTION_STATE::POSE: _servoController->setCenterPwm(); return false;
             case MOTION_STATE::STAND: {
-                body_state.xm = lerp(body_state.xm, target_body_state.xm, 0.06);
-                body_state.ym = lerp(body_state.ym, target_body_state.ym, 0.06);
-                body_state.zm = lerp(body_state.zm, target_body_state.zm, 0.06);
-                body_state.phi = lerp(body_state.phi, target_body_state.phi + _peripherals->angleY(), 0.06);
-                body_state.omega = lerp(body_state.omega, target_body_state.omega + _peripherals->angleX(), 0.06);
+                body_state.xm = lerp(body_state.xm, target_body_state.xm, smoothing_factor);
+                body_state.ym = lerp(body_state.ym, target_body_state.ym, smoothing_factor);
+                body_state.zm = lerp(body_state.zm, target_body_state.zm, smoothing_factor);
+                body_state.phi = lerp(body_state.phi, target_body_state.phi + _peripherals->angleY(), smoothing_factor);
+                body_state.omega =
+                    lerp(body_state.omega, target_body_state.omega + _peripherals->angleX(), smoothing_factor);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
             }
             case MOTION_STATE::WALK: {
-                body_state.phi = lerp(body_state.phi, target_body_state.phi + _peripherals->angleY(), 0.06);
-                body_state.omega = lerp(body_state.omega, target_body_state.omega + _peripherals->angleX(), 0.06);
+                body_state.phi = lerp(body_state.phi, target_body_state.phi + _peripherals->angleY(), smoothing_factor);
+                body_state.omega =
+                    lerp(body_state.omega, target_body_state.omega + _peripherals->angleX(), smoothing_factor);
                 gait.step(gait_state, body_state, 5.f / 1000.f);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
@@ -126,9 +117,11 @@ class MotionService {
     GaitController gait;
 
     CommandMsg command = {0, 0, 0, 0, 0, 0, 0};
-    body_state_t body_state = {0, 0, 0, 0, 0, 15};
-    body_state_t target_body_state = {0, 0, 0, 0, 0, 15};
+    body_state_t body_state = {0, 0, 0, 0, 0, 0};
+    body_state_t target_body_state = {0, 0, 0, 0, 0, 0};
     gait_state_t gait_state = {15, 0, 0, 0, 1, 0.002, default_stand_frac, GaitType::TRI_GATE, {0, 0.5, 0, 0.5, 0, 0.5}};
+
+    const float smoothing_factor = 0.06f;
 
     float default_feet_pos[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
                                     {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};

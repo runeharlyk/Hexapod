@@ -91,24 +91,24 @@ struct CommandMsg {
     float lx, ly, rx, ry, h, s, s1;
     friend void toJson(JsonVariant v, CommandMsg const &c) {
         JsonArray arr = v.to<JsonArray>();
-        arr.add(static_cast<int8_t>(c.lx * 127));
-        arr.add(static_cast<int8_t>(c.ly * 127));
-        arr.add(static_cast<int8_t>(c.rx * 127));
-        arr.add(static_cast<int8_t>(c.ry * 127));
-        arr.add(static_cast<int8_t>(c.h * 127));
-        arr.add(static_cast<int8_t>(c.s * 127));
-        arr.add(static_cast<int8_t>(c.s1 * 127));
+        arr.add(c.lx);
+        arr.add(c.ly);
+        arr.add(c.rx);
+        arr.add(c.ry);
+        arr.add(c.h);
+        arr.add(c.s);
+        arr.add(c.s1);
     }
 
     void fromJson(JsonVariantConst o) {
         JsonArrayConst arr = o.as<JsonArrayConst>();
-        lx = arr[0].as<int8_t>() / 127.0f;
-        ly = arr[1].as<int8_t>() / 127.0f;
-        rx = arr[2].as<int8_t>() / 127.0f;
-        ry = arr[3].as<int8_t>() / 127.0f;
-        h = arr[4].as<int8_t>() / 127.0f;
-        s = arr[5].as<int8_t>() / 127.0f;
-        s1 = arr[6].as<int8_t>() / 127.0f;
+        lx = arr[0].as<float>();
+        ly = arr[1].as<float>();
+        rx = arr[2].as<float>();
+        ry = arr[3].as<float>();
+        h = arr[4].as<float>();
+        s = arr[5].as<float>();
+        s1 = arr[6].as<float>();
     }
 };
 

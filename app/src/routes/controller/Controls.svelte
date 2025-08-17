@@ -74,13 +74,13 @@
   }
 
   const updateData = () => {
-    data[0] = toInt8($input.left.x, -1, 1)
-    data[1] = toInt8($input.left.y, -1, 1)
-    data[2] = toInt8($input.right.x, -1, 1)
-    data[3] = toInt8($input.right.y, -1, 1)
-    data[4] = toInt8($input.height, 0, 100)
-    data[5] = toInt8($input.speed, 0, 25)
-    data[6] = toInt8($input.s1, 0, 25)
+    data[0] = $input.left.x
+    data[1] = $input.left.y
+    data[2] = $input.right.x
+    data[3] = $input.right.y
+    data[4] = $input.height
+    data[5] = $input.speed
+    data[6] = $input.s1
 
     outControllerData.set(data)
   }
@@ -135,7 +135,11 @@
   </div>
   <div class="absolute bottom-0 z-10 flex items-end">
     <div class="flex items-center flex-col bg-base-300 bg-opacity-50 p-3 pb-2 gap-2 rounded-tr-xl">
-      <VerticalSlider min={0} max={100} oninput={(e: Event) => handleRange(e, 'height')} />
+      <VerticalSlider
+        min={-1}
+        step={0.01}
+        max={1}
+        oninput={(e: Event) => handleRange(e, 'height')} />
       <label for="height">Ht</label>
     </div>
     <div class="flex items-end gap-4 bg-base-300 bg-opacity-50 h-min rounded-tr-xl pl-0 p-3">
@@ -168,8 +172,9 @@
             <input
               type="range"
               name="s1"
-              min="0"
-              max="25"
+              min="-1"
+              step="0.01"
+              max="1"
               oninput={e => handleRange(e, 's1')}
               class="range range-sm range-primary" />
           </div>
@@ -178,8 +183,9 @@
             <input
               type="range"
               name="speed"
-              min="0"
-              max="25"
+              min="-1"
+              step="0.01"
+              max="1"
               oninput={e => handleRange(e, 'speed')}
               class="range range-sm range-primary" />
           </div>
