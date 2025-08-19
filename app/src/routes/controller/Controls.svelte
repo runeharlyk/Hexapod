@@ -39,6 +39,10 @@
       mode.set(MotionModes.STAND)
     } else if ($gamepadButtons[3].pressed) {
       mode.set(MotionModes.WALK)
+    } else if ($gamepadButtons[4].pressed) {
+      mode.set(MotionModes.RANDOM_POSE)
+    } else if ($gamepadButtons[5].pressed) {
+      mode.set(MotionModes.CONSTRAINED_RANDOM)
     }
   })
 
@@ -155,7 +159,7 @@
         {#if $mode === MotionModes.WALK}
           <select
             class="select select-primary"
-            oninput={e => changeGait(e.target?.value as GaitType)}>
+            oninput={e => changeGait((e.target as HTMLSelectElement)?.value as GaitType)}>
             {#each Object.values(GaitType) as gaitValue}
               <option value={gaitValue} selected={$gait === gaitValue}>
                 {capitalize(gaitValue.toString())}

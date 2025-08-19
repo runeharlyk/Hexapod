@@ -40,8 +40,7 @@
     'Target position': false,
     'Trace points': 30,
     'Fix camera on robot': true,
-    'Smooth motion': true,
-    Background: 'black'
+    'Smooth motion': true
   }
 
   let jointAngles: Record<string, number> = {}
@@ -117,7 +116,6 @@
     visualization.add(settings, 'Trace points', 1, 1000, 1)
     visualization.add(settings, 'Target position')
     visualization.add(settings, 'Smooth motion')
-    visualization.addColor(settings, 'Background')
   }
 
   const resetLimbs = () => {
