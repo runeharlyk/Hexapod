@@ -15,9 +15,7 @@ export enum MotionModes {
   POSE = 'pose',
   STAND = 'stand',
   WALK = 'walk',
-  RANDOM_POSE = 'random_pose',
-  CONSTRAINED_RANDOM = 'constrained_random',
-  LAYING_DOWN = 'laying_down'
+  CONSTRAINED_RANDOM = 'constrained_random'
 }
 
 export default class Motion {
@@ -37,7 +35,6 @@ export default class Motion {
   lastPoseGeneration: number = 0
   constrainedPoses: number[][] = []
   constrainedPoseIndex = 0
-  layingDownPose: number[] = []
   targetPose: [number, number, number, number][] = []
   isMovingToTarget = false
 
@@ -68,15 +65,11 @@ export default class Motion {
     }
 
     this.initializeConstrainedPoses()
-    this.layingDownPose = this.generateLayingDownPose()
   }
 
   setMode(mode: MotionModes) {
     this.mode = mode
-    if (mode === MotionModes.RANDOM_POSE) {
-      this.lastPoseGeneration = 0
-      this.generateRandomPose()
-    } else if (mode === MotionModes.CONSTRAINED_RANDOM) {
+    if (mode === MotionModes.CONSTRAINED_RANDOM) {
       this.lastPoseGeneration = 0
       this.constrainedPoseIndex = 0
       this.isMovingToTarget = false
@@ -135,15 +128,6 @@ export default class Motion {
         this.targetAngles = this.order(this.kinematics.inverseKinematics(this.body_state).flat())
         break
       }
-      case MotionModes.RANDOM_POSE: {
-        const now = performance.now()
-        if (now - this.lastPoseGeneration > 1000) {
-          this.generateRandomPose()
-          this.lastPoseGeneration = now
-        }
-        this.targetAngles = this.poses[this.current_pose_idx]
-        break
-      }
       case MotionModes.CONSTRAINED_RANDOM: {
         const now = performance.now()
         if (now - this.lastPoseGeneration > 2000) {
@@ -165,66 +149,12 @@ export default class Motion {
         this.targetAngles = this.order(this.kinematics.inverseKinematics(this.body_state).flat())
         break
       }
-      case MotionModes.LAYING_DOWN: {
-        this.targetAngles = this.layingDownPose
-        break
-      }
     }
     return true
   }
 
-  generateRandomPose() {
-    const randomAngles: [number, number, number][] = []
-
-    for (let i = 0; i < 6; i++) {
-      const a0 = (Math.random() - 0.5) * (Math.PI / 3)
-      const a1 = Math.random() * (Math.PI / 2) + Math.PI / 6
-      const a2 = -(Math.random() * (Math.PI / 3) + Math.PI / 6)
-      randomAngles.push([a0, a1, a2])
-    }
-
-    const neutralBodyState = {
-      omega: 0,
-      phi: 0,
-      psi: 0,
-      xm: 0,
-      ym: 0,
-      zm: 0,
-      feet: this.defaultPosition
-    }
-
-    const feet = this.kinematics.forwardKinematics(neutralBodyState, randomAngles)
-
-    this.body_state.feet = feet
-
-    const poseAngles = this.kinematics.inverseKinematics(this.body_state)
-    this.poses[this.current_pose_idx] = this.order(poseAngles.flat())
-  }
-
   initializeConstrainedPoses() {
     this.constrainedPoses = [this.generateStandingPose(), new Array(18).fill(0)]
-  }
-
-  generateLayingDownPose(): number[] {
-    const zeroAngles: [number, number, number][] = Array(6).fill([0, 0, 0])
-
-    const neutralBodyState = {
-      omega: 0,
-      phi: 0,
-      psi: 0,
-      xm: 0,
-      ym: 0,
-      zm: 0,
-      feet: this.defaultPosition
-    }
-
-    const feet = this.kinematics.forwardKinematics(neutralBodyState, zeroAngles)
-
-    const tempBodyState = { ...this.body_state }
-    tempBodyState.feet = feet
-
-    const poseAngles = this.kinematics.inverseKinematics(tempBodyState)
-    return this.order(poseAngles.flat())
   }
 
   generateStandingPose(): number[] {
@@ -242,7 +172,7 @@ export default class Motion {
       return
     }
 
-    const constrainedFeet = this.defaultPosition.map((defaultFoot, i) => {
+    const constrainedFeet = this.defaultPosition.map(defaultFoot => {
       const randomX = defaultFoot[0] + (Math.random() - 0.5) * 100
       const randomY = defaultFoot[1] + (Math.random() - 0.5) * 80
 
