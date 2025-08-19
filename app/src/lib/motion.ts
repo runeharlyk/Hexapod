@@ -41,6 +41,7 @@ export default class Motion {
   isMovingToTarget = false
   layingDownPose: [number, number, number, number][] = []
   standingUpPhase = 0
+  layingDownPhase = 0
 
   constructor() {
     this.mode = MotionModes.STAND
@@ -87,13 +88,8 @@ export default class Motion {
       this.generateConstrainedRandomPose()
     } else if (mode === MotionModes.LAYING_TRANSITION) {
       this.isMovingToTarget = true
+      this.layingDownPhase = 0
       this.targetPose = this.calculateNextLayingStep()
-      this.gait_state.gait_type = GaitType.TRI_GATE
-      this.gait_state.offset = default_offset[GaitType.TRI_GATE]
-      this.gait_state.stand_frac = default_stand_frac[GaitType.TRI_GATE]
-      this.gait_state.step_height = 6
-      this.gait_state.step_speed = 0.4
-      this.gait.phase = 0
       this.lastPoseGeneration = performance.now()
     } else if (mode === MotionModes.STANDING_UP) {
       this.isMovingToTarget = true
@@ -177,19 +173,14 @@ export default class Motion {
           if (nextStep.length > 0) {
             this.targetPose = nextStep
             this.isMovingToTarget = true
-            this.gait.phase = 0
           }
           this.lastPoseGeneration = now
         }
 
         if (this.isMovingToTarget && this.targetPose.length > 0) {
-          const delta = performance.now() - this.lastTick
-          this.lastTick = performance.now()
-
-          this.body_state.feet = this.moveTowardTarget(
+          this.body_state.feet = this.moveDirectlyToTarget(
             this.body_state.feet as [number, number, number, number][],
-            this.targetPose,
-            delta / 1000
+            this.targetPose
           )
         }
 
@@ -344,41 +335,58 @@ export default class Motion {
     const currentFeet = this.body_state.feet as [number, number, number, number][]
     const targetFeet = this.layingDownPose
 
-    const maxStepSize = 25
-    const maxHeightStep = 15
+    if (this.layingDownPhase === 0) {
+      return this.calculateZLowering(currentFeet, targetFeet)
+    } else {
+      return this.calculateLayingXYPositioning(currentFeet, targetFeet)
+    }
+  }
+
+  calculateLayingXYPositioning(
+    currentFeet: [number, number, number, number][],
+    targetFeet: [number, number, number, number][]
+  ): [number, number, number, number][] {
+    const currentHeight = currentFeet[0][2]
+
+    const xyTargetFeet = targetFeet.map(
+      foot => [foot[0], foot[1], currentHeight, 1] as [number, number, number, number]
+    )
 
     const distances = currentFeet.map((currentFoot, i) => {
-      const dx = targetFeet[i][0] - currentFoot[0]
-      const dy = targetFeet[i][1] - currentFoot[1]
-      const dz = targetFeet[i][2] - currentFoot[2]
-      return { dx, dy, dz, distance: Math.hypot(dx, dy, dz), index: i }
+      const dx = xyTargetFeet[i][0] - currentFoot[0]
+      const dy = xyTargetFeet[i][1] - currentFoot[1]
+      return Math.hypot(dx, dy)
     })
 
-    const maxDistance = Math.max(...distances.map(d => d.distance))
+    const maxDistance = Math.max(...distances)
 
     if (maxDistance < 5) {
       return []
     }
 
+    return xyTargetFeet
+  }
+
+  calculateZLowering(
+    currentFeet: [number, number, number, number][],
+    targetFeet: [number, number, number, number][]
+  ): [number, number, number, number][] {
     const currentHeight = currentFeet[0][2]
     const targetHeight = Math.min(...targetFeet.map(f => f[2]))
     const heightDiff = targetHeight - currentHeight
 
+    if (Math.abs(heightDiff) < 2) {
+      this.layingDownPhase = 1
+      return this.calculateLayingXYPositioning(currentFeet, targetFeet)
+    }
+
+    const maxHeightStep = 15
     const heightStep = Math.max(heightDiff, -maxHeightStep)
     const newHeight = currentHeight + heightStep
 
-    const stepScale = Math.min(maxStepSize / maxDistance, 0.3)
-
-    const nextFeet = currentFeet.map((currentFoot, i) => {
-      const target = targetFeet[i]
-      const dx = target[0] - currentFoot[0]
-      const dy = target[1] - currentFoot[1]
-
-      const newX = currentFoot[0] + dx * stepScale
-      const newY = currentFoot[1] + dy * stepScale
-
-      return [newX, newY, newHeight, 1] as [number, number, number, number]
-    })
+    const nextFeet = currentFeet.map(
+      foot => [foot[0], foot[1], newHeight, 1] as [number, number, number, number]
+    )
 
     return nextFeet
   }
