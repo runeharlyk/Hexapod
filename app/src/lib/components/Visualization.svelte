@@ -36,11 +36,8 @@
     'Internal kinematic': true,
     'Robot transform controls': false,
     'Auto orient robot': true,
-    'Trace feet': debug,
-    'Target position': false,
-    'Trace points': 30,
     'Fix camera on robot': true,
-    'Smooth motion': true
+    'Smooth motion': false
   }
 
   let jointAngles: Record<string, number> = {}
@@ -112,9 +109,6 @@
     }
 
     const visualization = gui_panel.addFolder('Visualization')
-    visualization.add(settings, 'Trace feet')
-    visualization.add(settings, 'Trace points', 1, 1000, 1)
-    visualization.add(settings, 'Target position')
     visualization.add(settings, 'Smooth motion')
   }
 

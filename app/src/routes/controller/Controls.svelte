@@ -1,7 +1,7 @@
 <script lang="ts">
   import nipplejs from 'nipplejs'
   import { onMount } from 'svelte'
-  import { capitalize, throttler, toInt8 } from '$lib/utilities'
+  import { capitalize } from '$lib/utilities'
   import { input, outControllerData, mode, gait } from '$lib/stores'
   import type { vector } from '$lib/types/models'
   import { VerticalSlider } from '$lib/components/input'
@@ -10,11 +10,9 @@
   import { notifications } from '$lib/components/toasts/notifications'
   import { gamepadAxes, gamepadButtons, hasGamepad } from '$lib/stores/gamepad'
 
-  let throttle = new throttler()
   let left: nipplejs.JoystickManager
   let right: nipplejs.JoystickManager
 
-  let throttle_timing = 40
   let data = new Array(7)
 
   $effect(() => {
@@ -40,11 +38,11 @@
     } else if ($gamepadButtons[3].pressed) {
       mode.set(MotionModes.WALK)
     } else if ($gamepadButtons[4].pressed) {
-      mode.set(MotionModes.RANDOM_POSE)
-    } else if ($gamepadButtons[5].pressed) {
       mode.set(MotionModes.CONSTRAINED_RANDOM)
+    } else if ($gamepadButtons[5].pressed) {
+      mode.set(MotionModes.LAYING_TRANSITION)
     } else if ($gamepadButtons[6].pressed) {
-      mode.set(MotionModes.LAYING_DOWN)
+      mode.set(MotionModes.STANDING_UP)
     }
   })
 
@@ -76,7 +74,7 @@
       inputData[key] = data
       return inputData
     })
-    throttle.throttle(updateData, throttle_timing)
+    updateData()
   }
 
   const updateData = () => {
@@ -100,7 +98,7 @@
       if (event.key === 'd') data.left.x = down ? -1 : 0
       return data
     })
-    throttle.throttle(updateData, throttle_timing)
+    updateData()
   }
 
   const handleRange = (event: Event, key: 'speed' | 'height' | 's1') => {
@@ -110,7 +108,7 @@
       inputData[key] = value
       return inputData
     })
-    throttle.throttle(updateData, throttle_timing)
+    updateData()
   }
 
   const changeMode = (modeValue: MotionModes) => {

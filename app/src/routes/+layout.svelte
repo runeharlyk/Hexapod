@@ -14,6 +14,7 @@
   import { websocket } from '$lib/transport/websocket-adapter'
   import { MessageTopic } from '$lib/interfaces/transport.interface'
   import { GaitType } from '$lib/gait'
+  import { throttler } from '$lib/utilities'
 
   interface Props {
     children?: import('svelte').Snippet
@@ -22,12 +23,16 @@
   dataBroker.addTransport(ble)
   dataBroker.addTransport(websocket)
 
+  const throttle = new throttler()
+
   let { children }: Props = $props()
 
   onMount(async () => {
     await websocket.connect()
 
-    outControllerData.subscribe(data => dataBroker.emit(MessageTopic.COMMAND, data))
+    outControllerData.subscribe(data =>
+      throttle.throttle(() => dataBroker.emit(MessageTopic.COMMAND, data), 40)
+    )
 
     mode.subscribe(data =>
       dataBroker.emit(MessageTopic.MODE, Object.values(MotionModes).indexOf(data))
