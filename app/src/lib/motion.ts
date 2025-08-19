@@ -38,6 +38,8 @@ export default class Motion {
   constrainedPoses: number[][] = []
   constrainedPoseIndex = 0
   layingDownPose: number[] = []
+  targetPose: [number, number, number, number][] = []
+  isMovingToTarget = false
 
   constructor() {
     this.mode = MotionModes.STAND
@@ -77,6 +79,13 @@ export default class Motion {
     } else if (mode === MotionModes.CONSTRAINED_RANDOM) {
       this.lastPoseGeneration = 0
       this.constrainedPoseIndex = 0
+      this.isMovingToTarget = false
+      this.gait_state.gait_type = GaitType.WAVE
+      this.gait_state.offset = default_offset[GaitType.WAVE]
+      this.gait_state.stand_frac = default_stand_frac[GaitType.WAVE]
+      this.gait_state.step_height = 8
+      this.gait_state.step_speed = 0.5
+      this.body_state.feet = this.defaultPosition
       this.generateConstrainedRandomPose()
     }
   }
@@ -137,11 +146,27 @@ export default class Motion {
       }
       case MotionModes.CONSTRAINED_RANDOM: {
         const now = performance.now()
-        if (now - this.lastPoseGeneration > 5000) {
+        if (now - this.lastPoseGeneration > 2000) {
           this.generateConstrainedRandomPose()
           this.lastPoseGeneration = now
         }
-        this.targetAngles = this.constrainedPoses[this.constrainedPoseIndex]
+
+        if (this.isMovingToTarget && this.targetPose.length > 0) {
+          const delta = performance.now() - this.lastTick
+          this.lastTick = performance.now()
+
+          this.body_state.feet = this.moveTowardTarget(
+            this.body_state.feet as [number, number, number, number][],
+            this.targetPose,
+            delta / 1000
+          )
+        }
+
+        this.targetAngles = this.order(this.kinematics.inverseKinematics(this.body_state).flat())
+        break
+      }
+      case MotionModes.LAYING_DOWN: {
+        this.targetAngles = this.layingDownPose
         break
       }
     }
@@ -177,11 +202,7 @@ export default class Motion {
   }
 
   initializeConstrainedPoses() {
-    this.constrainedPoses = [
-      this.generateLayingDownPose(),
-      this.generateStandingPose(),
-      new Array(18).fill(0)
-    ]
+    this.constrainedPoses = [this.generateStandingPose(), new Array(18).fill(0)]
   }
 
   generateLayingDownPose(): number[] {
@@ -215,8 +236,9 @@ export default class Motion {
   }
 
   generateConstrainedRandomPose() {
-    if (this.constrainedPoseIndex < 2) {
+    if (this.constrainedPoseIndex < 1) {
       this.constrainedPoseIndex++
+      this.isMovingToTarget = false
       return
     }
 
@@ -224,8 +246,12 @@ export default class Motion {
       const randomX = defaultFoot[0] + (Math.random() - 0.5) * 100
       const randomY = defaultFoot[1] + (Math.random() - 0.5) * 80
 
-      return [randomX, randomY, defaultFoot[2], 1]
+      return [randomX, randomY, defaultFoot[2], 1] as [number, number, number, number]
     })
+
+    this.targetPose = constrainedFeet
+    this.isMovingToTarget = true
+    this.gait.phase = 0
 
     const tempBodyState = {
       omega: 0,
@@ -238,9 +264,65 @@ export default class Motion {
     }
 
     const poseAngles = this.kinematics.inverseKinematics(tempBodyState)
-    this.constrainedPoses[2] = this.order(poseAngles.flat())
+    this.constrainedPoses[1] = this.order(poseAngles.flat())
 
-    this.constrainedPoseIndex = (this.constrainedPoseIndex + 1) % 3
+    this.constrainedPoseIndex = (this.constrainedPoseIndex + 1) % 2
+  }
+
+  moveTowardTarget(
+    currentFeet: [number, number, number, number][],
+    targetFeet: [number, number, number, number][],
+    dt: number
+  ): [number, number, number, number][] {
+    const distances = currentFeet.map((currentFoot, i) => {
+      const dx = targetFeet[i][0] - currentFoot[0]
+      const dy = targetFeet[i][1] - currentFoot[1]
+      const dz = targetFeet[i][2] - currentFoot[2]
+      return Math.hypot(dx, dy, dz)
+    })
+
+    const maxDistance = Math.max(...distances)
+    const threshold = 5
+
+    if (maxDistance < threshold) {
+      this.isMovingToTarget = false
+      return targetFeet
+    }
+
+    const newFeet = currentFeet.map((currentFoot, i) => {
+      const targetFoot = targetFeet[i]
+      const phase = (this.gait.phase + this.gait_state.offset[i]) % 1
+
+      const dx = targetFoot[0] - currentFoot[0]
+      const dy = targetFoot[1] - currentFoot[1]
+      const dz = targetFoot[2] - currentFoot[2]
+      const distance = Math.hypot(dx, dy, dz)
+
+      if (distance < threshold) {
+        return targetFoot
+      }
+
+      let stepProgress = 0
+      if (phase < this.gait_state.stand_frac) {
+        stepProgress = 0
+      } else {
+        const liftPhase = (phase - this.gait_state.stand_frac) / (1 - this.gait_state.stand_frac)
+        stepProgress = liftPhase
+      }
+
+      const stepSize = Math.min(distance, 15)
+      const heightCurve = Math.sin(stepProgress * Math.PI) * this.gait_state.step_height
+
+      const newX = currentFoot[0] + (dx / distance) * stepSize * stepProgress
+      const newY = currentFoot[1] + (dy / distance) * stepSize * stepProgress
+      const newZ = currentFoot[2] + (dz / distance) * stepSize * stepProgress + heightCurve
+
+      return [newX, newY, newZ, 1] as [number, number, number, number]
+    })
+
+    this.gait.phase = (this.gait.phase + dt * this.gait_state.step_speed) % 1
+
+    return newFeet
   }
 
   order(a: number[]) {

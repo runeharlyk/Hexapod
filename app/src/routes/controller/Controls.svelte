@@ -43,6 +43,8 @@
       mode.set(MotionModes.RANDOM_POSE)
     } else if ($gamepadButtons[5].pressed) {
       mode.set(MotionModes.CONSTRAINED_RANDOM)
+    } else if ($gamepadButtons[6].pressed) {
+      mode.set(MotionModes.LAYING_DOWN)
     }
   })
 
