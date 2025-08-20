@@ -5,6 +5,12 @@
 #include <ArduinoJson.h>
 #include <PsychicHttp.h>
 
+// Variables
+#define APP_NAME "Hexapod"
+#define APP_VERSION "v0.0.1"
+#define SSID "YOUR_SSID"
+#define PASSWORD "YOUR_PASSWORD"
+
 #include <hexapod.h>
 #include <wifi_service.h>
 #include <ap_service.h>
@@ -17,10 +23,6 @@
 #include <event_storage.h>
 
 #include <www_mount.hpp>
-
-// Variables
-#define APP_NAME "Hexapod"
-#define APP_VERSION "v0.0.1"
 
 // Communication
 BLE ble;

@@ -157,9 +157,9 @@ class ServoSettingsMsg {
 };
 
 struct WiFiSettingsMsg {
-    String ssid;
-    String password;
-    String hostname;
+    String ssid {SSID};
+    String password {PASSWORD};
+    String hostname {APP_NAME};
 
     friend void toJson(JsonVariant dst, WiFiSettingsMsg const &src) {
         dst["ssid"] = src.ssid;
@@ -168,8 +168,17 @@ struct WiFiSettingsMsg {
     }
 
     void fromJson(JsonVariantConst src) {
-        ssid = src["ssid"] | ssid;
-        password = src["password"] | password;
-        hostname = src["hostname"] | hostname;
+        String newSsid = src["ssid"].as<String>();
+        String newPassword = src["password"].as<String>();
+        String newHostname = src["hostname"].as<String>();
+
+        if (isValidSsid(newSsid)) ssid = newSsid;
+        if (isValidPassword(newPassword)) password = newPassword;
+        if (isValidHostname(newHostname)) hostname = newHostname;
     }
+
+  private:
+    bool isValidSsid(const String &value) const { return value.length() > 0 && value.length() <= 32; }
+    bool isValidPassword(const String &value) const { return value.length() >= 8 && value.length() <= 63; }
+    bool isValidHostname(const String &value) const { return value.length() != 0 && value.length() < 63; }
 };
