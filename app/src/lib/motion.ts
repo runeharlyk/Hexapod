@@ -27,6 +27,8 @@ export default class Motion {
   body_state: body_state_t
   gait_state: gait_state_t
   defaultPosition: [number, number, number, number][]
+  baseDefaultPosition: [number, number, number, number][]
+  feetDistanceScale: number = 1.0
   angles = new Array(18).fill(0)
   targetAngles = new Array(18).fill(0)
 
@@ -46,7 +48,8 @@ export default class Motion {
   constructor() {
     this.mode = MotionModes.STAND
     this.kinematics = new Kinematics(config)
-    this.defaultPosition = this.kinematics.genPosture(degToRad(60), degToRad(75))
+    this.baseDefaultPosition = this.kinematics.genPosture(degToRad(60), degToRad(75))
+    this.defaultPosition = [...this.baseDefaultPosition]
     this.gait = new GaitController(this.defaultPosition)
     this.body_state = {
       omega: 0,
@@ -105,9 +108,35 @@ export default class Motion {
     this.gait_state.stand_frac = default_stand_frac[gait]
   }
 
+  updateFeetDistance(distanceValue: number) {
+    this.feetDistanceScale = 0.5 + (distanceValue + 1) * 0.5
+
+    this.defaultPosition = this.baseDefaultPosition.map(foot => {
+      const [x, y, z, w] = foot
+      const distanceFromCenter = Math.hypot(x, y)
+      const angle = Math.atan2(y, x)
+      const newDistance = distanceFromCenter * this.feetDistanceScale
+
+      return [Math.cos(angle) * newDistance, Math.sin(angle) * newDistance, z, w] as [
+        number,
+        number,
+        number,
+        number
+      ]
+    })
+
+    this.gait.defaultPosition = this.defaultPosition
+    this.body_state.feet = this.defaultPosition
+  }
+
   handleCommand(command: number[]) {
     this.body_state.zm = command[4] * 50
     this.body_state.omega = command[3] * 0.254
+
+    if (command[7] !== undefined) {
+      this.updateFeetDistance(command[7])
+    }
+
     switch (this.mode) {
       case MotionModes.STAND:
         this.body_state.xm = command[0] * 50

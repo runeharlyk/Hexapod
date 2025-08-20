@@ -14,12 +14,13 @@ export const mode: Writable<MotionModes> = writable(MotionModes.DEACTIVATED)
 
 export const gait: Writable<GaitType> = writable(GaitType.TRI_GATE)
 
-export const outControllerData = writable([0, 0, 0, 0, 0, 0])
+export const outControllerData = writable([0, 0, 0, 0, 0, 0, 0, 0])
 
 export const input: Writable<ControllerInput> = writable({
   left: { x: 0, y: 0 },
   right: { x: 0, y: 0 },
   height: 0,
   speed: 0,
-  s1: 0
+  s1: 0,
+  feetDistance: 0
 })

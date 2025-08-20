@@ -13,7 +13,7 @@
   let left: nipplejs.JoystickManager
   let right: nipplejs.JoystickManager
 
-  let data = new Array(7)
+  let data = new Array(8)
 
   $effect(() => {
     if ($hasGamepad) notifications.success('🎮 Gamepad connected', 3000)
@@ -30,6 +30,7 @@
       data[4] = i.height
       data[5] = i.speed
       data[6] = i.s1
+      data[7] = i.feetDistance
       outControllerData.set(data)
       return i
     })
@@ -79,6 +80,7 @@
       data[4] = i.height
       data[5] = i.speed
       data[6] = i.s1
+      data[7] = i.feetDistance
       outControllerData.set(data)
       return i
     })
@@ -98,12 +100,13 @@
       data[4] = i.height
       data[5] = i.speed
       data[6] = i.s1
+      data[7] = i.feetDistance
       outControllerData.set(data)
       return i
     })
   }
 
-  const handleRange = (event: Event, key: 'speed' | 'height' | 's1') => {
+  const handleRange = (event: Event, key: 'speed' | 'height' | 's1' | 'feetDistance') => {
     const value: number = Number((event.target as HTMLInputElement).value)
     input.update(i => {
       i[key] = value
@@ -114,6 +117,7 @@
       data[4] = i.height
       data[5] = i.speed
       data[6] = i.s1
+      data[7] = i.feetDistance
       outControllerData.set(data)
       return i
     })
@@ -153,6 +157,14 @@
         max={1}
         oninput={(e: Event) => handleRange(e, 'height')} />
       <label for="height">Ht</label>
+    </div>
+    <div class="flex items-center flex-col bg-base-300 bg-opacity-50 p-3 pb-2 gap-2">
+      <VerticalSlider
+        min={-1}
+        step={0.01}
+        max={1}
+        oninput={(e: Event) => handleRange(e, 'feetDistance')} />
+      <label for="feetDistance">Dist</label>
     </div>
     <div class="flex items-end gap-4 bg-base-300 bg-opacity-50 h-min rounded-tr-xl pl-0 p-3">
       <div class="join">
