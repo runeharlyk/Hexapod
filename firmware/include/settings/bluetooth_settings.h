@@ -4,10 +4,6 @@
 #include <utils/string_utils.h>
 #include <template/state_result.h>
 
-#ifndef FACTORY_BT_DEVICE_NAME
-#define FACTORY_BT_DEVICE_NAME "Hexapod"
-#endif
-
 typedef struct {
     String deviceName;
 
@@ -24,9 +20,7 @@ typedef struct {
 
 } bluetooth_settings_t;
 
-inline bluetooth_settings_t createDefaultBluetoothSettings() {
-    return bluetooth_settings_t {.deviceName = FACTORY_BT_DEVICE_NAME};
-}
+inline bluetooth_settings_t createDefaultBluetoothSettings() { return bluetooth_settings_t {.deviceName = APP_NAME}; }
 
 class BluetoothSettings {
   public:

@@ -49,6 +49,7 @@ class EventStorage {
         settings.fromJson(doc);
         ESP_LOGI("EventStorage", "Loaded settings from %s", filename);
         EventBus<T>::store(settings);
+        save(settings, filename);
         return ESP_OK;
     }
 

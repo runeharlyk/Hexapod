@@ -157,8 +157,8 @@ class ServoSettingsMsg {
 };
 
 struct WiFiSettingsMsg {
-    String ssid {SSID};
-    String password {PASSWORD};
+    String ssid {FACTORY_WIFI_SSID};
+    String password {FACTORY_WIFI_PASSWORD};
     String hostname {APP_NAME};
 
     friend void toJson(JsonVariant dst, WiFiSettingsMsg const &src) {

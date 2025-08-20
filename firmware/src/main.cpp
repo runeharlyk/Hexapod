@@ -6,10 +6,15 @@
 #include <PsychicHttp.h>
 
 // Variables
+#ifndef APP_NAME
 #define APP_NAME "Hexapod"
+#endif
+#ifndef APP_VERSION
 #define APP_VERSION "v0.0.1"
-#define SSID "YOUR_SSID"
-#define PASSWORD "YOUR_PASSWORD"
+#endif
+#ifndef NUM_SERVO
+#define NUM_SERVO 18
+#endif
 
 #include <hexapod.h>
 #include <wifi_service.h>

@@ -3,13 +3,13 @@
 
 #include <utils/math_utils.h>
 
-struct body_state_t {
+struct BodyStateMsg {
     float omega, phi, psi, xm, ym, zm;
     float feet[6][4];
 
     void updateFeet(const float newFeet[6][4]) { COPY_2D_ARRAY_6x4(feet, newFeet); }
 
-    bool operator==(const body_state_t &other) const {
+    bool operator==(const BodyStateMsg &other) const {
         if (!IS_ALMOST_EQUAL(omega, other.omega) || !IS_ALMOST_EQUAL(phi, other.phi) ||
             !IS_ALMOST_EQUAL(psi, other.psi) || !IS_ALMOST_EQUAL(xm, other.xm) || !IS_ALMOST_EQUAL(ym, other.ym) ||
             !IS_ALMOST_EQUAL(zm, other.zm)) {
@@ -37,7 +37,7 @@ constexpr HexapodConfig hexapodConfig = {{44.82, 61.03, 44.82, -44.82, -61.03, -
                                          54.06,
                                          97};
 
-constexpr void get_transformation_matrix(const body_state_t &b, float T[4][4]) {
+constexpr void get_transformation_matrix(const BodyStateMsg &b, float T[4][4]) {
     float co = cosf(b.omega), so = sinf(b.omega);
     float cp = cosf(b.phi), sp = sinf(b.phi);
     float cs = cosf(b.psi), ss = sinf(b.psi);
@@ -65,7 +65,7 @@ class Kinematics {
     float mountX[6], mountY[6], rootJ1, j1J2, j2J3, j3Tip;
     float ca[6], sa[6], mountPos[6][3];
 
-    body_state_t currentState;
+    BodyStateMsg currentState;
 
   public:
     Kinematics(const HexapodConfig &c = hexapodConfig) {
@@ -96,7 +96,7 @@ class Kinematics {
         }
     }
 
-    void inverseKinematics(const body_state_t &b, float ang[18]) {
+    void inverseKinematics(const BodyStateMsg &b, float ang[18]) {
         float T[4][4], w[4], dx, dy, radial, vertical, base, lr2, lr, c1, c2;
 
         get_transformation_matrix(b, T);

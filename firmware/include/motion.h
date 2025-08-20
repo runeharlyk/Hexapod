@@ -110,8 +110,8 @@ class MotionService {
     GaitController gait;
 
     CommandMsg command = {0, 0, 0, 0, 0, 0, 0};
-    body_state_t body_state = {0, 0, 0, 0, 0, 0};
-    body_state_t target_body_state = {0, 0, 0, 0, 0, 0};
+    BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
+    BodyStateMsg target_body_state = {0, 0, 0, 0, 0, 0};
     gait_state_t gait_state = {15, 0, 0, 0, 1, 0.002, default_stand_frac, GaitType::TRI_GATE, {0, 0.5, 0, 0.5, 0, 0.5}};
 
     const float smoothing_factor = 0.06f;

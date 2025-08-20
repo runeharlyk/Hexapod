@@ -146,7 +146,7 @@ class GaitController {
         }
     }
 
-    void step(gait_state_t& gait, body_state_t& body, float dt) {
+    void step(gait_state_t& gait, BodyStateMsg& body, float dt) {
         const float step_x = gait.step_x;
         const float step_z = gait.step_z;
         const float angle = gait.step_angle;
