@@ -16,34 +16,34 @@
   let data = new Array(7)
 
   $effect(() => {
-    if ($hasGamepad) {
-      notifications.success('🎮 Gamepad connected', 3000)
-    }
+    if ($hasGamepad) notifications.success('🎮 Gamepad connected', 3000)
   })
 
   $effect(() => {
-    handleJoyMove('left', { x: $gamepadAxes[0], y: $gamepadAxes[1] })
-    handleJoyMove('right', { x: $gamepadAxes[2], y: $gamepadAxes[3] })
+    input.update(i => {
+      i.left = { x: $gamepadAxes[0] ?? 0, y: $gamepadAxes[1] ?? 0 }
+      i.right = { x: $gamepadAxes[2] ?? 0, y: $gamepadAxes[3] ?? 0 }
+      data[0] = i.left.x
+      data[1] = i.left.y
+      data[2] = i.right.x
+      data[3] = i.right.y
+      data[4] = i.height
+      data[5] = i.speed
+      data[6] = i.s1
+      outControllerData.set(data)
+      return i
+    })
   })
 
   $effect(() => {
     if ($gamepadButtons.length === 0) return
-
-    if ($gamepadButtons[0].pressed) {
-      mode.set(MotionModes.DEACTIVATED)
-    } else if ($gamepadButtons[1].pressed) {
-      mode.set(MotionModes.IDLE)
-    } else if ($gamepadButtons[2].pressed) {
-      mode.set(MotionModes.STAND)
-    } else if ($gamepadButtons[3].pressed) {
-      mode.set(MotionModes.WALK)
-    } else if ($gamepadButtons[4].pressed) {
-      mode.set(MotionModes.CONSTRAINED_RANDOM)
-    } else if ($gamepadButtons[5].pressed) {
-      mode.set(MotionModes.LAYING_TRANSITION)
-    } else if ($gamepadButtons[6].pressed) {
-      mode.set(MotionModes.STANDING_UP)
-    }
+    if ($gamepadButtons[0].pressed) mode.set(MotionModes.DEACTIVATED)
+    else if ($gamepadButtons[1].pressed) mode.set(MotionModes.IDLE)
+    else if ($gamepadButtons[2].pressed) mode.set(MotionModes.STAND)
+    else if ($gamepadButtons[3].pressed) mode.set(MotionModes.WALK)
+    else if ($gamepadButtons[4].pressed) mode.set(MotionModes.CONSTRAINED_RANDOM)
+    else if ($gamepadButtons[5].pressed) mode.set(MotionModes.LAYING_TRANSITION)
+    else if ($gamepadButtons[6].pressed) mode.set(MotionModes.STANDING_UP)
   })
 
   onMount(() => {
@@ -63,52 +63,60 @@
       restOpacity: 1
     })
 
-    left.on('move', (_, data) => handleJoyMove('left', data.vector))
-    left.on('end', (_, __) => handleJoyMove('left', { x: 0, y: 0 }))
-    right.on('move', (_, data) => handleJoyMove('right', data.vector))
-    right.on('end', (_, __) => handleJoyMove('right', { x: 0, y: 0 }))
+    left.on('move', (_, d) => handleJoyMove('left', d.vector))
+    left.on('end', () => handleJoyMove('left', { x: 0, y: 0 }))
+    right.on('move', (_, d) => handleJoyMove('right', d.vector))
+    right.on('end', () => handleJoyMove('right', { x: 0, y: 0 }))
   })
 
-  const handleJoyMove = (key: 'left' | 'right', data: vector) => {
-    input.update(inputData => {
-      inputData[key] = data
-      return inputData
+  const handleJoyMove = (key: 'left' | 'right', v: vector) => {
+    input.update(i => {
+      i[key] = v
+      data[0] = i.left.x
+      data[1] = i.left.y
+      data[2] = i.right.x
+      data[3] = i.right.y
+      data[4] = i.height
+      data[5] = i.speed
+      data[6] = i.s1
+      outControllerData.set(data)
+      return i
     })
-    updateData()
-  }
-
-  const updateData = () => {
-    data[0] = $input.left.x
-    data[1] = $input.left.y
-    data[2] = $input.right.x
-    data[3] = $input.right.y
-    data[4] = $input.height
-    data[5] = $input.speed
-    data[6] = $input.s1
-
-    outControllerData.set(data)
   }
 
   const handleKeyup = (event: KeyboardEvent) => {
     const down = event.type === 'keydown'
-    input.update(data => {
-      if (event.key === 'w') data.left.y = down ? 1 : 0
-      if (event.key === 'a') data.left.x = down ? 1 : 0
-      if (event.key === 's') data.left.y = down ? -1 : 0
-      if (event.key === 'd') data.left.x = down ? -1 : 0
-      return data
+    input.update(i => {
+      if (event.key === 'w') i.left.y = down ? 1 : 0
+      if (event.key === 'a') i.left.x = down ? 1 : 0
+      if (event.key === 's') i.left.y = down ? -1 : 0
+      if (event.key === 'd') i.left.x = down ? -1 : 0
+      data[0] = i.left.x
+      data[1] = i.left.y
+      data[2] = i.right.x
+      data[3] = i.right.y
+      data[4] = i.height
+      data[5] = i.speed
+      data[6] = i.s1
+      outControllerData.set(data)
+      return i
     })
-    updateData()
   }
 
   const handleRange = (event: Event, key: 'speed' | 'height' | 's1') => {
     const value: number = Number((event.target as HTMLInputElement).value)
-
-    input.update(inputData => {
-      inputData[key] = value
-      return inputData
+    input.update(i => {
+      i[key] = value
+      data[0] = i.left.x
+      data[1] = i.left.y
+      data[2] = i.right.x
+      data[3] = i.right.y
+      data[4] = i.height
+      data[5] = i.speed
+      data[6] = i.s1
+      outControllerData.set(data)
+      return i
     })
-    updateData()
   }
 
   const changeMode = (modeValue: MotionModes) => {
