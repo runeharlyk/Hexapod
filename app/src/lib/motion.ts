@@ -41,6 +41,7 @@ export default class Motion {
   constrainedPoseIndex = 0
   targetPose: [number, number, number, number][] = []
   isMovingToTarget = false
+  standTargetPose: [number, number, number, number][] = []
   layingDownPose: [number, number, number, number][] = []
   standingUpPhase = 0
   layingDownPhase = 0
@@ -111,7 +112,7 @@ export default class Motion {
   updateFeetDistance(distanceValue: number) {
     this.feetDistanceScale = 0.5 + (distanceValue + 1) * 0.5
 
-    this.defaultPosition = this.baseDefaultPosition.map(foot => {
+    const newDefaultPosition = this.baseDefaultPosition.map(foot => {
       const [x, y, z, w] = foot
       const distanceFromCenter = Math.hypot(x, y)
       const angle = Math.atan2(y, x)
@@ -125,8 +126,21 @@ export default class Motion {
       ]
     })
 
+    this.defaultPosition = newDefaultPosition
     this.gait.defaultPosition = this.defaultPosition
-    this.body_state.feet = this.defaultPosition
+
+    if (this.mode === MotionModes.STAND) {
+      this.standTargetPose = this.defaultPosition
+      this.isMovingToTarget = true
+      this.gait.phase = 0
+      this.gait_state.gait_type = GaitType.WAVE
+      this.gait_state.offset = default_offset[GaitType.WAVE]
+      this.gait_state.stand_frac = default_stand_frac[GaitType.WAVE]
+      this.gait_state.step_height = 8
+      this.gait_state.step_speed = 0.5
+    } else {
+      this.body_state.feet = this.defaultPosition
+    }
   }
 
   handleCommand(command: number[]) {
@@ -163,6 +177,27 @@ export default class Motion {
         this.targetAngles = this.poses[this.current_pose_idx]
         break
       case MotionModes.STAND: {
+        if (this.isMovingToTarget && this.standTargetPose.length > 0) {
+          if (this.lastTick === 0) this.lastTick = performance.now()
+          const delta = performance.now() - this.lastTick
+          this.lastTick = performance.now()
+
+          this.body_state.feet = this.moveTowardTarget(
+            this.body_state.feet as [number, number, number, number][],
+            this.standTargetPose,
+            delta / 1000
+          )
+
+          if (!this.isMovingToTarget) {
+            this.standTargetPose = []
+            this.gait_state.gait_type = GaitType.TRI_GATE
+            this.gait_state.offset = default_offset[GaitType.TRI_GATE]
+            this.gait_state.stand_frac = default_stand_frac[GaitType.TRI_GATE]
+            this.gait_state.step_height = 15
+            this.gait_state.step_speed = 1
+          }
+        }
+
         this.targetAngles = this.order(this.kinematics.inverseKinematics(this.body_state).flat())
         break
       }
