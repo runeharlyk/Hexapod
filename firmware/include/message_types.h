@@ -1,5 +1,7 @@
 #pragma once
 
+#include <utils/math_utils.h>
+
 // TODO: Find a way to match a topic with the data type
 enum message_topic_t { // enum class
     SERVO_SIGNAL = 1,
