@@ -157,10 +157,11 @@ export default class SceneBuilder {
 
   public addOrbitControls = (minDistance: number, maxDistance: number, autoRotate = true) => {
     this.orbit = new OrbitControls(this.camera, this.renderer.domElement)
-    this.orbit.minDistance = minDistance
     this.orbit.maxDistance = maxDistance
+    this.orbit.minDistance = minDistance + (maxDistance - minDistance) / 2
     this.orbit.autoRotate = autoRotate
     this.orbit.update()
+    this.orbit.minDistance = minDistance
     return this
   }
 
