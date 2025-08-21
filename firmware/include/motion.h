@@ -84,6 +84,9 @@ class MotionService {
                 break;
             }
             case MOTION_STATE::WALK: {
+                body_state.xm = lerp(body_state.xm, target_body_state.xm, smoothing_factor);
+                body_state.ym = lerp(body_state.ym, target_body_state.ym, smoothing_factor);
+                body_state.zm = lerp(body_state.zm, target_body_state.zm, smoothing_factor);
                 body_state.phi = lerp(body_state.phi, target_body_state.phi + _peripherals->angleY(), smoothing_factor);
                 body_state.omega =
                     lerp(body_state.omega, target_body_state.omega + _peripherals->angleX(), smoothing_factor);
