@@ -2,22 +2,7 @@
 #define Kinematics_h
 
 #include <utils/math_utils.h>
-
-struct BodyStateMsg {
-    float omega, phi, psi, xm, ym, zm;
-    float feet[6][4];
-
-    void updateFeet(const float newFeet[6][4]) { COPY_2D_ARRAY_6x4(feet, newFeet); }
-
-    bool operator==(const BodyStateMsg &other) const {
-        if (!IS_ALMOST_EQUAL(omega, other.omega) || !IS_ALMOST_EQUAL(phi, other.phi) ||
-            !IS_ALMOST_EQUAL(psi, other.psi) || !IS_ALMOST_EQUAL(xm, other.xm) || !IS_ALMOST_EQUAL(ym, other.ym) ||
-            !IS_ALMOST_EQUAL(zm, other.zm)) {
-            return false;
-        }
-        return arrayEqual(feet, other.feet, 0.1);
-    }
-};
+#include <message_types.h>
 
 struct HexapodConfig {
     const float mountX[6];

@@ -182,3 +182,41 @@ struct WiFiSettingsMsg {
     bool isValidPassword(const String &value) const { return value.length() >= 8 && value.length() <= 63; }
     bool isValidHostname(const String &value) const { return value.length() != 0 && value.length() < 63; }
 };
+
+struct BodyStateMsg {
+    float omega, phi, psi, xm, ym, zm;
+    float feet[6][4];
+
+    friend void toJson(JsonVariant v, BodyStateMsg const &s) {
+        v["omega"] = s.omega;
+        v["phi"] = s.phi;
+        v["psi"] = s.psi;
+        v["xm"] = s.xm;
+        v["ym"] = s.ym;
+        v["zm"] = s.zm;
+        for (uint8_t i = 0; i < 6; ++i)
+            for (uint8_t j = 0; j < 4; ++j) v["feet"][i][j] = s.feet[i][j];
+    }
+
+    void fromJson(JsonVariantConst o) {
+        omega = o["omega"].as<float>();
+        phi = o["phi"].as<float>();
+        psi = o["psi"].as<float>();
+        xm = o["xm"].as<float>();
+        ym = o["ym"].as<float>();
+        zm = o["zm"].as<float>();
+        for (uint8_t i = 0; i < 6; ++i)
+            for (uint8_t j = 0; j < 4; ++j) feet[i][j] = o["feet"][i][j].as<float>();
+    }
+
+    void updateFeet(const float newFeet[6][4]) { COPY_2D_ARRAY_6x4(feet, newFeet); }
+
+    bool operator==(const BodyStateMsg &other) const {
+        if (!IS_ALMOST_EQUAL(omega, other.omega) || !IS_ALMOST_EQUAL(phi, other.phi) ||
+            !IS_ALMOST_EQUAL(psi, other.psi) || !IS_ALMOST_EQUAL(xm, other.xm) || !IS_ALMOST_EQUAL(ym, other.ym) ||
+            !IS_ALMOST_EQUAL(zm, other.zm)) {
+            return false;
+        }
+        return arrayEqual(feet, other.feet, 0.1);
+    }
+};
