@@ -42,9 +42,6 @@
     else if ($gamepadButtons[1].pressed) mode.set(MotionModes.IDLE)
     else if ($gamepadButtons[2].pressed) mode.set(MotionModes.STAND)
     else if ($gamepadButtons[3].pressed) mode.set(MotionModes.WALK)
-    else if ($gamepadButtons[4].pressed) mode.set(MotionModes.CONSTRAINED_RANDOM)
-    else if ($gamepadButtons[5].pressed) mode.set(MotionModes.LAYING_TRANSITION)
-    else if ($gamepadButtons[6].pressed) mode.set(MotionModes.STANDING_UP)
   })
 
   onMount(() => {
@@ -150,7 +147,7 @@
     <div class="flex justify-center w-full"></div>
   </div>
   <div class="absolute bottom-0 z-10 flex items-end">
-    <div class="flex items-center flex-col bg-base-300 bg-opacity-50 p-3 pb-2 gap-2 rounded-tr-xl">
+    <div class="flex items-center flex-col bg-base-300 bg-opacity-50 p-3 pb-2 gap-2">
       <VerticalSlider
         min={-1}
         step={0.01}
@@ -158,7 +155,7 @@
         oninput={(e: Event) => handleRange(e, 'height')} />
       <label for="height">Ht</label>
     </div>
-    <div class="flex items-center flex-col bg-base-300 bg-opacity-50 p-3 pb-2 gap-2">
+    <div class="flex items-center flex-col bg-base-300 bg-opacity-50 p-3 pb-2 gap-2 rounded-tr-xl">
       <VerticalSlider
         min={-1}
         step={0.01}
