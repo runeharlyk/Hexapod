@@ -1,15 +1,16 @@
-import { Color, LoaderUtils, Vector3 } from 'three'
+import { Color, Vector3 } from 'three'
 import URDFLoader, { type URDFRobot } from 'urdf-loader'
 import { XacroLoader } from 'xacro-parser'
 import { Result } from '$lib/utilities'
 import { jointNames, model } from '$lib/stores'
-import { base } from '$app/paths'
+import { resolve } from '$app/paths'
 
 let model_xml: XMLDocument
+const base = resolve('/')
 
 export const populateModelCache = async () => {
   // await cacheModelFiles();
-  const modelRes = await loadModelAsync(`${base}/model.xacro`)
+  const modelRes = await loadModelAsync(`${base}model.xacro`)
   if (modelRes.isOk()) {
     const [urdf, JOINT_NAME] = modelRes.inner
     jointNames.set(JOINT_NAME)
@@ -22,10 +23,10 @@ export const populateModelCache = async () => {
 export const loadModelAsync = async (
   url: string
 ): Promise<Result<[URDFRobot, string[]], string>> => {
-  return new Promise((resolve, reject) => {
+  return new Promise(res => {
     const xacroLoader = new XacroLoader()
     const urdfLoader = new URDFLoader()
-    urdfLoader.workingPath = LoaderUtils.extractUrlBase(url)
+    urdfLoader.workingPath = base
 
     xacroLoader.load(
       url,
@@ -43,12 +44,12 @@ export const loadModelAsync = async (
             .filter(joint => joint[1].jointType !== 'fixed')
             .map(joint => joint[0])
 
-          resolve(Result.ok([model, joints]))
+          res(Result.ok([model, joints]))
         } catch (error) {
-          resolve(Result.err('Failed to load model', error))
+          res(Result.err('Failed to load model', error))
         }
       },
-      error => resolve(Result.err('Failed to load model', error))
+      error => res(Result.err('Failed to load model', error))
     )
   })
 }
