@@ -1,7 +1,10 @@
-import type { PageLoad } from './$types';
-import { goto } from '$app/navigation';
+import type { PageLoad } from './$types'
+import { goto } from '$app/navigation'
+import { resolve } from '$app/paths'
+
+const base = resolve('/')
 
 export const load = (async () => {
-	goto('/');
-	return;
-}) satisfies PageLoad;
+  goto(base)
+  return
+}) satisfies PageLoad

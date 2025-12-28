@@ -282,7 +282,8 @@
     <div class="w-full overflow-x-auto">
       <div
         class="flex w-full flex-col space-y-1 h-60"
-        transition:slide|local={{ duration: 300, easing: cubicOut }}>
+        transition:slide|local={{ duration: 300, easing: cubicOut }}
+      >
         <canvas bind:this={angleChartElement}></canvas>
       </div>
     </div>
@@ -291,14 +292,16 @@
     <div class="w-full overflow-x-auto">
       <div
         class="flex w-full flex-col space-y-1 h-60"
-        transition:slide|local={{ duration: 300, easing: cubicOut }}>
+        transition:slide|local={{ duration: 300, easing: cubicOut }}
+      >
         <canvas bind:this={tempChartElement}></canvas>
       </div>
     </div>
     <div class="w-full overflow-x-auto">
       <div
         class="flex w-full flex-col space-y-1 h-60"
-        transition:slide|local={{ duration: 300, easing: cubicOut }}>
+        transition:slide|local={{ duration: 300, easing: cubicOut }}
+      >
         <canvas bind:this={altitudeChartElement}></canvas>
       </div>
     </div>

@@ -291,7 +291,7 @@
   <div class="w-full overflow-x-auto">
     {#await getWifiStatus()}
       <Spinner />
-    {:then nothing}
+    {:then}
       <div
         class="flex w-full flex-col space-y-1"
         transition:slide|local={{ duration: 300, easing: cubicOut }}>
@@ -349,7 +349,7 @@
     </div>
     {#await getWifiSettings()}
       <Spinner />
-    {:then nothing}
+    {:then}
       <div class="relative w-full overflow-visible">
         <button
           class="btn btn-primary text-primary-content btn-md absolute -top-14 right-16"

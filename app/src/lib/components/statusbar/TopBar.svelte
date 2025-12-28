@@ -1,17 +1,20 @@
 <script lang="ts">
-    import {Hamburger} from '../icons'
+  import { Hamburger } from '../icons'
+  import { resolve } from '$app/paths'
+
+  const base = resolve('/')
 </script>
 
 <div class="topbar absolute left-0 top-0 w-full z-20 flex justify-between bg-zinc-800">
-	<div class="flex gap-2 p-2">
-        <a href="./">
-            <Hamburger class="h-8 w-8"/>
-        </a>
-    </div>
+  <div class="flex gap-2 p-2">
+    <a href={base}>
+      <Hamburger class="h-8 w-8" />
+    </a>
+  </div>
 </div>
 
 <style>
-	.topbar {
-		height: 50px;
-	}
+  .topbar {
+    height: 50px;
+  }
 </style>

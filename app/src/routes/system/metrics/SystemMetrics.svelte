@@ -339,7 +339,8 @@
   <div class="w-full overflow-x-auto">
     <div
       class="flex w-full flex-col space-y-1 h-60"
-      transition:slide|local={{ duration: 300, easing: cubicOut }}>
+      transition:slide|local={{ duration: 300, easing: cubicOut }}
+    >
       <canvas bind:this={cpuChartElement}></canvas>
     </div>
   </div>
@@ -347,21 +348,24 @@
   <div class="w-full overflow-x-auto">
     <div
       class="flex w-full flex-col space-y-1 h-60"
-      transition:slide|local={{ duration: 300, easing: cubicOut }}>
+      transition:slide|local={{ duration: 300, easing: cubicOut }}
+    >
       <canvas bind:this={heapChartElement}></canvas>
     </div>
   </div>
   <div class="w-full overflow-x-auto">
     <div
       class="flex w-full flex-col space-y-1 h-52"
-      transition:slide|local={{ duration: 300, easing: cubicOut }}>
+      transition:slide|local={{ duration: 300, easing: cubicOut }}
+    >
       <canvas bind:this={filesystemChartElement}></canvas>
     </div>
   </div>
   <div class="w-full overflow-x-auto">
     <div
       class="flex w-full flex-col space-y-1 h-52"
-      transition:slide|local={{ duration: 300, easing: cubicOut }}>
+      transition:slide|local={{ duration: 300, easing: cubicOut }}
+    >
       <canvas bind:this={temperatureChartElement}></canvas>
     </div>
   </div>

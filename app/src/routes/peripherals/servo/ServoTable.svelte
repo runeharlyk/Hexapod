@@ -65,7 +65,8 @@
               onblur={syncConfig}
               oninput={event => updateValue(event, index, 'center')}
               min="80"
-              max="600" />
+              max="600"
+            />
           </td>
           <td>
             <input
@@ -76,13 +77,15 @@
               onblur={syncConfig}
               oninput={event => updateValue(event, index, 'pin')}
               min="0"
-              max="32" />
+              max="32"
+            />
           </td>
           <td>
             <button
               class="btn btn-sm btn-ghost"
               title="Toggle direction {servo.dir}"
-              onclick={() => toggleDirection(index)}>
+              onclick={() => toggleDirection(index)}
+            >
               {#if servo.dir === 1}
                 <RotateCw class="w-4 h-4 text-green-500" />
               {:else}
@@ -99,7 +102,8 @@
               onblur={syncConfig}
               oninput={event => updateValue(event, index, 'conv')}
               min="0"
-              max="10" />
+              max="10"
+            />
           </td>
         </tr>
       {/each}

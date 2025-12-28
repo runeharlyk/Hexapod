@@ -72,8 +72,8 @@
     <div
       class="fixed inset-0 z-40 max-h-full max-w-full bg-black/20 backdrop-blur-sm"
       transition:fade
-      onclick={modals.closeAll}>
-    </div>
+      onclick={modals.closeAll}
+    ></div>
   {/snippet}
 </Modals>
 

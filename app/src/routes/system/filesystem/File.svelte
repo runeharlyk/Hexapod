@@ -18,7 +18,8 @@
 
   <button
     class="opacity-0 group-hover:opacity-100 p-1 hover:text-red-500"
-    onclick={() => onDelete(name)}>
+    onclick={() => onDelete(name)}
+  >
     <TrashIcon class="w-4 h-4" />
   </button>
 </div>

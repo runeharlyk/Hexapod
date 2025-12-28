@@ -152,7 +152,8 @@
         min={-1}
         step={0.01}
         max={1}
-        oninput={(e: Event) => handleRange(e, 'height')} />
+        oninput={(e: Event) => handleRange(e, 'height')}
+      />
       <label for="height">Ht</label>
     </div>
     <div class="flex items-center flex-col bg-base-300 bg-opacity-50 p-3 pb-2 gap-2 rounded-tr-xl">
@@ -160,7 +161,8 @@
         min={-1}
         step={0.01}
         max={1}
-        oninput={(e: Event) => handleRange(e, 'feetDistance')} />
+        oninput={(e: Event) => handleRange(e, 'feetDistance')}
+      />
       <label for="feetDistance">Dist</label>
     </div>
     <div class="flex items-end gap-4 bg-base-300 bg-opacity-50 h-min rounded-tr-xl pl-0 p-3">
@@ -169,14 +171,16 @@
           <button
             class="btn join-item"
             class:btn-primary={$mode === modeValue}
-            onclick={() => changeMode(modeValue)}>
+            onclick={() => changeMode(modeValue)}
+          >
             {capitalize(modeValue)}
           </button>
         {/each}
         {#if $mode === MotionModes.WALK}
           <select
             class="select select-primary"
-            oninput={e => changeGait((e.target as HTMLSelectElement)?.value as GaitType)}>
+            oninput={e => changeGait((e.target as HTMLSelectElement)?.value as GaitType)}
+          >
             {#each Object.values(GaitType) as gaitValue}
               <option value={gaitValue} selected={$gait === gaitValue}>
                 {capitalize(gaitValue.toString())}
@@ -197,7 +201,8 @@
               step="0.01"
               max="1"
               oninput={e => handleRange(e, 's1')}
-              class="range range-sm range-primary" />
+              class="range range-sm range-primary"
+            />
           </div>
           <div>
             <label for="speed">Speed</label>
@@ -208,7 +213,8 @@
               step="0.01"
               max="1"
               oninput={e => handleRange(e, 'speed')}
-              class="range range-sm range-primary" />
+              class="range range-sm range-primary"
+            />
           </div>
         </div>
       {/if}

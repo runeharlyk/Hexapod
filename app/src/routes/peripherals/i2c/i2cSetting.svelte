@@ -56,7 +56,8 @@
             max="48"
             title="SDA pin number (0-48)"
             disabled={!isEditing}
-            bind:value={settings.sda} />
+            bind:value={settings.sda}
+          />
         </label>
         <label for="scl" class="input validator">
           SCL
@@ -70,7 +71,8 @@
             max="48"
             title="SCL pin number (0-48)"
             disabled={!isEditing}
-            bind:value={settings.scl} />
+            bind:value={settings.scl}
+          />
         </label>
         <label class="input validator" for="frequency">
           Frequency
@@ -83,7 +85,8 @@
             max="430000"
             title="I2C frequency in Hz"
             disabled={!isEditing}
-            bind:value={settings.frequency} />
+            bind:value={settings.frequency}
+          />
         </label>
         <div>
           <button class="btn btn-outline btn-primary" onclick={() => (isEditing = !isEditing)}>

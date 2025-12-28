@@ -67,7 +67,8 @@
     {#if mdnsStatus}
       <div
         class="flex w-full flex-col space-y-1"
-        transition:slide|local={{ duration: 300, easing: cubicOut }}>
+        transition:slide|local={{ duration: 300, easing: cubicOut }}
+      >
         <StatusItem icon={Home} title="IP Address" description={mdnsStatus.hostname} />
 
         <StatusItem icon={MAC} title="Instance" description={mdnsStatus.instance} />

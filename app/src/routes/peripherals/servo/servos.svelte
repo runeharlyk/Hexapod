@@ -44,7 +44,8 @@
     max="600"
     bind:value={pwm}
     oninput={updatePWM}
-    class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700" />
+    class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
+  />
 
   {#if isLoading}
     <Spinner />
@@ -58,7 +59,8 @@
           type="checkbox"
           class="toggle"
           bind:checked={active}
-          onchange={active ? activateServo : deactivateServo} />
+          onchange={active ? activateServo : deactivateServo}
+        />
       </span>
     </div>
   {/if}

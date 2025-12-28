@@ -2,11 +2,12 @@
   import SystemMetrics from './SystemMetrics.svelte'
   import { goto } from '$app/navigation'
   import { useFeatureFlags } from '$lib/stores/featureFlags'
+  import { resolve } from '$app/paths'
 
   const features = useFeatureFlags()
 
   if (!$features.analytics) {
-    goto('/')
+    goto(resolve('/'))
   }
 </script>
 

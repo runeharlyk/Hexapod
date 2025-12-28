@@ -167,12 +167,14 @@
     {:then nothing}
       <div
         class="flex w-full flex-col space-y-1"
-        transition:slide|local={{ duration: 300, easing: cubicOut }}>
+        transition:slide|local={{ duration: 300, easing: cubicOut }}
+      >
         <StatusItem
           icon={AP}
           title="Status"
           variant={apStatusVariant[apStatus.status]}
-          description={apStatusDescription[apStatus.status]} />
+          description={apStatusDescription[apStatus.status]}
+        />
 
         <StatusItem icon={Home} title="IP Address" description={apStatus.ip_address} />
 
@@ -185,7 +187,8 @@
 
   <div class="bg-base-200 relative grid w-full max-w-2xl self-center overflow-hidden">
     <div
-      class="min-h-16 flex w-full items-center justify-between space-x-3 p-0 text-xl font-medium">
+      class="min-h-16 flex w-full items-center justify-between space-x-3 p-0 text-xl font-medium"
+    >
       Change AP Settings
     </div>
     {#await getAPSettings()}
@@ -193,12 +196,14 @@
     {:then nothing}
       <div
         class="flex flex-col gap-2 p-0"
-        transition:slide|local={{ duration: 300, easing: cubicOut }}>
+        transition:slide|local={{ duration: 300, easing: cubicOut }}
+      >
         <form
           class="grid w-full grid-cols-1 content-center gap-x-4 p-0s sm:grid-cols-2"
           onsubmit={preventDefault(handleSubmitAP)}
           novalidate
-          bind:this={formField}>
+          bind:this={formField}
+        >
           <div>
             <label class="label" for="apmode">
               <span class="label-text">Provide Access Point ...</span>
@@ -206,7 +211,8 @@
             <select
               class="select select-bordered w-full"
               id="apmode"
-              bind:value={apSettings.provision_mode}>
+              bind:value={apSettings.provision_mode}
+            >
               {#each provisionMode as mode}
                 <option value={mode.id}>
                   {mode.text}
@@ -229,10 +235,12 @@
               id="ssid"
               min="2"
               max="32"
-              required />
+              required
+            />
             <label class="label" for="ssid">
               <span class="label-text-alt text-error {formErrors.ssid ? '' : 'hidden'}"
-                >SSID must be between 2 and 32 characters long</span>
+                >SSID must be between 2 and 32 characters long</span
+              >
             </label>
           </div>
 
@@ -257,10 +265,12 @@
               : ''}"
               bind:value={apSettings.channel}
               id="channel"
-              required />
+              required
+            />
             <label class="label" for="channel">
               <span class="label-text-alt text-error {formErrors.channel ? '' : 'hidden'}"
-                >Must be channel 1 to 13</span>
+                >Must be channel 1 to 13</span
+              >
             </label>
           </div>
 
@@ -279,10 +289,12 @@
               : ''}"
               bind:value={apSettings.max_clients}
               id="clients"
-              required />
+              required
+            />
             <label class="label" for="clients">
               <span class="label-text-alt text-error {formErrors.max_clients ? '' : 'hidden'}"
-                >Maximum 8 clients allowed</span>
+                >Maximum 8 clients allowed</span
+              >
             </label>
           </div>
 
@@ -300,10 +312,12 @@
               size="15"
               bind:value={apSettings.local_ip}
               id="localIP"
-              required />
+              required
+            />
             <label class="label" for="localIP">
               <span class="label-text-alt text-error {formErrors.local_ip ? '' : 'hidden'}"
-                >Must be a valid IPv4 address</span>
+                >Must be a valid IPv4 address</span
+              >
             </label>
           </div>
 
@@ -320,10 +334,12 @@
               size="15"
               bind:value={apSettings.gateway_ip}
               id="gateway"
-              required />
+              required
+            />
             <label class="label" for="gateway">
               <span class="label-text-alt text-error {formErrors.gateway_ip ? '' : 'hidden'}"
-                >Must be a valid IPv4 address</span>
+                >Must be a valid IPv4 address</span
+              >
             </label>
           </div>
           <div>
@@ -339,10 +355,12 @@
               size="15"
               bind:value={apSettings.subnet_mask}
               id="subnet"
-              required />
+              required
+            />
             <label class="label" for="subnet">
               <span class="label-text-alt text-error {formErrors.subnet_mask ? '' : 'hidden'}"
-                >Must be a valid IPv4 address</span>
+                >Must be a valid IPv4 address</span
+              >
             </label>
           </div>
 
@@ -350,7 +368,8 @@
             <input
               type="checkbox"
               bind:checked={apSettings.ssid_hidden}
-              class="checkbox checkbox-primary" />
+              class="checkbox checkbox-primary"
+            />
             <span class="">Hide SSID</span>
           </label>
 

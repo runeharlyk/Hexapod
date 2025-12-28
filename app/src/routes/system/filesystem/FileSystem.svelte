@@ -117,7 +117,8 @@
 <div class="flex flex-col md:flex-row gap-4 w-full">
   <!-- File Tree -->
   <div
-    class="w-full md:w-[300px] md:min-w-[300px] md:max-w-[300px] border-b md:border-b-0 md:border-r pb-4 md:pb-0 md:pr-4">
+    class="w-full md:w-[300px] md:min-w-[300px] md:max-w-[300px] border-b md:border-b-0 md:border-r pb-4 md:pb-0 md:pr-4"
+  >
     {#await getFiles()}
       <Spinner />
     {:then files}
@@ -126,7 +127,8 @@
         files={files.root}
         expanded
         selected={updateSelected}
-        onDelete={deleteFile} />
+        onDelete={deleteFile}
+      />
     {/await}
   </div>
 
@@ -158,7 +160,8 @@
         {#if isEditing}
           <textarea
             class="w-full h-[300px] sm:h-[500px] font-mono p-2 bg-gray-800 text-white"
-            bind:value={content}></textarea>
+            bind:value={content}
+          ></textarea>
         {:else}
           <pre
             class="bg-gray-800 p-4 rounded overflow-auto max-h-[300px] sm:max-h-[500px]">{content}</pre>
