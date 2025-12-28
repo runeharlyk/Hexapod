@@ -4,7 +4,7 @@
   import GithubButton from '../menu/GithubButton.svelte'
   import LogoButton from '../menu/LogoButton.svelte'
   import MenuList from '../menu/MenuList.svelte'
-  import { base } from '$app/paths'
+  import { resolve } from '$app/paths'
   import {
     Connection,
     Settings,
@@ -26,6 +26,7 @@
   } from '$lib/components/icons'
 
   const features = useFeatureFlags()
+  const base = resolve('/')
 
   const appName = page.data.app_name
 
@@ -42,7 +43,7 @@
     submenu?: menuItem[]
   }
 
-  const withBase = (path: string) => `${base}/${path}`.replace(/\/+/, '/')
+  const withBase = (path: string) => `${base}${path}`.replace(/\/+/, '/')
 
   let menuItems = $state<menuItem[]>([])
 
