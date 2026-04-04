@@ -90,7 +90,7 @@ struct IMUAnglesMsg {
 };
 
 struct CommandMsg {
-    float lx, ly, rx, ry, h, s, s1;
+    float lx, ly, rx, ry, h, s, s1, fd;
     friend void toJson(JsonVariant v, CommandMsg const &c) {
         JsonArray arr = v.to<JsonArray>();
         arr.add(c.lx);
@@ -100,6 +100,7 @@ struct CommandMsg {
         arr.add(c.h);
         arr.add(c.s);
         arr.add(c.s1);
+        arr.add(c.fd);
     }
 
     void fromJson(JsonVariantConst o) {
@@ -111,6 +112,7 @@ struct CommandMsg {
         h = arr[4].as<float>();
         s = arr[5].as<float>();
         s1 = arr[6].as<float>();
+        fd = arr.size() > 7 ? arr[7].as<float>() : 0.0f;
     }
 };
 

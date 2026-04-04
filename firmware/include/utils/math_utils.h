@@ -88,9 +88,10 @@ inline bool isEqual(float a, float b, float epsilon) { return std::fabs(a - b) <
 
 inline float round2(float value) { return (int)(value * 100 + 0.5) / 100.0; }
 
-inline bool arrayEqual(const float arr1[4][4], const float arr2[4][4], float epsilon = 1e-3) {
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
+template <size_t Rows, size_t Cols>
+inline bool arrayEqual(const float (&arr1)[Rows][Cols], const float (&arr2)[Rows][Cols], float epsilon = 1e-3) {
+    for (size_t i = 0; i < Rows; ++i) {
+        for (size_t j = 0; j < Cols; ++j) {
             if (std::fabs(arr1[i][j] - arr2[i][j]) > epsilon) {
                 return false;
             }

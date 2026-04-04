@@ -11,6 +11,17 @@ export class DataBroker {
   private subscriptions: Map<MessageTopic, Map<string, DataBrokerCallback<unknown>>> = new Map()
   private subscriptionCounter = 0
 
+  private dispatchTransport(
+    transport: ITransport,
+    type: MessageType,
+    topic?: MessageTopic,
+    payload?: unknown
+  ) {
+    transport.sendEvent(type, topic, payload).catch(error => {
+      console.error('Transport send failed', { type, topic, payload, error })
+    })
+  }
+
   constructor() {
     this.transports = new Map()
   }
@@ -31,7 +42,7 @@ export class DataBroker {
   private subscribeTransport(transport: ITransport) {
     const activeTopics = Array.from(this.subscriptions.keys())
     activeTopics.forEach(topic => {
-      transport.sendEvent(MessageType.CONNECT, topic)
+      this.dispatchTransport(transport, MessageType.CONNECT, topic)
     })
   }
 
@@ -48,7 +59,7 @@ export class DataBroker {
     this.subscriptions.set(topic, topicSubscriptions)
 
     this.transports.forEach((_, transport) => {
-      transport.sendEvent(MessageType.CONNECT, topic)
+      this.dispatchTransport(transport, MessageType.CONNECT, topic)
     })
 
     return subscriptionId
@@ -60,7 +71,7 @@ export class DataBroker {
         if (subscriptions.size === 0) {
           this.subscriptions.delete(topic)
           this.transports.forEach((_, transport) => {
-            transport.sendEvent(MessageType.DISCONNECT, topic)
+            this.dispatchTransport(transport, MessageType.DISCONNECT, topic)
           })
         }
         break
@@ -70,14 +81,14 @@ export class DataBroker {
 
   send<T>(topic: MessageTopic, data: T) {
     this.transports.forEach((_, transport) => {
-      transport.sendEvent(MessageType.EVENT, topic, data)
+      this.dispatchTransport(transport, MessageType.EVENT, topic, data)
     })
   }
 
   emit<T>(topic: MessageTopic, data: T, excludeSubscriptionId?: string) {
     this.transports.forEach((transportId, transport) => {
       if (transportId !== excludeSubscriptionId) {
-        transport.sendEvent(MessageType.EVENT, topic, data)
+        this.dispatchTransport(transport, MessageType.EVENT, topic, data)
       }
     })
     const subscriptions = this.subscriptions.get(topic)

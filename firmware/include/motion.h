@@ -58,12 +58,12 @@ class MotionService {
         ESP_LOGI("MotionService", "Mode %d", m.mode);
         motionState = m.mode;
         motionState == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
-        if (motionState == MOTION_STATE::STAND) body_state.updateFeet(default_feet_pos);
     }
 
     void handleCommand(CommandMsg const &c) {
         lastCommandMillis = millis();
         commandTimedOut = false;
+        updateFeetDistanceTarget(c.fd);
         target_body_state.zm = c.h * 50;
         target_body_state.omega = c.ry * 0.254f;
         switch (motionState) {
@@ -71,7 +71,9 @@ class MotionService {
                 target_body_state.xm = c.lx * 50.f;
                 target_body_state.ym = -c.ly * 50.f;
                 target_body_state.phi = c.rx * 0.254f;
-                body_state.updateFeet(default_feet_pos);
+                gait_state.step_x = 0;
+                gait_state.step_z = 0;
+                gait_state.step_angle = 0;
                 break;
             }
             case MOTION_STATE::WALK: {
@@ -88,6 +90,7 @@ class MotionService {
 
     bool updateMotion() {
         resetCommandIfTimedOut();
+        const float dt = getMotionDeltaSeconds();
         switch (motionState) {
             case MOTION_STATE::DEACTIVATED: return false;
             case MOTION_STATE::IDLE: return false;
@@ -99,6 +102,7 @@ class MotionService {
                 body_state.phi = lerp(body_state.phi, target_body_state.phi + _peripherals->angleY(), smoothing_factor);
                 body_state.omega =
                     lerp(body_state.omega, target_body_state.omega + _peripherals->angleX(), smoothing_factor);
+                gait.step(gait_state, body_state, dt);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
             }
@@ -109,7 +113,7 @@ class MotionService {
                 body_state.phi = lerp(body_state.phi, target_body_state.phi + _peripherals->angleY(), smoothing_factor);
                 body_state.omega =
                     lerp(body_state.omega, target_body_state.omega + _peripherals->angleX(), smoothing_factor);
-                gait.step(gait_state, body_state, 5.f / 1000.f);
+                gait.step(gait_state, body_state, dt);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
             }
@@ -131,19 +135,25 @@ class MotionService {
     Kinematics kinematics;
     GaitController gait;
 
-    CommandMsg command = {0, 0, 0, 0, 0, 0, 0};
+    CommandMsg command = {0, 0, 0, 0, 0, 0, 0, 0};
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
     BodyStateMsg target_body_state = {0, 0, 0, 0, 0, 0};
     gait_state_t gait_state = {15, 0, 0, 0, 1, 0.002, default_stand_frac, GaitType::TRI_GATE, {0, 0.5, 0, 0.5, 0, 0.5}};
 
     const float smoothing_factor = 0.06f;
     static constexpr unsigned long COMMAND_TIMEOUT_MS = 2000;
+    static constexpr float FEET_DISTANCE_SCALE_MIN = 0.75f;
+    static constexpr float FEET_DISTANCE_SCALE_MAX = 1.25f;
+    static constexpr float FEET_DISTANCE_SCALE_RANGE = FEET_DISTANCE_SCALE_MAX - FEET_DISTANCE_SCALE_MIN;
 
+    float base_feet_pos[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
+                                 {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
     float default_feet_pos[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
                                     {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
 
     MOTION_STATE motionState = MOTION_STATE::DEACTIVATED;
     unsigned long lastCommandMillis = 0;
+    unsigned long lastMotionMicros = 0;
     bool commandTimedOut = false;
 
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
@@ -160,6 +170,35 @@ class MotionService {
         gait_state.step_speed = 1.f;
         gait_state.step_height = 15.f;
         gait_state.step_depth = 0.002f;
+    }
+
+    void rebuildDefaultFeet(float scale, float output[6][4]) {
+        for (int i = 0; i < 6; ++i) {
+            output[i][0] = base_feet_pos[i][0] * scale;
+            output[i][1] = base_feet_pos[i][1] * scale;
+            output[i][2] = base_feet_pos[i][2];
+            output[i][3] = base_feet_pos[i][3];
+        }
+    }
+
+    void updateFeetDistanceTarget(float normalizedFeetDistance) {
+        const float clamped = CLIP(normalizedFeetDistance, -1.0f, 1.0f);
+        const float scale = FEET_DISTANCE_SCALE_MIN + ((clamped + 1.0f) * 0.5f) * FEET_DISTANCE_SCALE_RANGE;
+        rebuildDefaultFeet(scale, default_feet_pos);
+        gait.setDefaultFootTarget(default_feet_pos);
+    }
+
+    float getMotionDeltaSeconds() {
+        const unsigned long now = micros();
+        if (lastMotionMicros == 0) {
+            lastMotionMicros = now;
+            return 0.005f;
+        }
+
+        const unsigned long elapsedMicros = now - lastMotionMicros;
+        lastMotionMicros = now;
+        const float dt = elapsedMicros / 1000000.0f;
+        return CLIP(dt, 0.001f, 0.05f);
     }
 
     void resetCommandIfTimedOut() {

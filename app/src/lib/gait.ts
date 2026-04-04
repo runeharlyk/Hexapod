@@ -54,6 +54,9 @@ export interface ControllerCommand {
 
 export class GaitController {
   defaultPosition: Matrix
+  targetDefaultPosition: Matrix
+  swingStartPosition: Matrix
+  footWasSwinging: boolean[]
   phase = 0
   last_body_state: body_state_t | null = null
   protected cumulative_position = { x: 0, y: 0, z: 0 }
@@ -62,11 +65,27 @@ export class GaitController {
 
   constructor(defaultPosition: Matrix) {
     this.defaultPosition = defaultPosition
+    this.targetDefaultPosition = defaultPosition.map(foot => [...foot])
+    this.swingStartPosition = defaultPosition.map(foot => [...foot])
+    this.footWasSwinging = new Array(defaultPosition.length).fill(false)
+  }
+
+  setDefaultFootTarget(targetDefaultPosition: Matrix) {
+    this.targetDefaultPosition = targetDefaultPosition.map(foot => [...foot])
+  }
+
+  hasPendingStanceChange() {
+    return this.defaultPosition.some((foot, i) =>
+      foot.some((value, j) => Math.abs(value - this.targetDefaultPosition[i][j]) > 0.5)
+    )
   }
 
   step(gait: gait_state_t, body: body_state_t, dt: number) {
     const { step_x, step_z, step_angle: angle } = gait
-    if (Math.abs(step_x) < 2 && Math.abs(step_z) < 2 && !angle) {
+    const isMoving = Math.abs(step_x) >= 2 || Math.abs(step_z) >= 2 || angle !== 0
+    const isRepositioning = !isMoving && this.hasPendingStanceChange()
+
+    if (!isMoving && !isRepositioning) {
       body.feet = body.feet.map((f, i) =>
         f.map((v, j) => v + (this.defaultPosition[i][j] - v) * dt * 10)
       )
@@ -76,11 +95,30 @@ export class GaitController {
 
     const lengthRaw = Math.hypot(step_x, step_z)
     const length = step_x < 0 ? -lengthRaw : lengthRaw
-    const speed =
-      gait.step_speed * Math.min(1.5, Math.max(0.75, Math.abs(length) / 25, Math.abs(angle * 1.5)))
+    const speed = isRepositioning
+      ? gait.step_speed
+      : gait.step_speed * Math.min(1.5, Math.max(0.75, Math.abs(length) / 25, Math.abs(angle * 1.5)))
     const turnAmplitude = Math.atan2(step_z, length) * 2
 
     this.advancePhase(dt, speed)
+
+    this.defaultPosition = this.defaultPosition.map((foot, i) => {
+      const phase = (this.phase + gait.offset[i]) % 1
+      const isSwinging = phase >= gait.stand_frac
+
+      if (isSwinging && !this.footWasSwinging[i]) {
+        this.swingStartPosition[i] = [...foot]
+      }
+      this.footWasSwinging[i] = isSwinging
+
+      if (!isSwinging) return foot
+
+      const swingProgress = (phase - gait.stand_frac) / (1 - gait.stand_frac)
+      return foot.map((_, j) =>
+        this.swingStartPosition[i][j] +
+        (this.targetDefaultPosition[i][j] - this.swingStartPosition[i][j]) * swingProgress
+      )
+    })
 
     const newFeet = this.defaultPosition.map(fp => fp.map(() => 0))
 

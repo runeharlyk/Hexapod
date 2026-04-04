@@ -40,7 +40,7 @@ export default class Motion {
     this.mode = MotionModes.STAND
     this.kinematics = new Kinematics(config)
     this.baseDefaultPosition = this.kinematics.genPosture(degToRad(60), degToRad(75))
-    this.defaultPosition = [...this.baseDefaultPosition]
+    this.defaultPosition = this.baseDefaultPosition.map(foot => [...foot] as [number, number, number, number])
     this.gait = new GaitController(this.defaultPosition)
     this.body_state = {
       omega: 0,
@@ -83,12 +83,16 @@ export default class Motion {
   handleCommand(command: number[]) {
     this.body_state.zm = command[4] * 50
     this.body_state.omega = command[3] * 0.254
+    this.setFeetDistance(command[7] ?? 0)
 
     switch (this.mode) {
       case MotionModes.STAND:
         this.body_state.xm = command[0] * 50
         this.body_state.ym = -command[1] * 50
         this.body_state.phi = command[2] * 0.254
+        this.gait_state.step_x = 0
+        this.gait_state.step_z = 0
+        this.gait_state.step_angle = 0
         break
       case MotionModes.WALK:
         this.gait_state.step_x = -command[0] * 100
@@ -102,6 +106,11 @@ export default class Motion {
   }
 
   step() {
+    const now = performance.now()
+    if (this.lastTick === 0) this.lastTick = now
+    const dt = (now - this.lastTick) / 1000
+    this.lastTick = now
+
     switch (this.mode) {
       case MotionModes.DEACTIVATED:
       case MotionModes.IDLE:
@@ -110,13 +119,14 @@ export default class Motion {
         this.targetAngles = this.poses[this.current_pose_idx]
         break
       case MotionModes.STAND: {
+        this.gait.step(this.gait_state, this.body_state, dt)
+        this.defaultPosition = this.gait.defaultPosition as [number, number, number, number][]
         this.targetAngles = this.order(this.kinematics.inverseKinematics(this.body_state).flat())
         break
       }
       case MotionModes.WALK: {
-        const delta = performance.now() - this.lastTick
-        this.lastTick = performance.now()
-        this.gait.step(this.gait_state, this.body_state, delta / 1000)
+        this.gait.step(this.gait_state, this.body_state, dt)
+        this.defaultPosition = this.gait.defaultPosition as [number, number, number, number][]
         this.targetAngles = this.order(this.kinematics.inverseKinematics(this.body_state).flat())
         break
       }
@@ -124,60 +134,16 @@ export default class Motion {
     return true
   }
 
-  moveTowardTarget(
-    currentFeet: [number, number, number, number][],
-    targetFeet: [number, number, number, number][],
-    dt: number
-  ): [number, number, number, number][] {
-    const distances = currentFeet.map((currentFoot, i) => {
-      const dx = targetFeet[i][0] - currentFoot[0]
-      const dy = targetFeet[i][1] - currentFoot[1]
-      const dz = targetFeet[i][2] - currentFoot[2]
-      return Math.hypot(dx, dy, dz)
-    })
-
-    const maxDistance = Math.max(...distances)
-    const threshold = 5
-
-    if (maxDistance < threshold) {
-      this.isMovingToTarget = false
-      return targetFeet
-    }
-
-    const newFeet = currentFeet.map((currentFoot, i) => {
-      const targetFoot = targetFeet[i]
-      const phase = (this.gait.phase + this.gait_state.offset[i]) % 1
-
-      const dx = targetFoot[0] - currentFoot[0]
-      const dy = targetFoot[1] - currentFoot[1]
-      const dz = targetFoot[2] - currentFoot[2]
-      const distance = Math.hypot(dx, dy, dz)
-
-      if (distance < threshold) {
-        return targetFoot
-      }
-
-      let stepProgress = 0
-      if (phase < this.gait_state.stand_frac) {
-        stepProgress = 0
-      } else {
-        const liftPhase = (phase - this.gait_state.stand_frac) / (1 - this.gait_state.stand_frac)
-        stepProgress = liftPhase
-      }
-
-      const stepSize = Math.min(distance, 15)
-      const heightCurve = Math.sin(stepProgress * Math.PI) * this.gait_state.step_height
-
-      const newX = currentFoot[0] + (dx / distance) * stepSize * stepProgress
-      const newY = currentFoot[1] + (dy / distance) * stepSize * stepProgress
-      const newZ = currentFoot[2] + (dz / distance) * stepSize * stepProgress + heightCurve
-
-      return [newX, newY, newZ, 1] as [number, number, number, number]
-    })
-
-    this.gait.phase = (this.gait.phase + dt * this.gait_state.step_speed) % 1
-
-    return newFeet
+  private setFeetDistance(normalizedFeetDistance: number) {
+    const clamped = Math.max(-1, Math.min(1, normalizedFeetDistance))
+    this.feetDistanceScale = 0.75 + ((clamped + 1) / 2) * 0.5
+    const targetDefaultPosition = this.baseDefaultPosition.map(([x, y, z, w]) => [
+      x * this.feetDistanceScale,
+      y * this.feetDistanceScale,
+      z,
+      w
+    ])
+    this.gait.setDefaultFootTarget(targetDefaultPosition)
   }
 
   order(a: number[]) {

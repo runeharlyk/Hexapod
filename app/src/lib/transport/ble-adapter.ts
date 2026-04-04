@@ -22,6 +22,7 @@ function createBLEAdapter(): ITransport {
   let service: BluetoothRemoteGATTService | undefined
   let tx: BluetoothRemoteGATTCharacteristic | undefined
   let rx: BluetoothRemoteGATTCharacteristic | undefined
+  let writeQueue = Promise.resolve()
 
   const connect = async () => {
     if (!navigator.bluetooth) {
@@ -73,8 +74,16 @@ function createBLEAdapter(): ITransport {
   }
 
   const send = async <T>(data: T) => {
-    if (!rx) return
-    await rx?.writeValue(encode(data))
+    if (!rx || !device?.gatt?.connected) return
+
+    const payload = encode(data)
+    const writeTask = writeQueue.then(async () => {
+      if (!rx || !device?.gatt?.connected) return
+      await rx.writeValue(payload)
+    })
+
+    writeQueue = writeTask.catch(() => undefined)
+    await writeTask
   }
 
   const onData = (data: (type: MessageType, topic: MessageTopic, payload: unknown) => void) => {

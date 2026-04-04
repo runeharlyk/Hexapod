@@ -20,7 +20,11 @@ class GaitController {
     float phase = 0.0f;
     float defaultPosition[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
                                    {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
-
+    float targetDefaultPosition[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
+                                         {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
+    float swingStartPosition[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
+                                      {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
+    bool footWasSwinging[6] = {false, false, false, false, false, false};
     static constexpr uint8_t BEZIER_POINTS = 12;
     static constexpr std::array<float, BEZIER_POINTS> COMBINATORIAL_VALUES = {
         combinatorial_constexpr(11, 0),  // 1
@@ -101,8 +105,36 @@ class GaitController {
                 height};
     }
 
+    bool positionsMatch(const float lhs[6][4], const float rhs[6][4], float epsilon = 0.5f) const {
+        for (int i = 0; i < 6; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                if (std::fabs(lhs[i][j] - rhs[i][j]) > epsilon) return false;
+            }
+        }
+        return true;
+    }
+
+    void updateDefaultPositionTarget(int footIndex, float swingProgress) {
+        for (int j = 0; j < 4; ++j) {
+            defaultPosition[footIndex][j] =
+                lerp(swingStartPosition[footIndex][j], targetDefaultPosition[footIndex][j], swingProgress);
+        }
+    }
+
   public:
     GaitController() {}
+
+    void setDefaultFootTarget(const float target[6][4]) { COPY_2D_ARRAY_6x4(targetDefaultPosition, target); }
+
+    void snapDefaultFootTarget(const float target[6][4]) {
+        COPY_2D_ARRAY_6x4(defaultPosition, target);
+        COPY_2D_ARRAY_6x4(targetDefaultPosition, target);
+        COPY_2D_ARRAY_6x4(swingStartPosition, target);
+        for (bool &footSwinging : footWasSwinging) footSwinging = false;
+        phase = 0.0f;
+    }
+
+    bool hasPendingStanceChange() const { return !positionsMatch(defaultPosition, targetDefaultPosition); }
 
     void setGait(gait_state_t& gait) {
         switch (gait.gait_type) {
@@ -150,8 +182,15 @@ class GaitController {
         const float step_x = gait.step_x;
         const float step_z = gait.step_z;
         const float angle = gait.step_angle;
+        const bool isMoving = std::fabs(step_x) >= 2 || std::fabs(step_z) >= 2 || angle;
+        const bool isRepositioning = !isMoving && hasPendingStanceChange();
 
-        if (std::fabs(step_x) < 2 && std::fabs(step_z) < 2 && !angle) {
+        const float* activeOffset = gait.offset;
+        const float activeStandFrac = gait.stand_frac;
+        const float activeStepHeight = gait.step_height;
+        const float activeSpeed = gait.step_speed;
+
+        if (!isMoving && !isRepositioning) {
             for (int i = 0; i < 6; i++) {
                 for (int j = 0; j < 4; j++) {
                     body.feet[i][j] += (defaultPosition[i][j] - body.feet[i][j]) * dt * 10.0f;
@@ -165,7 +204,7 @@ class GaitController {
         const float turnAmplitude = std::atan2(step_z, length) * 2;
 
         const float speed_factor = std::max(std::abs(length) / 25.f, std::abs(angle) * 1.5f);
-        const float speed = gait.step_speed * CLIP(speed_factor, 0.75, 1.5);
+        const float speed = isRepositioning ? activeSpeed : activeSpeed * CLIP(speed_factor, 0.75, 1.5f);
 
         advancePhase(dt, speed);
 
@@ -174,9 +213,22 @@ class GaitController {
 
         for (int i = 0; i < 6; i++) {
             const float* currentFoot = body.feet[i];
-            const float phase = std::fmod(this->phase + gait.offset[i], 1.0f);
+            const float phase = std::fmod(this->phase + activeOffset[i], 1.0f);
+            const bool isSwinging = phase >= activeStandFrac;
 
-            auto [phNorm, curveFn, amp] = phaseParams(phase, gait.stand_frac, gait.step_depth, gait.step_height);
+            if (isSwinging && !footWasSwinging[i]) {
+                for (int j = 0; j < 4; ++j) {
+                    swingStartPosition[i][j] = defaultPosition[i][j];
+                }
+            }
+            footWasSwinging[i] = isSwinging;
+
+            if (isSwinging) {
+                const float swingProgress = (phase - activeStandFrac) / (1.0f - activeStandFrac);
+                updateDefaultPositionTarget(i, swingProgress);
+            }
+
+            auto [phNorm, curveFn, amp] = phaseParams(phase, activeStandFrac, gait.step_depth, activeStepHeight);
 
             float deltaPos[3] = {0, 0, 0};
             curveFn(length / 2, turnAmplitude, &amp, phNorm, deltaPos);

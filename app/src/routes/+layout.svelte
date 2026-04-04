@@ -42,7 +42,6 @@
     dataBroker.on<number>(MessageTopic.MODE, data => {
       const nextMode = Object.values(MotionModes)[data]
       if (nextMode !== undefined) {
-        currentMode = nextMode
         mode.set(nextMode)
       }
     })
@@ -52,6 +51,10 @@
       if (nextGait !== undefined) {
         gait.set(nextGait)
       }
+    })
+
+    mode.subscribe(value => {
+      currentMode = value
     })
 
     commandHeartbeatId = setInterval(() => {
