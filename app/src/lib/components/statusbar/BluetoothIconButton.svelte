@@ -10,14 +10,16 @@
     <button
       class="btn btn-ghost btn-circle btn-sm"
       onclick={() => ble.disconnect()}
-      title="Disconnect Bluetooth">
+      title="Disconnect Bluetooth"
+    >
       <BluetoothConnected class="h-6 w-auto text-success" />
     </button>
   {:else}
     <button
       class="btn btn-ghost btn-circle btn-sm"
       onclick={() => ble.connect()}
-      title="Connect Bluetooth">
+      title="Connect Bluetooth"
+    >
       <BluetoothDisconnected class="h-6 w-auto text-error" />
     </button>
   {/if}

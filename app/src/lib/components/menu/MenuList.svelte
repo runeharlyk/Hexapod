@@ -37,7 +37,8 @@
             class:bg-base-100={menuItem.active}
             class:text-lg={level === 0}
             class:text-md={level === 1}
-            onclick={() => selectMenuItem(menuItem.title)}>
+            onclick={() => selectMenuItem(menuItem.title)}
+          >
             <menuItem.icon class="h-6 w-6" />
             {menuItem.title}
           </a>

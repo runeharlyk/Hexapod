@@ -24,7 +24,8 @@
   {max}
   {step}
   bind:value
-  {...rest} />
+  {...rest}
+/>
 
 <style>
   input[type='range']::-webkit-slider-runnable-track {

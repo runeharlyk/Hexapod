@@ -46,5 +46,6 @@
 
 <div class="w-full h-96">
   <textarea class="w-full h-full rounded-md bg-gray-100 p-2 text-xs text-gray-500"
-    >{log.join('\n')}</textarea>
+    >{log.join('\n')}</textarea
+  >
 </div>

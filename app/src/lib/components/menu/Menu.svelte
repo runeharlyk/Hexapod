@@ -186,7 +186,8 @@
     {menuItems}
     select={updateMenu}
     class="grow flex-nowrap overflow-y-auto overflow-x-hidden"
-    level="0" />
+    level="0"
+  />
 
   <div class="divider my-0"></div>
 

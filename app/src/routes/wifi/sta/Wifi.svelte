@@ -294,12 +294,14 @@
     {:then}
       <div
         class="flex w-full flex-col space-y-1"
-        transition:slide|local={{ duration: 300, easing: cubicOut }}>
+        transition:slide|local={{ duration: 300, easing: cubicOut }}
+      >
         <StatusItem
           icon={AP}
           title="Status"
           variant={wifiStatus.status === 3 ? 'success' : 'error'}
-          description={wifiStatus.status === 3 ? 'Connected' : 'Inactive'} />
+          description={wifiStatus.status === 3 ? 'Connected' : 'Inactive'}
+        />
 
         {#if wifiStatus.status === 3}
           <StatusItem icon={SSID} title="SSID" description={wifiStatus.ssid} />
@@ -311,13 +313,15 @@
               class="btn btn-circle btn-ghost btn-sm modal-button"
               onclick={() => {
                 showWifiDetails = !showWifiDetails
-              }}>
+              }}
+            >
               <Down
                 class="text-base-content h-auto w-6 transition-transform duration-300 ease-in-out {(
                   showWifiDetails
                 ) ?
                   'rotate-180'
-                : ''}" />
+                : ''}"
+              />
             </button>
           </StatusItem>
         {/if}
@@ -327,7 +331,8 @@
       {#if showWifiDetails}
         <div
           class="flex w-full flex-col space-y-1 pt-1"
-          transition:slide|local={{ duration: 300, easing: cubicOut }}>
+          transition:slide|local={{ duration: 300, easing: cubicOut }}
+        >
           <StatusItem icon={MAC} title="MAC Address" description={wifiStatus.mac_address} />
 
           <StatusItem icon={Channel} title="Channel" description={wifiStatus.channel} />
@@ -344,7 +349,8 @@
 
   <div class="bg-base-200 relative grid w-full max-w-2xl self-center overflow-hidden">
     <div
-      class="min-h-16 flex w-full items-center justify-between space-x-3 p-0 text-xl font-medium">
+      class="min-h-16 flex w-full items-center justify-between space-x-3 p-0 text-xl font-medium"
+    >
       Saved Networks
     </div>
     {#await getWifiSettings()}
@@ -358,8 +364,10 @@
               addNetwork()
               showNetworkEditor = true
             }
-          }}>
-          <Add class="h-6 w-6" /></button>
+          }}
+        >
+          <Add class="h-6 w-6" /></button
+        >
         <button
           class="btn btn-primary text-primary-content btn-md absolute -top-14 right-0"
           onclick={() => {
@@ -367,18 +375,22 @@
               scanForNetworks()
               showNetworkEditor = true
             }
-          }}>
-          <Scan class="h-6 w-6" /></button>
+          }}
+        >
+          <Scan class="h-6 w-6" /></button
+        >
 
         <div
           class="overflow-x-auto space-y-1"
-          transition:slide|local={{ duration: 300, easing: cubicOut }}>
+          transition:slide|local={{ duration: 300, easing: cubicOut }}
+        >
           <DragDropList
             id="networks"
             type={VerticalDropZone}
             itemSize={60}
             itemCount={dndNetworkList.length}
-            on:drop={onDrop}>
+            on:drop={onDrop}
+          >
             {#snippet children({ index })}
               <StatusItem icon={Router} title={dndNetworkList[index].ssid}>
                 <div class="space-x-0 px-0 mx-0">
@@ -386,13 +398,16 @@
                     class="btn btn-ghost btn-sm"
                     onclick={() => {
                       handleEdit(index)
-                    }}>
-                    <Edit class="h-6 w-6" /></button>
+                    }}
+                  >
+                    <Edit class="h-6 w-6" /></button
+                  >
                   <button
                     class="btn btn-ghost btn-sm"
                     onclick={() => {
                       confirmDelete(index)
-                    }}>
+                    }}
+                  >
                     <Delete class="text-error h-6 w-6" />
                   </button>
                 </div>
@@ -405,7 +420,8 @@
       <div class="divider mb-0"></div>
       <div
         class="flex flex-col gap-2 p-0"
-        transition:slide|local={{ duration: 300, easing: cubicOut }}>
+        transition:slide|local={{ duration: 300, easing: cubicOut }}
+      >
         <form class="" onsubmit={validateWiFiForm} novalidate bind:this={formField}>
           <div class="grid w-full grid-cols-1 content-center gap-x-4 px-4 sm:grid-cols-2">
             <div>
@@ -423,17 +439,20 @@
                 : ''}"
                 bind:value={wifiSettings.hostname}
                 id="channel"
-                required />
+                required
+              />
               <label class="label" for="channel">
                 <span class="label-text-alt text-error {formErrorhostname ? '' : 'hidden'}"
-                  >Host name must be between 2 and 32 characters long</span>
+                  >Host name must be between 2 and 32 characters long</span
+                >
               </label>
             </div>
             <label class="label inline-flex cursor-pointer content-end justify-start gap-4">
               <input
                 type="checkbox"
                 bind:checked={wifiSettings.priority_RSSI}
-                class="checkbox checkbox-primary sm:-mb-5" />
+                class="checkbox checkbox-primary sm:-mb-5"
+              />
               <span class="sm:-mb-5">Connect to strongest WiFi</span>
             </label>
           </div>
@@ -442,7 +461,8 @@
             <div class="divider my-0"></div>
             <div
               class="grid w-full grid-cols-1 content-center gap-x-4 px-4 sm:grid-cols-2"
-              transition:slide|local={{ duration: 300, easing: cubicOut }}>
+              transition:slide|local={{ duration: 300, easing: cubicOut }}
+            >
               <div>
                 <label class="label" for="ssid">
                   <span class="label-text text-md">SSID</span>
@@ -458,10 +478,12 @@
                   id="ssid"
                   min="2"
                   max="32"
-                  required />
+                  required
+                />
                 <label class="label" for="ssid">
                   <span class="label-text-alt text-error {formErrors.ssid ? '' : 'hidden'}"
-                    >SSID must be between 3 and 32 characters long</span>
+                    >SSID must be between 3 and 32 characters long</span
+                  >
                 </label>
               </div>
               <div>
@@ -471,18 +493,21 @@
                 <PasswordInput bind:value={networkEditable.password} id="pwd" />
               </div>
               <label
-                class="label inline-flex cursor-pointer content-end justify-start gap-4 mt-2 sm:mb-4">
+                class="label inline-flex cursor-pointer content-end justify-start gap-4 mt-2 sm:mb-4"
+              >
                 <input
                   type="checkbox"
                   bind:checked={static_ip_config}
-                  class="checkbox checkbox-primary sm:-mb-5" />
+                  class="checkbox checkbox-primary sm:-mb-5"
+                />
                 <span class="sm:-mb-5">Static IP Config?</span>
               </label>
             </div>
             {#if static_ip_config}
               <div
                 class="grid w-full grid-cols-1 content-center gap-x-4 px-4 sm:grid-cols-2"
-                transition:slide|local={{ duration: 300, easing: cubicOut }}>
+                transition:slide|local={{ duration: 300, easing: cubicOut }}
+              >
                 <div>
                   <label class="label" for="localIP">
                     <span class="label-text text-md">Local IP</span>
@@ -497,10 +522,12 @@
                     size="15"
                     bind:value={networkEditable.local_ip}
                     id="localIP"
-                    required />
+                    required
+                  />
                   <label class="label" for="localIP">
                     <span class="label-text-alt text-error {formErrors.local_ip ? '' : 'hidden'}"
-                      >Must be a valid IPv4 address</span>
+                      >Must be a valid IPv4 address</span
+                    >
                   </label>
                 </div>
 
@@ -517,10 +544,12 @@
                     maxlength="15"
                     size="15"
                     bind:value={networkEditable.gateway_ip}
-                    required />
+                    required
+                  />
                   <label class="label" for="gateway">
                     <span class="label-text-alt text-error {formErrors.gateway_ip ? '' : 'hidden'}"
-                      >Must be a valid IPv4 address</span>
+                      >Must be a valid IPv4 address</span
+                    >
                   </label>
                 </div>
                 <div>
@@ -536,10 +565,12 @@
                     maxlength="15"
                     size="15"
                     bind:value={networkEditable.subnet_mask}
-                    required />
+                    required
+                  />
                   <label class="label" for="subnet">
                     <span
-                      class="label-text-alt text-error {formErrors.subnet_mask ? '' : 'hidden'}">
+                      class="label-text-alt text-error {formErrors.subnet_mask ? '' : 'hidden'}"
+                    >
                       Must be a valid IPv4 address
                     </span>
                   </label>
@@ -556,7 +587,8 @@
                     maxlength="15"
                     size="15"
                     bind:value={networkEditable.dns_ip_1}
-                    required />
+                    required
+                  />
                   <label class="label" for="gateway">
                     <span class="label-text-alt text-error {formErrors.dns_1 ? '' : 'hidden'}">
                       Must be a valid IPv4 address
@@ -575,7 +607,8 @@
                     maxlength="15"
                     size="15"
                     bind:value={networkEditable.dns_ip_2}
-                    required />
+                    required
+                  />
                   <label class="label" for="subnet">
                     <span class="label-text-alt text-error {formErrors.dns_2 ? '' : 'hidden'}">
                       Must be a valid IPv4 address

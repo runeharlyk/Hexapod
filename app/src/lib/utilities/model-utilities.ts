@@ -1,4 +1,4 @@
-import { Color, Vector3 } from 'three'
+import { Box3, Color, Vector3 } from 'three'
 import URDFLoader, { type URDFRobot } from 'urdf-loader'
 import { XacroLoader } from 'xacro-parser'
 import { Result } from '$lib/utilities'
@@ -41,8 +41,9 @@ export const loadModelAsync = async (
           model.rotation.x = -Math.PI / 2
           model.rotation.z = Math.PI / 2
           model.traverse(c => (c.castShadow = true))
-          model.updateMatrixWorld(true)
           model.scale.setScalar(10)
+          centerRobotPivot(model)
+          model.updateMatrixWorld(true)
           const joints = Object.entries(model.joints)
             .filter(joint => joint[1].jointType !== 'fixed')
             .map(joint => joint[0])
@@ -67,6 +68,15 @@ export const toeWorldPositions = (robot: URDFRobot) => {
     }
   })
   return toe_positions
+}
+
+const centerRobotPivot = (robot: URDFRobot) => {
+  robot.updateMatrixWorld(true)
+  const bounds = new Box3().setFromObject(robot)
+  const center = bounds.getCenter(new Vector3())
+
+  robot.position.x -= center.x
+  robot.position.z -= center.z
 }
 
 export const footColor = () => {
