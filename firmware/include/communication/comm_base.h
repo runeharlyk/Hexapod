@@ -15,7 +15,12 @@ enum class MsgKind : uint8_t { CONNECT = 0, DISCONNECT = 1, EVENT = 2, PING = 3,
 
 class CommAdapterBase {
   public:
-    CommAdapterBase() { mutex_ = xSemaphoreCreateMutex(); }
+    CommAdapterBase() {
+        mutex_ = xSemaphoreCreateMutex();
+        if (!busMutex_) {
+            busMutex_ = xSemaphoreCreateMutex();
+        }
+    }
 
     ~CommAdapterBase() {
         unsubscribeAllEventBus();
@@ -83,33 +88,40 @@ class CommAdapterBase {
                 message_topic_t topic = obj[1].as<message_topic_t>();
                 ESP_LOGD("Comm Base", "EVENT payload for topic: %d", topic);
 
+                // Mark this as an incoming message to prevent re-emission
+                _incomingMessage = true;
+
                 if (topic == SERVO_SIGNAL) {
                     ServoSignalMsg payload;
                     payload.fromJson(obj[2]);
-                    EventBus<ServoSignalMsg>::publish(payload, _servoSubHandle);
+                    EventBus<ServoSignalMsg>::publish(payload);
                 } else if (topic == COMMAND) {
                     CommandMsg payload;
                     payload.fromJson(obj[2]);
-                    EventBus<CommandMsg>::publish(payload, _cmdSubHandle);
+                    EventBus<CommandMsg>::publish(payload);
                 } else if (topic == MODE) {
                     ModeMsg payload;
                     payload.fromJson(obj[2]);
-                    EventBus<ModeMsg>::publish(payload, _modeSubHandle);
+                    EventBus<ModeMsg>::publish(payload);
                 } else if (topic == GAIT) {
                     GaitMsg payload;
                     payload.fromJson(obj[2]);
-                    EventBus<GaitMsg>::publish(payload, _gaitSubHandle);
+                    ESP_LOGI("Comm Base", "Publishing GAIT message with value %d, _incomingMessage=%s",
+                             (int)payload.gait, _incomingMessage ? "true" : "false");
+                    EventBus<GaitMsg>::publish(payload);
                 } else if (topic == SERVO_SETTINGS) {
                     ServoSettingsMsg payload;
                     payload.fromJson(obj[2]);
-                    EventBus<ServoSettingsMsg>::publish(payload, _servoSettingsMsgSubHandle);
+                    EventBus<ServoSettingsMsg>::publish(payload);
                 } else if (topic == ANGLE) {
                     ServoAnglesMsg payload;
                     payload.fromJson(obj[2]);
-                    EventBus<ServoAnglesMsg>::publish(payload, _angleSubHandle);
+                    EventBus<ServoAnglesMsg>::publish(payload);
                 } else {
                     ESP_LOGW("Comm Base", "Unknown EVENT topic: %d", topic);
                 }
+
+                _incomingMessage = false;
                 break;
             }
 
@@ -131,16 +143,18 @@ class CommAdapterBase {
     }
 
   protected:
-    EventBus<CommandMsg>::Handle _cmdSubHandle;
-    EventBus<ModeMsg>::Handle _modeSubHandle;
-    EventBus<GaitMsg>::Handle _gaitSubHandle;
-    EventBus<ServoAnglesMsg>::Handle _angleSubHandle;
-    EventBus<ServoSignalMsg>::Handle _servoSubHandle;
-    EventBus<ServoSettingsMsg>::Handle _servoSettingsMsgSubHandle;
+    static EventBus<CommandMsg>::Handle _cmdSubHandle;
+    static EventBus<ModeMsg>::Handle _modeSubHandle;
+    static EventBus<GaitMsg>::Handle _gaitSubHandle;
+    static EventBus<ServoAnglesMsg>::Handle _angleSubHandle;
+    static EventBus<ServoSignalMsg>::Handle _servoSubHandle;
+    static EventBus<ServoSettingsMsg>::Handle _servoSettingsMsgSubHandle;
 
     std::map<message_topic_t, std::list<int>> subs_;
 
-    std::map<message_topic_t, bool> busActive_;
+    static std::map<message_topic_t, bool> busActive_;
+    static SemaphoreHandle_t busMutex_;
+    static thread_local bool _incomingMessage;
 
     SemaphoreHandle_t mutex_;
 
@@ -173,37 +187,76 @@ class CommAdapterBase {
     }
 
     void subscribeIfNeeded(message_topic_t t) {
-        if (busActive_[t]) return;
+        ESP_LOGI("Comm Base", "subscribeIfNeeded called for topic %d by adapter %p", t, this);
+        xSemaphoreTake(busMutex_, portMAX_DELAY);
+        if (busActive_[t]) {
+            ESP_LOGI("Comm Base", "Topic %d already active, skipping subscription", t);
+            xSemaphoreGive(busMutex_);
+            return;
+        }
+        ESP_LOGI("Comm Base", "Creating new subscription for topic %d", t);
 
         switch (t) {
             case COMMAND:
-                _cmdSubHandle = EventBus<CommandMsg>::subscribe([this](const CommandMsg& c) { emit(COMMAND, c); });
+                _cmdSubHandle = EventBus<CommandMsg>::subscribe([this](const CommandMsg& c) {
+                    if (!_incomingMessage) {
+                        emit(COMMAND, c);
+                    }
+                });
                 break;
             case MODE:
-                _modeSubHandle = EventBus<ModeMsg>::subscribe([this](const ModeMsg& m) { emit(MODE, m); });
+                _modeSubHandle = EventBus<ModeMsg>::subscribe([this](const ModeMsg& m) {
+                    if (!_incomingMessage) {
+                        emit(MODE, m);
+                    }
+                });
                 break;
             case GAIT:
-                _gaitSubHandle = EventBus<GaitMsg>::subscribe([this](const GaitMsg& g) { emit(GAIT, g); });
+                ESP_LOGI("Comm Base", "Creating GAIT subscription for adapter %p", this);
+                _gaitSubHandle = EventBus<GaitMsg>::subscribe([this](const GaitMsg& g) {
+                    ESP_LOGI("Comm Base", "GAIT event received by adapter %p, _incomingMessage=%s", this,
+                             _incomingMessage ? "true" : "false");
+                    if (!_incomingMessage) {
+                        ESP_LOGI("Comm Base", "Emitting GAIT to clients from adapter %p", this);
+                        emit(GAIT, g);
+                    } else {
+                        ESP_LOGI("Comm Base", "Skipping GAIT emit (incoming message) from adapter %p", this);
+                    }
+                });
                 break;
             case SERVO_SIGNAL:
-                _servoSubHandle =
-                    EventBus<ServoSignalMsg>::subscribe([this](const ServoSignalMsg& s) { emit(SERVO_SIGNAL, s); });
+                _servoSubHandle = EventBus<ServoSignalMsg>::subscribe([this](const ServoSignalMsg& s) {
+                    if (!_incomingMessage) {
+                        emit(SERVO_SIGNAL, s);
+                    }
+                });
                 break;
             case SERVO_SETTINGS:
-                _servoSettingsMsgSubHandle = EventBus<ServoSettingsMsg>::subscribe(
-                    [this](const ServoSettingsMsg& s) { emit(SERVO_SETTINGS, s); });
+                _servoSettingsMsgSubHandle = EventBus<ServoSettingsMsg>::subscribe([this](const ServoSettingsMsg& s) {
+                    if (!_incomingMessage) {
+                        emit(SERVO_SETTINGS, s);
+                    }
+                });
                 break;
             case ANGLE:
-                _angleSubHandle =
-                    EventBus<ServoAnglesMsg>::subscribe([this](const ServoAnglesMsg& a) { emit(ANGLE, a); });
+                _angleSubHandle = EventBus<ServoAnglesMsg>::subscribe([this](const ServoAnglesMsg& a) {
+                    if (!_incomingMessage) {
+                        emit(ANGLE, a);
+                    }
+                });
                 break;
             default: break;
         }
         busActive_[t] = true;
+        xSemaphoreGive(busMutex_);
     }
 
     void unsubscribeIfNeeded(message_topic_t t) {
-        if (!busActive_[t]) return;
+        xSemaphoreTake(busMutex_, portMAX_DELAY);
+        if (!busActive_[t]) {
+            xSemaphoreGive(busMutex_);
+            return;
+        }
 
         switch (t) {
             case COMMAND: _cmdSubHandle.unsubscribe(); break;
@@ -215,6 +268,7 @@ class CommAdapterBase {
             default: break;
         }
         busActive_[t] = false;
+        xSemaphoreGive(busMutex_);
     }
 
     void unsubscribeAllEventBus() {

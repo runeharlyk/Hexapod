@@ -11,6 +11,7 @@
   import { dataBroker } from '$lib/transport/databroker'
   import { MessageTopic } from '$lib/interfaces/transport.interface'
   import { Vector3 } from 'three'
+  import { requestGait, requestMode } from '$lib/control'
 
   interface Props {
     sky?: boolean
@@ -89,7 +90,7 @@
       .add(motion.gait_state, 'gait_type', GaitLabels)
       .name('Gait Type')
       .onChange((value: GaitType) => {
-        gait.set(value)
+        requestGait(value)
       })
 
     const kin = gui_panel.addFolder('Kinematics')
@@ -117,7 +118,7 @@
     for (const name of $jointNames) {
       jointAngles[name] = 0
     }
-    mode.set(MotionModes.IDLE)
+    requestMode(MotionModes.IDLE)
     updateLimbs()
   }
 

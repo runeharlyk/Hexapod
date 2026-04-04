@@ -9,6 +9,7 @@
   import { GaitType } from '$lib/gait'
   import { notifications } from '$lib/components/toasts/notifications'
   import { gamepadAxes, gamepadButtons, hasGamepad } from '$lib/stores/gamepad'
+  import { requestGait, requestMode } from '$lib/control'
 
   let left: nipplejs.JoystickManager
   let right: nipplejs.JoystickManager
@@ -38,10 +39,10 @@
 
   $effect(() => {
     if ($gamepadButtons.length === 0) return
-    if ($gamepadButtons[0].pressed) mode.set(MotionModes.DEACTIVATED)
-    else if ($gamepadButtons[1].pressed) mode.set(MotionModes.IDLE)
-    else if ($gamepadButtons[2].pressed) mode.set(MotionModes.STAND)
-    else if ($gamepadButtons[3].pressed) mode.set(MotionModes.WALK)
+    if ($gamepadButtons[0].pressed) requestMode(MotionModes.DEACTIVATED)
+    else if ($gamepadButtons[1].pressed) requestMode(MotionModes.IDLE)
+    else if ($gamepadButtons[2].pressed) requestMode(MotionModes.STAND)
+    else if ($gamepadButtons[3].pressed) requestMode(MotionModes.WALK)
   })
 
   onMount(() => {
@@ -121,11 +122,11 @@
   }
 
   const changeMode = (modeValue: MotionModes) => {
-    mode.set(modeValue)
+    requestMode(modeValue)
   }
 
   const changeGait = (gaitValue: GaitType) => {
-    gait.set(gaitValue)
+    requestGait(gaitValue)
   }
 </script>
 
@@ -179,10 +180,11 @@
         {#if $mode === MotionModes.WALK}
           <select
             class="select select-primary"
-            oninput={e => changeGait((e.target as HTMLSelectElement)?.value as GaitType)}
+            value={$gait}
+            onchange={e => changeGait((e.target as HTMLSelectElement).value as GaitType)}
           >
             {#each Object.values(GaitType) as gaitValue}
-              <option value={gaitValue} selected={$gait === gaitValue}>
+              <option value={gaitValue}>
                 {capitalize(gaitValue.toString())}
               </option>
             {/each}

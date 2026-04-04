@@ -68,6 +68,12 @@ export class DataBroker {
     }
   }
 
+  send<T>(topic: MessageTopic, data: T) {
+    this.transports.forEach((_, transport) => {
+      transport.sendEvent(MessageType.EVENT, topic, data)
+    })
+  }
+
   emit<T>(topic: MessageTopic, data: T, excludeSubscriptionId?: string) {
     this.transports.forEach((transportId, transport) => {
       if (transportId !== excludeSubscriptionId) {

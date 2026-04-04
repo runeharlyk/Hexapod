@@ -73,7 +73,9 @@ function createWebSocketAdapter(): ITransport {
         hasEnabledProtocol = true
         connectCallbacks.forEach(cb => cb())
       }
-      if (topic && payload) dataCallbacks.forEach(cb => cb(type, topic, payload))
+      if (topic !== undefined && payload !== undefined) {
+        dataCallbacks.forEach(cb => cb(type, topic, payload))
+      }
     }
 
     ws.onerror = error => {

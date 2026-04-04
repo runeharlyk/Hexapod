@@ -1,9 +1,9 @@
 <script lang="ts">
+  import { requestMode } from '$lib/control'
   import { MotionModes } from '$lib/motion'
-  import { mode } from '$lib/stores'
 
   const deactivate = async () => {
-    mode.set(MotionModes.DEACTIVATED)
+    requestMode(MotionModes.DEACTIVATED)
   }
 </script>
 

@@ -46,7 +46,9 @@ function createBLEAdapter(): ITransport {
     tx?.addEventListener('characteristicvaluechanged', e => {
       const data = decode(new Uint8Array(e.target.value.buffer)) as ServerMessage
       const [type, topic, payload] = data
-      if (topic && payload) dataCallbacks.forEach(cb => cb(type, topic, payload))
+      if (topic !== undefined && payload !== undefined) {
+        dataCallbacks.forEach(cb => cb(type, topic, payload))
+      }
     })
 
     connected.set(true)

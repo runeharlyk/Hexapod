@@ -34,12 +34,19 @@
       throttle.throttle(() => dataBroker.emit(MessageTopic.COMMAND, data), 40)
     )
 
-    mode.subscribe(data =>
-      dataBroker.emit(MessageTopic.MODE, Object.values(MotionModes).indexOf(data))
-    )
-    gait.subscribe(data =>
-      dataBroker.emit(MessageTopic.GAIT, Object.values(GaitType).indexOf(data))
-    )
+    dataBroker.on<number>(MessageTopic.MODE, data => {
+      const nextMode = Object.values(MotionModes)[data]
+      if (nextMode !== undefined) {
+        mode.set(nextMode)
+      }
+    })
+
+    dataBroker.on<number>(MessageTopic.GAIT, data => {
+      const nextGait = Object.values(GaitType)[data]
+      if (nextGait !== undefined) {
+        gait.set(nextGait)
+      }
+    })
   })
 
   let menuOpen = $state(false)

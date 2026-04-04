@@ -15,15 +15,31 @@ class MotionService {
         : _servoController(servoController), _peripherals(peripherals) {}
 
     void begin() {
-        _cmdSubHandle = EventBus<CommandMsg>::subscribe([&](CommandMsg const &c) { handleCommand(c); });
-        _modeSubHandle = EventBus<ModeMsg>::subscribe([&](ModeMsg const &c) { handleInputMode(c); });
-        _gaitSubHandle = EventBus<GaitMsg>::subscribe([&](GaitMsg const &c) { handleInputGait(c); });
-        _angleSubHandle = EventBus<ServoAnglesMsg>::subscribe([&](ServoAnglesMsg const &s) { handleAnglesEvent(s); });
+        ESP_LOGI("MotionService", "Subscribing to event buses...");
+        _cmdSubHandle = EventBus<CommandMsg>::subscribe([&](CommandMsg const &c) {
+            ESP_LOGI("MotionService", "COMMAND callback called");
+            handleCommand(c);
+        });
+        _modeSubHandle = EventBus<ModeMsg>::subscribe([&](ModeMsg const &c) {
+            ESP_LOGI("MotionService", "MODE callback called with mode %d", (int)c.mode);
+            handleInputMode(c);
+        });
+        _gaitSubHandle = EventBus<GaitMsg>::subscribe([&](GaitMsg const &c) {
+            ESP_LOGI("MotionService", "GAIT callback called with gait %d", (int)c.gait);
+            handleInputGait(c);
+        });
+        _angleSubHandle = EventBus<ServoAnglesMsg>::subscribe([&](ServoAnglesMsg const &s) {
+            ESP_LOGI("MotionService", "ANGLES callback called");
+            handleAnglesEvent(s);
+        });
+        ESP_LOGI("MotionService", "Event bus subscriptions completed");
         // TODO: Add body state
         // _positionSubHandle = EventBus::subscribe<Gait>([&](Gait const &c) { handleInputGait(c); });
 
         // TODO: Send joint angles on subscribe
         body_state.updateFeet(default_feet_pos);
+        EventBus<ModeMsg>::publish({motionState});
+        EventBus<GaitMsg>::publish({gait_state.gait_type});
     }
 
     void handleAnglesEvent(ServoAnglesMsg const &s) {
@@ -46,6 +62,8 @@ class MotionService {
     }
 
     void handleCommand(CommandMsg const &c) {
+        lastCommandMillis = millis();
+        commandTimedOut = false;
         target_body_state.zm = c.h * 50;
         target_body_state.omega = c.ry * 0.254f;
         switch (motionState) {
@@ -69,6 +87,7 @@ class MotionService {
     }
 
     bool updateMotion() {
+        resetCommandIfTimedOut();
         switch (motionState) {
             case MOTION_STATE::DEACTIVATED: return false;
             case MOTION_STATE::IDLE: return false;
@@ -118,13 +137,40 @@ class MotionService {
     gait_state_t gait_state = {15, 0, 0, 0, 1, 0.002, default_stand_frac, GaitType::TRI_GATE, {0, 0.5, 0, 0.5, 0, 0.5}};
 
     const float smoothing_factor = 0.06f;
+    static constexpr unsigned long COMMAND_TIMEOUT_MS = 2000;
 
     float default_feet_pos[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
                                     {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
 
     MOTION_STATE motionState = MOTION_STATE::DEACTIVATED;
+    unsigned long lastCommandMillis = 0;
+    bool commandTimedOut = false;
 
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+
+    void applyZeroCommand() {
+        target_body_state.xm = 0;
+        target_body_state.ym = 0;
+        target_body_state.zm = 0;
+        target_body_state.phi = 0;
+        target_body_state.omega = 0;
+        gait_state.step_x = 0;
+        gait_state.step_z = 0;
+        gait_state.step_angle = 0;
+        gait_state.step_speed = 1.f;
+        gait_state.step_height = 15.f;
+        gait_state.step_depth = 0.002f;
+    }
+
+    void resetCommandIfTimedOut() {
+        if (lastCommandMillis == 0) return;
+        if (commandTimedOut) return;
+        if (millis() - lastCommandMillis < COMMAND_TIMEOUT_MS) return;
+
+        ESP_LOGW("MotionService", "No motion command for %lu ms, applying zero command", COMMAND_TIMEOUT_MS);
+        applyZeroCommand();
+        commandTimedOut = true;
+    }
 };
 
 #endif
