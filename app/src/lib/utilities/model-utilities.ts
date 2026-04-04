@@ -9,7 +9,6 @@ let model_xml: XMLDocument
 const base = resolve('/')
 
 export const populateModelCache = async () => {
-  // await cacheModelFiles();
   const modelRes = await loadModelAsync(`${base}model.xacro`)
   if (modelRes.isOk()) {
     const [urdf, JOINT_NAME] = modelRes.inner
@@ -26,6 +25,10 @@ export const loadModelAsync = async (
   return new Promise(res => {
     const xacroLoader = new XacroLoader()
     const urdfLoader = new URDFLoader()
+    ;(xacroLoader as XacroLoader & { workingPath: string }).workingPath = base
+    urdfLoader.packages = {
+      hex: `${base}hex`
+    }
     urdfLoader.workingPath = base
 
     xacroLoader.load(

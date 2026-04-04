@@ -55,6 +55,10 @@ export interface ControllerCommand {
 export class GaitController {
   defaultPosition: Matrix
   phase = 0
+  last_body_state: body_state_t | null = null
+  protected cumulative_position = { x: 0, y: 0, z: 0 }
+  protected cumulative_orientation = { roll: 0, pitch: 0, yaw: 0 }
+  protected walkTranslationScale = 2.5
 
   constructor(defaultPosition: Matrix) {
     this.defaultPosition = defaultPosition
@@ -102,6 +106,7 @@ export class GaitController {
     }
 
     body.feet = newFeet
+    this.update_cumulative_position(body, gait, dt)
   }
 
   private advancePhase(dt: number, velocity: number) {
@@ -118,6 +123,48 @@ export class GaitController {
       return [phase / standFrac, sine_curve, -depth]
     }
     return [(phase - standFrac) / (1 - standFrac), bezier_curve, height]
+  }
+
+  update_cumulative_position(body_state: body_state_t, gait_state: gait_state_t, dt: number) {
+    if (this.last_body_state === null) {
+      this.last_body_state = { ...body_state }
+      body_state.cumulative_x = 0
+      body_state.cumulative_y = 0
+      body_state.cumulative_z = 0
+      body_state.cumulative_roll = 0
+      body_state.cumulative_pitch = 0
+      body_state.cumulative_yaw = 0
+      return
+    }
+
+    const m = gait_state
+    const moving = m.step_x !== 0 || m.step_z !== 0 || m.step_angle !== 0
+
+    if (moving) {
+      const step_displacement_x_local = m.step_x * this.walkTranslationScale * m.step_speed * dt
+      const step_displacement_z_local = m.step_z * this.walkTranslationScale * m.step_speed * dt
+      const step_displacement_yaw = m.step_angle * m.step_speed * dt
+
+      const cos_yaw = Math.cos(this.cumulative_orientation.yaw)
+      const sin_yaw = Math.sin(this.cumulative_orientation.yaw)
+      const step_displacement_x =
+        step_displacement_x_local * cos_yaw - step_displacement_z_local * sin_yaw
+      const step_displacement_z =
+        step_displacement_x_local * sin_yaw + step_displacement_z_local * cos_yaw
+
+      this.cumulative_position.x += step_displacement_x
+      this.cumulative_position.z += step_displacement_z
+      this.cumulative_orientation.yaw += step_displacement_yaw
+    }
+
+    body_state.cumulative_x = this.cumulative_position.x
+    body_state.cumulative_y = this.cumulative_position.y
+    body_state.cumulative_z = this.cumulative_position.z
+    body_state.cumulative_roll = this.cumulative_orientation.roll
+    body_state.cumulative_pitch = this.cumulative_orientation.pitch
+    body_state.cumulative_yaw = this.cumulative_orientation.yaw
+
+    this.last_body_state = { ...body_state }
   }
 }
 

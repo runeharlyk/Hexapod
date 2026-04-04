@@ -10,7 +10,7 @@
   import Motion, { MotionModes } from '$lib/motion'
   import { dataBroker } from '$lib/transport/databroker'
   import { MessageTopic } from '$lib/interfaces/transport.interface'
-  import Kinematics from '$lib/kinematic'
+  import { Vector3 } from 'three'
 
   interface Props {
     sky?: boolean
@@ -41,6 +41,7 @@
   }
 
   let jointAngles: Record<string, number> = {}
+  let lastRobotPosition = new Vector3()
 
   onMount(async () => {
     await populateModelCache()
@@ -158,7 +159,10 @@
 
   const update_camera = (robot: URDFRobot) => {
     if (!settings['Fix camera on robot']) return
-    sceneManager.orbit.target = robot.position.clone()
+    const delta = robot.position.clone().sub(lastRobotPosition)
+    sceneManager.orbit.target.add(delta)
+    sceneManager.camera.position.add(delta)
+    lastRobotPosition.copy(robot.position)
   }
 
   const calculateGroundHeight = () => {
@@ -181,13 +185,57 @@
   const orient_robot = (robot: URDFRobot) => {
     if (settings['Robot transform controls'] || !settings['Auto orient robot']) return
 
-    robot.position.z = smooth(robot.position.z, -motion.body_state.xm / 12, 0.1)
-    robot.position.x = smooth(robot.position.x, -motion.body_state.ym / 12, 0.1)
-    robot.position.y = smooth(robot.position.y, calculateGroundHeight(), 0.1)
+    const ORIENT_SMOOTH = 0.1
+    const POSITION_SCALE = 1 / 12
+    const body = motion.body_state
 
-    robot.rotation.z = smooth(robot.rotation.z, -motion.body_state.psi + Math.PI / 2, 0.1)
-    robot.rotation.y = smooth(robot.rotation.y, motion.body_state.omega, 0.1)
-    robot.rotation.x = smooth(robot.rotation.x, -motion.body_state.phi - Math.PI / 2, 0.1)
+    const cmdXm = body.xm ?? 0
+    const cmdYm = body.ym ?? 0
+    const cmdYaw = -(body.psi ?? 0)
+    const cmdRoll = body.omega ?? 0
+    const cmdPitch = -(body.phi ?? 0)
+
+    const cumulativeYaw = body.cumulative_yaw ?? 0
+    const cumulativePitch = body.cumulative_pitch ?? 0
+    const cumulativeRoll = body.cumulative_roll ?? 0
+    const cumulativeXm = body.cumulative_x ?? 0
+    const cumulativeZm = body.cumulative_z ?? body.cumulative_y ?? 0
+
+    const totalYaw = cmdYaw + cumulativeYaw
+
+    const cosYaw = Math.cos(totalYaw)
+    const sinYaw = Math.sin(totalYaw)
+
+    const rotatedXm = cmdXm * cosYaw - cmdYm * sinYaw
+    const rotatedYm = cmdXm * sinYaw + cmdYm * cosYaw
+
+    robot.position.z = smooth(
+      robot.position.z,
+      (-rotatedXm + cumulativeXm) * POSITION_SCALE,
+      ORIENT_SMOOTH
+    )
+
+    robot.position.x = smooth(
+      robot.position.x,
+      (-rotatedYm + cumulativeZm) * POSITION_SCALE,
+      ORIENT_SMOOTH
+    )
+
+    robot.position.y = smooth(robot.position.y, calculateGroundHeight(), ORIENT_SMOOTH)
+
+    robot.rotation.z = smooth(robot.rotation.z, totalYaw + Math.PI / 2, ORIENT_SMOOTH)
+
+    robot.rotation.x = smooth(
+      robot.rotation.x,
+      -Math.PI / 2 + cmdPitch * cosYaw - cmdRoll * sinYaw + cumulativePitch,
+      ORIENT_SMOOTH
+    )
+
+    robot.rotation.y = smooth(
+      robot.rotation.y,
+      cmdPitch * sinYaw + cmdRoll * cosYaw + cumulativeRoll,
+      ORIENT_SMOOTH
+    )
   }
 
   const render = () => {

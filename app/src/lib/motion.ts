@@ -49,7 +49,13 @@ export default class Motion {
       xm: 0,
       ym: 0,
       zm: 0,
-      feet: this.defaultPosition
+      feet: this.defaultPosition,
+      cumulative_x: 0,
+      cumulative_y: 0,
+      cumulative_z: 0,
+      cumulative_roll: 0,
+      cumulative_pitch: 0,
+      cumulative_yaw: 0
     }
     this.gait_state = {
       step_height: 15,
