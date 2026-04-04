@@ -1,9 +1,6 @@
 #pragma once
 
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEUtils.h>
-#include <BLE2902.h>
+#include <NimBLEDevice.h>
 
 #include <filesystem.h>
 #include <template/stateful_service.h>
@@ -31,30 +28,33 @@ struct BLEMessage {
 
 class BLE : public CommAdapterBase {
   private:
-    BLEServer* _server {nullptr};
-    BLECharacteristic* _txCharacteristic {nullptr};
-    BLECharacteristic* _rxCharacteristic {nullptr};
+    NimBLEServer* _server {nullptr};
+    NimBLECharacteristic* _txCharacteristic {nullptr};
+    NimBLECharacteristic* _rxCharacteristic {nullptr};
     bool _deviceConnected {false};
 
     QueueHandle_t _messageQueue {nullptr};
     TaskHandle_t _processingTask {nullptr};
     bool _taskRunning {false};
 
-    class ServerCallbacks : public BLEServerCallbacks {
+    class ServerCallbacks : public NimBLEServerCallbacks {
         BLE* _service;
 
       public:
         ServerCallbacks(BLE* service) : _service(service) {}
-        void onConnect(BLEServer* pServer) override;
-        void onDisconnect(BLEServer* pServer) override;
+        void onConnect(NimBLEServer* pServer);
+        void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo);
+        void onDisconnect(NimBLEServer* pServer);
+        void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason);
     };
 
-    class RXCallbacks : public BLECharacteristicCallbacks {
+    class RXCallbacks : public NimBLECharacteristicCallbacks {
         BLE* _service;
 
       public:
         RXCallbacks(BLE* service) : _service(service) {}
-        void onWrite(BLECharacteristic* characteristic) override;
+        void onWrite(NimBLECharacteristic* characteristic);
+        void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo& connInfo);
     };
 
     void restart();
@@ -66,7 +66,7 @@ class BLE : public CommAdapterBase {
   public:
     BLE() {};
     ~BLE() {
-        if (_server) BLEDevice::deinit(true);
+        if (_server) NimBLEDevice::deinit(true);
         if (_messageQueue) vQueueDelete(_messageQueue);
         if (_processingTask) vTaskDelete(_processingTask);
     };

@@ -26,20 +26,23 @@ void BLE::begin() {
 void BLE::setup() {
     ESP_LOGI("BluetoothService", "Initializing BLE with device name: %s", "Hexapod");
 
-    BLEDevice::init("Hexapod");
-    _server = BLEDevice::createServer();
+    NimBLEDevice::init("Hexapod");
+    NimBLEDevice::setMTU(255);
+    NimBLEDevice::setPower(ESP_PWR_LVL_P9);
+    _server = NimBLEDevice::createServer();
     _server->setCallbacks(new ServerCallbacks(this));
 
-    BLEService* service = _server->createService(SERVICE_UUID);
+    NimBLEService* service = _server->createService(SERVICE_UUID);
 
-    _txCharacteristic = service->createCharacteristic(CHARACTERISTIC_TX, BLECharacteristic::PROPERTY_NOTIFY);
-    _txCharacteristic->addDescriptor(new BLE2902());
+    _txCharacteristic = service->createCharacteristic(CHARACTERISTIC_TX, NIMBLE_PROPERTY::NOTIFY);
 
-    _rxCharacteristic = service->createCharacteristic(CHARACTERISTIC_RX, BLECharacteristic::PROPERTY_WRITE);
+    _rxCharacteristic = service->createCharacteristic(CHARACTERISTIC_RX, NIMBLE_PROPERTY::WRITE);
     _rxCharacteristic->setCallbacks(new RXCallbacks(this));
 
     service->start();
-    _server->getAdvertising()->start();
+    NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+    advertising->addServiceUUID(SERVICE_UUID);
+    advertising->start();
 
     ESP_LOGI("BluetoothService", "BLE UART service started, advertising as %s", "Hexapod");
 }
@@ -47,7 +50,7 @@ void BLE::setup() {
 void BLE::restart() {
     ESP_LOGI("BluetoothService", "Restarting BLE service due to settings update.");
     if (_server) {
-        BLEDevice::deinit(true);
+        NimBLEDevice::deinit(true);
         _server = nullptr;
         _txCharacteristic = nullptr;
         _rxCharacteristic = nullptr;
@@ -55,21 +58,28 @@ void BLE::restart() {
     setup();
 }
 
-void BLE::ServerCallbacks::onConnect(BLEServer* pServer) {
+void BLE::ServerCallbacks::onConnect(NimBLEServer* pServer) {
     _service->_deviceConnected = true;
     ESP_LOGI("BluetoothService", "Client connected");
 }
 
-void BLE::ServerCallbacks::onDisconnect(BLEServer* pServer) {
+void BLE::ServerCallbacks::onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) { onConnect(pServer); }
+
+void BLE::ServerCallbacks::onDisconnect(NimBLEServer* pServer) {
     _service->_deviceConnected = false;
     ESP_LOGI("BluetoothService", "Client disconnected");
     pServer->startAdvertising();
     ESP_LOGI("BluetoothService", "Restarting advertising");
 }
 
-void BLE::RXCallbacks::onWrite(BLECharacteristic* characteristic) {
-    uint8_t* data = characteristic->getData();
-    size_t len = characteristic->getLength();
+void BLE::ServerCallbacks::onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) {
+    onDisconnect(pServer);
+}
+
+void BLE::RXCallbacks::onWrite(NimBLECharacteristic* characteristic) {
+    std::string value = characteristic->getValue();
+    const uint8_t* data = reinterpret_cast<const uint8_t*>(value.data());
+    size_t len = value.size();
     if (len && len <= 512) {
         BLEMessage msg;
         memcpy(msg.data, data, len);
@@ -80,6 +90,8 @@ void BLE::RXCallbacks::onWrite(BLECharacteristic* characteristic) {
         }
     }
 }
+
+void BLE::RXCallbacks::onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo& connInfo) { onWrite(characteristic); }
 
 void BLE::messageProcessingTask(void* parameter) {
     BLE* ble = static_cast<BLE*>(parameter);

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import { page } from '$app/state'
   import { Modals, modals } from 'svelte-modals'
   import Toast from '$lib/components/toasts/Toast.svelte'
@@ -24,19 +24,25 @@
   dataBroker.addTransport(websocket)
 
   const throttle = new throttler()
+  const COMMAND_HEARTBEAT_MS = 250
+  let lastCommand = [0, 0, 0, 0, 0, 0, 0, 0]
+  let currentMode = MotionModes.DEACTIVATED
+  let commandHeartbeatId: ReturnType<typeof setInterval> | undefined
 
   let { children }: Props = $props()
 
   onMount(async () => {
     await websocket.connect()
 
-    outControllerData.subscribe(data =>
+    outControllerData.subscribe(data => {
+      lastCommand = [...data]
       throttle.throttle(() => dataBroker.emit(MessageTopic.COMMAND, data), 40)
-    )
+    })
 
     dataBroker.on<number>(MessageTopic.MODE, data => {
       const nextMode = Object.values(MotionModes)[data]
       if (nextMode !== undefined) {
+        currentMode = nextMode
         mode.set(nextMode)
       }
     })
@@ -47,6 +53,15 @@
         gait.set(nextGait)
       }
     })
+
+    commandHeartbeatId = setInterval(() => {
+      if (currentMode !== MotionModes.STAND && currentMode !== MotionModes.WALK) return
+      dataBroker.send(MessageTopic.COMMAND, lastCommand)
+    }, COMMAND_HEARTBEAT_MS)
+  })
+
+  onDestroy(() => {
+    if (commandHeartbeatId) clearInterval(commandHeartbeatId)
   })
 
   let menuOpen = $state(false)

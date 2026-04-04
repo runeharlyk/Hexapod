@@ -95,7 +95,7 @@ void IRAM_ATTR serviceLoopEntry(void *) {
 
     ble.begin();
     socket.begin();
-    eventSource.begin();
+    // eventSource.begin();
 
     ESP_LOGI("main", "Service control task started");
     for (;;) {
