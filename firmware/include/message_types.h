@@ -28,7 +28,7 @@ struct ModeMsg {
     void fromJson(JsonVariantConst o) { mode = (MOTION_STATE)o.as<int>(); }
 };
 
-enum class GaitType { TRI_GATE, BI_GATE, WAVE, RIPPLE };
+enum class GaitType { TRI_GATE, BI_GATE, WAVE, RIPPLE, AUTO };
 
 struct GaitMsg {
     GaitType gait;

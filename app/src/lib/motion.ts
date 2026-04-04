@@ -62,7 +62,7 @@ export default class Motion {
       step_x: 0,
       step_z: 0,
       step_angle: 0,
-      step_speed: 1,
+      step_speed: 0.5,
       step_depth: 0.002,
       stand_frac: default_stand_frac[GaitType.TRI_GATE],
       offset: default_offset[GaitType.TRI_GATE],
@@ -78,6 +78,9 @@ export default class Motion {
     this.gait_state.gait_type = gait
     this.gait_state.offset = default_offset[gait]
     this.gait_state.stand_frac = default_stand_frac[gait]
+    if (gait === GaitType.AUTO) {
+      this.gait_state.step_speed = 1
+    }
   }
 
   handleCommand(command: number[]) {
@@ -98,7 +101,10 @@ export default class Motion {
         this.gait_state.step_x = -command[0] * 100
         this.gait_state.step_z = command[1] * 100
         this.gait_state.step_angle = command[2] * 0.8
-        this.gait_state.step_speed = command[5] + 1
+        this.gait_state.step_speed =
+          this.gait_state.gait_type === GaitType.AUTO
+            ? 1
+            : Math.max(0, Math.min(1, (command[5] + 1) * 0.5))
         this.gait_state.step_height = (command[6] + 1) * 20
         this.gait_state.step_depth = 0.002
         break

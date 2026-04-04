@@ -80,7 +80,7 @@ class MotionService {
                 gait_state.step_x = -c.lx * 100;
                 gait_state.step_z = c.ly * 100;
                 gait_state.step_angle = c.rx * 0.8;
-                gait_state.step_speed = c.s + 1.f;
+                gait_state.step_speed = CLIP((c.s + 1.f) * 0.5f, 0.0f, 1.0f);
                 gait_state.step_height = (c.s1 + 1.f) * 20.f;
                 gait_state.step_depth = 0.002f;
                 break;
@@ -167,7 +167,7 @@ class MotionService {
         gait_state.step_x = 0;
         gait_state.step_z = 0;
         gait_state.step_angle = 0;
-        gait_state.step_speed = 1.f;
+        gait_state.step_speed = 0.5f;
         gait_state.step_height = 15.f;
         gait_state.step_depth = 0.002f;
     }

@@ -5,28 +5,59 @@ export enum GaitType {
   TRI_GATE = 'Tri Gate',
   BI_GATE = 'Bi Gate',
   WAVE = 'Wave',
-  RIPPLE = 'Ripple'
+  RIPPLE = 'Ripple',
+  AUTO = 'Auto'
 }
 
 export const GaitLabels: Record<string, GaitType> = {
   'Tri Gate': GaitType.TRI_GATE,
   'Bi Gate': GaitType.BI_GATE,
   Wave: GaitType.WAVE,
-  Ripple: GaitType.RIPPLE
+  Ripple: GaitType.RIPPLE,
+  Auto: GaitType.AUTO
 }
 
 export const default_offset: Record<GaitType, number[]> = {
   [GaitType.TRI_GATE]: [0, 0.52, 0.08, 0.58, 0.16, 0.66],
   [GaitType.BI_GATE]: [0, 1 / 3, 2 / 3, 2 / 3, 1 / 3, 0],
   [GaitType.WAVE]: [0, 1 / 6, 2 / 6, 5 / 6, 4 / 6, 3 / 6],
-  [GaitType.RIPPLE]: [0, 4 / 6, 2 / 6, 1 / 6, 5 / 6, 3 / 6]
+  [GaitType.RIPPLE]: [0, 4 / 6, 2 / 6, 1 / 6, 5 / 6, 3 / 6],
+  [GaitType.AUTO]: [0, 4 / 6, 2 / 6, 1 / 6, 5 / 6, 3 / 6]
 }
 
 export const default_stand_frac: Record<GaitType, number> = {
   [GaitType.TRI_GATE]: 3.1 / 6,
   [GaitType.BI_GATE]: 2.1 / 6,
   [GaitType.WAVE]: 5 / 6,
-  [GaitType.RIPPLE]: 5 / 6
+  [GaitType.RIPPLE]: 5 / 6,
+  [GaitType.AUTO]: 5 / 6
+}
+
+const MAX_STEP_LENGTH_MM = 70
+const MIN_STEP_LENGTH_MM = 12
+const FOOT_PATH_MAX_SPEED_MM_S = 200
+const BODY_SPEED_SAFETY = 0.85
+const AUTO_RIPPLE_MAX_INPUT = 0.45
+const AUTO_TRI_MAX_INPUT = 0.55
+const MAX_COMMAND_TRANSLATION_MM = Math.hypot(100, 100)
+const MAX_COMMAND_TURN_RAD = 0.8
+const TURN_EQUIVALENT_STEP_MM = 55
+const REPOSITION_PHASE_SPEED = 0.9
+const AUTO_COMMAND_BLEND = 0.06
+const AUTO_BAND_RIPPLE = 0.33
+const AUTO_BAND_TRI = 0.6
+const GAIT_SPEED_SAFETY: Record<GaitType, number> = {
+  [GaitType.RIPPLE]: 0.75,
+  [GaitType.TRI_GATE]: 0.78,
+  [GaitType.BI_GATE]: 1,
+  [GaitType.AUTO]: 0.75,
+}
+const GAIT_PHASE_COUNT: Record<GaitType, number> = {
+  [GaitType.TRI_GATE]: 2,
+  [GaitType.BI_GATE]: 1,
+  [GaitType.WAVE]: 6,
+  [GaitType.RIPPLE]: 6,
+  [GaitType.AUTO]: 6
 }
 
 export interface gait_state_t {
@@ -61,7 +92,8 @@ export class GaitController {
   last_body_state: body_state_t | null = null
   protected cumulative_position = { x: 0, y: 0, z: 0 }
   protected cumulative_orientation = { roll: 0, pitch: 0, yaw: 0 }
-  protected walkTranslationScale = 2.5
+  private autoCommandState = 0
+  private autoGaitState = GaitType.RIPPLE
 
   constructor(defaultPosition: Matrix) {
     this.defaultPosition = defaultPosition
@@ -93,18 +125,50 @@ export class GaitController {
       return
     }
 
-    const lengthRaw = Math.hypot(step_x, step_z)
+    const translationMagnitude = Math.hypot(step_x, step_z)
+    const translationCommand = clamp(translationMagnitude / MAX_COMMAND_TRANSLATION_MM, 0, 1)
+    const turnCommand = clamp(Math.abs(angle) / MAX_COMMAND_TURN_RAD, 0, 1)
+    let normalizedCommand = Math.max(translationCommand, turnCommand)
+    if (gait.gait_type === GaitType.AUTO) {
+      normalizedCommand = lerp(this.autoCommandState, normalizedCommand, AUTO_COMMAND_BLEND)
+      normalizedCommand = clamp(normalizedCommand, 0, 1)
+      this.autoCommandState = normalizedCommand
+      this.autoGaitState = this.determineAutoGait(normalizedCommand)
+    } else {
+      normalizedCommand = normalizedCommand * clamp(gait.step_speed, 0, 1)
+      this.autoCommandState = normalizedCommand
+    }
+    const activeGait =
+      gait.gait_type === GaitType.AUTO ? this.selectAutoGait(normalizedCommand) : gait.gait_type
+    const activeOffset = default_offset[activeGait]
+    const activeStandFrac = default_stand_frac[activeGait]
+    const lengthRaw = translationMagnitude
     const length = step_x < 0 ? -lengthRaw : lengthRaw
+    const baseStepLength = clamp(
+      Math.max(translationMagnitude, Math.abs(angle) * TURN_EQUIVALENT_STEP_MM, MIN_STEP_LENGTH_MM),
+      MIN_STEP_LENGTH_MM,
+      MAX_STEP_LENGTH_MM
+    )
+    const lengthScale =
+      gait.gait_type === GaitType.AUTO ? 0.85 : lerp(0.6, 1.0, clamp(gait.step_speed, 0, 1))
+    const effectiveStepLength = baseStepLength * lengthScale
+    const desiredVelocity =
+      gait.gait_type === GaitType.AUTO
+        ? this.desiredBodyVelocity(normalizedCommand, activeGait)
+        : Math.min(
+            normalizedCommand * this.gaitMaxBodyVelocity(GaitType.BI_GATE),
+            this.gaitMaxBodyVelocity(activeGait)
+          )
     const speed = isRepositioning
-      ? gait.step_speed
-      : gait.step_speed * Math.min(1.5, Math.max(0.75, Math.abs(length) / 25, Math.abs(angle * 1.5)))
+      ? REPOSITION_PHASE_SPEED
+      : (desiredVelocity * activeStandFrac) / effectiveStepLength
     const turnAmplitude = Math.atan2(step_z, length) * 2
 
     this.advancePhase(dt, speed)
 
     this.defaultPosition = this.defaultPosition.map((foot, i) => {
-      const phase = (this.phase + gait.offset[i]) % 1
-      const isSwinging = phase >= gait.stand_frac
+      const phase = (this.phase + activeOffset[i]) % 1
+      const isSwinging = phase >= activeStandFrac
 
       if (isSwinging && !this.footWasSwinging[i]) {
         this.swingStartPosition[i] = [...foot]
@@ -113,7 +177,7 @@ export class GaitController {
 
       if (!isSwinging) return foot
 
-      const swingProgress = (phase - gait.stand_frac) / (1 - gait.stand_frac)
+      const swingProgress = (phase - activeStandFrac) / (1 - activeStandFrac)
       return foot.map((_, j) =>
         this.swingStartPosition[i][j] +
         (this.targetDefaultPosition[i][j] - this.swingStartPosition[i][j]) * swingProgress
@@ -125,10 +189,10 @@ export class GaitController {
     for (let i = 0; i < this.defaultPosition.length; i++) {
       const defaultFoot = this.defaultPosition[i]
       const currentFoot = body.feet[i]
-      const phase = (this.phase + gait.offset[i]) % 1
+      const phase = (this.phase + activeOffset[i]) % 1
       const [phNorm, curveFn, amp] = this.phaseParams(
         phase,
-        gait.stand_frac,
+        activeStandFrac,
         gait.step_depth,
         gait.step_height
       )
@@ -144,7 +208,53 @@ export class GaitController {
     }
 
     body.feet = newFeet
-    this.update_cumulative_position(body, gait, dt)
+    this.update_cumulative_position(body, gait, dt, desiredVelocity)
+  }
+
+  private gaitPhaseScale(gaitType: GaitType) {
+    const ripplePhases = GAIT_PHASE_COUNT[GaitType.RIPPLE]
+    const phases = GAIT_PHASE_COUNT[gaitType] ?? ripplePhases
+    return ripplePhases / Math.max(phases, 1)
+  }
+
+  private gaitMaxBodyVelocity(gaitType: GaitType) {
+    const standFrac = default_stand_frac[gaitType]
+    const swingFrac = Math.max(1 - standFrac, 0.05)
+    return FOOT_PATH_MAX_SPEED_MM_S * (swingFrac / standFrac) * BODY_SPEED_SAFETY * this.gaitPhaseScale(gaitType)
+  }
+
+  private safeGaitMax(gaitType: GaitType) {
+    const safety = GAIT_SPEED_SAFETY[gaitType] ?? 0.75
+    return this.gaitMaxBodyVelocity(gaitType) * safety
+  }
+
+  private selectAutoGait(normalizedCommand: number) {
+    return this.autoGaitState
+  }
+
+  private determineAutoGait(normalizedCommand: number) {
+    if (normalizedCommand > AUTO_TRI_MAX_INPUT - 0.02) return GaitType.BI_GATE
+    if (normalizedCommand > AUTO_BAND_RIPPLE + 0.02) return GaitType.TRI_GATE
+    return GaitType.RIPPLE
+    return this.autoGaitState
+  }
+
+  private desiredBodyVelocity(normalizedCommand: number, selectedGait: GaitType) {
+    const rippleMax = this.safeGaitMax(GaitType.RIPPLE)
+    const triMax = this.safeGaitMax(GaitType.TRI_GATE)
+    const biMax = this.safeGaitMax(GaitType.BI_GATE)
+
+    if (normalizedCommand <= AUTO_BAND_RIPPLE) {
+      return (normalizedCommand / AUTO_BAND_RIPPLE) * rippleMax
+    }
+
+    if (normalizedCommand <= AUTO_BAND_TRI) {
+      const band = (normalizedCommand - AUTO_BAND_RIPPLE) / (AUTO_BAND_TRI - AUTO_BAND_RIPPLE)
+      return rippleMax + clamp(band, 0, 1) * (triMax - rippleMax)
+    }
+
+    const band = (normalizedCommand - AUTO_BAND_TRI) / (1 - AUTO_BAND_TRI)
+    return triMax + clamp(band, 0, 1) * (biMax - triMax)
   }
 
   private advancePhase(dt: number, velocity: number) {
@@ -163,7 +273,7 @@ export class GaitController {
     return [(phase - standFrac) / (1 - standFrac), bezier_curve, height]
   }
 
-  update_cumulative_position(body_state: body_state_t, gait_state: gait_state_t, dt: number) {
+  update_cumulative_position(body_state: body_state_t, gait_state: gait_state_t, dt: number, desiredVelocity: number) {
     if (this.last_body_state === null) {
       this.last_body_state = { ...body_state }
       body_state.cumulative_x = 0
@@ -179,9 +289,15 @@ export class GaitController {
     const moving = m.step_x !== 0 || m.step_z !== 0 || m.step_angle !== 0
 
     if (moving) {
-      const step_displacement_x_local = m.step_x * this.walkTranslationScale * m.step_speed * dt
-      const step_displacement_z_local = m.step_z * this.walkTranslationScale * m.step_speed * dt
-      const step_displacement_yaw = m.step_angle * m.step_speed * dt
+      const translationMagnitude = Math.hypot(m.step_x, m.step_z)
+      const translationScale = translationMagnitude > 0 ? (desiredVelocity * dt) / translationMagnitude : 0
+      const turnScale =
+        MAX_COMMAND_TURN_RAD > 0
+          ? desiredVelocity / (this.gaitMaxBodyVelocity(GaitType.BI_GATE) * MAX_COMMAND_TURN_RAD)
+          : 0
+      const step_displacement_x_local = m.step_x * translationScale
+      const step_displacement_z_local = m.step_z * translationScale
+      const step_displacement_yaw = m.step_angle * turnScale * dt
 
       const cos_yaw = Math.cos(this.cumulative_orientation.yaw)
       const sin_yaw = Math.sin(this.cumulative_orientation.yaw)
@@ -205,6 +321,9 @@ export class GaitController {
     this.last_body_state = { ...body_state }
   }
 }
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 
 export function sine_curve(length: number, angle: number, height: number, phase: number): number[] {
   const step = length * (1 - 2 * phase)

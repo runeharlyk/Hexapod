@@ -83,7 +83,7 @@
     gait_gui
       .add(motion.gait_state, 'step_angle', -Math.PI / 4, Math.PI / 4, 0.01)
       .name('Step Angle')
-    gait_gui.add(motion.gait_state, 'step_speed', 0, 2, 0.01).name('Step Speed')
+    gait_gui.add(motion.gait_state, 'step_speed', 0, 1, 0.01).name('Speed Limit')
     gait_gui.add(motion.gait_state, 'step_depth', 0, 0.01, 0.001).name('Step Depth')
     gait_gui.add(motion.gait_state, 'stand_frac', 0, 1, 0.01).name('Stand Fraction')
     gait_gui

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <utils/math_utils.h>
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <kinematics.h>
@@ -17,6 +18,18 @@ struct gait_state_t {
 
 class GaitController {
   private:
+    static constexpr float MAX_STEP_LENGTH_MM = 70.0f;
+    static constexpr float MIN_STEP_LENGTH_MM = 12.0f;
+    static constexpr float FOOT_PATH_MAX_SPEED_MM_S = 320.0f;
+    static constexpr float BODY_SPEED_SAFETY = 0.85f;
+    static constexpr float AUTO_RIPPLE_MAX_INPUT = 0.3f;
+    static constexpr float AUTO_TRI_MAX_INPUT = 0.7f;
+    static constexpr float MAX_COMMAND_TRANSLATION_MM = 141.421356f;
+    static constexpr float MAX_COMMAND_TURN_RAD = 0.8f;
+    static constexpr float TURN_EQUIVALENT_STEP_MM = 55.0f;
+    static constexpr float REPOSITION_PHASE_SPEED = 0.9f;
+    float autoCommandState = 0.0f;
+
     float phase = 0.0f;
     float defaultPosition[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
                                    {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
@@ -121,6 +134,116 @@ class GaitController {
         }
     }
 
+    static constexpr std::array<float, 5> GAIT_PHASE_COUNT = {
+        2.0f, // TRI_GATE
+        1.0f, // BI_GATE
+        6.0f, // WAVE
+        6.0f, // RIPPLE
+        6.0f, // AUTO
+    };
+
+    float gaitPhaseScale(GaitType gaitType) const {
+        const float base = GAIT_PHASE_COUNT[static_cast<size_t>(GaitType::RIPPLE)];
+        auto index = static_cast<size_t>(gaitType);
+        if (gaitType == GaitType::AUTO) index = static_cast<size_t>(GaitType::RIPPLE);
+        const float phases = std::max(GAIT_PHASE_COUNT[index], 1.0f);
+        return base / phases;
+    }
+
+    float gaitMaxBodyVelocity(GaitType gaitType) const {
+        const float standFrac = gaitStandFraction(gaitType);
+        const float swingFrac = std::max(1.0f - standFrac, 0.05f);
+        const float phaseScale = gaitPhaseScale(gaitType);
+        return FOOT_PATH_MAX_SPEED_MM_S * (swingFrac / standFrac) * BODY_SPEED_SAFETY * phaseScale;
+    }
+
+    float gaitStandFraction(GaitType gaitType) const {
+        switch (gaitType) {
+            case GaitType::TRI_GATE: return 3.1f / 6.0f;
+            case GaitType::BI_GATE: return 2.1f / 6.0f;
+            case GaitType::WAVE: return 5.0f / 6.0f;
+            case GaitType::RIPPLE:
+            case GaitType::AUTO: return 5.0f / 6.0f;
+            default: return default_stand_frac;
+        }
+    }
+
+    void gaitOffsets(GaitType gaitType, float (&offsets)[6]) const {
+        switch (gaitType) {
+            case GaitType::TRI_GATE:
+                offsets[0] = 0.0f;
+                offsets[1] = 0.52f;
+                offsets[2] = 0.08f;
+                offsets[3] = 0.58f;
+                offsets[4] = 0.16f;
+                offsets[5] = 0.66f;
+                break;
+            case GaitType::BI_GATE:
+                offsets[0] = 0.0f;
+                offsets[1] = 1.0f / 3.0f;
+                offsets[2] = 2.0f / 3.0f;
+                offsets[3] = 2.0f / 3.0f;
+                offsets[4] = 1.0f / 3.0f;
+                offsets[5] = 0.0f;
+                break;
+            case GaitType::WAVE:
+                offsets[0] = 0.0f;
+                offsets[1] = 1.0f / 6.0f;
+                offsets[2] = 2.0f / 6.0f;
+                offsets[3] = 5.0f / 6.0f;
+                offsets[4] = 4.0f / 6.0f;
+                offsets[5] = 3.0f / 6.0f;
+                break;
+            case GaitType::RIPPLE:
+            case GaitType::AUTO:
+                offsets[0] = 0.0f;
+                offsets[1] = 4.0f / 6.0f;
+                offsets[2] = 2.0f / 6.0f;
+                offsets[3] = 1.0f / 6.0f;
+                offsets[4] = 5.0f / 6.0f;
+                offsets[5] = 3.0f / 6.0f;
+                break;
+        }
+    }
+
+    GaitType selectAutoGait(float normalizedCommand) const {
+        if (normalizedCommand < AUTO_RIPPLE_MAX_INPUT) return GaitType::RIPPLE;
+        if (normalizedCommand < AUTO_TRI_MAX_INPUT) return GaitType::TRI_GATE;
+        return GaitType::BI_GATE;
+    }
+
+    float desiredBodyVelocity(float normalizedCommand, GaitType selectedGait) const {
+        normalizedCommand = CLIP(normalizedCommand, 0.0f, 1.0f);
+
+        if (selectedGait == GaitType::AUTO) selectedGait = selectAutoGait(normalizedCommand);
+
+        const float rippleMax = gaitMaxBodyVelocity(GaitType::RIPPLE);
+        const float triMax = gaitMaxBodyVelocity(GaitType::TRI_GATE);
+        const float biMax = gaitMaxBodyVelocity(GaitType::BI_GATE);
+
+        if (selectedGait == GaitType::RIPPLE) {
+            const float band = CLIP(normalizedCommand / AUTO_RIPPLE_MAX_INPUT, 0.0f, 1.0f);
+            return rippleMax * band * 0.75f;
+        }
+
+        if (selectedGait == GaitType::TRI_GATE) {
+            const float minBand = AUTO_RIPPLE_MAX_INPUT;
+            const float maxBand = AUTO_TRI_MAX_INPUT;
+            if (normalizedCommand < minBand) return rippleMax * 0.75f;
+            const float band = CLIP((normalizedCommand - minBand) / (maxBand - minBand), 0.0f, 1.0f);
+            return lerp(rippleMax * 0.75f, triMax * 0.8f, band);
+        }
+
+        if (selectedGait == GaitType::BI_GATE) {
+            const float startBand = AUTO_TRI_MAX_INPUT;
+            if (normalizedCommand < startBand) return triMax * 0.8f;
+            const float band = CLIP((normalizedCommand - startBand) / (1.0f - startBand), 0.0f, 1.0f);
+            return lerp(triMax * 0.8f, biMax, band);
+        }
+
+        return std::min(normalizedCommand * biMax, gaitMaxBodyVelocity(selectedGait));
+    }
+
   public:
     GaitController() {}
 
@@ -137,45 +260,8 @@ class GaitController {
     bool hasPendingStanceChange() const { return !positionsMatch(defaultPosition, targetDefaultPosition); }
 
     void setGait(gait_state_t& gait) {
-        switch (gait.gait_type) {
-            case GaitType::TRI_GATE:
-                gait.offset[0] = 0.0f;
-                gait.offset[1] = 0.52f;
-                gait.offset[2] = 0.08f;
-                gait.offset[3] = 0.58f;
-                gait.offset[4] = 0.16f;
-                gait.offset[5] = 0.66f;
-                gait.stand_frac = 3.1f / 6.0f;
-                break;
-            case GaitType::BI_GATE:
-                gait.offset[0] = 0.0f;
-                gait.offset[1] = 1.0f / 3.0f;
-                gait.offset[2] = 2.0f / 3.0f;
-                gait.offset[3] = 2.0f / 3.0f;
-                gait.offset[4] = 1.0f / 3.0f;
-                gait.offset[5] = 0.0f;
-                gait.stand_frac = 2.1f / 6.0f;
-                break;
-            case GaitType::WAVE:
-                gait.offset[0] = 0.0f;
-                gait.offset[1] = 1.0f / 6.0f;
-                gait.offset[2] = 2.0f / 6.0f;
-                gait.offset[3] = 5.0f / 6.0f;
-                gait.offset[4] = 4.0f / 6.0f;
-                gait.offset[5] = 3.0f / 6.0f;
-                gait.stand_frac = 5.0f / 6.0f;
-                break;
-            case GaitType::RIPPLE:
-                gait.offset[0] = 0.0f;
-                gait.offset[1] = 4.0f / 6.0f;
-                gait.offset[2] = 2.0f / 6.0f;
-                gait.offset[3] = 1.0f / 6.0f;
-                gait.offset[4] = 5.0f / 6.0f;
-                gait.offset[5] = 3.0f / 6.0f;
-                gait.stand_frac = 5.0f / 6.0f;
-                break;
-            default: break;
-        }
+        gaitOffsets(gait.gait_type, gait.offset);
+        gait.stand_frac = gaitStandFraction(gait.gait_type);
     }
 
     void step(gait_state_t& gait, BodyStateMsg& body, float dt) {
@@ -184,11 +270,24 @@ class GaitController {
         const float angle = gait.step_angle;
         const bool isMoving = std::fabs(step_x) >= 2 || std::fabs(step_z) >= 2 || angle;
         const bool isRepositioning = !isMoving && hasPendingStanceChange();
-
-        const float* activeOffset = gait.offset;
-        const float activeStandFrac = gait.stand_frac;
+        const float translationMagnitude = std::hypot(step_x, step_z);
+        const float translationCommand = CLIP(translationMagnitude / MAX_COMMAND_TRANSLATION_MM, 0.0f, 1.0f);
+        const float turnCommand = CLIP(std::fabs(angle) / MAX_COMMAND_TURN_RAD, 0.0f, 1.0f);
+        const float baseCommand = std::max(translationCommand, turnCommand);
+        const float speedLimit = CLIP(gait.step_speed, 0.0f, 1.0f);
+        float normalizedCommand = baseCommand;
+        if (gait.gait_type == GaitType::AUTO) {
+            normalizedCommand = lerp(autoCommandState, baseCommand, 0.12f);
+            autoCommandState = normalizedCommand;
+        } else {
+            normalizedCommand = baseCommand * speedLimit;
+            autoCommandState = normalizedCommand;
+        }
+        const GaitType activeGait = gait.gait_type == GaitType::AUTO ? selectAutoGait(normalizedCommand) : gait.gait_type;
+        float activeOffset[6];
+        gaitOffsets(activeGait, activeOffset);
+        const float activeStandFrac = gaitStandFraction(activeGait);
         const float activeStepHeight = gait.step_height;
-        const float activeSpeed = gait.step_speed;
 
         if (!isMoving && !isRepositioning) {
             for (int i = 0; i < 6; i++) {
@@ -202,9 +301,14 @@ class GaitController {
 
         const float length = std::hypot(step_x, step_z) * (gait.step_x < 0 ? -1 : 1);
         const float turnAmplitude = std::atan2(step_z, length) * 2;
-
-        const float speed_factor = std::max(std::abs(length) / 25.f, std::abs(angle) * 1.5f);
-        const float speed = isRepositioning ? activeSpeed : activeSpeed * CLIP(speed_factor, 0.75, 1.5f);
+        const float effectiveStepLength =
+            CLIP(std::max({translationMagnitude, std::fabs(angle) * TURN_EQUIVALENT_STEP_MM, MIN_STEP_LENGTH_MM}),
+                 MIN_STEP_LENGTH_MM, MAX_STEP_LENGTH_MM);
+        const float desiredVelocity = gait.gait_type == GaitType::AUTO
+                                          ? desiredBodyVelocity(normalizedCommand, activeGait)
+                                          : std::min(normalizedCommand * gaitMaxBodyVelocity(GaitType::BI_GATE),
+                                                     gaitMaxBodyVelocity(activeGait));
+        const float speed = isRepositioning ? REPOSITION_PHASE_SPEED : (desiredVelocity * activeStandFrac / effectiveStepLength);
 
         advancePhase(dt, speed);
 
