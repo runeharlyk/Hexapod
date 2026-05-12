@@ -41,9 +41,9 @@ export interface ITransport {
   connected: Writable<boolean>
   connect: () => Promise<void>
   disconnect: () => Promise<void>
-  send: <T>(data: T) => Promise<void>
+  send: <T>(data: T, reliable?: boolean) => Promise<void>
   onData: (data: DataBrokerCallback<unknown>) => void
   onConnect: (cb: () => void) => void
   onDisconnect: (cb: () => void) => void
-  sendEvent: (type: MessageType, topic?: MessageTopic, payload?: unknown) => Promise<void>
+  sendEvent: (type: MessageType, topic?: MessageTopic, payload?: unknown, reliable?: boolean) => Promise<void>
 }

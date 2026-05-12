@@ -93,16 +93,21 @@ function createWebSocketAdapter(): ITransport {
     }
   }
 
-  const sendEvent = async (type: MessageType, topic?: MessageTopic, payload?: unknown) => {
+  const sendEvent = async (
+    type: MessageType,
+    topic?: MessageTopic,
+    payload?: unknown,
+    reliable?: boolean
+  ) => {
     const data = [
       type,
       ...(topic !== undefined ? [topic] : []),
       ...(payload !== undefined ? [payload] : [])
     ]
-    await send(data)
+    await send(data, reliable)
   }
 
-  const send = async <T>(data: T) => {
+  const send = async <T>(data: T, reliable?: boolean) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return
     const serialized = encodeMessage(data)
     if (!serialized) {

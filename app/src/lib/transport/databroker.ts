@@ -15,9 +15,10 @@ export class DataBroker {
     transport: ITransport,
     type: MessageType,
     topic?: MessageTopic,
-    payload?: unknown
+    payload?: unknown,
+    reliable?: boolean
   ) {
-    transport.sendEvent(type, topic, payload).catch(error => {
+    transport.sendEvent(type, topic, payload, reliable).catch(error => {
       console.error('Transport send failed', { type, topic, payload, error })
     })
   }
@@ -42,7 +43,7 @@ export class DataBroker {
   private subscribeTransport(transport: ITransport) {
     const activeTopics = Array.from(this.subscriptions.keys())
     activeTopics.forEach(topic => {
-      this.dispatchTransport(transport, MessageType.CONNECT, topic)
+      this.dispatchTransport(transport, MessageType.CONNECT, topic, undefined, true)
     })
   }
 
@@ -59,7 +60,7 @@ export class DataBroker {
     this.subscriptions.set(topic, topicSubscriptions)
 
     this.transports.forEach((_, transport) => {
-      this.dispatchTransport(transport, MessageType.CONNECT, topic)
+      this.dispatchTransport(transport, MessageType.CONNECT, topic, undefined, true)
     })
 
     return subscriptionId
@@ -71,7 +72,7 @@ export class DataBroker {
         if (subscriptions.size === 0) {
           this.subscriptions.delete(topic)
           this.transports.forEach((_, transport) => {
-            this.dispatchTransport(transport, MessageType.DISCONNECT, topic)
+            this.dispatchTransport(transport, MessageType.DISCONNECT, topic, undefined, true)
           })
         }
         break
@@ -79,16 +80,16 @@ export class DataBroker {
     }
   }
 
-  send<T>(topic: MessageTopic, data: T) {
+  send<T>(topic: MessageTopic, data: T, reliable?: boolean) {
     this.transports.forEach((_, transport) => {
-      this.dispatchTransport(transport, MessageType.EVENT, topic, data)
+      this.dispatchTransport(transport, MessageType.EVENT, topic, data, reliable)
     })
   }
 
-  emit<T>(topic: MessageTopic, data: T, excludeSubscriptionId?: string) {
+  emit<T>(topic: MessageTopic, data: T, excludeSubscriptionId?: string, reliable?: boolean) {
     this.transports.forEach((transportId, transport) => {
       if (transportId !== excludeSubscriptionId) {
-        this.dispatchTransport(transport, MessageType.EVENT, topic, data)
+        this.dispatchTransport(transport, MessageType.EVENT, topic, data, reliable)
       }
     })
     const subscriptions = this.subscriptions.get(topic)

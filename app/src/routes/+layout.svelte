@@ -34,9 +34,20 @@
   onMount(async () => {
     await websocket.connect()
 
+    let wasStop = true
     outControllerData.subscribe(data => {
       lastCommand = [...data]
-      throttle.throttle(() => dataBroker.emit(MessageTopic.COMMAND, data), 40)
+      const isStop = data[0] === 0 && data[1] === 0 && data[2] === 0 && data[3] === 0
+
+      if (isStop) {
+        if (!wasStop) {
+          dataBroker.emit(MessageTopic.COMMAND, data, undefined, true)
+          wasStop = true
+        }
+      } else {
+        wasStop = false
+        throttle.throttle(() => dataBroker.emit(MessageTopic.COMMAND, data), 40)
+      }
     })
 
     dataBroker.on<number>(MessageTopic.MODE, data => {
