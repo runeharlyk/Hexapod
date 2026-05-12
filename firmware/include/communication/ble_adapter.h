@@ -21,8 +21,12 @@
 #define CHARACTERISTIC_TX "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 #define CHARACTERISTIC_RX "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 
+#ifndef BLE_MAX_MESSAGE_SIZE
+#define BLE_MAX_MESSAGE_SIZE 256
+#endif
+
 struct BLEMessage {
-    uint8_t data[512];
+    uint8_t data[BLE_MAX_MESSAGE_SIZE];
     size_t length;
 };
 

@@ -6,10 +6,10 @@ import { dataBroker } from '$lib/transport/databroker'
 
 export const requestMode = (nextMode: MotionModes) => {
   modeStore.set(nextMode)
-  dataBroker.send(MessageTopic.MODE, Object.values(MotionModes).indexOf(nextMode))
+  dataBroker.send(MessageTopic.MODE, Object.values(MotionModes).indexOf(nextMode), true)
 }
 
 export const requestGait = (nextGait: GaitType) => {
   gaitStore.set(nextGait)
-  dataBroker.send(MessageTopic.GAIT, Object.values(GaitType).indexOf(nextGait))
+  dataBroker.send(MessageTopic.GAIT, Object.values(GaitType).indexOf(nextGait), true)
 }

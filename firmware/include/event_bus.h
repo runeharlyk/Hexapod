@@ -60,7 +60,7 @@ class FixedFn<R(A...), MaxSize> {
 
 enum class EmitMode { Latest, Batch };
 
-template <typename Msg, size_t QueueDepth = 64, size_t MaxSubs = 8, size_t BatchSize = 16>
+template <typename Msg, size_t QueueDepth = 10, size_t MaxSubs = 4, size_t BatchSize = 2>
 class EventBus {
     struct Item {
         Msg payload;

@@ -2,7 +2,7 @@
 #include <cstring>
 
 void BLE::begin() {
-    _messageQueue = xQueueCreate(10, sizeof(BLEMessage));
+    _messageQueue = xQueueCreate(30, sizeof(BLEMessage));
     if (!_messageQueue) {
         ESP_LOGE("BluetoothService", "Failed to create message queue");
         return;
@@ -10,7 +10,7 @@ void BLE::begin() {
 
     _taskRunning = true;
     BaseType_t result =
-        xTaskCreatePinnedToCore(messageProcessingTask, "BLE_Process", 8192, this, 5, &_processingTask, 0);
+        xTaskCreatePinnedToCore(messageProcessingTask, "BLE_Process", 8192, this, 6, &_processingTask, 0);
 
     if (result != pdPASS) {
         ESP_LOGE("BluetoothService", "Failed to create processing task");
@@ -36,7 +36,7 @@ void BLE::setup() {
 
     _txCharacteristic = service->createCharacteristic(CHARACTERISTIC_TX, NIMBLE_PROPERTY::NOTIFY);
 
-    _rxCharacteristic = service->createCharacteristic(CHARACTERISTIC_RX, NIMBLE_PROPERTY::WRITE);
+    _rxCharacteristic = service->createCharacteristic(CHARACTERISTIC_RX, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
     _rxCharacteristic->setCallbacks(new RXCallbacks(this));
 
     service->start();
@@ -63,7 +63,14 @@ void BLE::ServerCallbacks::onConnect(NimBLEServer* pServer) {
     ESP_LOGI("BluetoothService", "Client connected");
 }
 
-void BLE::ServerCallbacks::onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) { onConnect(pServer); }
+void BLE::ServerCallbacks::onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) {
+    _service->_deviceConnected = true;
+    ESP_LOGI("BluetoothService", "Client connected, handle: %d", connInfo.getConnHandle());
+
+    // Optimize connection parameters for low latency
+    // minInterval: 15ms (12 * 1.25ms), maxInterval: 30ms (24 * 1.25ms), latency: 0, timeout: 400 (4s)
+    pServer->updateConnParams(connInfo.getConnHandle(), 12, 24, 0, 400);
+}
 
 void BLE::ServerCallbacks::onDisconnect(NimBLEServer* pServer) {
     _service->_deviceConnected = false;
@@ -77,10 +84,10 @@ void BLE::ServerCallbacks::onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& c
 }
 
 void BLE::RXCallbacks::onWrite(NimBLECharacteristic* characteristic) {
-    std::string value = characteristic->getValue();
-    const uint8_t* data = reinterpret_cast<const uint8_t*>(value.data());
-    size_t len = value.size();
-    if (len && len <= 512) {
+    NimBLEAttValue value = characteristic->getValue();
+    const uint8_t* data = value.data();
+    size_t len = value.length();
+    if (len && len <= BLE_MAX_MESSAGE_SIZE) {
         BLEMessage msg;
         memcpy(msg.data, data, len);
         msg.length = len;
@@ -98,10 +105,14 @@ void BLE::messageProcessingTask(void* parameter) {
     BLEMessage msg;
 
     while (ble->_taskRunning) {
-        if (xQueueReceive(ble->_messageQueue, &msg, pdMS_TO_TICKS(1000)) == pdTRUE) {
+        if (xQueueReceive(ble->_messageQueue, &msg, portMAX_DELAY) == pdTRUE) {
             ble->processMessage(msg.data, msg.length);
+
+            // Process any additional messages immediately without yielding
+            while (xQueueReceive(ble->_messageQueue, &msg, 0) == pdTRUE) {
+                ble->processMessage(msg.data, msg.length);
+            }
         }
-        vTaskDelay(pdMS_TO_TICKS(1));
     }
 
     vTaskDelete(nullptr);

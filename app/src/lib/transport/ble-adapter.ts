@@ -52,6 +52,11 @@ function createBLEAdapter(): ITransport {
       }
     })
 
+    device.addEventListener('gattserverdisconnected', () => {
+      connected.set(false)
+      disconnectCallbacks.forEach(cb => cb())
+    })
+
     connected.set(true)
     connectCallbacks.forEach(cb => cb())
   }
@@ -64,22 +69,37 @@ function createBLEAdapter(): ITransport {
     }
   }
 
-  const sendEvent = async (type: MessageType, topic?: MessageTopic, payload?: unknown) => {
+  const sendEvent = async (
+    type: MessageType,
+    topic?: MessageTopic,
+    payload?: unknown,
+    reliable?: boolean
+  ) => {
     const data = [
       type,
       ...(topic !== undefined ? [topic] : []),
       ...(payload !== undefined ? [payload] : [])
     ]
-    await send(data)
+    await send(data, reliable)
   }
 
-  const send = async <T>(data: T) => {
+  const send = async <T>(data: T, reliable = false) => {
     if (!rx || !device?.gatt?.connected) return
 
     const payload = encode(data)
     const writeTask = writeQueue.then(async () => {
       if (!rx || !device?.gatt?.connected) return
-      await rx.writeValue(payload)
+
+      try {
+        // Use writeValueWithoutResponse for faster throughput if supported and reliable delivery is not requested
+        if (!reliable && typeof rx.writeValueWithoutResponse === 'function') {
+          await rx.writeValueWithoutResponse(payload)
+        } else {
+          await rx.writeValue(payload)
+        }
+      } catch (err) {
+        console.error('BLE Write Error:', err)
+      }
     })
 
     writeQueue = writeTask.catch(() => undefined)
