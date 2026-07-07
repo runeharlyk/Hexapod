@@ -28,6 +28,16 @@ Its built with:
 
 ![spider pose](assets/spider_pose.jpg)
 
+## 🧩 3D Printed Parts
+
+The robot is based on the original [Hexapod v2.1](https://www.thingiverse.com/thing:3270159) by SmallpTsai.
+
+I made a small Thingiverse remix to make the leg assembly simpler and more robust:
+
+[Thingiverse Remix - Hexapod Thigh Bottom Remix](https://www.thingiverse.com/thing:7380101)
+
+The remix moves the leg screws from the side to the top. This makes the legs easier to assemble and disassemble, while avoiding the fragile side screw points from the original design.
+
 ### 🎮 Controller
 
 The [controller](https://runeharlyk.github.io/Hexapod/) is a svelte app which is deployed using github pages.
