@@ -1,4 +1,0 @@
-source;share/hexapod/local_setup.bash
-source;share/hexapod/local_setup.dsv
-source;share/hexapod/local_setup.sh
-source;share/hexapod/local_setup.zsh

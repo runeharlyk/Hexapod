@@ -46,9 +46,10 @@ It includes full control over robot settings like network and calibration, and a
 
 ## Simulation
 
-A pybullet simulation is available in `/simulation`
+A MuJoCo simulation with RL training and sim-to-real policy export is available in `/simulation`.
+See `simulation/README.md` for the full workflow.
 
-![banner](assets/bullet.gif)
+![banner](assets/mujoco_walk.gif)
 
 ## 🔮 Getting started
 

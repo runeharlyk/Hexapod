@@ -15,14 +15,7 @@ dependencies = [
     "tqdm",
     "rich",
     "mediapy",
-    "msgpack",
-    "websockets",
 ]
-
-# Legacy PyBullet sim (main.py / src/envs/hexapod_env.py). Install with:
-#   uv sync --extra legacy
-[project.optional-dependencies]
-legacy = ["pybullet"]
 
 [tool.uv]
 package = false
