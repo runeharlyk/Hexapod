@@ -77,17 +77,17 @@ def leg_xml(i):
         <joint name="coxa_{i}" type="hinge" axis="0 0 1" range="{-COXA_RANGE} {COXA_RANGE}"
                damping="{DAMPING}" frictionloss="{FRICTIONLOSS}"/>
         <inertial pos="{l1/2:.5f} 0 0" mass="{M_COXA}" diaginertia="{ci[0]:.3e} {ci[1]:.3e} {ci[2]:.3e}"/>
-        <geom type="capsule" fromto="0 0 0 {l1:.5f} 0 0" size="0.008" rgba="0.3 0.3 0.3 1" contype="0" conaffinity="0"/>
+        <geom type="capsule" fromto="0 0 0 {l1:.5f} 0 0" size="0.008" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
         <body name="femur_{i}" pos="{l1:.5f} 0 0">
           <joint name="femur_{i}" type="hinge" axis="0 -1 0" range="{-FEMUR_RANGE} {FEMUR_RANGE}"
                  damping="{DAMPING}" frictionloss="{FRICTIONLOSS}"/>
           <inertial pos="{l2/2:.5f} 0 0" mass="{M_FEMUR}" diaginertia="{fi[0]:.3e} {fi[1]:.3e} {fi[2]:.3e}"/>
-          <geom type="capsule" fromto="0 0 0 {l2:.5f} 0 0" size="0.007" rgba="0.3 0.3 0.3 1" contype="0" conaffinity="0"/>
+          <geom type="capsule" fromto="0 0 0 {l2:.5f} 0 0" size="0.007" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
           <body name="tibia_{i}" pos="{l2:.5f} 0 0">
             <joint name="tibia_{i}" type="hinge" axis="0 -1 0" range="{-TIBIA_RANGE} {TIBIA_RANGE}"
                    damping="{DAMPING}" frictionloss="{FRICTIONLOSS}"/>
             <inertial pos="{l3/2:.5f} 0 0" mass="{M_TIBIA}" diaginertia="{ti[0]:.3e} {ti[1]:.3e} {ti[2]:.3e}"/>
-            <geom type="capsule" fromto="0 0 0 {l3:.5f} 0 0" size="0.005" rgba="0.2 0.7 0.8 1" contype="0" conaffinity="0"/>
+            <geom type="capsule" fromto="0 0 0 {l3:.5f} 0 0" size="0.005" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
             <geom name="foot_{i}" type="sphere" pos="{l3:.5f} 0 0" size="{FOOT_RADIUS}"
                   rgba="0.2 0.7 0.8 1" condim="4" friction="1.0 0.02 0.001" priority="1"/>
             <site name="foot_{i}" pos="{l3:.5f} 0 0" size="0.004"/>
@@ -112,20 +112,27 @@ def actuators_xml():
 
 
 def build(terrain=False):
-    bi = box_inertia(M_BASE, 0.12, 0.12, 0.04)
+    bi = box_inertia(M_BASE, 0.070, 0.126, 0.038)
     legs = "".join(leg_xml(i) for i in range(6))
-    base_box_x, base_box_y, base_box_z = 0.06, 0.06, 0.02
+    base_box_x, base_box_y, base_box_z = 0.035, 0.063, 0.019
+    floor = """
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.18 0.26 0.42" rgb2="0.10 0.15 0.28"
+             width="512" height="512"/>
+    <material name="grid" texture="grid" texuniform="true" texrepeat="14 14" reflectance="0.35"/>"""
     if terrain:
         asset = f"""
-  <asset>
+  <asset>{floor}
     <hfield name="terrain" nrow="{HF_N}" ncol="{HF_N}" size="{HF_RADIUS} {HF_RADIUS} {HF_ZMAX} 0.1"/>
   </asset>
 """
-        ground = """<geom name="ground" type="hfield" hfield="terrain" rgba="0.5 0.55 0.6 1"
+        ground = """<geom name="ground" type="hfield" hfield="terrain" material="grid"
           condim="4" friction="1.0 0.02 0.001"/>"""
     else:
-        asset = ""
-        ground = """<geom name="ground" type="plane" size="5 5 0.1" rgba="0.5 0.55 0.6 1"
+        asset = f"""
+  <asset>{floor}
+  </asset>
+"""
+        ground = """<geom name="ground" type="plane" material="grid" size="5 5 0.1"
           condim="4" friction="1.0 0.02 0.001"/>"""
     xml = f"""<mujoco model="hexapod">
   <compiler angle="radian" meshdir="stl" autolimits="true"/>
@@ -149,7 +156,7 @@ def build(terrain=False):
     <body name="base" pos="0 0 {INIT_Z}">
       <freejoint name="root"/>
       <inertial pos="0 0 0" mass="{M_BASE}" diaginertia="{bi[0]:.3e} {bi[1]:.3e} {bi[2]:.3e}"/>
-      <geom type="box" size="{base_box_x} {base_box_y} {base_box_z}" rgba="0.25 0.25 0.28 1"
+      <geom type="box" size="{base_box_x} {base_box_y} {base_box_z}" rgba="0.9 0.9 0.9 1"
             contype="0" conaffinity="0"/>
       <site name="imu" pos="0 0 0" size="0.005"/>{legs}
     </body>
