@@ -10,6 +10,7 @@ dependencies = [
     "stable-baselines3>=2.6",
     "torch==2.4.1",
     "numpy<2",
+    "scipy",
     "tensorboard",
     "tqdm",
     "rich",
