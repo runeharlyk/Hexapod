@@ -176,6 +176,9 @@ class Peripherals : public StatefulService<PeripheralsConfiguration> {
     float angleZ() { return _imu.getAngleZ(); }
     float angleY() { return _imu.getAngleY(); }
 
+    void gyroRad(float out[3]) { _imu.getGyroRad(out); }
+    void gravityBody(float out[3]) { _imu.getGravity(out); }
+
     IMUAnglesMsg getIMUAngles() { return _imu.getIMUAngles(); }
 
     StatefulHttpEndpoint<PeripheralsConfiguration> endpoint;

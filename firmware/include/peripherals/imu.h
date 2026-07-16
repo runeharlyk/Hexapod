@@ -47,6 +47,7 @@ class IMU {
         _imu.dmpGetQuaternion(&q, fifoBuffer);
         _imu.dmpGetGravity(&gravity, &q);
         _imu.dmpGetYawPitchRoll(imuMsg.rpy, &q, &gravity);
+        _imu.dmpGetGyro(&gyroRaw, fifoBuffer);
         return updated;
 #endif
 #if FT_ENABLED(USE_BNO055)
@@ -72,6 +73,28 @@ class IMU {
 
     IMUAnglesMsg getIMUAngles() { return imuMsg; }
 
+    void getGyroRad(float out[3]) {
+#if FT_ENABLED(USE_MPU6050)
+        constexpr float GYRO_RAD_PER_LSB = (2000.0f / 32768.0f) * ((float)M_PI / 180.0f);
+        out[0] = gyroRaw.x * GYRO_RAD_PER_LSB;
+        out[1] = gyroRaw.y * GYRO_RAD_PER_LSB;
+        out[2] = gyroRaw.z * GYRO_RAD_PER_LSB;
+#else
+        out[0] = out[1] = out[2] = 0.0f;
+#endif
+    }
+
+    void getGravity(float out[3]) {
+#if FT_ENABLED(USE_MPU6050)
+        out[0] = gravity.x;
+        out[1] = gravity.y;
+        out[2] = gravity.z;
+#else
+        out[0] = out[1] = 0.0f;
+        out[2] = 1.0f;
+#endif
+    }
+
   private:
 #if FT_ENABLED(USE_MPU6050)
     MPU6050 _imu;
@@ -79,6 +102,7 @@ class IMU {
     Quaternion q;
     uint8_t fifoBuffer[64];
     VectorFloat gravity;
+    VectorInt16 gyroRaw;
 #endif
 #if FT_ENABLED(USE_BNO055)
     Adafruit_BNO055 _imu;
