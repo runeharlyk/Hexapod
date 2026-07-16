@@ -24,7 +24,8 @@ class APService : public StatefulService<APSettings> {
     PsychicHttpServer *_server;
     FSPersistence<APSettings> _persistence;
 
-    DNSServer *_dnsServer;
+    DNSServer _dnsServer;
+    bool _dnsActive = false;
 
     volatile unsigned long _lastManaged;
     volatile boolean _reconfigureAp;

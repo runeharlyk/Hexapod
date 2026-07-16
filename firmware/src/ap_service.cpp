@@ -75,27 +75,26 @@ void APService::startAP() {
 #if CONFIG_IDF_TARGET_ESP32C3
     WiFi.setTxPower(WIFI_POWER_8_5dBm); // https://www.wemos.cc/en/latest/c3/c3_mini_1_0_0.html#about-wifi
 #endif
-    if (!_dnsServer) {
+    if (!_dnsActive) {
         IPAddress apIp = WiFi.softAPIP();
         ESP_LOGI(TAG, "Starting captive portal on %s", apIp.toString().c_str());
-        _dnsServer = new DNSServer;
-        _dnsServer->start(DNS_PORT, "*", apIp);
+        _dnsServer.start(DNS_PORT, "*", apIp);
+        _dnsActive = true;
     }
 }
 
 void APService::stopAP() {
-    if (_dnsServer) {
+    if (_dnsActive) {
         ESP_LOGI(TAG, "Stopping captive portal");
-        _dnsServer->stop();
-        delete _dnsServer;
-        _dnsServer = nullptr;
+        _dnsServer.stop();
+        _dnsActive = false;
     }
     ESP_LOGI(TAG, "Stopping AP");
     WiFi.softAPdisconnect(true);
 }
 
 void APService::handleDNS() {
-    if (_dnsServer) {
-        _dnsServer->processNextRequest();
+    if (_dnsActive) {
+        _dnsServer.processNextRequest();
     }
 }
