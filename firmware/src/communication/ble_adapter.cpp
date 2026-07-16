@@ -58,29 +58,19 @@ void BLE::restart() {
     setup();
 }
 
-void BLE::ServerCallbacks::onConnect(NimBLEServer* pServer) {
+void BLE::ServerCallbacks::onConnect(NimBLEServer* pServer, ble_gap_conn_desc* desc) {
     _service->_deviceConnected = true;
-    ESP_LOGI("BluetoothService", "Client connected");
-}
-
-void BLE::ServerCallbacks::onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) {
-    _service->_deviceConnected = true;
-    ESP_LOGI("BluetoothService", "Client connected, handle: %d", connInfo.getConnHandle());
+    ESP_LOGI("BluetoothService", "Client connected, handle: %d", desc->conn_handle);
 
     // Optimize connection parameters for low latency
     // minInterval: 15ms (12 * 1.25ms), maxInterval: 30ms (24 * 1.25ms), latency: 0, timeout: 400 (4s)
-    pServer->updateConnParams(connInfo.getConnHandle(), 12, 24, 0, 400);
+    pServer->updateConnParams(desc->conn_handle, 12, 24, 0, 400);
 }
 
 void BLE::ServerCallbacks::onDisconnect(NimBLEServer* pServer) {
     _service->_deviceConnected = false;
-    ESP_LOGI("BluetoothService", "Client disconnected");
+    ESP_LOGI("BluetoothService", "Client disconnected, restarting advertising");
     pServer->startAdvertising();
-    ESP_LOGI("BluetoothService", "Restarting advertising");
-}
-
-void BLE::ServerCallbacks::onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) {
-    onDisconnect(pServer);
 }
 
 void BLE::RXCallbacks::onWrite(NimBLECharacteristic* characteristic) {
@@ -97,8 +87,6 @@ void BLE::RXCallbacks::onWrite(NimBLECharacteristic* characteristic) {
         }
     }
 }
-
-void BLE::RXCallbacks::onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo& connInfo) { onWrite(characteristic); }
 
 void BLE::messageProcessingTask(void* parameter) {
     BLE* ble = static_cast<BLE*>(parameter);

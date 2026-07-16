@@ -35,7 +35,7 @@ class BLE : public CommAdapterBase {
     NimBLEServer* _server {nullptr};
     NimBLECharacteristic* _txCharacteristic {nullptr};
     NimBLECharacteristic* _rxCharacteristic {nullptr};
-    bool _deviceConnected {false};
+    volatile bool _deviceConnected {false}; // written from the NimBLE host task, read from senders
 
     QueueHandle_t _messageQueue {nullptr};
     TaskHandle_t _processingTask {nullptr};
@@ -46,10 +46,8 @@ class BLE : public CommAdapterBase {
 
       public:
         ServerCallbacks(BLE* service) : _service(service) {}
-        void onConnect(NimBLEServer* pServer);
-        void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo);
-        void onDisconnect(NimBLEServer* pServer);
-        void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason);
+        void onConnect(NimBLEServer* pServer, ble_gap_conn_desc* desc) override;
+        void onDisconnect(NimBLEServer* pServer) override;
     };
 
     class RXCallbacks : public NimBLECharacteristicCallbacks {
@@ -57,8 +55,7 @@ class BLE : public CommAdapterBase {
 
       public:
         RXCallbacks(BLE* service) : _service(service) {}
-        void onWrite(NimBLECharacteristic* characteristic);
-        void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo& connInfo);
+        void onWrite(NimBLECharacteristic* characteristic) override;
     };
 
     void restart();
