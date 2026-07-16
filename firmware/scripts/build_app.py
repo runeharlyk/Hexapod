@@ -116,7 +116,7 @@ def write_header():
         default_uri = "/index.html" if any(u == "/index.html" for u,_,_,_,_ in assets) else (assets[0][0] if assets else "/")
         f.write(f'static const WebOptions WWW_OPT = {{ "{default_uri}", 31536000u, 1 }};\n')
 
-if get_flag("EMBED_WEBAPP") == 1 and needs_rebuild():
+if get_flag("EMBED_WEBAPP") == "1" and needs_rebuild():
     print("Building web app")
     build_web()
     write_header()
