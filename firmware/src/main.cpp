@@ -25,36 +25,41 @@
 #include <communication/ble_adapter.h>
 #include <communication/websocket_adapter.h>
 #include <communication/event_source_adapter.h>
+#if USE_ESPNOW
+#include <communication/espnow_adapter.h>
+#endif
 #include <event_storage.h>
 
 #include <www_mount.hpp>
 
 // Communication
-BLE ble;
-PsychicHttpServer server;
-Websocket socket {server, "/api/ws"};
-EventSource eventSource {server, "/api/sse"};
+BLE* ble;
+PsychicHttpServer* server;
+Websocket* socket;
+EventSource* eventSource;
 
-// TODO: EspNowAdapter now;
+#if USE_ESPNOW
+EspNowAdapter* espnow;
+#endif
 // TODO: Bluepad bluepad;
 
 // Service
-WiFiService wifiService;
-APService apService;
-EventStorage eventStorage;
+WiFiService* wifiService;
+APService* apService;
+EventStorage* eventStorage;
 
-DRAM_ATTR Hexapod robot;
+Hexapod* robot;
 
 void setupServer() {
-    server.config.max_uri_handlers = 5 + WWW_ASSETS_COUNT;
-    server.maxUploadSize = 1000000; // 1 MB;
-    server.listen(80);
-    server.serveStatic("/api/config/", ESP_FS, "/config/");
-    server.on("/api/features", feature_service::getFeatures);
+    server->config.max_uri_handlers = 5 + WWW_ASSETS_COUNT;
+    server->maxUploadSize = 1000000; // 1 MB;
+    server->listen(80);
+    server->serveStatic("/api/config/", ESP_FS, "/config/");
+    server->on("/api/features", feature_service::getFeatures);
 #if EMBED_WEBAPP
-    mountStaticAssets(server);
+    mountStaticAssets(*server);
 #endif
-    server.on("/*", HTTP_OPTIONS, [](PsychicRequest *request) { // CORS handling
+    server->on("/*", HTTP_OPTIONS, [](PsychicRequest *request) { // CORS handling
         PsychicResponse response(request);
         response.setCode(200);
         return response.send();
@@ -68,14 +73,14 @@ void setupServer() {
 
 void IRAM_ATTR controlLoopEntry(void *) {
     ESP_LOGI("main", "Control task starting");
-    robot.initialize();
+    robot->initialize();
     TickType_t xLastWakeTime = xTaskGetTickCount();
     const TickType_t xFrequency = 5 / portTICK_PERIOD_MS;
     ESP_LOGI("main", "Control task started");
     for (;;) {
-        robot.readSensors();
-        robot.planMotion();
-        robot.updateActuators();
+        robot->readSensors();
+        robot->planMotion();
+        robot->updateActuators();
         // robot.emitTelemetry();
 
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
@@ -84,23 +89,26 @@ void IRAM_ATTR controlLoopEntry(void *) {
 
 void IRAM_ATTR serviceLoopEntry(void *) {
     ESP_LOGI("main", "Service control task starting");
-    eventStorage.begin();
+    eventStorage->begin();
 
-    wifiService.begin();
+    wifiService->begin();
     MDNS.begin(APP_NAME);
     MDNS.setInstanceName(APP_NAME);
-    apService.begin();
+    apService->begin();
 
     setupServer();
 
-    ble.begin();
-    socket.begin();
-    // eventSource.begin();
+    ble->begin();
+    socket->begin();
+    // eventSource->begin();
+#if USE_ESPNOW
+    espnow->begin();  // after WiFi is up: esp_now needs the radio started
+#endif
 
     ESP_LOGI("main", "Service control task started");
     for (;;) {
-        wifiService.loop();
-        apService.loop();
+        wifiService->loop();
+        apService->loop();
 
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
@@ -110,6 +118,19 @@ void setup() {
     Serial.begin(115200);
     ESP_FS.begin(true); // TODO: Log failure
     ESP_LOGI("main", "Booting robot");
+
+    // Initialize services on the heap
+    ble = new BLE();
+    server = new PsychicHttpServer();
+    socket = new Websocket(*server, "/api/ws");
+    eventSource = new EventSource(*server, "/api/sse");
+    wifiService = new WiFiService();
+    apService = new APService();
+    eventStorage = new EventStorage();
+#if USE_ESPNOW
+    espnow = new EspNowAdapter();
+#endif
+    robot = new Hexapod();
 
     feature_service::printFeatureConfiguration();
 

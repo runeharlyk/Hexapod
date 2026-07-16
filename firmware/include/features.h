@@ -37,6 +37,16 @@
 #define EMBED_WEBAPP 0
 #endif
 
+// ESP-NOW handheld controller receiver off by default
+#ifndef USE_ESPNOW
+#define USE_ESPNOW 0
+#endif
+
+// Wi-Fi channel the ESP-NOW controller broadcasts on (must match the controller)
+#ifndef ESPNOW_WIFI_CHANNEL
+#define ESPNOW_WIFI_CHANNEL 1
+#endif
+
 namespace feature_service {
 
 void printFeatureConfiguration();

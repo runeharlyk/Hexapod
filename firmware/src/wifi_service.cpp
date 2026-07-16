@@ -1,6 +1,11 @@
 #include <wifi_service.h>
 
-WiFiService::WiFiService() {}
+#include <features.h>
+#if USE_ESPNOW
+#include <communication/espnow_adapter.h>
+#endif
+
+WiFiService::WiFiService() : _lastConnectionAttempt(0), _stopping(false) {}
 
 WiFiService::~WiFiService() {}
 
@@ -32,6 +37,10 @@ void WiFiService::loop() { EXECUTE_EVERY_N_MS(reconnectDelay, manageSTA()); }
 
 void WiFiService::manageSTA() {
     if (WiFi.isConnected()) return;
+    if (cfg.ssid.isEmpty()) return;
+#if USE_ESPNOW
+    if (EspNowAdapter::controllerActive()) return;
+#endif
     if ((WiFi.getMode() & WIFI_STA) == 0) connectToWiFi();
 }
 
