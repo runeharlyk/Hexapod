@@ -76,17 +76,6 @@ class GaitController {
         }
     }
 
-    float yawArc(const float default_foot_pos[4], const float* current_pos) {
-        const float foot_mag = std::hypot(default_foot_pos[0], default_foot_pos[1]);
-        const float foot_dir = std::atan2(default_foot_pos[1], default_foot_pos[0]);
-        const float offsets[] = {current_pos[0] - default_foot_pos[0], current_pos[2] - default_foot_pos[2],
-                                 current_pos[1] - default_foot_pos[1]};
-        const float offset_mag = std::hypot(offsets[0], offsets[1]);
-        const float offset_mod = std::atan2(offset_mag, foot_mag);
-
-        return M_PI_2 + foot_dir + offset_mod;
-    }
-
     void advancePhase(float dt, float velocity) { phase = std::fmod(phase + dt * velocity, 1.0f); }
 
     std::tuple<float, std::function<void(const float, const float, const float*, const float, float*)>, float>
@@ -178,17 +167,54 @@ class GaitController {
         }
     }
 
-    void step(gait_state_t& gait, BodyStateMsg& body, float dt) {
-        const float step_x = gait.step_x;
-        const float step_z = gait.step_z;
-        const float angle = gait.step_angle;
-        const bool isMoving = std::fabs(step_x) >= 2 || std::fabs(step_z) >= 2 || angle;
-        const bool isRepositioning = !isMoving && hasPendingStanceChange();
 
-        const float* activeOffset = gait.offset;
-        const float activeStandFrac = gait.stand_frac;
-        const float activeStepHeight = gait.step_height;
-        const float activeSpeed = gait.step_speed;
+    void generateFeet(gait_state_t& gait, BodyStateMsg& body) {
+        float newFeet[6][4];
+        COPY_2D_ARRAY_6x4(newFeet, defaultPosition);
+
+        for (int i = 0; i < 6; i++) {
+            const float ph = std::fmod(this->phase + gait.offset[i], 1.0f);
+            const bool isSwinging = ph >= gait.stand_frac;
+
+            if (isSwinging && !footWasSwinging[i]) {
+                for (int j = 0; j < 4; ++j) {
+                    swingStartPosition[i][j] = defaultPosition[i][j];
+                }
+            }
+            footWasSwinging[i] = isSwinging;
+
+            if (isSwinging) {
+                const float swingProgress = (ph - gait.stand_frac) / (1.0f - gait.stand_frac);
+                updateDefaultPositionTarget(i, swingProgress);
+            }
+
+            const float rx = defaultPosition[i][0];
+            const float ry = defaultPosition[i][1];
+            const float strokeX = gait.step_x + gait.step_angle * (-ry);
+            const float strokeY = gait.step_z + gait.step_angle * (rx);
+            const float stroke = std::hypot(strokeX, strokeY);
+            const float direction = std::atan2(strokeY, strokeX);
+
+            auto [phNorm, curveFn, amp] = phaseParams(ph, gait.stand_frac, gait.step_depth, gait.step_height);
+
+            float delta[3] = {0, 0, 0};
+            curveFn(stroke / 2, direction, &amp, phNorm, delta);
+
+            for (int j = 0; j < 3; j++) {
+                newFeet[i][j] = defaultPosition[i][j] + delta[j];
+            }
+            newFeet[i][3] = 1;
+        }
+
+        body.updateFeet(newFeet);
+    }
+
+    void setPhase(float p) { phase = std::fmod(p, 1.0f); }
+    float getPhase() const { return phase; }
+
+    void step(gait_state_t& gait, BodyStateMsg& body, float dt) {
+        const bool isMoving = std::fabs(gait.step_x) >= 2 || std::fabs(gait.step_z) >= 2 || gait.step_angle;
+        const bool isRepositioning = !isMoving && hasPendingStanceChange();
 
         if (!isMoving && !isRepositioning) {
             for (int i = 0; i < 6; i++) {
@@ -200,48 +226,12 @@ class GaitController {
             return;
         }
 
-        const float length = std::hypot(step_x, step_z) * (gait.step_x < 0 ? -1 : 1);
-        const float turnAmplitude = std::atan2(step_z, length) * 2;
-
-        const float speed_factor = std::max(std::abs(length) / 25.f, std::abs(angle) * 1.5f);
-        const float speed = isRepositioning ? activeSpeed : activeSpeed * CLIP(speed_factor, 0.75, 1.5f);
+        const float length = std::hypot(gait.step_x, gait.step_z) * (gait.step_x < 0 ? -1 : 1);
+        const float speed_factor = std::max(std::abs(length) / 25.f, std::abs(gait.step_angle) * 1.5f);
+        const float speed =
+            isRepositioning ? gait.step_speed : gait.step_speed * CLIP(speed_factor, 0.75, 1.5f);
 
         advancePhase(dt, speed);
-
-        float newFeet[6][4];
-        COPY_2D_ARRAY_6x4(newFeet, defaultPosition);
-
-        for (int i = 0; i < 6; i++) {
-            const float* currentFoot = body.feet[i];
-            const float phase = std::fmod(this->phase + activeOffset[i], 1.0f);
-            const bool isSwinging = phase >= activeStandFrac;
-
-            if (isSwinging && !footWasSwinging[i]) {
-                for (int j = 0; j < 4; ++j) {
-                    swingStartPosition[i][j] = defaultPosition[i][j];
-                }
-            }
-            footWasSwinging[i] = isSwinging;
-
-            if (isSwinging) {
-                const float swingProgress = (phase - activeStandFrac) / (1.0f - activeStandFrac);
-                updateDefaultPositionTarget(i, swingProgress);
-            }
-
-            auto [phNorm, curveFn, amp] = phaseParams(phase, activeStandFrac, gait.step_depth, activeStepHeight);
-
-            float deltaPos[3] = {0, 0, 0};
-            curveFn(length / 2, turnAmplitude, &amp, phNorm, deltaPos);
-
-            float deltaRot[3] = {0, 0, 0};
-            curveFn((angle * 180) / M_PI, yawArc(defaultPosition[i], currentFoot), &amp, phNorm, deltaRot);
-
-            for (int j = 0; j < 3; j++) {
-                newFeet[i][j] = defaultPosition[i][j] + deltaPos[j] + deltaRot[j];
-            }
-            newFeet[i][3] = 1;
-        }
-
-        body.updateFeet(newFeet);
+        generateFeet(gait, body);
     }
 };

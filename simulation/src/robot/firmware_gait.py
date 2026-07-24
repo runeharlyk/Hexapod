@@ -247,19 +247,6 @@ class GaitController:
             if one_minus_phase != 0.0:
                 inv_phase_power /= one_minus_phase
 
-    @staticmethod
-    def _yaw_arc(default_foot_pos, current_pos):
-        foot_mag = math.hypot(default_foot_pos[0], default_foot_pos[1])
-        foot_dir = math.atan2(default_foot_pos[1], default_foot_pos[0])
-        offsets = [
-            current_pos[0] - default_foot_pos[0],
-            current_pos[2] - default_foot_pos[2],
-            current_pos[1] - default_foot_pos[1],
-        ]
-        offset_mag = math.hypot(offsets[0], offsets[1])
-        offset_mod = math.atan2(offset_mag, foot_mag)
-        return math.pi / 2 + foot_dir + offset_mod
-
     def _phase_params(self, phase, stand_frac, depth, height):
         if phase < stand_frac:
             return phase / stand_frac, self._stance_curve, -depth
@@ -275,36 +262,27 @@ class GaitController:
 
         Used by `phase_gait` control mode where the policy owns the phase.
         """
-        length, turn_amplitude = self._kinematic_params(gait)
-        angle = gait.step_angle
         new_feet = self.default_position.copy()
         for i in range(6):
-            current_foot = body.feet[i]
             phase = math.fmod(self.phase + gait.offset[i], 1.0)
             is_swinging = phase >= gait.stand_frac
-
             if is_swinging and not self.foot_was_swinging[i]:
                 self.swing_start_position[i] = self.default_position[i].copy()
             self.foot_was_swinging[i] = is_swinging
 
+            rx, ry = self.default_position[i][0], self.default_position[i][1]
+            stroke_x = gait.step_x + gait.step_angle * (-ry)   # translation + (omega x r): radius-scaled turn
+            stroke_y = gait.step_z + gait.step_angle * (rx)
+            stroke = math.hypot(stroke_x, stroke_y)
+            direction = math.atan2(stroke_y, stroke_x)
+
             ph_norm, curve_fn, amp = self._phase_params(
                 phase, gait.stand_frac, gait.step_depth, gait.step_height
             )
-
-            delta_pos = [0.0, 0.0, 0.0]
-            curve_fn(length / 2, turn_amplitude, amp, ph_norm, delta_pos)
-
-            delta_rot = [0.0, 0.0, 0.0]
-            curve_fn(
-                (angle * 180) / math.pi,
-                self._yaw_arc(self.default_position[i], current_foot),
-                amp,
-                ph_norm,
-                delta_rot,
-            )
-
+            delta = [0.0, 0.0, 0.0]
+            curve_fn(stroke / 2.0, direction, amp, ph_norm, delta)
             for j in range(3):
-                new_feet[i][j] = self.default_position[i][j] + delta_pos[j] + delta_rot[j]
+                new_feet[i][j] = self.default_position[i][j] + delta[j]
             new_feet[i][3] = 1.0
 
         body.feet = new_feet

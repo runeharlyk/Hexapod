@@ -95,10 +95,11 @@ export class GaitController {
 
     const lengthRaw = Math.hypot(step_x, step_z)
     const length = step_x < 0 ? -lengthRaw : lengthRaw
-    const speed = isRepositioning
-      ? gait.step_speed
-      : gait.step_speed * Math.min(1.5, Math.max(0.75, Math.abs(length) / 25, Math.abs(angle * 1.5)))
-    const turnAmplitude = Math.atan2(step_z, length) * 2
+    const speed =
+      isRepositioning ?
+        gait.step_speed
+      : gait.step_speed *
+        Math.min(1.5, Math.max(0.75, Math.abs(length) / 25, Math.abs(angle * 1.5)))
 
     this.advancePhase(dt, speed)
 
@@ -114,9 +115,10 @@ export class GaitController {
       if (!isSwinging) return foot
 
       const swingProgress = (phase - gait.stand_frac) / (1 - gait.stand_frac)
-      return foot.map((_, j) =>
-        this.swingStartPosition[i][j] +
-        (this.targetDefaultPosition[i][j] - this.swingStartPosition[i][j]) * swingProgress
+      return foot.map(
+        (_, j) =>
+          this.swingStartPosition[i][j] +
+          (this.targetDefaultPosition[i][j] - this.swingStartPosition[i][j]) * swingProgress
       )
     })
 
@@ -124,7 +126,6 @@ export class GaitController {
 
     for (let i = 0; i < this.defaultPosition.length; i++) {
       const defaultFoot = this.defaultPosition[i]
-      const currentFoot = body.feet[i]
       const phase = (this.phase + gait.offset[i]) % 1
       const [phNorm, curveFn, amp] = this.phaseParams(
         phase,
@@ -132,14 +133,12 @@ export class GaitController {
         gait.step_depth,
         gait.step_height
       )
-      const deltaPos = curveFn(length / 2, turnAmplitude, amp, phNorm)
-      const deltaRot = curveFn(
-        (angle * 180) / Math.PI,
-        yawArc(defaultFoot, currentFoot),
-        amp,
-        phNorm
-      )
-      newFeet[i] = defaultFoot.map((v, j) => v + deltaPos[j] + deltaRot[j])
+      const strokeX = step_x + angle * -defaultFoot[1]
+      const strokeY = step_z + angle * defaultFoot[0]
+      const stroke = Math.hypot(strokeX, strokeY)
+      const direction = Math.atan2(strokeY, strokeX)
+      const delta = curveFn(stroke / 2, direction, amp, phNorm)
+      newFeet[i] = defaultFoot.map((v, j) => v + delta[j])
       newFeet[i][3] = 1
     }
 
@@ -212,20 +211,6 @@ export function sine_curve(length: number, angle: number, height: number, phase:
   const z = step * Math.sin(angle)
   const y = length ? height * Math.cos((Math.PI * (x + z)) / (2 * length)) : 0
   return [x, z, y]
-}
-
-const yawArc = (default_foot_pos: number[], current_foot_pos: number[]): number => {
-  const foot_mag = Math.hypot(default_foot_pos[0] + default_foot_pos[1])
-  const foot_dir = Math.atan2(default_foot_pos[1], default_foot_pos[0])
-  const offsets = [
-    current_foot_pos[0] - default_foot_pos[0],
-    current_foot_pos[2] - default_foot_pos[2],
-    current_foot_pos[1] - default_foot_pos[1]
-  ]
-  const offset_mag = Math.hypot(offsets[0] + offsets[1])
-  const offset_mod = Math.atan2(offset_mag, foot_mag)
-
-  return Math.PI / 2.0 + foot_dir + offset_mod
 }
 
 const bezier_curve = (length: number, angle: number, height: number, phase: number): number[] => {
