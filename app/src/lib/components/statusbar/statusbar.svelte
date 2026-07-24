@@ -1,40 +1,31 @@
 <script lang="ts">
   import { page } from '$app/state'
-  import { telemetry } from '$lib/stores/telemetry'
-  import RssiIndicator from '$lib/components/statusbar/RSSIIndicator.svelte'
   import UpdateIndicator from '$lib/components/statusbar/UpdateIndicator.svelte'
-  import ThemeButton from './ThemeButton.svelte'
+  import LinkIndicator from '$lib/components/statusbar/LinkIndicator.svelte'
   import FullscreenButton from './FullscreenButton.svelte'
-  import StopButton from './StopButton.svelte'
   import ViewSelector from './ViewSelector.svelte'
   import { Hamburger } from '../icons'
-  import BluetoothIconButton from '$lib/components/statusbar/BluetoothIconButton.svelte'
-  import WebsocketIconButton from '$lib/components/statusbar/WebsocketIconButton.svelte'
 </script>
 
-<div class="navbar bg-base-300 sticky top-0 z-10 h-12 min-h-fit drop-shadow-lg lg:h-16 gap-2 pr-0">
-  <div class="flex flex-1 gap-2">
-    <label for="main-menu" class="btn btn-ghost btn-circle btn-sm drawer-button">
+<div class="navbar bg-base-300 sticky top-0 z-20 h-12 min-h-fit gap-1 px-2 drop-shadow-lg lg:h-16">
+  <div class="flex min-w-0 flex-1 gap-2">
+    <label
+      for="main-menu"
+      class="btn btn-ghost btn-circle btn-sm drawer-button"
+      aria-label="Open menu"
+    >
       <Hamburger class="h-6 w-auto" />
     </label>
     {#if page.data.title === 'Controller'}
       <ViewSelector />
     {:else}
-      <h1 class="px-2 text-xl font-bold lg:text-2xl">{page.data.title}</h1>
+      <h1 class="truncate px-2 text-xl font-bold lg:text-2xl">{page.data.title}</h1>
     {/if}
   </div>
 
   <UpdateIndicator />
 
-  <WebsocketIconButton />
-
-  <BluetoothIconButton />
+  <LinkIndicator />
 
   <FullscreenButton />
-
-  <ThemeButton />
-
-  <RssiIndicator rssi={$telemetry.rssi.rssi} />
-
-  <StopButton />
 </div>

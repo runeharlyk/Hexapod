@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ble } from '$lib/transport/ble-adapter'
   import SettingsCard from '$lib/components/SettingsCard.svelte'
-  import BluetoothIconButton from '$lib/components/statusbar/BluetoothIconButton.svelte'
+  import BluetoothIconButton from '$lib/components/BluetoothIconButton.svelte'
   import { onMount } from 'svelte'
   import { dataBroker } from '$lib/transport/databroker'
   import { MessageTopic, type Temp } from '$lib/interfaces/transport.interface'

@@ -1,5 +1,6 @@
 <script lang="ts">
   interface Props {
+    id?: string
     min?: number
     max?: number
     step?: number

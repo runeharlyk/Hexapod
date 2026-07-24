@@ -1,13 +1,19 @@
 import { encode, decode } from '@msgpack/msgpack'
-import { get, writable } from 'svelte/store'
+import { derived, get, writable } from 'svelte/store'
 import {
   MessageTopic,
   MessageType,
   type ITransport,
+  type LinkStatus,
   type ServerMessage
 } from '../interfaces/transport.interface'
 import type { DataBrokerCallback } from './databroker'
 import { location } from '$lib/stores'
+
+const PING_INTERVAL_MS = 2000
+const PONG_TIMEOUT_MS = 6000
+const RECONNECT_MIN_MS = 1000
+const RECONNECT_MAX_MS = 15000
 
 let useBinary = false
 
@@ -37,35 +43,94 @@ function createWebSocketAdapter(): ITransport {
   const dataCallbacks: DataBrokerCallback<unknown>[] = []
   const connectCallbacks: (() => void)[] = []
   const disconnectCallbacks: (() => void)[] = []
-  const connected = writable(false)
+  const status = writable<LinkStatus>('disconnected')
+  const latencyMs = writable<number | null>(null)
+  const connected = derived(status, $status => $status === 'connected')
   let hasEnabledProtocol = false
   let ws: WebSocket | undefined
+  let wantConnection = false
+  let reconnectDelay = RECONNECT_MIN_MS
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  let pingTimer: ReturnType<typeof setInterval> | undefined
+  let lastPingAt = 0
+  let lastPongAt = 0
 
-  const connect = async () => {
+  const stopReconnecting = () => {
+    if (reconnectTimer) clearTimeout(reconnectTimer)
+    reconnectTimer = undefined
+  }
+
+  const scheduleReconnect = () => {
+    if (!wantConnection || reconnectTimer) return
+    const delay = reconnectDelay
+    reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS)
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = undefined
+      openSocket()
+    }, delay)
+  }
+
+  const stopPinging = () => {
+    if (pingTimer) clearInterval(pingTimer)
+    pingTimer = undefined
+  }
+
+  const startPinging = () => {
+    stopPinging()
+    lastPongAt = performance.now()
+    pingTimer = setInterval(() => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return
+      if (performance.now() - lastPongAt > PONG_TIMEOUT_MS) latencyMs.set(null)
+      ping()
+    }, PING_INTERVAL_MS)
+  }
+
+  // The firmware answers a PING in whichever encoding it was built with, so probing with
+  // both lets the reply settle `useBinary` through decodeMessage.
+  const probeEncoding = () => {
+    ping()
+    useBinary = true
+    ping()
+    useBinary = false
+  }
+
+  const openSocket = () => {
+    if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return
+
     const wsLocation = get(location) ? get(location) : window.location.host
-    const wsUrl = `ws://${wsLocation}/api/ws`
+    status.set('connecting')
+
+    let socket: WebSocket
     try {
-      ws = new WebSocket(wsUrl)
-    } catch (error) {
-      console.log(error)
+      socket = new WebSocket(`ws://${wsLocation}/api/ws`)
+    } catch {
+      status.set('disconnected')
+      scheduleReconnect()
       return
     }
-    ws.binaryType = 'arraybuffer'
 
-    ws.onopen = () => {
-      ping()
-      useBinary = true
-      ping()
-      useBinary = false
-      connected.set(true)
+    ws = socket
+    socket.binaryType = 'arraybuffer'
+
+    socket.onopen = () => {
+      reconnectDelay = RECONNECT_MIN_MS
+      status.set('connected')
+      probeEncoding()
+      startPinging()
     }
 
-    ws.onclose = () => {
-      connected.set(false)
+    socket.onclose = () => {
+      if (ws !== socket) return
+      ws = undefined
+      hasEnabledProtocol = false
+      stopPinging()
+      latencyMs.set(null)
+      status.set('disconnected')
       disconnectCallbacks.forEach(cb => cb())
+      scheduleReconnect()
     }
 
-    ws.onmessage = frame => {
+    socket.onmessage = frame => {
       const message = decodeMessage(frame.data)
       if (!message) return
       const [type, topic = undefined, payload = undefined] = message
@@ -73,22 +138,39 @@ function createWebSocketAdapter(): ITransport {
         hasEnabledProtocol = true
         connectCallbacks.forEach(cb => cb())
       }
+      if (type === MessageType.PONG) {
+        lastPongAt = performance.now()
+        latencyMs.set(Math.max(0, Math.round(lastPongAt - lastPingAt)))
+        return
+      }
       if (topic !== undefined && payload !== undefined) {
         dataCallbacks.forEach(cb => cb(type, topic, payload))
       }
     }
 
-    ws.onerror = error => {
-      console.error('WebSocket error:', error)
+    socket.onerror = () => {
       hasEnabledProtocol = false
     }
   }
 
+  const connect = async () => {
+    wantConnection = true
+    reconnectDelay = RECONNECT_MIN_MS
+    stopReconnecting()
+    openSocket()
+  }
+
   const disconnect = async () => {
+    wantConnection = false
+    stopReconnecting()
+    stopPinging()
     hasEnabledProtocol = false
-    if (ws) {
-      ws.close()
-      connected.set(false)
+    latencyMs.set(null)
+    const socket = ws
+    ws = undefined
+    status.set('disconnected')
+    if (socket) {
+      socket.close()
       disconnectCallbacks.forEach(cb => cb())
     }
   }
@@ -118,11 +200,12 @@ function createWebSocketAdapter(): ITransport {
   }
 
   function ping() {
-    const serialized = encodeMessage([3])
+    const serialized = encodeMessage([MessageType.PING])
     if (!serialized) {
       console.error('Could not serialize message')
       return
     }
+    lastPingAt = performance.now()
     ws?.send(serialized)
   }
 
@@ -135,6 +218,8 @@ function createWebSocketAdapter(): ITransport {
 
   return {
     connected,
+    status,
+    latencyMs,
     connect,
     disconnect,
     send,

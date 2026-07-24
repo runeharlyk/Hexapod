@@ -1,5 +1,5 @@
 import type { DataBrokerCallback } from '$lib/transport/databroker'
-import { type Writable } from 'svelte/store'
+import { type Readable } from 'svelte/store'
 
 export enum MessageType {
   CONNECT = 0,
@@ -37,13 +37,22 @@ export type PongMsg = [MessageType.PONG]
 
 export type ServerMessage = SubscribeMsg | UnsubscribeMsg | DataMsg | PingMsg | PongMsg
 
+export type LinkStatus = 'disconnected' | 'connecting' | 'connected'
+
 export interface ITransport {
-  connected: Writable<boolean>
+  connected: Readable<boolean>
+  status: Readable<LinkStatus>
+  latencyMs: Readable<number | null>
   connect: () => Promise<void>
   disconnect: () => Promise<void>
   send: <T>(data: T, reliable?: boolean) => Promise<void>
   onData: (data: DataBrokerCallback<unknown>) => void
   onConnect: (cb: () => void) => void
   onDisconnect: (cb: () => void) => void
-  sendEvent: (type: MessageType, topic?: MessageTopic, payload?: unknown, reliable?: boolean) => Promise<void>
+  sendEvent: (
+    type: MessageType,
+    topic?: MessageTopic,
+    payload?: unknown,
+    reliable?: boolean
+  ) => Promise<void>
 }

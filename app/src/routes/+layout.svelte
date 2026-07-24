@@ -88,13 +88,10 @@
 <div class="drawer">
   <input id="main-menu" type="checkbox" class="drawer-toggle" bind:checked={menuOpen} />
   <div class="drawer-content flex flex-col">
-    <!-- Status bar content here -->
     <Statusbar />
 
-    <!-- Main page content here -->
     {@render children?.()}
   </div>
-  <!-- Side Navigation -->
   <div class="drawer-side z-30 shadow-lg">
     <label for="main-menu" class="drawer-overlay"></label>
     <Menu menuClicked={() => (menuOpen = false)} />

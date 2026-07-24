@@ -5,6 +5,10 @@
   const SvelteComponent = $derived($isFullscreen ? MdiFullscreenExit : MdiFullscreen)
 </script>
 
-<button onclick={toggleFullscreen}>
-  <SvelteComponent class="h-7 w-7" />
+<button
+  class="btn btn-ghost btn-circle btn-sm"
+  onclick={toggleFullscreen}
+  aria-label={$isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+>
+  <SvelteComponent class="h-6 w-6" />
 </button>

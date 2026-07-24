@@ -2,12 +2,13 @@
   import SettingsCard from '$lib/components/SettingsCard.svelte'
   import { BluetoothConnected, BluetoothDisconnected, WiFi } from '$lib/components/icons'
   import { location } from '$lib/stores'
+  import { connectBluetooth, connectWebsocket } from '$lib/stores/link'
   import { ble, SERVICE_UUID } from '$lib/transport/ble-adapter'
   import { websocket } from '$lib/transport/websocket-adapter'
 
-  const update = () => {
-    websocket.disconnect()
-    websocket.connect()
+  const update = async () => {
+    await websocket.disconnect()
+    connectWebsocket()
   }
 
   let isConnected = ble.connected
@@ -38,7 +39,7 @@
     {:else}
       <button
         class="btn btn-ghost btn-circle btn-sm"
-        onclick={() => websocket.connect()}
+        onclick={connectWebsocket}
         title="Connect WebSocket"
       >
         <WiFi class="h-6 w-auto text-error" />
@@ -68,7 +69,7 @@
     {:else}
       <button
         class="btn btn-ghost btn-circle btn-sm"
-        onclick={() => ble.connect()}
+        onclick={connectBluetooth}
         title="Connect Bluetooth"
       >
         <BluetoothDisconnected class="h-6 w-auto text-error" />

@@ -4,6 +4,7 @@
   import GithubButton from '../menu/GithubButton.svelte'
   import LogoButton from '../menu/LogoButton.svelte'
   import MenuList from '../menu/MenuList.svelte'
+  import ThemeButton from '../menu/ThemeButton.svelte'
   import { resolve } from '$app/paths'
   import {
     Connection,
@@ -192,7 +193,10 @@
   <div class="divider my-0"></div>
 
   <div class="flex items-center justify-between">
-    <GithubButton {github} />
+    <div class="flex items-center gap-1">
+      <GithubButton {github} />
+      <ThemeButton />
+    </div>
     <div class="flex items-center justify-end text-sm gap-2">
       <Copyright class="h-4 w-4" />{copyright}
     </div>

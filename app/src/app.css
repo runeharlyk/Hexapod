@@ -23,8 +23,7 @@
   --base-content: oklch(0.3 0.012 256);
 }
 
-#nipple_0_0,
-#nipple_1_1 {
+.nipple {
   z-index: 10 !important;
 }
 
