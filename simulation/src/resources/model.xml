@@ -22,136 +22,136 @@
   <worldbody>
     <light pos="0 0 2" dir="0 0 -1" diffuse="0.8 0.8 0.8"/>
     <geom name="ground" type="plane" material="grid" size="5 5 0.1"
-          condim="4" friction="1.0 0.02 0.001"/>
+          condim="3" friction="1.0 0.02 0.001"/>
 
     <body name="base" pos="0 0 0.075">
       <freejoint name="root"/>
-      <inertial pos="0 0 0" mass="0.218" diaginertia="3.146e-04 1.152e-04 3.774e-04"/>
-      <geom type="box" size="0.035 0.063 0.019" rgba="0.9 0.9 0.9 1"
+      <inertial pos="0 0 0" mass="0.218" diaginertia="5.344e-04 3.123e-04 8.173e-04"/>
+      <geom name="chassis" type="box" size="0.035 0.063 0.019" rgba="0.9 0.9 0.9 1"
             contype="0" conaffinity="0"/>
       <site name="imu" pos="0 0 0" size="0.005"/>
       <body name="coxa_0" pos="0.04482 0.07482 0" euler="0 0 0.785398">
         <joint name="coxa_0" type="hinge" axis="0 0 1" range="-0.55 0.55"
-               damping="0.02" frictionloss="0.005"/>
+               damping="0.02" frictionloss="0.005" armature="0.003"/>
         <inertial pos="0.01900 0 0" mass="0.01" diaginertia="6.667e-07 1.537e-06 1.537e-06"/>
         <geom type="capsule" fromto="0 0 0 0.03800 0 0" size="0.008" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
         <body name="femur_0" pos="0.03800 0 0">
           <joint name="femur_0" type="hinge" axis="0 -1 0" range="-1.8 1.8"
-                 damping="0.02" frictionloss="0.005"/>
+                 damping="0.02" frictionloss="0.005" armature="0.003"/>
           <inertial pos="0.02703 0 0" mass="0.042" diaginertia="1.575e-06 1.102e-05 1.102e-05"/>
           <geom type="capsule" fromto="0 0 0 0.05406 0 0" size="0.007" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
           <body name="tibia_0" pos="0.05406 0 0">
             <joint name="tibia_0" type="hinge" axis="0 -1 0" range="-2.2 2.2"
-                   damping="0.02" frictionloss="0.005"/>
+                   damping="0.02" frictionloss="0.005" armature="0.003"/>
             <inertial pos="0.04850 0 0" mass="0.025" diaginertia="6.000e-07 1.990e-05 1.990e-05"/>
             <geom type="capsule" fromto="0 0 0 0.09700 0 0" size="0.005" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
             <geom name="foot_0" type="sphere" pos="0.09700 0 0" size="0.006"
-                  rgba="0.2 0.7 0.8 1" condim="4" friction="1.0 0.02 0.001" priority="1"/>
+                  rgba="0.2 0.7 0.8 1" condim="3" friction="2.0 0.02 0.001" priority="1"/>
             <site name="foot_0" pos="0.09700 0 0" size="0.004"/>
           </body>
         </body>
       </body>
       <body name="coxa_1" pos="0.06103 0.00000 0" euler="0 0 0.000000">
         <joint name="coxa_1" type="hinge" axis="0 0 1" range="-0.55 0.55"
-               damping="0.02" frictionloss="0.005"/>
+               damping="0.02" frictionloss="0.005" armature="0.003"/>
         <inertial pos="0.01900 0 0" mass="0.01" diaginertia="6.667e-07 1.537e-06 1.537e-06"/>
         <geom type="capsule" fromto="0 0 0 0.03800 0 0" size="0.008" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
         <body name="femur_1" pos="0.03800 0 0">
           <joint name="femur_1" type="hinge" axis="0 -1 0" range="-1.8 1.8"
-                 damping="0.02" frictionloss="0.005"/>
+                 damping="0.02" frictionloss="0.005" armature="0.003"/>
           <inertial pos="0.02703 0 0" mass="0.042" diaginertia="1.575e-06 1.102e-05 1.102e-05"/>
           <geom type="capsule" fromto="0 0 0 0.05406 0 0" size="0.007" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
           <body name="tibia_1" pos="0.05406 0 0">
             <joint name="tibia_1" type="hinge" axis="0 -1 0" range="-2.2 2.2"
-                   damping="0.02" frictionloss="0.005"/>
+                   damping="0.02" frictionloss="0.005" armature="0.003"/>
             <inertial pos="0.04850 0 0" mass="0.025" diaginertia="6.000e-07 1.990e-05 1.990e-05"/>
             <geom type="capsule" fromto="0 0 0 0.09700 0 0" size="0.005" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
             <geom name="foot_1" type="sphere" pos="0.09700 0 0" size="0.006"
-                  rgba="0.2 0.7 0.8 1" condim="4" friction="1.0 0.02 0.001" priority="1"/>
+                  rgba="0.2 0.7 0.8 1" condim="3" friction="2.0 0.02 0.001" priority="1"/>
             <site name="foot_1" pos="0.09700 0 0" size="0.004"/>
           </body>
         </body>
       </body>
       <body name="coxa_2" pos="0.04482 -0.07482 0" euler="0 0 -0.785398">
         <joint name="coxa_2" type="hinge" axis="0 0 1" range="-0.55 0.55"
-               damping="0.02" frictionloss="0.005"/>
+               damping="0.02" frictionloss="0.005" armature="0.003"/>
         <inertial pos="0.01900 0 0" mass="0.01" diaginertia="6.667e-07 1.537e-06 1.537e-06"/>
         <geom type="capsule" fromto="0 0 0 0.03800 0 0" size="0.008" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
         <body name="femur_2" pos="0.03800 0 0">
           <joint name="femur_2" type="hinge" axis="0 -1 0" range="-1.8 1.8"
-                 damping="0.02" frictionloss="0.005"/>
+                 damping="0.02" frictionloss="0.005" armature="0.003"/>
           <inertial pos="0.02703 0 0" mass="0.042" diaginertia="1.575e-06 1.102e-05 1.102e-05"/>
           <geom type="capsule" fromto="0 0 0 0.05406 0 0" size="0.007" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
           <body name="tibia_2" pos="0.05406 0 0">
             <joint name="tibia_2" type="hinge" axis="0 -1 0" range="-2.2 2.2"
-                   damping="0.02" frictionloss="0.005"/>
+                   damping="0.02" frictionloss="0.005" armature="0.003"/>
             <inertial pos="0.04850 0 0" mass="0.025" diaginertia="6.000e-07 1.990e-05 1.990e-05"/>
             <geom type="capsule" fromto="0 0 0 0.09700 0 0" size="0.005" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
             <geom name="foot_2" type="sphere" pos="0.09700 0 0" size="0.006"
-                  rgba="0.2 0.7 0.8 1" condim="4" friction="1.0 0.02 0.001" priority="1"/>
+                  rgba="0.2 0.7 0.8 1" condim="3" friction="2.0 0.02 0.001" priority="1"/>
             <site name="foot_2" pos="0.09700 0 0" size="0.004"/>
           </body>
         </body>
       </body>
       <body name="coxa_3" pos="-0.04482 0.07482 0" euler="0 0 -3.926991">
         <joint name="coxa_3" type="hinge" axis="0 0 1" range="-0.55 0.55"
-               damping="0.02" frictionloss="0.005"/>
+               damping="0.02" frictionloss="0.005" armature="0.003"/>
         <inertial pos="0.01900 0 0" mass="0.01" diaginertia="6.667e-07 1.537e-06 1.537e-06"/>
         <geom type="capsule" fromto="0 0 0 0.03800 0 0" size="0.008" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
         <body name="femur_3" pos="0.03800 0 0">
           <joint name="femur_3" type="hinge" axis="0 -1 0" range="-1.8 1.8"
-                 damping="0.02" frictionloss="0.005"/>
+                 damping="0.02" frictionloss="0.005" armature="0.003"/>
           <inertial pos="0.02703 0 0" mass="0.042" diaginertia="1.575e-06 1.102e-05 1.102e-05"/>
           <geom type="capsule" fromto="0 0 0 0.05406 0 0" size="0.007" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
           <body name="tibia_3" pos="0.05406 0 0">
             <joint name="tibia_3" type="hinge" axis="0 -1 0" range="-2.2 2.2"
-                   damping="0.02" frictionloss="0.005"/>
+                   damping="0.02" frictionloss="0.005" armature="0.003"/>
             <inertial pos="0.04850 0 0" mass="0.025" diaginertia="6.000e-07 1.990e-05 1.990e-05"/>
             <geom type="capsule" fromto="0 0 0 0.09700 0 0" size="0.005" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
             <geom name="foot_3" type="sphere" pos="0.09700 0 0" size="0.006"
-                  rgba="0.2 0.7 0.8 1" condim="4" friction="1.0 0.02 0.001" priority="1"/>
+                  rgba="0.2 0.7 0.8 1" condim="3" friction="2.0 0.02 0.001" priority="1"/>
             <site name="foot_3" pos="0.09700 0 0" size="0.004"/>
           </body>
         </body>
       </body>
       <body name="coxa_4" pos="-0.06103 0.00000 0" euler="0 0 -3.141593">
         <joint name="coxa_4" type="hinge" axis="0 0 1" range="-0.55 0.55"
-               damping="0.02" frictionloss="0.005"/>
+               damping="0.02" frictionloss="0.005" armature="0.003"/>
         <inertial pos="0.01900 0 0" mass="0.01" diaginertia="6.667e-07 1.537e-06 1.537e-06"/>
         <geom type="capsule" fromto="0 0 0 0.03800 0 0" size="0.008" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
         <body name="femur_4" pos="0.03800 0 0">
           <joint name="femur_4" type="hinge" axis="0 -1 0" range="-1.8 1.8"
-                 damping="0.02" frictionloss="0.005"/>
+                 damping="0.02" frictionloss="0.005" armature="0.003"/>
           <inertial pos="0.02703 0 0" mass="0.042" diaginertia="1.575e-06 1.102e-05 1.102e-05"/>
           <geom type="capsule" fromto="0 0 0 0.05406 0 0" size="0.007" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
           <body name="tibia_4" pos="0.05406 0 0">
             <joint name="tibia_4" type="hinge" axis="0 -1 0" range="-2.2 2.2"
-                   damping="0.02" frictionloss="0.005"/>
+                   damping="0.02" frictionloss="0.005" armature="0.003"/>
             <inertial pos="0.04850 0 0" mass="0.025" diaginertia="6.000e-07 1.990e-05 1.990e-05"/>
             <geom type="capsule" fromto="0 0 0 0.09700 0 0" size="0.005" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
             <geom name="foot_4" type="sphere" pos="0.09700 0 0" size="0.006"
-                  rgba="0.2 0.7 0.8 1" condim="4" friction="1.0 0.02 0.001" priority="1"/>
+                  rgba="0.2 0.7 0.8 1" condim="3" friction="2.0 0.02 0.001" priority="1"/>
             <site name="foot_4" pos="0.09700 0 0" size="0.004"/>
           </body>
         </body>
       </body>
       <body name="coxa_5" pos="-0.04482 -0.07482 0" euler="0 0 -2.356194">
         <joint name="coxa_5" type="hinge" axis="0 0 1" range="-0.55 0.55"
-               damping="0.02" frictionloss="0.005"/>
+               damping="0.02" frictionloss="0.005" armature="0.003"/>
         <inertial pos="0.01900 0 0" mass="0.01" diaginertia="6.667e-07 1.537e-06 1.537e-06"/>
         <geom type="capsule" fromto="0 0 0 0.03800 0 0" size="0.008" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
         <body name="femur_5" pos="0.03800 0 0">
           <joint name="femur_5" type="hinge" axis="0 -1 0" range="-1.8 1.8"
-                 damping="0.02" frictionloss="0.005"/>
+                 damping="0.02" frictionloss="0.005" armature="0.003"/>
           <inertial pos="0.02703 0 0" mass="0.042" diaginertia="1.575e-06 1.102e-05 1.102e-05"/>
           <geom type="capsule" fromto="0 0 0 0.05406 0 0" size="0.007" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
           <body name="tibia_5" pos="0.05406 0 0">
             <joint name="tibia_5" type="hinge" axis="0 -1 0" range="-2.2 2.2"
-                   damping="0.02" frictionloss="0.005"/>
+                   damping="0.02" frictionloss="0.005" armature="0.003"/>
             <inertial pos="0.04850 0 0" mass="0.025" diaginertia="6.000e-07 1.990e-05 1.990e-05"/>
             <geom type="capsule" fromto="0 0 0 0.09700 0 0" size="0.005" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
             <geom name="foot_5" type="sphere" pos="0.09700 0 0" size="0.006"
-                  rgba="0.2 0.7 0.8 1" condim="4" friction="1.0 0.02 0.001" priority="1"/>
+                  rgba="0.2 0.7 0.8 1" condim="3" friction="2.0 0.02 0.001" priority="1"/>
             <site name="foot_5" pos="0.09700 0 0" size="0.004"/>
           </body>
         </body>
@@ -160,24 +160,24 @@
   </worldbody>
 
   <actuator>
-    <position name="coxa_0" joint="coxa_0" kp="3.0" ctrlrange="-0.55 0.55" forcerange="-0.3 0.3"/>
-    <position name="femur_0" joint="femur_0" kp="3.0" ctrlrange="-1.8 1.8" forcerange="-0.3 0.3"/>
-    <position name="tibia_0" joint="tibia_0" kp="3.0" ctrlrange="-2.2 2.2" forcerange="-0.3 0.3"/>
-    <position name="coxa_1" joint="coxa_1" kp="3.0" ctrlrange="-0.55 0.55" forcerange="-0.3 0.3"/>
-    <position name="femur_1" joint="femur_1" kp="3.0" ctrlrange="-1.8 1.8" forcerange="-0.3 0.3"/>
-    <position name="tibia_1" joint="tibia_1" kp="3.0" ctrlrange="-2.2 2.2" forcerange="-0.3 0.3"/>
-    <position name="coxa_2" joint="coxa_2" kp="3.0" ctrlrange="-0.55 0.55" forcerange="-0.3 0.3"/>
-    <position name="femur_2" joint="femur_2" kp="3.0" ctrlrange="-1.8 1.8" forcerange="-0.3 0.3"/>
-    <position name="tibia_2" joint="tibia_2" kp="3.0" ctrlrange="-2.2 2.2" forcerange="-0.3 0.3"/>
-    <position name="coxa_3" joint="coxa_3" kp="3.0" ctrlrange="-0.55 0.55" forcerange="-0.3 0.3"/>
-    <position name="femur_3" joint="femur_3" kp="3.0" ctrlrange="-1.8 1.8" forcerange="-0.3 0.3"/>
-    <position name="tibia_3" joint="tibia_3" kp="3.0" ctrlrange="-2.2 2.2" forcerange="-0.3 0.3"/>
-    <position name="coxa_4" joint="coxa_4" kp="3.0" ctrlrange="-0.55 0.55" forcerange="-0.3 0.3"/>
-    <position name="femur_4" joint="femur_4" kp="3.0" ctrlrange="-1.8 1.8" forcerange="-0.3 0.3"/>
-    <position name="tibia_4" joint="tibia_4" kp="3.0" ctrlrange="-2.2 2.2" forcerange="-0.3 0.3"/>
-    <position name="coxa_5" joint="coxa_5" kp="3.0" ctrlrange="-0.55 0.55" forcerange="-0.3 0.3"/>
-    <position name="femur_5" joint="femur_5" kp="3.0" ctrlrange="-1.8 1.8" forcerange="-0.3 0.3"/>
-    <position name="tibia_5" joint="tibia_5" kp="3.0" ctrlrange="-2.2 2.2" forcerange="-0.3 0.3"/>
+    <motor name="coxa_0" joint="coxa_0" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="femur_0" joint="femur_0" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="tibia_0" joint="tibia_0" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="coxa_1" joint="coxa_1" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="femur_1" joint="femur_1" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="tibia_1" joint="tibia_1" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="coxa_2" joint="coxa_2" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="femur_2" joint="femur_2" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="tibia_2" joint="tibia_2" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="coxa_3" joint="coxa_3" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="femur_3" joint="femur_3" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="tibia_3" joint="tibia_3" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="coxa_4" joint="coxa_4" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="femur_4" joint="femur_4" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="tibia_4" joint="tibia_4" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="coxa_5" joint="coxa_5" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="femur_5" joint="femur_5" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="tibia_5" joint="tibia_5" ctrlrange="-0.9 0.9" gear="1"/>
   </actuator>
 
   <sensor>

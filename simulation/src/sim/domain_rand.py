@@ -4,8 +4,7 @@ Applied by `HexapodMjEnv` when `randomize=True`. Per-episode it perturbs the MOD
 (masses/inertia, CoM, friction, motor strength) and sets per-episode sensor biases,
 action latency, and a push schedule. Per-step it adds IMU noise and applies pushes.
 
-Ranges follow the plan; the most important for THIS robot (WiFi/BLE + open-loop servos)
-is action latency. Calibrate the IMU noise ranges against real stationary logs later.
+The most important range for THIS robot (WiFi/BLE + open-loop servos) is action latency.
 """
 
 import numpy as np
@@ -33,7 +32,6 @@ class DomainRandomizer:
 
     # -------------------------------------------------- per-episode (at reset)
     def reset_episode(self, model, rng):
-        # mass + inertia (per body)
         scale = rng.uniform(0.8, 1.2, size=model.nbody)
         model.body_mass[:] = self.base_body_mass * scale
         model.body_inertia[:] = self.base_body_inertia * scale[:, None]
@@ -41,7 +39,6 @@ class DomainRandomizer:
         model.body_ipos[self.base_id] = self.base_body_ipos[self.base_id] + rng.uniform(
             [-0.015, -0.015, -0.010], [0.015, 0.015, 0.010]
         )
-        # ground/foot sliding friction
         model.geom_friction[:, 0] = self.base_geom_friction[:, 0] * rng.uniform(0.6, 1.4)
         # motor strength: position actuator kp lives in gainprm[:,0] and biasprm[:,1] = -kp
         kp = rng.uniform(0.8, 1.2)
@@ -52,7 +49,7 @@ class DomainRandomizer:
         # per-episode sensor biases + latency
         self.gyro_bias = rng.normal(0.0, 0.05, size=3)
         self.rpy_bias = np.deg2rad(rng.uniform(-5.0, 5.0, size=3))
-        self.action_latency_steps = int(rng.integers(0, 3))  # 0..2 control steps (~0-40ms)
+        self.action_latency_steps = int(rng.integers(1, 4))  # 1..3 control steps (~20-60ms hobby-servo lag)
 
         # push schedule (every ~3-5 s at 50 Hz)
         self.next_push = int(rng.integers(150, 250))

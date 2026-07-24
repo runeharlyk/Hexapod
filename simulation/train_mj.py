@@ -1,11 +1,12 @@
 """Train a hexapod walking policy in MuJoCo with SB3 PPO (PyTorch).
 
-Stack: MuJoCo (C engine, CPU) env stepping in parallel via SubprocVecEnv; PPO policy/value
-nets on GPU (your torch+cu118). The action space is selected by --control-mode:
+Action space is selected by --control-mode:
   phase_gait    : 6-D gait settings + phase control (constrained, transfer-safe) [default]
   foot          : 18-D foot-position offsets (expressive, learns the whole gait)
   residual      : 6-D gait settings + 18-D foot residuals
   residual_pure : 18-D foot residuals on top of the analytic command->gait map (deploy target)
+  residual_gait : analytic base + policy adjusts stride/height/blend/cadence (5) + 18 foot residuals
+                  (zero action = analytic gait)
 
 Examples:
   python train_mj.py --control-mode phase_gait --timesteps 5_000_000 --num-envs 16
@@ -44,9 +45,26 @@ class Curriculum(BaseCallback):
         return True
 
 
+class TerrainCurriculum(BaseCallback):
+    """Ramp terrain roughness 0 -> max_height over `full_at` steps (learn on flat, then rougher)."""
+
+    def __init__(self, max_height, full_at):
+        super().__init__()
+        self.max_height = max_height
+        self.full_at = max(1, full_at)
+
+    def _on_rollout_start(self):
+        h = self.max_height * min(1.0, self.num_timesteps / self.full_at)
+        self.training_env.env_method("set_terrain", h)
+        self.logger.record("curriculum/terrain_m", h)
+
+    def _on_step(self):
+        return True
+
+
 class TermLogger(BaseCallback):
-    """Log mean reward components + achieved speed to tensorboard so we can SEE whether
-    the policy actually walks (r_vel high) vs games the reward by standing still."""
+    """Log mean reward components + achieved speed so walking (high r_vel) is distinguishable
+    from gaming the reward by standing still."""
 
     def __init__(self, window=4000):
         super().__init__()
@@ -75,7 +93,7 @@ def build_vecenv(mode, n, randomize, seed, subproc, vn_load=None, resample_steps
     venv = SubprocVecEnv(fns) if (subproc and n > 1) else DummyVecEnv(fns)
     venv = VecMonitor(venv)
     if vn_load and os.path.exists(vn_load):
-        vn = VecNormalize.load(vn_load, venv)  # continue from prior normalization stats
+        vn = VecNormalize.load(vn_load, venv)
         vn.training = True
         vn.norm_reward = True
         return vn
@@ -84,7 +102,7 @@ def build_vecenv(mode, n, randomize, seed, subproc, vn_load=None, resample_steps
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--control-mode", choices=["phase_gait", "foot", "residual", "residual_pure"],
+    ap.add_argument("--control-mode", choices=["phase_gait", "foot", "residual", "residual_pure", "residual_gait"],
                     default="phase_gait")
     ap.add_argument("--timesteps", type=int, default=5_000_000)
     ap.add_argument("--num-envs", type=int, default=16)
@@ -101,6 +119,8 @@ def main():
     ap.add_argument("--resample-steps", type=int, default=0, help="resample command every N control steps")
     ap.add_argument("--terrain", type=float, default=0.0,
                     help="max bump height (m) of per-episode random heightfield terrain (e.g. 0.02)")
+    ap.add_argument("--terrain-curriculum", action="store_true",
+                    help="ramp terrain roughness 0 -> --terrain over training (learn flat first)")
     ap.add_argument("--curriculum", action="store_true", help="ramp command difficulty forward->omnidirectional")
     ap.add_argument("--tag", default=None, help="override output run-dir name")
     ap.add_argument("--smoke", action="store_true", help="tiny run to verify the pipeline")
@@ -173,6 +193,8 @@ def main():
     ]
     if args.curriculum:
         callbacks.append(Curriculum(full_at=int(0.45 * args.timesteps)))
+    if args.terrain_curriculum:
+        callbacks.append(TerrainCurriculum(args.terrain, full_at=int(0.6 * args.timesteps)))
 
     model.learn(total_timesteps=args.timesteps, callback=callbacks, progress_bar=not args.smoke)
 

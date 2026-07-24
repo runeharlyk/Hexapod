@@ -9,10 +9,7 @@
   python eval_policy.py --run <name> --headless --randomize --seeds 10   # robustness gate
   python eval_policy.py --run <name> --headless --push 5 --seeds 10      # push stress gate
 
-Why this exists: the old version spawned a new Python process per command (slow: torch/TF
-re-import each time) and let the env resample a random command every episode, so the robot
-appeared to "walk then freeze" whenever it drew a command it doesn't track. This version
-loads once and drives a fixed command schedule in one continuous episode.
+Loads the model once and drives a fixed command schedule in one continuous episode.
 """
 
 import argparse
@@ -120,7 +117,8 @@ def run_headless(args):
     rows = []  # (label, vel_err, yaw_err, fell, mean|action|)
     for i in range(args.seeds):
         seed = args.seed + i
-        env = HexapodMjEnv(args.control_mode, randomize=args.randomize, seed=seed, terrain=args.terrain)
+        env = HexapodMjEnv(args.control_mode, randomize=args.randomize, seed=seed, terrain=args.terrain,
+                           terrain_kind=args.terrain_kind, terrain_feature=args.terrain_feature)
         pusher = _Pusher(env, args.push, seed) if args.push > 0 else None
         for label, cmd, dur in schedule(args):
             env.fixed_command = np.asarray(cmd, dtype=np.float32)
@@ -230,10 +228,10 @@ def _draw_arrows(viewer, env, cmd, avx, avy):
         )
         scn.ngeom += 1
 
-    arrow(base, cwx, cwy, [1.0, 0.3, 0.3, 1.0])  # command
+    arrow(base, cwx, cwy, [1.0, 0.3, 0.3, 1.0])
     arrow(
         base - np.array([0, 0, 0.02]), avx, avy, [0.3, 1.0, 0.3, 1.0]
-    )  # actual (smoothed)
+    )
 
 
 def run_viewer(args):
@@ -332,7 +330,7 @@ if __name__ == "__main__":
     )
     ap.add_argument(
         "--control-mode",
-        choices=["phase_gait", "foot", "residual", "residual_pure"],
+        choices=["phase_gait", "foot", "residual", "residual_pure", "residual_gait"],
         default="phase_gait",
     )
     ap.add_argument("--model", default=None)
@@ -352,6 +350,10 @@ if __name__ == "__main__":
                     help="headless: horizontal push force (N) on a fixed schedule (stress test)")
     ap.add_argument("--terrain", type=float, default=0.0,
                     help="max bump height (m) of per-episode random heightfield terrain (e.g. 0.02)")
+    ap.add_argument("--terrain-kind", default="bumps", choices=["bumps", "rocks", "slope"],
+                    help="terrain type for eval (fixed, so gait vs policy see the same ground)")
+    ap.add_argument("--terrain-feature", type=float, default=1.0,
+                    help="terrain bumpiness/feature (fixed for eval; e.g. 2.5)")
     ap.add_argument(
         "--tour", action="store_true", help="scripted command tour instead of keyboard"
     )
