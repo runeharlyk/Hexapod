@@ -25,7 +25,7 @@
 
 <div class="absolute top-0 select-none w-screen h-screen">
   <Controls />
-  <div class="absolute w-full h-screen top-0 overflow-hidden lg:pt-16 pt-12">
+  <div class="absolute w-full h-screen top-0 overflow-hidden">
     <WidgetContainer container={layout.content} />
   </div>
 </div>

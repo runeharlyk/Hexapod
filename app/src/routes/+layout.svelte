@@ -14,6 +14,7 @@
   import { websocket } from '$lib/transport/websocket-adapter'
   import { MessageTopic } from '$lib/interfaces/transport.interface'
   import { GaitType } from '$lib/gait'
+  import { listenForNetworkStatus } from '$lib/stores/network'
   import { throttler } from '$lib/utilities'
 
   interface Props {
@@ -64,6 +65,7 @@
       }
     })
 
+    listenForNetworkStatus()
     mode.subscribe(value => {
       currentMode = value
     })

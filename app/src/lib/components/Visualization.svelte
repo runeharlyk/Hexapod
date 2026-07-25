@@ -135,6 +135,10 @@
     }
   }
 
+  $effect(() => {
+    if (sceneManager.orbit) sceneManager.orbit.autoRotate = orbit
+  })
+
   const createScene = async () => {
     if (!canvas) return
     sceneManager

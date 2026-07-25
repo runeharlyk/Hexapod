@@ -7,7 +7,9 @@
   import { Hamburger } from '../icons'
 </script>
 
-<div class="navbar bg-base-300 sticky top-0 z-20 h-12 min-h-fit gap-1 px-2 drop-shadow-lg lg:h-16">
+<div
+  class="navbar bg-base-300/50 border-base-content/10 sticky top-0 z-20 h-12 min-h-fit gap-1 border-b px-2 backdrop-blur-md lg:h-16"
+>
   <div class="flex min-w-0 flex-1 gap-2">
     <label
       for="main-menu"

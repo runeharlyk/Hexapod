@@ -84,7 +84,9 @@ function createBLEAdapter(): ITransport {
     }
 
     tx?.addEventListener('characteristicvaluechanged', e => {
-      const data = decode(new Uint8Array(e.target.value.buffer)) as ServerMessage
+      const value = (e.target as BluetoothRemoteGATTCharacteristic).value
+      if (!value) return
+      const data = decode(new Uint8Array(value.buffer)) as ServerMessage
       const [type, topic, payload] = data
       if (type === MessageType.PONG) {
         lastPongAt = performance.now()
