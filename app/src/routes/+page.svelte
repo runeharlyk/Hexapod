@@ -6,13 +6,6 @@
   import { MotionModes } from '$lib/motion'
   import { connectBluetooth, link } from '$lib/stores/link'
   import {
-    forceAccessPoint,
-    preferBluetooth,
-    requestNetworkStatus,
-    robotNetwork,
-    robotWifiAddress
-  } from '$lib/stores/network'
-  import {
     addRobot,
     forgetRobot,
     markSeen,
@@ -28,13 +21,10 @@
     type CandidateStatus
   } from '$lib/services/discovery'
   import { websocket } from '$lib/transport/websocket-adapter'
-  import { ble } from '$lib/transport/ble-adapter'
   import { notifications } from '$lib/components/toasts/notifications'
-  import { Add, Bluetooth, Cancel, Check, Delete, Scan, WiFi } from '$lib/components/icons'
+  import { Add, Bluetooth, Cancel, Check, Delete, Scan } from '$lib/components/icons'
 
   type Reachability = 'probing' | 'online' | 'offline'
-
-  const bleConnected = ble.connected
 
   let adding = $state(false)
   let candidates = $state<CandidateStatus[]>([])
@@ -66,10 +56,6 @@
       ($link.transport === 'bluetooth' ? 'Hexapod over Bluetooth' : $location || 'the robot')
   )
 
-  const offerWifiUpgrade = $derived(
-    $link.transport === 'bluetooth' && !$preferBluetooth && $robotNetwork !== null
-  )
-
   onMount(() => {
     mode.set(MotionModes.STAND)
     prefixDraft = $subnetPrefix
@@ -78,10 +64,6 @@
   })
 
   onDestroy(() => controller?.abort())
-
-  $effect(() => {
-    if ($bleConnected) requestNetworkStatus()
-  })
 
   const refreshSaved = async () => {
     for (const robot of $robots) reachability[robot.address] = 'probing'
@@ -157,11 +139,6 @@
     adding = false
   }
 
-  const openOverWifi = (address: string) => {
-    addRobot(address)
-    window.location.href = `http://${address}/`
-  }
-
   const statusLabel = (robot: Robot) => {
     const state = reachability[robot.address]
     if (state === 'probing') return 'Checking…'
@@ -194,49 +171,6 @@
         </div>
 
         <a class="btn btn-primary mt-4 w-full" href={resolve('/controller')}>Open controller</a>
-
-        {#if offerWifiUpgrade}
-          <div class="divider my-3"></div>
-          {#if $robotWifiAddress}
-            <p class="text-xs opacity-70">
-              {#if $robotNetwork?.staConnected}
-                This robot is on <span class="font-medium">{$robotNetwork.staSsid}</span> at
-                <span class="font-mono">{$robotWifiAddress}</span>. WiFi is faster and enables the
-                camera.
-              {:else}
-                The robot is broadcasting
-                <span class="font-medium">{$robotNetwork?.apSsid}</span>. Join that network, then
-                open <span class="font-mono">{$robotWifiAddress}</span>.
-              {/if}
-            </p>
-            <div class="mt-2 flex gap-2">
-              <button
-                class="btn btn-sm btn-outline flex-1"
-                onclick={() => openOverWifi($robotWifiAddress!)}
-              >
-                <WiFi class="h-4 w-4" />
-                Open over WiFi
-              </button>
-              <button class="btn btn-sm btn-ghost" onclick={() => preferBluetooth.set(true)}>
-                Stay on Bluetooth
-              </button>
-            </div>
-          {:else}
-            <p class="text-xs opacity-70">
-              The robot is not on a WiFi network. You can have it raise its own hotspot and connect
-              through that instead.
-            </p>
-            <div class="mt-2 flex gap-2">
-              <button class="btn btn-sm btn-outline flex-1" onclick={forceAccessPoint}>
-                <WiFi class="h-4 w-4" />
-                Start robot hotspot
-              </button>
-              <button class="btn btn-sm btn-ghost" onclick={() => preferBluetooth.set(true)}>
-                Stay on Bluetooth
-              </button>
-            </div>
-          {/if}
-        {/if}
       </div>
     {:else if !adding}
       {#if $robots.length}

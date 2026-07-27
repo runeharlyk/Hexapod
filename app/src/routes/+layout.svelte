@@ -14,7 +14,6 @@
   import { websocket } from '$lib/transport/websocket-adapter'
   import { MessageTopic } from '$lib/interfaces/transport.interface'
   import { GaitType } from '$lib/gait'
-  import { listenForNetworkStatus } from '$lib/stores/network'
   import { throttler } from '$lib/utilities'
 
   interface Props {
@@ -65,7 +64,6 @@
       }
     })
 
-    listenForNetworkStatus()
     mode.subscribe(value => {
       currentMode = value
     })
@@ -101,14 +99,14 @@
 </div>
 
 <Modals>
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
   {#snippet backdrop()}
-    <div
+    <button
+      type="button"
+      aria-label="Close modal"
       class="fixed inset-0 z-40 max-h-full max-w-full bg-black/20 backdrop-blur-sm"
       transition:fade
       onclick={modals.closeAll}
-    ></div>
+    ></button>
   {/snippet}
 </Modals>
 

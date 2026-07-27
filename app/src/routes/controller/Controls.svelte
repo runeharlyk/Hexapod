@@ -2,25 +2,19 @@
   import nipplejs from 'nipplejs'
   import { onDestroy, onMount } from 'svelte'
   import { capitalize } from '$lib/utilities'
-  import { input, outControllerData, mode, gait, animationRequest } from '$lib/stores'
-  import { isLinked } from '$lib/stores/link'
+  import { input, outControllerData, mode, gait } from '$lib/stores'
   import type { ControllerInput, vector } from '$lib/types/models'
   import { VerticalSlider } from '$lib/components/input'
   import { MotionModes } from '$lib/motion'
   import { GaitType } from '$lib/gait'
   import { notifications } from '$lib/components/toasts/notifications'
   import { gamepadAxes, gamepadButtons, hasGamepad } from '$lib/stores/gamepad'
-  import { requestAnimation, requestGait, requestMode, stopAnimation } from '$lib/control'
-  import { presets } from '$lib/animations/presets'
-  import type { AnimationClip } from '$lib/animation'
+  import { requestGait, requestMode } from '$lib/control'
 
   type SliderKey = 'height' | 'feetDistance' | 'speed' | 's1'
 
   let left: nipplejs.JoystickManager
   let right: nipplejs.JoystickManager
-
-  const modeLabel = (value: MotionModes) =>
-    value === MotionModes.WALK_NN ? 'Walk NN' : capitalize(value)
 
   const syncCommand = (i: ControllerInput) => {
     outControllerData.set([
@@ -115,8 +109,6 @@
   }
 
   const changeGait = (gaitValue: GaitType) => requestGait(gaitValue)
-
-  const playAnimation = (clip: AnimationClip) => requestAnimation(clip)
 </script>
 
 <div class="absolute top-0 left-0 h-screen w-screen">
@@ -175,14 +167,14 @@
       class="bg-base-300/70 flex h-min shrink-0 flex-wrap items-end gap-4 rounded-tr-xl p-3 pl-0"
     >
       <div class="join">
-        {#each Object.values(MotionModes).filter(m => m !== MotionModes.ANIMATE) as modeValue}
+        {#each Object.values(MotionModes) as modeValue}
           <button
             class="btn join-item btn-sm lg:btn-md"
             class:btn-primary={$mode === modeValue && modeValue !== MotionModes.DEACTIVATED}
             class:btn-error={$mode === modeValue && modeValue === MotionModes.DEACTIVATED}
             onclick={() => requestMode(modeValue)}
           >
-            {modeLabel(modeValue)}
+            {capitalize(modeValue)}
           </button>
         {/each}
         {#if $mode === MotionModes.WALK}
@@ -238,28 +230,6 @@
             />
           </div>
         </div>
-      {/if}
-    </div>
-
-    <div class="bg-base-300/70 flex shrink-0 items-center gap-2 rounded-tr-xl p-3">
-      {#if !$isLinked}
-        <span class="badge badge-warning badge-sm shrink-0">Preview</span>
-      {/if}
-      <span class="pr-1 text-sm opacity-70">Animations</span>
-      <div class="join">
-        {#each presets as clip}
-          <button
-            class="btn join-item btn-sm"
-            class:btn-primary={$mode === MotionModes.ANIMATE &&
-              $animationRequest?.name === clip.name}
-            onclick={() => playAnimation(clip)}
-          >
-            {capitalize(clip.name)}
-          </button>
-        {/each}
-      </div>
-      {#if $mode === MotionModes.ANIMATE}
-        <button class="btn btn-sm btn-error" onclick={() => stopAnimation()}>Stop</button>
       {/if}
     </div>
   </div>
