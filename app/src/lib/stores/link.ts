@@ -3,6 +3,9 @@ import { notifications } from '$lib/components/toasts/notifications'
 import type { LinkStatus } from '$lib/interfaces/transport.interface'
 import { ble } from '$lib/transport/ble-adapter'
 import { websocket } from '$lib/transport/websocket-adapter'
+import { dataBroker } from '$lib/transport/databroker'
+
+export const latencyMs = dataBroker.latencyMs
 
 export type TransportKind = 'websocket' | 'bluetooth'
 
@@ -19,22 +22,22 @@ export const transportLabels: Record<TransportKind, string> = {
 }
 
 export const link: Readable<LinkState> = derived(
-  [websocket.status, websocket.latencyMs, ble.status, ble.latencyMs],
-  ([wsStatus, wsLatency, bleStatus, bleLatency]): LinkState => {
+  [websocket.status, ble.status, dataBroker.latencyMs],
+  ([wsStatus, bleStatus, latency]): LinkState => {
     if (wsStatus === 'connected')
       return {
         status: 'connected',
         transport: 'websocket',
-        latencyMs: wsLatency,
-        responsive: wsLatency !== null
+        latencyMs: latency,
+        responsive: latency !== null
       }
 
     if (bleStatus === 'connected')
       return {
         status: 'connected',
         transport: 'bluetooth',
-        latencyMs: bleLatency,
-        responsive: bleLatency !== null
+        latencyMs: latency,
+        responsive: latency !== null
       }
 
     return {

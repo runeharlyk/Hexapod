@@ -1,66 +1,46 @@
-import { encode, decode } from '@msgpack/msgpack'
 import { derived, writable } from 'svelte/store'
-import {
-  MessageTopic,
-  MessageType,
-  type ITransport,
-  type LinkStatus,
-  type ServerMessage
-} from '../interfaces/transport.interface'
-import type { DataBrokerCallback } from './databroker'
+import { type ITransport, type LinkStatus } from '../interfaces/transport.interface'
 
 export const SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e'
 const CHARACTERISTIC_TX_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'
 const CHARACTERISTIC_RX_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'
 
-const PING_INTERVAL_MS = 2000
-const PONG_TIMEOUT_MS = 6000
-
 function createBLEAdapter(): ITransport {
-  const dataCallbacks: DataBrokerCallback<unknown>[] = []
+  const dataCallbacks: ((data: Uint8Array) => void)[] = []
   const connectCallbacks: (() => void)[] = []
   const disconnectCallbacks: (() => void)[] = []
   const status = writable<LinkStatus>('disconnected')
-  const latencyMs = writable<number | null>(null)
-  const connected = derived(status, $status => $status === 'connected')
+  const connected = derived(status, $s => $s === 'connected')
+
   let device: BluetoothDevice | undefined
-  let server: BluetoothRemoteGATTServer | undefined
-  let service: BluetoothRemoteGATTService | undefined
-  let tx: BluetoothRemoteGATTCharacteristic | undefined
   let rx: BluetoothRemoteGATTCharacteristic | undefined
   let writeQueue = Promise.resolve()
-  let pingTimer: ReturnType<typeof setInterval> | undefined
-  let lastPingAt = 0
-  let lastPongAt = 0
 
-  const stopPinging = () => {
-    if (pingTimer) clearInterval(pingTimer)
-    pingTimer = undefined
-  }
+  // Framing: [uint16 LE length][payload] chunked to the MTU; rxBuffer reassembles by length prefix.
+  const CHUNK = 180
+  let rxBuffer = new Uint8Array(0)
 
-  const startPinging = () => {
-    stopPinging()
-    lastPongAt = performance.now()
-    pingTimer = setInterval(() => {
-      if (!device?.gatt?.connected) return
-      if (performance.now() - lastPongAt > PONG_TIMEOUT_MS) latencyMs.set(null)
-      lastPingAt = performance.now()
-      sendEvent(MessageType.PING)
-    }, PING_INTERVAL_MS)
+  const handleChunk = (chunk: Uint8Array) => {
+    const merged = new Uint8Array(rxBuffer.length + chunk.length)
+    merged.set(rxBuffer)
+    merged.set(chunk, rxBuffer.length)
+    rxBuffer = merged
+    while (rxBuffer.length >= 2) {
+      const len = rxBuffer[0] | (rxBuffer[1] << 8)
+      if (rxBuffer.length < 2 + len) break
+      const message = rxBuffer.slice(2, 2 + len)
+      dataCallbacks.forEach(cb => cb(message))
+      rxBuffer = rxBuffer.slice(2 + len)
+    }
   }
 
   const markDisconnected = () => {
-    stopPinging()
-    latencyMs.set(null)
     status.set('disconnected')
     disconnectCallbacks.forEach(cb => cb())
   }
 
   const connect = async () => {
-    if (!navigator.bluetooth) {
-      throw new Error('Web Bluetooth API is not available')
-    }
-
+    if (!navigator.bluetooth) throw new Error('Web Bluetooth API is not available')
     status.set('connecting')
 
     try {
@@ -68,40 +48,27 @@ function createBLEAdapter(): ITransport {
         filters: [{ services: [SERVICE_UUID] }],
         optionalServices: [SERVICE_UUID]
       })
+      if (!device?.gatt) throw new Error('GATT not available')
 
-      if (!device?.gatt) {
-        throw new Error('GATT service not available')
-      }
+      const server = await device.gatt.connect()
+      const service = await server.getPrimaryService(SERVICE_UUID)
+      const tx = await service.getCharacteristic(CHARACTERISTIC_TX_UUID)
+      rx = await service.getCharacteristic(CHARACTERISTIC_RX_UUID)
+      await tx.startNotifications()
+      rxBuffer = new Uint8Array(0)
 
-      server = await device.gatt.connect()
-      service = await server?.getPrimaryService(SERVICE_UUID)
-      tx = await service?.getCharacteristic(CHARACTERISTIC_TX_UUID)
-      rx = await service?.getCharacteristic(CHARACTERISTIC_RX_UUID)
-      await tx?.startNotifications()
+      tx.addEventListener('characteristicvaluechanged', e => {
+        const value = (e.target as BluetoothRemoteGATTCharacteristic).value
+        if (!value) return
+        handleChunk(new Uint8Array(value.buffer))
+      })
+      device.addEventListener('gattserverdisconnected', markDisconnected)
     } catch (error) {
       status.set('disconnected')
       throw error
     }
 
-    tx?.addEventListener('characteristicvaluechanged', e => {
-      const value = (e.target as BluetoothRemoteGATTCharacteristic).value
-      if (!value) return
-      const data = decode(new Uint8Array(value.buffer)) as ServerMessage
-      const [type, topic, payload] = data
-      if (type === MessageType.PONG) {
-        lastPongAt = performance.now()
-        latencyMs.set(Math.max(0, Math.round(lastPongAt - lastPingAt)))
-        return
-      }
-      if (topic !== undefined && payload !== undefined) {
-        dataCallbacks.forEach(cb => cb(type, topic, payload))
-      }
-    })
-
-    device.addEventListener('gattserverdisconnected', markDisconnected)
-
     status.set('connected')
-    startPinging()
     connectCallbacks.forEach(cb => cb())
   }
 
@@ -112,66 +79,34 @@ function createBLEAdapter(): ITransport {
     }
   }
 
-  const sendEvent = async (
-    type: MessageType,
-    topic?: MessageTopic,
-    payload?: unknown,
-    reliable?: boolean
-  ) => {
-    const data = [
-      type,
-      ...(topic !== undefined ? [topic] : []),
-      ...(payload !== undefined ? [payload] : [])
-    ]
-    await send(data, reliable)
-  }
-
-  const send = async <T>(data: T, reliable = false) => {
+  const send = (data: Uint8Array) => {
     if (!rx || !device?.gatt?.connected) return
-
-    const payload = encode(data)
-    const writeTask = writeQueue.then(async () => {
-      if (!rx || !device?.gatt?.connected) return
-
-      try {
-        // Use writeValueWithoutResponse for faster throughput if supported and reliable delivery is not requested
-        if (!reliable && typeof rx.writeValueWithoutResponse === 'function') {
-          await rx.writeValueWithoutResponse(payload)
-        } else {
-          await rx.writeValue(payload)
-        }
-      } catch (err) {
-        console.error('BLE Write Error:', err)
-      }
-    })
-
-    writeQueue = writeTask.catch(() => undefined)
-    await writeTask
-  }
-
-  const onData = (data: (type: MessageType, topic: MessageTopic, payload: unknown) => void) => {
-    dataCallbacks.push(data)
-  }
-
-  const onConnect = (cb: () => void) => {
-    connectCallbacks.push(cb)
-  }
-
-  const onDisconnect = (cb: () => void) => {
-    disconnectCallbacks.push(cb)
+    const characteristic = rx
+    const framed = new Uint8Array(2 + data.length)
+    framed[0] = data.length & 0xff
+    framed[1] = (data.length >> 8) & 0xff
+    framed.set(data, 2)
+    for (let offset = 0; offset < framed.length; offset += CHUNK) {
+      const chunk = framed.slice(offset, offset + CHUNK)
+      writeQueue = writeQueue
+        .then(() =>
+          typeof characteristic.writeValueWithoutResponse === 'function' ?
+            characteristic.writeValueWithoutResponse(chunk)
+          : characteristic.writeValue(chunk)
+        )
+        .catch(err => console.error('BLE write error:', err))
+    }
   }
 
   return {
-    connected,
     status,
-    latencyMs,
+    connected,
     connect,
     disconnect,
     send,
-    sendEvent,
-    onData,
-    onConnect,
-    onDisconnect
+    onData: cb => dataCallbacks.push(cb),
+    onConnect: cb => connectCallbacks.push(cb),
+    onDisconnect: cb => disconnectCallbacks.push(cb)
   }
 }
 
