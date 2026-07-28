@@ -1,5 +1,4 @@
 #pragma once
-#include <ArduinoJson.h>
 #include <vector>
 #include <functional>
 #include <type_traits>

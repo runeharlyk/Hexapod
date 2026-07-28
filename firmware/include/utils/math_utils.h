@@ -6,7 +6,9 @@
 
 #define CLIP(val, low, high) ((val) < (low) ? (low) : ((val) > (high) ? (high) : (val)))
 
+#ifndef ARRAY_SIZE  // NimBLE's nimble_npl_os.h also defines this
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof(arr[0]))
+#endif
 
 #define COPY_2D_ARRAY_4x4(dest, src) \
     do {                             \

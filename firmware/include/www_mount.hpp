@@ -1,5 +1,10 @@
 #pragma once
-#include <PsychicHttp.h>
+#include <features.h>
+
+#if EMBED_WEBAPP
+#include <communication/webserver.h>
 #include "WWWData.h"
 
-void mountStaticAssets(PsychicHttpServer& s);
+void mountStaticAssets(WebServer &s);
+void mountSpaFallback(WebServer &s);
+#endif
