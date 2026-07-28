@@ -1,0 +1,70 @@
+# Baseline ESP-IDF configuration for the Hexapod (ESP32-S3 WROOM cam).
+# Board-specific overrides go in sdkconfig.defaults.<target> if other chips are added later.
+
+# HTTP server WebSocket support (replaces PsychicHttp)
+CONFIG_HTTPD_WS_SUPPORT=y
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
+CONFIG_HTTPD_MAX_URI_LEN=1024
+
+# mDNS
+CONFIG_MDNS_MAX_SERVICES=10
+
+# LittleFS
+CONFIG_LITTLEFS_MAX_PARTITIONS=3
+
+# CPU
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
+
+# 1 kHz tick so the 5 ms (200 Hz) control loop has resolution. ESP-IDF defaults to 100 Hz
+# (10 ms tick), under which pdMS_TO_TICKS(5) rounds to 0 and vTaskDelayUntil asserts. Arduino
+# defaulted to 1 kHz, so this restores the pre-migration timing.
+CONFIG_FREERTOS_HZ=1000
+
+# Task stacks
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=4096
+
+# FreeRTOS run-time stats: per-core CPU usage in analytics (idle-task counters over esp_timer)
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
+
+# Software AES + SHA. The hardware crypto drivers allocate DMA buffers from internal RAM, which is
+# exhausted once BLE + WiFi(STA+AP) + coexistence + camera are up, failing the WPA2 handshake
+# ("esp-aes"/"esp-sha: Failed to allocate ... memory" -> STA auth fail, reason 202). Software crypto
+# needs no DMA and the cost is trivial for occasional handshakes (no TLS here).
+CONFIG_MBEDTLS_HARDWARE_AES=n
+CONFIG_MBEDTLS_HARDWARE_SHA=n
+
+# Octal PSRAM on the S3 WROOM module (matches Arduino memory_type qio_opi)
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+# Push WiFi/LWIP buffers into PSRAM so the BLE controller + HCI keep enough internal DMA RAM
+# (BLE inits after WiFi/AP; HCI-buffer allocation was starving of internal RAM).
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# Camera DMA line-buffer must come from internal DMA RAM, which is tight after BLE+WiFi+AP. Cap it
+# (default 32 KB -> it picked 16 KB and failed; ~14 KB contiguous is all that's left) so it fits.
+CONFIG_CAMERA_DMA_BUFFER_SIZE_MAX=8192
+
+# 16 MB flash
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# Custom partition table (file set via board_build.partitions in platformio.ini)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+
+# Compiler
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# Long filenames on the FAT staging area
+CONFIG_FATFS_LFN_STACK=y
+
+# Bluetooth / NimBLE (peripheral role for the NUS transport)
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
+CONFIG_BT_NIMBLE_ROLE_OBSERVER=n

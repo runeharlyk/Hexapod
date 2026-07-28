@@ -83,11 +83,11 @@ def write_header():
 
     with open(output_file, "w", newline="\n") as f:
         f.write("#pragma once\n")
-        f.write("#include <Arduino.h>\n\n")
+        f.write("#include <cstddef>\n#include <cstdint>\n\n")
         f.write("struct WebAsset { const char* uri; const char* mime; const uint8_t* data; uint32_t len; uint32_t etag; uint8_t gz; };\n")
         f.write("struct WebOptions { const char* default_uri; uint32_t max_age; uint8_t add_vary; };\n\n")
 
-        f.write("static const uint8_t WWW_BLOB[] PROGMEM = {\n")
+        f.write("static const uint8_t WWW_BLOB[] = {\n")
         col = 0
         for _, _, data, _, _ in assets:
             for b in data:
@@ -102,12 +102,12 @@ def write_header():
         f.write("};\n\n")
 
         for i,(uri,_,_,_,_) in enumerate(assets):
-            f.write(f'static const char WWW_URI_{i}[] PROGMEM = "{uri}";\n')
+            f.write(f'static const char WWW_URI_{i}[] = "{uri}";\n')
         for i,(_,mime,_,_,_) in enumerate(assets):
-            f.write(f'static const char WWW_MIME_{i}[] PROGMEM = "{mime}";\n')
+            f.write(f'static const char WWW_MIME_{i}[] = "{mime}";\n')
         f.write("\n")
 
-        f.write("static const WebAsset WWW_ASSETS[] PROGMEM = {\n")
+        f.write("static const WebAsset WWW_ASSETS[] = {\n")
         for i,(_,_,data,gz_flag,etag) in enumerate(assets):
             f.write(f"\t{{WWW_URI_{i}, WWW_MIME_{i}, WWW_BLOB+{offsets[i]}, {len(data)}, 0x{etag:08X}, {gz_flag}}},\n")
         f.write("};\n\n")
