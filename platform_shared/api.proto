@@ -1,0 +1,308 @@
+syntax = "proto3";
+
+package api;
+
+
+// Empty message for endpoints which only needs a status
+message EmptyMessage {}
+
+// =============================================================================
+// AP (Access Point) Settings - shared data types
+// =============================================================================
+
+enum APProvisionMode {
+    AP_MODE_ALWAYS = 0;
+    AP_MODE_DISCONNECTED = 1;
+    AP_MODE_NEVER = 2;
+}
+
+enum APNetworkStatus {
+    AP_ACTIVE = 0;
+    AP_INACTIVE = 1;
+    AP_LINGERING = 2;
+}
+
+message APSettings {
+    APProvisionMode provision_mode = 1;
+    string ssid = 2;
+    string password = 3;
+    uint32 channel = 4;
+    bool ssid_hidden = 5;
+    uint32 max_clients = 6;
+    uint32 local_ip = 7;
+    uint32 gateway_ip = 8;
+    uint32 subnet_mask = 9;
+}
+
+message APStatus {
+    APNetworkStatus status = 1;
+    uint32 ip_address = 2;
+    string mac_address = 3;
+    uint32 station_num = 4;
+}
+
+// Empty request types for GET-like operations
+message APSettingsRequest {}
+message APStatusRequest {}
+
+// =============================================================================
+// Servo Settings - shared data types
+// =============================================================================
+
+message Servo {
+    float center_pwm = 1;
+    float direction = 2;
+    float center_angle = 3;
+    float conversion = 4;
+    string name = 5;
+}
+
+message ServoSettings {
+    repeated Servo servos = 1; // max 18 servos
+}
+
+message ServoSettingsRequest {}
+
+// =============================================================================
+// WiFi STA Settings - shared data types
+// =============================================================================
+
+message WifiNetwork {
+    string ssid = 1;
+    string password = 2;
+    bool static_ip_config = 3;
+    uint32 local_ip = 4;
+    uint32 gateway_ip = 5;
+    uint32 subnet_mask = 6;
+    uint32 dns_ip_1 = 7;
+    uint32 dns_ip_2 = 8;
+}
+
+message WifiSettings {
+    string hostname = 1;
+    bool priority_rssi = 2;
+    repeated WifiNetwork wifi_networks = 3; // max 5 networks
+    uint32 selected_network = 4;
+}
+
+message WifiSettingsRequest {}
+message WifiNetworksRequest {}
+message WifiStatusRequest {}
+
+// WiFi scan result - single network found during scan
+message WifiNetworkScan {
+    int32 rssi = 1;
+    string ssid = 2;
+    string bssid = 3;
+    uint32 channel = 4;
+    uint32 encryption_type = 5;
+}
+
+// Response for /api/wifi/networks endpoint
+message WifiNetworkList {
+    repeated WifiNetworkScan networks = 1;
+}
+
+// Response for /api/wifi/sta/status endpoint
+message WifiStatus {
+    uint32 status = 1;
+    uint32 local_ip = 2;
+    string mac_address = 3;
+    int32 rssi = 4;
+    string ssid = 5;
+    string bssid = 6;
+    uint32 channel = 7;
+    uint32 subnet_mask = 8;
+    uint32 gateway_ip = 9;
+    uint32 dns_ip_1 = 10;
+    uint32 dns_ip_2 = 11;
+}
+
+// =============================================================================
+// Camera Settings - shared data types
+// =============================================================================
+
+message CameraSettings {
+    uint32 pixformat = 1;
+    uint32 framesize = 2;       // 0-10
+    uint32 quality = 3;         // 0-63
+    int32 brightness = 4;       // -2 to 2
+    int32 contrast = 5;         // -2 to 2
+    int32 saturation = 6;       // -2 to 2
+    int32 sharpness = 7;        // -2 to 2
+    uint32 denoise = 8;
+    uint32 gainceiling = 9;
+    uint32 whitebal = 10;
+    uint32 special_effect = 11; // 0-6
+    uint32 wb_mode = 12;        // 0-4
+    uint32 awb = 13;
+    uint32 exposure_ctrl = 14;
+    uint32 awb_gain = 15;
+    uint32 gain_ctrl = 16;
+    uint32 aec = 17;
+    uint32 aec2 = 18;
+    int32 ae_level = 19;        // -2 to 2
+    uint32 aec_value = 20;      // 0-1200
+    uint32 agc = 21;
+    uint32 agc_gain = 22;       // 0-30
+    uint32 bpc = 23;
+    uint32 wpc = 24;
+    uint32 raw_gma = 25;
+    uint32 lenc = 26;
+    uint32 hmirror = 27;
+    uint32 vflip = 28;
+    uint32 dcw = 29;
+    uint32 colorbar = 30;
+}
+
+message CameraSettingsRequest {}
+
+// =============================================================================
+// mDNS Settings - shared data types
+// =============================================================================
+
+message MDNSTxtRecord {
+    string key = 1;
+    string value = 2;
+}
+
+message MDNSServiceDef {
+    string service = 1;
+    string protocol = 2;
+    uint32 port = 3;
+    repeated MDNSTxtRecord txt_records = 4;
+}
+
+message MDNSSettings {
+    string hostname = 1;
+    string instance = 2;
+    repeated MDNSServiceDef services = 3;
+    repeated MDNSTxtRecord global_txt_records = 4;
+}
+
+message MDNSStatus {
+    bool started = 1;
+    string hostname = 2;
+    string instance = 3;
+    repeated MDNSServiceDef services = 4;
+    repeated MDNSTxtRecord global_txt_records = 5;
+}
+
+message MDNSSettingsRequest {}
+message MDNSStatusRequest {}
+
+message MDNSQueryRequest {
+    string service = 1;
+    string protocol = 2;
+}
+
+message MDNSQueryResult {
+    string name = 1;
+    string ip = 2;
+    uint32 port = 3;
+}
+
+message MDNSQueryResponse {
+    repeated MDNSQueryResult services = 1;
+}
+
+// =============================================================================
+// Peripheral Settings - I2C configuration
+// =============================================================================
+
+message PinConfig {
+    int32 pin = 1;
+    string mode = 2;
+    string type = 3;
+    string role = 4;
+}
+
+message PeripheralSettings {
+    int32 sda = 1;
+    int32 scl = 2;
+    int32 frequency = 3;
+    repeated PinConfig pins = 4;
+}
+
+message PeripheralSettingsRequest {}
+
+// =============================================================================
+// File System - shared data types
+// =============================================================================
+
+message FileEntry {
+    string name = 1;
+    bool is_directory = 2;
+    uint32 size = 3; // Only for files
+    repeated FileEntry children = 4; // Only for directories
+}
+
+message FileList {
+    repeated FileEntry entries = 1;
+}
+
+message FileListRequest {}
+
+message FileDeleteRequest {
+    string path = 1;
+}
+
+message FileEditRequest {
+    string path = 1;
+    bytes content = 2;
+}
+
+message FileMkdirRequest {
+    string path = 1;
+}
+
+// =============================================================================
+// REST API wrappers - used by HTTP endpoints
+// =============================================================================
+
+// Request wrapper for REST endpoints
+message Request {
+    oneof payload {
+        APSettings ap_settings = 10;
+        APSettingsRequest ap_settings_request = 11;
+        APStatusRequest ap_status_request = 12;
+        ServoSettings servo_settings = 20;
+        ServoSettingsRequest servo_settings_request = 21;
+        FileListRequest file_list_request = 30;
+        FileDeleteRequest file_delete_request = 31;
+        FileEditRequest file_edit_request = 32;
+        FileMkdirRequest file_mkdir_request = 33;
+        WifiSettings wifi_settings = 40;
+        WifiSettingsRequest wifi_settings_request = 41;
+        CameraSettings camera_settings = 50;
+        CameraSettingsRequest camera_settings_request = 51;
+        MDNSSettings mdns_settings = 60;
+        MDNSSettingsRequest mdns_settings_request = 61;
+        MDNSStatusRequest mdns_status_request = 62;
+        MDNSQueryRequest mdns_query_request = 63;
+        PeripheralSettings peripheral_settings = 70;
+        PeripheralSettingsRequest peripheral_settings_request = 71;
+    }
+}
+
+// Response wrapper for REST endpoints
+message Response {
+    uint32 status_code = 1;
+    string error_message = 2;
+
+    oneof payload {
+        EmptyMessage empty_message = 5;
+        APSettings ap_settings = 10;
+        APStatus ap_status = 11;
+        ServoSettings servo_settings = 20;
+        FileList file_list = 30;
+        WifiSettings wifi_settings = 40;
+        WifiNetworkList wifi_network_list = 41;
+        WifiStatus wifi_status = 42;
+        CameraSettings camera_settings = 50;
+        MDNSSettings mdns_settings = 60;
+        MDNSStatus mdns_status = 61;
+        MDNSQueryResponse mdns_query_response = 62;
+        PeripheralSettings peripheral_settings = 70;
+    }
+}

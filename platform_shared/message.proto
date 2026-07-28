@@ -1,0 +1,185 @@
+syntax = "proto3";
+
+package socket_message;
+
+// api.proto settings types are reused so a setting can be read/written over any transport.
+import "api.proto";
+
+message Vector {
+  float x = 1;
+  float y = 2;
+}
+
+message PingMsg {}
+message PongMsg {}
+message SubscribeNotification { int32 tag = 1; }
+message UnsubscribeNotification { int32 tag = 1; }
+
+// Mirrors firmware MOTION_STATE. Serialized by enum value.
+enum ModesEnum {
+  DEACTIVATED = 0;
+  IDLE = 1;
+  POSE = 2;
+  STAND = 3;
+  WALK = 4;
+}
+
+// Mirrors firmware GaitType.
+enum GaitEnum {
+  TRI_GATE = 0;
+  BI_GATE = 1;
+  WAVE = 2;
+  RIPPLE = 3;
+}
+
+message ControllerInputData {
+  Vector left = 1;
+  Vector right = 2;
+  float height = 3;
+  float speed = 4;
+  float s1 = 5;
+  float feet_distance = 6;
+}
+
+message ModeData { ModesEnum mode = 1; }
+message GaitData { GaitEnum gait = 1; }
+message AnglesData { repeated int32 angles = 1; } // 18 servos
+message IMUData {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+  float heading = 4;
+}
+message RSSIData { int32 rssi = 1; }
+
+message ServoPWMData {
+  int32 servo_id = 1;
+  uint32 servo_pwm = 2;
+}
+message ServoStateData { bool active = 1; }
+
+// --- Correlation RPC (request/response over the websocket) ---
+
+message I2CDevice {
+  int32 address = 1;
+  string part_number = 2;
+  string name = 3;
+}
+message I2CScanData { repeated I2CDevice devices = 1; }
+message I2CScanDataRequest {}
+
+message AnalyticsData {
+  int32 max_alloc_heap = 1;
+  int32 psram_size = 2;
+  int32 free_psram = 3;
+  int32 free_heap = 4;
+  int32 total_heap = 5;
+  int32 min_free_heap = 6;
+  float core_temp = 7;
+  int32 fs_total = 8;
+  int32 fs_used = 9;
+  int64 uptime = 10;
+  float cpu0_usage = 11;
+  float cpu1_usage = 12;
+  float cpu_usage = 13;
+}
+
+message StaticSystemInformation {
+  string esp_platform = 1;
+  string firmware_version = 2;
+  uint32 cpu_freq_mhz = 3;
+  string cpu_type = 4;
+  uint32 cpu_cores = 6;
+  string sdk_version = 9;
+  uint32 flash_chip_size = 11;
+  string cpu_reset_reason = 13;
+}
+
+message SystemInformationRequest {}
+message SystemInformationResponse {
+  AnalyticsData analytics_data = 1;
+  StaticSystemInformation static_system_information = 2;
+}
+
+message FeaturesDataRequest {}
+message FeaturesDataResponse {
+  string firmware_name = 1;
+  string firmware_version = 2;
+  bool camera = 3;
+  bool imu = 4;
+  bool mag = 5;
+  bool servo = 6;
+  bool mdns = 7;
+}
+
+message CorrelationRequest {
+  uint32 correlation_id = 1;
+  oneof request {
+    FeaturesDataRequest features_data_request = 10;
+    I2CScanDataRequest i2c_scan_data_request = 20;
+    SystemInformationRequest system_information_request = 40;
+    api.WifiSettingsRequest wifi_settings_get = 50;
+    api.WifiSettings wifi_settings_update = 51;
+    api.WifiNetworksRequest wifi_networks_get = 52;
+    api.WifiStatusRequest wifi_status_get = 53;
+    api.APSettingsRequest ap_settings_get = 60;
+    api.APSettings ap_settings_update = 61;
+    api.APStatusRequest ap_status_get = 62;
+    api.MDNSStatusRequest mdns_status_get = 70;
+    api.MDNSQueryRequest mdns_query = 71;
+    api.ServoSettingsRequest servo_settings_get = 80;
+    api.ServoSettings servo_settings_update = 81;
+  }
+}
+
+message CorrelationResponse {
+  uint32 correlation_id = 1;
+  uint32 status_code = 2;
+  oneof response {
+    FeaturesDataResponse features_data_response = 10;
+    I2CScanData i2c_scan_data = 20;
+    SystemInformationResponse system_information_response = 40;
+    api.WifiSettings wifi_settings = 50;
+    api.WifiNetworkList wifi_network_list = 52;
+    api.WifiStatus wifi_status = 53;
+    api.APSettings ap_settings = 60;
+    api.APStatus ap_status = 62;
+    api.MDNSStatus mdns_status = 70;
+    api.MDNSQueryResponse mdns_query_response = 71;
+    api.ServoSettings servo_settings = 80;
+  }
+}
+
+// SYS_NONE=0 is a no-op so an empty frame can't trigger a reboot.
+enum SystemCommand {
+  SYS_NONE = 0;
+  SYS_RESTART = 1;
+  SYS_RESET = 2;
+  SYS_SLEEP = 3;
+}
+message SystemCommandData {
+  SystemCommand command = 1;
+}
+
+message Message {
+  oneof message {
+    SubscribeNotification sub_notif = 20;
+    UnsubscribeNotification unsub_notif = 21;
+    PingMsg pingmsg = 30;
+    PongMsg pongmsg = 31;
+    CorrelationRequest correlation_request = 10;
+    CorrelationResponse correlation_response = 11;
+    IMUData imu = 110;
+    AnalyticsData analytics = 150;
+    ModeData mode = 130;
+    ControllerInputData input = 140;
+    GaitData gait = 160;
+    AnglesData angles = 170;
+    ServoPWMData servo_pwm = 210;
+    ServoStateData servo_state = 211;
+    RSSIData rssi = 260;
+    SystemCommandData system_command = 120;
+    api.WifiStatus wifi_status = 250;  // observable status: pushed on change (connect/disconnect)
+    api.APStatus ap_status = 251;      // observable status: pushed on AP up/down/station change
+  }
+}
