@@ -1,13 +1,19 @@
 #ifndef MotionService_h
 #define MotionService_h
 
+#include <esp_log.h>
+#include <esp_timer.h>
 #include <kinematics.h>
 #include <peripherals/servo_controller.h>
+#include <peripherals/peripherals.h>
 #include <utils/timing.h>
 #include <utils/math_utils.h>
 #include <gait.h>
 #include <event_bus.h>
 #include <message_types.h>
+
+static inline unsigned long millis() { return (unsigned long)(esp_timer_get_time() / 1000); }
+static inline unsigned long micros() { return (unsigned long)esp_timer_get_time(); }
 
 class MotionService {
   public:
@@ -17,26 +23,22 @@ class MotionService {
     void begin() {
         ESP_LOGI("MotionService", "Subscribing to event buses...");
         _cmdSubHandle = EventBus<CommandMsg>::subscribe([&](CommandMsg const &c) {
-            ESP_LOGI("MotionService", "COMMAND callback called");
+            ESP_LOGD("MotionService", "COMMAND callback called");
             handleCommand(c);
         });
         _modeSubHandle = EventBus<ModeMsg>::subscribe([&](ModeMsg const &c) {
-            ESP_LOGI("MotionService", "MODE callback called with mode %d", (int)c.mode);
+            ESP_LOGD("MotionService", "MODE callback called with mode %d", (int)c.mode);
             handleInputMode(c);
         });
         _gaitSubHandle = EventBus<GaitMsg>::subscribe([&](GaitMsg const &c) {
-            ESP_LOGI("MotionService", "GAIT callback called with gait %d", (int)c.gait);
+            ESP_LOGD("MotionService", "GAIT callback called with gait %d", (int)c.gait);
             handleInputGait(c);
         });
         _angleSubHandle = EventBus<ServoAnglesMsg>::subscribe([&](ServoAnglesMsg const &s) {
-            ESP_LOGI("MotionService", "ANGLES callback called");
+            ESP_LOGD("MotionService", "ANGLES callback called");
             handleAnglesEvent(s);
         });
         ESP_LOGI("MotionService", "Event bus subscriptions completed");
-        // TODO: Add body state
-        // _positionSubHandle = EventBus::subscribe<Gait>([&](Gait const &c) { handleInputGait(c); });
-
-        // TODO: Send joint angles on subscribe
         body_state.updateFeet(default_feet_pos);
         EventBus<ModeMsg>::publish({motionState});
         EventBus<GaitMsg>::publish({gait_state.gait_type});
@@ -85,6 +87,7 @@ class MotionService {
                 gait_state.step_depth = 0.002f;
                 break;
             }
+            default: break;
         }
     }
 
