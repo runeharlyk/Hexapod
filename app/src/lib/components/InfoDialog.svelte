@@ -4,7 +4,6 @@
   import { Check } from './icons'
   import { exitBeforeEnter } from 'svelte-modals'
 
-  // provided by <Modals />
 
   interface Props {
     isOpen: boolean

@@ -45,9 +45,7 @@
     firmwareVersion = ''
 
     if (compareVersions(results.tag_name, $features.firmware_version) === 1) {
-      // iterate over assets and find the correct one
       for (let i = 0; i < results.assets.length; i++) {
-        // check if the asset is of type *.bin
         if (
           results.assets[i].name.includes('.bin') &&
           results.assets[i].name.includes($features.firmware_built_target)

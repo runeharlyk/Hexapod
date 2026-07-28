@@ -1,14 +1,18 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte'
+  import { onMount } from 'svelte'
   import { modals } from 'svelte-modals'
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte'
   import SettingsCard from '$lib/components/SettingsCard.svelte'
   import Spinner from '$lib/components/Spinner.svelte'
   import { slide } from 'svelte/transition'
   import { cubicOut } from 'svelte/easing'
-  import type { SystemInformation, Analytics } from '$lib/types/models'
-  import { socket } from '$lib/stores/socket'
-  import { api } from '$lib/api'
+  import {
+    AnalyticsData,
+    SystemCommandData,
+    SystemCommand,
+    type StaticSystemInformation
+  } from '$lib/platform_shared/message'
+  import { dataBroker } from '$lib/transport/databroker'
   import { convertSeconds } from '$lib/utilities'
   import { useFeatureFlags } from '$lib/stores/featureFlags'
   import {
@@ -23,7 +27,6 @@
     Speed,
     Heap,
     Pyramid,
-    Sketch,
     Flash,
     Folder,
     Temperature,
@@ -34,30 +37,28 @@
 
   const features = useFeatureFlags()
 
-  let systemInformation: SystemInformation = $state()
+  let staticInfo: StaticSystemInformation | undefined = $state()
+  let analytics: AnalyticsData | undefined = $state()
 
   async function getSystemStatus() {
-    const result = await api.get<SystemInformation>('/api/system/status')
-    if (result.isErr()) {
-      console.error('Error:', result.inner)
-      return
-    }
-    systemInformation = result.inner
-    return systemInformation
+    const res = await dataBroker.request({ systemInformationRequest: {} })
+    const info = res.systemInformationResponse
+    staticInfo = info?.staticSystemInformation
+    analytics = info?.analyticsData
   }
 
-  const postFactoryReset = async () => await api.post('/api/system/reset')
+  const sendCommand = (command: SystemCommand) =>
+    dataBroker.emit(SystemCommandData, { command })
 
-  const postSleep = async () => await api.post('api/sleep')
+  const postFactoryReset = () => sendCommand(SystemCommand.SYS_RESET)
 
-  onMount(() => socket.on('analytics', handleSystemData))
+  const postSleep = () => sendCommand(SystemCommand.SYS_SLEEP)
 
-  onDestroy(() => socket.off('analytics', handleSystemData))
+  const handleSystemData = (data: AnalyticsData) => (analytics = data)
 
-  const handleSystemData = (data: Analytics) =>
-    (systemInformation = { ...systemInformation, ...data })
+  onMount(() => dataBroker.on(AnalyticsData, handleSystemData))
 
-  const postRestart = async () => await api.post('/api/system/restart')
+  const postRestart = () => sendCommand(SystemCommand.SYS_RESTART)
 
   function confirmRestart() {
     modals.open(ConfirmDialog, {
@@ -144,7 +145,7 @@
   <div class="w-full overflow-x-auto">
     {#await getSystemStatus()}
       <Spinner />
-    {:then nothing}
+    {:then}
       <div
         class="flex w-full flex-col space-y-1"
         transition:slide|local={{ duration: 300, easing: cubicOut }}
@@ -152,92 +153,69 @@
         <StatusItem
           icon={CPU}
           title="Chip"
-          description={`${systemInformation.cpu_type} Rev ${systemInformation.cpu_rev}`}
+          description={`${staticInfo?.cpuType} (${staticInfo?.espPlatform})`}
         />
 
-        <StatusItem
-          icon={SDK}
-          title="SDK Version"
-          description={`ESP-IDF ${systemInformation.sdk_version} / Arduino ${systemInformation.arduino_version}`}
-        />
+        <StatusItem icon={SDK} title="SDK Version" description={`ESP-IDF ${staticInfo?.sdkVersion}`} />
 
         <StatusItem
           icon={CPP}
           title="Firmware Version"
-          description={systemInformation.firmware_version}
+          description={staticInfo?.firmwareVersion ?? ''}
         />
 
         <StatusItem
           icon={Speed}
           title="CPU Frequency"
-          description={`${systemInformation.cpu_freq_mhz} MHz ${
-            systemInformation.cpu_cores == 2 ? 'Dual Core' : 'Single Core'
+          description={`${staticInfo?.cpuFreqMhz} MHz ${
+            staticInfo?.cpuCores == 2 ? 'Dual Core' : 'Single Core'
           }`}
         />
 
         <StatusItem
           icon={Heap}
-          title="Heap (Free / Max Alloc)"
-          description={`${systemInformation.free_heap} / ${systemInformation.max_alloc_heap} bytes`}
+          title="Heap (Free / Total)"
+          description={`${analytics?.freeHeap} / ${analytics?.totalHeap} bytes (max alloc ${analytics?.maxAllocHeap})`}
         />
 
         <StatusItem
           icon={Pyramid}
-          title="PSRAM (Size / Free)"
-          description={`${systemInformation.psram_size} / ${systemInformation.psram_size} bytes`}
-        />
-
-        <StatusItem
-          icon={Sketch}
-          title="Sketch (Used / Free)"
-          description={`${(
-            (systemInformation.sketch_size / systemInformation.free_sketch_space) *
-            100
-          ).toFixed(1)} % of
-                ${systemInformation.free_sketch_space / 1000000} MB used (${
-                  (systemInformation.free_sketch_space - systemInformation.sketch_size) / 1000000
-                } MB free)`}
+          title="PSRAM (Free / Size)"
+          description={`${analytics?.freePsram} / ${analytics?.psramSize} bytes`}
         />
 
         <StatusItem
           icon={Flash}
-          title="Flash Chip (Size / Speed)"
-          description={`${systemInformation.flash_chip_size / 1000000} MB / ${
-            systemInformation.flash_chip_speed / 1000000
-          } MHz`}
+          title="Flash Chip Size"
+          description={`${(staticInfo?.flashChipSize ?? 0) / 1000000} MB`}
         />
 
         <StatusItem
           icon={Folder}
           title="File System (Used / Total)"
-          description={`${((systemInformation.fs_used / systemInformation.fs_total) * 100).toFixed(
+          description={`${(((analytics?.fsUsed ?? 0) / (analytics?.fsTotal || 1)) * 100).toFixed(
             1
-          )} % of ${systemInformation.fs_total / 1000000} MB used (${
-            (systemInformation.fs_total - systemInformation.fs_used) / 1000000
-          }
-                MB free)`}
+          )} % of ${(analytics?.fsTotal ?? 0) / 1000000} MB used (${
+            ((analytics?.fsTotal ?? 0) - (analytics?.fsUsed ?? 0)) / 1000000
+          } MB free)`}
         />
 
         <StatusItem
           icon={Temperature}
           title="Core Temperature"
-          description={`${
-            systemInformation.core_temp == 53.33 ?
-              'NaN'
-            : systemInformation.core_temp.toFixed(2) + ' °C'
-          }`}
+          description={`${(analytics?.coreTemp ?? 0).toFixed(2)} °C`}
         />
 
         <StatusItem
           icon={Stopwatch}
           title="Uptime"
-          description={convertSeconds(systemInformation.uptime)}
+          description={convertSeconds(analytics?.uptime ?? 0)}
         />
 
         <StatusItem
           icon={Power}
           title="Reset Reason"
-          description={systemInformation.cpu_reset_reason}
+          description={staticInfo?.cpuResetReason ?? ''}
         />
       </div>
     {/await}

@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
-  import { location } from '$lib/stores'
+  import { resolveUrl } from '$lib/proto-api'
 
-  let source = $state(`${$location}/api/camera/stream`)
+  // Absolute URL so it works from the dev origin too; an <img> source isn't subject to CORS.
+  let source = $state(resolveUrl('/api/camera/stream'))
 
   onDestroy(() => (source = '#'))
 </script>

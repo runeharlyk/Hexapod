@@ -9,7 +9,7 @@
   import { GaitLabels, GaitType } from '$lib/gait'
   import Motion, { MotionModes } from '$lib/motion'
   import { dataBroker } from '$lib/transport/databroker'
-  import { MessageTopic } from '$lib/interfaces/transport.interface'
+  import { AnglesData } from '$lib/platform_shared/message'
   import { Vector3 } from 'three'
   import { requestGait, requestMode } from '$lib/control'
 
@@ -53,9 +53,9 @@
     if (panel) createPanel()
 
     outControllerData.subscribe(data => motion.handleCommand(data))
-    dataBroker.on<number[]>(MessageTopic.ANGLE, data => {
+    dataBroker.on(AnglesData, data => {
       settings['Internal kinematic'] = false
-      setTargetAngles(motion.order(data.map(degToRad)))
+      setTargetAngles(motion.order(data.angles.map(degToRad)))
     })
     mode.subscribe(mode => motion.setMode(mode))
     gait.subscribe(gait => motion.setGait(gait))

@@ -2,30 +2,13 @@
   import { ble } from '$lib/transport/ble-adapter'
   import SettingsCard from '$lib/components/SettingsCard.svelte'
   import BluetoothIconButton from '$lib/components/BluetoothIconButton.svelte'
-  import { onMount } from 'svelte'
-  import { dataBroker } from '$lib/transport/databroker'
-  import { MessageTopic, type Temp } from '$lib/interfaces/transport.interface'
-
-  let value = $state(0)
   let bleConnected = ble.connected
   let log: string[] = $state([])
-  let subscriptionId = ''
 
-  const handleTemp = (data: Temp) => {
-    console.log('temp', data)
-    log.push('rx: ' + JSON.stringify(data))
-  }
-
-  const subscribe = () => {
-    log.push('Subscribe (temp)')
-    subscriptionId = dataBroker.on<Temp>(MessageTopic.SERVO, handleTemp)
-  }
-
-  const unsubscribe = () => {
-    log.push('Unsubscribe (temp)')
-    dataBroker.off(subscriptionId)
-    subscriptionId = ''
-  }
+  // TODO(proto): this debug subscribe/unsubscribe used the old MsgPack topic API.
+  // Re-wire to a real protobuf Message once a debug/telemetry type is defined.
+  const subscribe = () => log.push('Subscribe (not wired to protobuf yet)')
+  const unsubscribe = () => log.push('Unsubscribe (not wired to protobuf yet)')
 </script>
 
 <SettingsCard collapsible={false}>

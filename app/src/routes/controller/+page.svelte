@@ -3,24 +3,19 @@
   import WidgetContainer from '$lib/components/layout/WidgetContainer.svelte'
   import { selectedView, views } from '$lib/stores/application'
   import { onMount } from 'svelte'
-  import { mpu, socket } from '$lib/stores'
+  import { mpu } from '$lib/stores'
   import { imu } from '$lib/stores/imu'
-  import type { IMU } from '$lib/types/models'
+  import { dataBroker } from '$lib/transport/databroker'
+  import { IMUData } from '$lib/platform_shared/message'
 
   let layout = $derived($views.find(v => v.name === $selectedView)!)
 
-  onMount(() => {
-    socket.on('imu', (data: IMU) => {
-      imu.addData(data)
-      if (data.heading)
-        mpu.update(mpuData => {
-          mpuData.heading = data.heading
-          console.log(data.heading)
-
-          return mpuData
-        })
+  onMount(() =>
+    dataBroker.on(IMUData, data => {
+      imu.addData({ ...data, altitude: 0, bmp_temp: 0, pressure: 0 })
+      if (data.heading) mpu.update(m => ({ ...m, heading: data.heading }))
     })
-  })
+  )
 </script>
 
 <div class="absolute top-0 select-none w-screen h-screen">

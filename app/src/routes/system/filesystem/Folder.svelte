@@ -6,12 +6,13 @@
   interface Props {
     expanded?: boolean
     name: string
+    path?: string
     files: any
-    selected: (name: string) => void
-    onDelete: (name: string) => void
+    selected: (path: string) => void
+    onDelete: (path: string) => void
   }
 
-  let { expanded = $bindable(false), name, files, selected, onDelete }: Props = $props()
+  let { expanded = $bindable(false), name, path = '', files, selected, onDelete }: Props = $props()
 
   function toggle() {
     expanded = !expanded
@@ -33,9 +34,9 @@
       {#each Object.entries(files) as [itemName, content]}
         <li class="py-1">
           {#if typeof content === 'object'}
-            <Folder name={itemName} files={content} {selected} {onDelete} />
+            <Folder name={itemName} path={`${path}/${itemName}`} files={content} {selected} {onDelete} />
           {:else}
-            <File name={itemName} {selected} {onDelete} />
+            <File name={itemName} path={`${path}/${itemName}`} {selected} {onDelete} />
           {/if}
         </li>
       {/each}

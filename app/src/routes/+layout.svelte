@@ -12,10 +12,19 @@
   import { dataBroker } from '$lib/transport/databroker'
   import { ble } from '$lib/transport/ble-adapter'
   import { websocket } from '$lib/transport/websocket-adapter'
-  import { MessageTopic } from '$lib/interfaces/transport.interface'
+  import { ControllerInputData, ModeData, GaitData } from '$lib/platform_shared/message'
   import { GaitType } from '$lib/gait'
-  import { listenForNetworkStatus } from '$lib/stores/network'
   import { throttler } from '$lib/utilities'
+
+  // outControllerData is [lx, ly, rx, ry, height, speed, s1, feetDistance].
+  const toControllerInput = (d: number[]): ControllerInputData => ({
+    left: { x: d[0], y: d[1] },
+    right: { x: d[2], y: d[3] },
+    height: d[4],
+    speed: d[5],
+    s1: d[6],
+    feetDistance: d[7]
+  })
 
   interface Props {
     children?: import('svelte').Snippet
@@ -42,37 +51,32 @@
 
       if (isStop) {
         if (!wasStop) {
-          dataBroker.emit(MessageTopic.COMMAND, data, undefined, true)
+          dataBroker.emit(ControllerInputData, toControllerInput(data))
           wasStop = true
         }
       } else {
         wasStop = false
-        throttle.throttle(() => dataBroker.emit(MessageTopic.COMMAND, data), 40)
+        throttle.throttle(() => dataBroker.emit(ControllerInputData, toControllerInput(data)), 40)
       }
     })
 
-    dataBroker.on<number>(MessageTopic.MODE, data => {
-      const nextMode = Object.values(MotionModes)[data]
-      if (nextMode !== undefined) {
-        mode.set(nextMode)
-      }
+    dataBroker.on(ModeData, data => {
+      const nextMode = Object.values(MotionModes)[data.mode]
+      if (nextMode !== undefined) mode.set(nextMode)
     })
 
-    dataBroker.on<number>(MessageTopic.GAIT, data => {
-      const nextGait = Object.values(GaitType)[data]
-      if (nextGait !== undefined) {
-        gait.set(nextGait)
-      }
+    dataBroker.on(GaitData, data => {
+      const nextGait = Object.values(GaitType)[data.gait]
+      if (nextGait !== undefined) gait.set(nextGait)
     })
 
-    listenForNetworkStatus()
     mode.subscribe(value => {
       currentMode = value
     })
 
     commandHeartbeatId = setInterval(() => {
       if (currentMode !== MotionModes.STAND && currentMode !== MotionModes.WALK) return
-      dataBroker.send(MessageTopic.COMMAND, lastCommand)
+      dataBroker.emit(ControllerInputData, toControllerInput(lastCommand))
     }, COMMAND_HEARTBEAT_MS)
   })
 

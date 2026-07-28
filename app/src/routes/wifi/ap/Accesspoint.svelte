@@ -1,53 +1,65 @@
 <script lang="ts">
   import { preventDefault } from 'svelte/legacy'
 
-  import { onMount, onDestroy } from 'svelte'
+  import { onMount } from 'svelte'
   import { slide } from 'svelte/transition'
   import { cubicOut } from 'svelte/easing'
   import { PasswordInput } from '$lib/components/input'
   import SettingsCard from '$lib/components/SettingsCard.svelte'
   import { notifications } from '$lib/components/toasts/notifications'
   import Spinner from '$lib/components/Spinner.svelte'
-  import type { ApSettings, ApStatus } from '$lib/types/models'
-  import { api } from '$lib/api'
   import { useFeatureFlags } from '$lib/stores'
   import { AP, Devices, Home, MAC } from '$lib/components/icons'
   import StatusItem from '$lib/components/StatusItem.svelte'
+  import { ipToString, ipToU32 } from '$lib/proto-api'
+  import { dataBroker } from '$lib/transport/databroker'
+  import { APStatus } from '$lib/platform_shared/api'
 
   const features = useFeatureFlags()
 
-  let apSettings: ApSettings = $state()
-  let apStatus: ApStatus = $state()
+  let apSettings: any = $state()
+  let apStatus: any = $state()
 
   let formField: any = $state()
 
-  async function getAPStatus() {
-    const result = await api.get<ApStatus>('/api/wifi/ap/status')
-    if (result.isErr()) {
-      console.error('Error:', result.inner)
-      return
+  const applyApStatus = (s: any) => {
+    apStatus = {
+      status: s.status,
+      ip_address: ipToString(s.ipAddress),
+      mac_address: s.macAddress,
+      station_num: s.stationNum
     }
-    apStatus = result.inner
+  }
+
+  async function getAPStatus() {
+    const res = await dataBroker.request({ apStatusGet: {} }).catch(() => null)
+    if (res?.apStatus) applyApStatus(res.apStatus)
     return apStatus
   }
 
   async function getAPSettings() {
-    const result = await api.get<ApSettings>('/api/wifi/ap/settings')
-    if (result.isErr()) {
-      console.error('Error:', result.inner)
-      return
+    const res = await dataBroker.request({ apSettingsGet: {} }).catch(() => null)
+    if (!res?.apSettings) return
+    const a = res.apSettings
+    apSettings = {
+      provision_mode: a.provisionMode,
+      ssid: a.ssid,
+      password: a.password,
+      channel: a.channel,
+      max_clients: a.maxClients,
+      ssid_hidden: a.ssidHidden,
+      local_ip: ipToString(a.localIp),
+      gateway_ip: ipToString(a.gatewayIp),
+      subnet_mask: ipToString(a.subnetMask)
     }
-    apSettings = result.inner
     return apSettings
   }
 
-  const interval = setInterval(async () => {
-    getAPStatus()
-  }, 5000)
-
-  onDestroy(() => clearInterval(interval))
-
-  onMount(getAPSettings)
+  onMount(() => {
+    getAPSettings()
+    getAPStatus() // current value now; live changes via the subscription below
+    return dataBroker.on(APStatus, applyApStatus)
+  })
 
   let provisionMode = [
     {
@@ -79,21 +91,34 @@
     subnet_mask: false
   })
 
-  async function postAPSettings(data: ApSettings) {
-    const result = await api.post<ApSettings>('/api/wifi/ap/settings', data)
-    if (result.isErr()) {
-      notifications.error('User not authorized.', 3000)
-      console.error('Error:', result.inner)
-      return
+  async function postAPSettings() {
+    try {
+      const res = await dataBroker.request({
+        apSettingsUpdate: {
+          provisionMode: Number(apSettings.provision_mode),
+          ssid: apSettings.ssid,
+          password: apSettings.password,
+          channel: Number(apSettings.channel),
+          ssidHidden: apSettings.ssid_hidden,
+          maxClients: Number(apSettings.max_clients),
+          localIp: ipToU32(apSettings.local_ip),
+          gatewayIp: ipToU32(apSettings.gateway_ip),
+          subnetMask: ipToU32(apSettings.subnet_mask)
+        }
+      })
+      if (!res.apSettings) {
+        notifications.error('Failed to update Access Point settings.', 3000)
+        return
+      }
+      notifications.success('Access Point settings updated.', 3000)
+    } catch {
+      notifications.error('Failed to update Access Point settings — is the robot connected?', 3000)
     }
-    notifications.success('Access Point settings updated.', 3000)
-    apSettings = result.inner
   }
 
   function handleSubmitAP() {
     let valid = true
 
-    // Validate SSID
     if (apSettings.ssid.length < 3 || apSettings.ssid.length > 32) {
       valid = false
       formErrors.ssid = true
@@ -101,7 +126,6 @@
       formErrors.ssid = false
     }
 
-    // Validate Channel
     let channel = Number(apSettings.channel)
     if (1 > channel || channel > 13) {
       valid = false
@@ -110,7 +134,6 @@
       formErrors.channel = false
     }
 
-    // Validate max_clients
     let maxClients = Number(apSettings.max_clients)
     if (1 > maxClients || maxClients > 8) {
       valid = false
@@ -119,11 +142,9 @@
       formErrors.max_clients = false
     }
 
-    // RegEx for IPv4
     const regexExp =
       /\b(?:(?:2(?:[0-4][0-9]|5[0-5])|[0-1]?[0-9]?[0-9])\.){3}(?:(?:2([0-4][0-9]|5[0-5])|[0-1]?[0-9]?[0-9]))\b/
 
-    // Validate gateway IP
     if (!regexExp.test(apSettings.gateway_ip)) {
       valid = false
       formErrors.gateway_ip = true
@@ -131,7 +152,6 @@
       formErrors.gateway_ip = false
     }
 
-    // Validate Subnet Mask
     if (!regexExp.test(apSettings.subnet_mask)) {
       valid = false
       formErrors.subnet_mask = true
@@ -139,7 +159,6 @@
       formErrors.subnet_mask = false
     }
 
-    // Validate local IP
     if (!regexExp.test(apSettings.local_ip)) {
       valid = false
       formErrors.local_ip = true
@@ -147,9 +166,8 @@
       formErrors.local_ip = false
     }
 
-    // Submit JSON to REST API
     if (valid) {
-      postAPSettings(apSettings)
+      postAPSettings()
     }
   }
 </script>

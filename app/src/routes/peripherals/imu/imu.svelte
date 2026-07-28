@@ -6,8 +6,8 @@
   import { slide } from 'svelte/transition'
   import { onDestroy, onMount } from 'svelte'
   import { daisyColor } from '$lib/utilities'
-  import { socket } from '$lib/stores'
-  import type { IMU } from '$lib/types/models'
+  import { dataBroker } from '$lib/transport/databroker'
+  import { IMUData } from '$lib/platform_shared/message'
   import { useFeatureFlags } from '$lib/stores/featureFlags'
   import { Rotate3d } from '$lib/components/icons'
 
@@ -23,14 +23,13 @@
   let tempChart: Chart
   let altitudeChart: Chart
 
-  const handleImu = (data: IMU) => {
-    console.log(data)
+  const handleImu = (data: IMUData) =>
+    imu.addData({ ...data, altitude: 0, bmp_temp: 0, pressure: 0 })
 
-    imu.addData(data)
-  }
+  let unsubscribeImu: () => void
 
   onMount(() => {
-    socket.on('imu', handleImu)
+    unsubscribeImu = dataBroker.on(IMUData, handleImu)
     angleChart = new Chart(angleChartElement, {
       type: 'line',
       data: {
@@ -239,7 +238,7 @@
   })
 
   onDestroy(() => {
-    socket.off('imu', handleImu)
+    unsubscribeImu?.()
   })
 
   const updateData = () => {
