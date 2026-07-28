@@ -1,33 +1,28 @@
 #pragma once
 
-#include <PsychicHttp.h>
-#include <ESPmDNS.h>
+#include <esp_http_server.h>
+#include <mdns.h>
 #include <template/stateful_service.h>
-#include <template/stateful_endpoint.h>
 #include <template/stateful_persistence.h>
 #include <settings/mdns_settings.h>
 #include <utils/timing.h>
 
 class MDNSService : public StatefulService<MDNSSettings> {
-  private:
-    FSPersistence<MDNSSettings> _persistence;
-    bool _started;
-
-    void reconfigureMDNS();
-    void startMDNS();
-    void stopMDNS();
-    void addServices();
-
   public:
     MDNSService();
     ~MDNSService();
 
     void begin();
 
-    esp_err_t getStatus(PsychicRequest *request);
-    void getStatus(JsonObject &root);
+    void statusProto(api_MDNSStatus &status);
+    void queryProto(const api_MDNSQueryRequest &req, api_MDNSQueryResponse &resp);
 
-    static esp_err_t queryServices(PsychicRequest *request, JsonVariant &json);
+  private:
+    FSPersistencePB<MDNSSettings> _persistence;
+    bool _started {false};
 
-    StatefulHttpEndpoint<MDNSSettings> endpoint;
+    void reconfigureMDNS();
+    void startMDNS();
+    void stopMDNS();
+    void addServices();
 };
