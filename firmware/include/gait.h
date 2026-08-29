@@ -133,6 +133,13 @@ class GaitController {
         return true;
     }
 
+    bool footAtTarget(int footIndex, float epsilon = 0.5f) const {
+        for (int j = 0; j < 4; ++j) {
+            if (std::fabs(defaultPosition[footIndex][j] - targetDefaultPosition[footIndex][j]) > epsilon) return false;
+        }
+        return true;
+    }
+
     void updateDefaultPositionTarget(int footIndex, float swingProgress) {
         for (int j = 0; j < 4; ++j) {
             defaultPosition[footIndex][j] =
@@ -204,13 +211,19 @@ class GaitController {
     }
 
 
-    void generateFeet(gait_state_t& gait, BodyStateMsg& body) {
+    // repositioning: a stance-change cycle with no locomotion command, where feet already on
+    // target hold station instead of stepping. Plain walking cycles pass false.
+    void generateFeet(gait_state_t& gait, BodyStateMsg& body, bool repositioning = false) {
         float newFeet[6][4];
         COPY_2D_ARRAY_6x4(newFeet, defaultPosition);
 
         for (int i = 0; i < 6; i++) {
             const float ph = std::fmod(this->phase + gait.offset[i], 1.0f);
             const bool isSwinging = ph >= gait.stand_frac;
+            // A foot already standing where it belongs has nothing to fetch, so it holds station
+            // rather than taking an empty step while the others catch up. Repositioning only: in
+            // normal walking every foot sits at its default position and must still swing.
+            const bool holdStation = repositioning && footAtTarget(i);
 
             if (isSwinging && !footWasSwinging[i]) {
                 for (int j = 0; j < 4; ++j) {
@@ -219,7 +232,7 @@ class GaitController {
             }
             footWasSwinging[i] = isSwinging;
 
-            if (isSwinging) {
+            if (isSwinging && !holdStation) {
                 const float swingProgress = (ph - gait.stand_frac) / (1.0f - gait.stand_frac);
                 updateDefaultPositionTarget(i, swingProgress);
             }
@@ -231,10 +244,11 @@ class GaitController {
             const float stroke = std::hypot(strokeX, strokeY);
             const float direction = std::atan2(strokeY, strokeX);
 
-            auto [phNorm, curveFn, amp] = phaseParams(ph, gait.stand_frac, gait.step_depth, gait.step_height);
-
             float delta[3] = {0, 0, 0};
-            curveFn(stroke / 2, direction, &amp, phNorm, delta);
+            if (!holdStation) {
+                auto [phNorm, curveFn, amp] = phaseParams(ph, gait.stand_frac, gait.step_depth, gait.step_height);
+                curveFn(stroke / 2, direction, &amp, phNorm, delta);
+            }
 
             for (int j = 0; j < 3; j++) {
                 newFeet[i][j] = defaultPosition[i][j] + delta[j];
@@ -270,6 +284,6 @@ class GaitController {
                                     : gait.step_speed * CLIP(speed_factor, 0.75, 1.5f);
 
         advancePhase(dt, speed);
-        generateFeet(gait, body);
+        generateFeet(gait, body, isRepositioning);
     }
 };

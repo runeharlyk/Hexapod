@@ -393,6 +393,61 @@ void test_stance_change_walks_the_feet_to_the_new_target() {
 }
 
 
+void test_settled_legs_hold_station_while_others_reposition() {
+    // Only one foot is off target. The other five are already standing where they belong, so they
+    // should stay planted rather than cycling through empty lifts until the odd one out catches up.
+    GaitController controller;
+    controller.snapDefaultFootTarget(STAND);
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 0, 0, 0);
+    controller.setGait(gait);
+    BodyStateMsg body = makeBody();
+
+    float tgt[6][4];
+    for (int i = 0; i < 6; i++)
+        for (int j = 0; j < 4; j++) tgt[i][j] = STAND[i][j];
+    tgt[0][0] += 30.0f;
+    controller.setDefaultFootTarget(tgt);
+
+    float maxLift[6] = {0, 0, 0, 0, 0, 0};
+    int ticks = 0;
+    while (controller.hasPendingStanceChange() && ticks < 4000) {
+        controller.step(gait, body, DT);
+        ticks++;
+        for (int i = 0; i < 6; i++) {
+            const float lift = body.feet[i][2] - STAND[i][2];
+            if (lift > maxLift[i]) maxLift[i] = lift;
+        }
+    }
+
+    TEST_ASSERT_FALSE_MESSAGE(controller.hasPendingStanceChange(), "stance change never converged");
+    TEST_ASSERT_TRUE_MESSAGE(maxLift[0] > 1.0f, "the foot that had to move never stepped");
+    for (int i = 1; i < 6; i++) {
+        TEST_ASSERT_TRUE_MESSAGE(maxLift[i] < 1.0f, "a leg already on target took an empty step");
+    }
+}
+
+void test_walking_still_swings_every_foot() {
+    // The hold-station rule must not leak into normal walking, where every foot sits at its default
+    // position and would otherwise qualify as "settled" and stop lifting entirely.
+    GaitController controller;
+    controller.snapDefaultFootTarget(STAND);
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 0, 60, 0);
+    controller.setGait(gait);
+    BodyStateMsg body = makeBody();
+
+    float maxLift[6] = {0, 0, 0, 0, 0, 0};
+    for (int t = 0; t < 1200; t++) {
+        controller.step(gait, body, DT);
+        for (int i = 0; i < 6; i++) {
+            const float lift = body.feet[i][2] - STAND[i][2];
+            if (lift > maxLift[i]) maxLift[i] = lift;
+        }
+    }
+    for (int i = 0; i < 6; i++) {
+        TEST_ASSERT_TRUE_MESSAGE(maxLift[i] > 1.0f, "a foot stopped swinging during normal walking");
+    }
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_tripod_keeps_three_feet_loaded);
@@ -410,5 +465,7 @@ int main(int, char **) {
     RUN_TEST(test_command_ramp_switches_cadence_mode_outright);
     RUN_TEST(test_command_ramp_leaves_the_gait_schedule_alone);
     RUN_TEST(test_stance_change_walks_the_feet_to_the_new_target);
+    RUN_TEST(test_settled_legs_hold_station_while_others_reposition);
+    RUN_TEST(test_walking_still_swings_every_foot);
     return UNITY_END();
 }
