@@ -12,3 +12,6 @@ simulation/__pycache__
 
 # Generated embedded web app (EMBED_WEBAPP=1), 7MB blob
 firmware/include/WWWData.h
+
+# Linker map files (ad-hoc size analysis output)
+*.map

@@ -45,6 +45,19 @@ CONFIG_SPIRAM_SPEED_80M=y
 # (BLE inits after WiFi/AP; HCI-buffer allocation was starving of internal RAM).
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 
+# WiFi internal-DMA pools: the static RX pool and the TX cache buffers live in internal DMA RAM.
+# At defaults (RX 16, cache 32) they leave nothing for the SoftAP beacon/hostap allocations once
+# BLE + camera are up, so ieee80211_hostap_attach null-derefs. Trim both; dynamic RX/TX already
+# spill to PSRAM via the prefer-SPIRAM flag above.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=16
+
+# Keep WiFi TX/RX code in flash instead of IRAM. On the S3 (unified internal SRAM) this returns
+# ~28 KB of DRAM-capable heap to the pool, which the BT controller needs to coexist with the camera
+# + SoftAP without "BLE_INIT: Malloc failed". Cost is WiFi throughput/latency (code runs cached).
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+
 # Camera DMA line-buffer must come from internal DMA RAM, which is tight after BLE+WiFi+AP. Cap it
 # (default 32 KB -> it picked 16 KB and failed; ~14 KB contiguous is all that's left) so it fits.
 CONFIG_CAMERA_DMA_BUFFER_SIZE_MAX=8192
@@ -68,3 +81,30 @@ CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
 CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
 CONFIG_BT_NIMBLE_ROLE_CENTRAL=n
 CONFIG_BT_NIMBLE_ROLE_OBSERVER=n
+
+# The BT controller can only allocate from internal RAM; the NimBLE host can't. Move the host's
+# mbuf/HCI pools (~18 KB) to PSRAM so the controller keeps its internal headroom when WiFi SoftAP is
+# also up, otherwise runtime notifies fail with "BLE_INIT: Malloc failed". One web-app client only,
+# so drop the connection count from the default 3.
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+
+# OTA: roll back to the previous slot unless the new image marks itself valid on first boot
+# (ota_service::confirmRunningImage). Without this a bad update boot-loops with no way back.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+# The https download fetches from GitHub, which redirects to a second host, so the image needs the
+# public root-CA bundle rather than a pinned certificate.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+# Keep the TLS session buffers (~16 KB) out of internal RAM: the OTA download runs while
+# WiFi, BLE and the camera already hold their internal allocations.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+
+# BLE controller footprint: ~64 KB of internal RAM at defaults, which starved the SoftAP. The NUS
+# transport only advertises and takes one connection, so the scan path and the spare activity slots
+# (828 B each) are unreachable. RUN_IN_FLASH_ONLY saves the most (>20 KB out of IRAM); its cost is
+# degraded BLE while flash is erasing.
+CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY=y
+CONFIG_BT_CTRL_BLE_MAX_ACT=2
+CONFIG_BT_CTRL_BLE_SCAN=n
+CONFIG_BT_CTRL_DTM_ENABLE=n
