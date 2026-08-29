@@ -18,11 +18,11 @@ constexpr float STAND[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -15
 
 constexpr float DT = 0.005f; // the control-task period
 
-gait_state_t makeGait(GaitType type, float stepX, float stepZ, float stepAngle) {
+gait_state_t makeGait(GaitType type, float stepX, float stepY, float stepAngle) {
     gait_state_t gait{};
     gait.gait_type = type;
     gait.step_x = stepX;
-    gait.step_z = stepZ;
+    gait.step_y = stepY;
     gait.step_angle = stepAngle;
     gait.step_speed = 1.0f;
     gait.step_height = 40.0f;
@@ -97,7 +97,7 @@ void test_idle_command_settles_on_the_default_stance() {
 }
 
 void test_command_below_deadband_does_not_start_the_cycle() {
-    // step() treats |step_x| < 2 and |step_z| < 2 with no yaw as standing still; a joystick at
+    // step() treats |step_x| < 2 and |step_y| < 2 with no yaw as standing still; a joystick at
     // rest must not creep the phase forward.
     gait_state_t gait = makeGait(GaitType::TRI_GATE, 1.9f, -1.9f, 0.0f);
     GaitController controller;
@@ -280,25 +280,25 @@ gait_state_t rampState() {
 void test_command_ramp_moves_toward_target_without_jumping() {
     gait_state_t cur = rampState();
     gait_state_t target = rampState();
-    target.step_z = 100.0f;
+    target.step_y = 100.0f;
 
     approachGaitCommand(cur, target, 0.005f, 0.15f);
-    TEST_ASSERT_TRUE_MESSAGE(cur.step_z > 0.0f, "one tick should make progress");
-    TEST_ASSERT_TRUE_MESSAGE(cur.step_z < 10.0f, "one 5 ms tick must not jump most of the way");
-    TEST_ASSERT_TRUE_MESSAGE(cur.step_z <= target.step_z, "ramp must not overshoot the command");
+    TEST_ASSERT_TRUE_MESSAGE(cur.step_y > 0.0f, "one tick should make progress");
+    TEST_ASSERT_TRUE_MESSAGE(cur.step_y < 10.0f, "one 5 ms tick must not jump most of the way");
+    TEST_ASSERT_TRUE_MESSAGE(cur.step_y <= target.step_y, "ramp must not overshoot the command");
 }
 
 void test_command_ramp_converges_on_the_command() {
     gait_state_t cur = rampState();
     gait_state_t target = rampState();
     target.step_x = -70.0f;
-    target.step_z = 100.0f;
+    target.step_y = 100.0f;
     target.step_angle = 0.4f;
 
     for (int i = 0; i < 200; i++) approachGaitCommand(cur, target, 0.005f, 0.15f);  // 1 s
 
     TEST_ASSERT_FLOAT_WITHIN(0.5f, target.step_x, cur.step_x);
-    TEST_ASSERT_FLOAT_WITHIN(0.5f, target.step_z, cur.step_z);
+    TEST_ASSERT_FLOAT_WITHIN(0.5f, target.step_y, cur.step_y);
     TEST_ASSERT_FLOAT_WITHIN(0.01f, target.step_angle, cur.step_angle);
 }
 
@@ -307,12 +307,12 @@ void test_command_ramp_is_independent_of_loop_rate() {
     // jitter would silently change how the robot accelerates.
     gait_state_t fine = rampState(), coarse = rampState();
     gait_state_t target = rampState();
-    target.step_z = 100.0f;
+    target.step_y = 100.0f;
 
     for (int i = 0; i < 20; i++) approachGaitCommand(fine, target, 0.005f, 0.15f);  // 20 x 5 ms
     approachGaitCommand(coarse, target, 0.100f, 0.15f);                             // 1 x 100 ms
 
-    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, fine.step_z, coarse.step_z, "ramp depends on tick size");
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, fine.step_y, coarse.step_y, "ramp depends on tick size");
 }
 
 void test_command_ramp_switches_cadence_mode_outright() {
@@ -345,7 +345,7 @@ void test_command_ramp_leaves_the_gait_schedule_alone() {
     target.gait_type = GaitType::BI_GATE;
     target.stand_frac = 0.75f;
     for (int i = 0; i < 6; i++) target.offset[i] = 0.9f;
-    target.step_z = 100.0f;
+    target.step_y = 100.0f;
 
     for (int i = 0; i < 50; i++) approachGaitCommand(cur, target, 0.005f, 0.15f);
 

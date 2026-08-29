@@ -78,7 +78,7 @@
     const gait_gui = gui_panel.addFolder('Gait')
     gait_gui.add(motion.gait_state, 'step_height', 0, 50, 0.01).name('Step Height')
     gait_gui.add(motion.gait_state, 'step_x', -50, 50, 0.01).name('Step X')
-    gait_gui.add(motion.gait_state, 'step_z', -50, 50, 0.01).name('Step Z')
+    gait_gui.add(motion.gait_state, 'step_y', -50, 50, 0.01).name('Step Y')
     gait_gui
       .add(motion.gait_state, 'step_angle', -Math.PI / 4, Math.PI / 4, 0.01)
       .name('Step Angle')

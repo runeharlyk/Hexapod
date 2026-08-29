@@ -62,7 +62,7 @@ export default class Motion {
     this.gait_state = {
       step_height: 15,
       step_x: 0,
-      step_z: 0,
+      step_y: 0,
       step_angle: 0,
       step_speed: 1,
       step_depth: 0.002,
@@ -93,12 +93,12 @@ export default class Motion {
         this.body_state.ym = -command[1] * 50
         this.body_state.phi = command[2] * 0.254
         this.gait_state.step_x = 0
-        this.gait_state.step_z = 0
+        this.gait_state.step_y = 0
         this.gait_state.step_angle = 0
         break
       case MotionModes.WALK:
         this.gait_state.step_x = -command[0] * 100
-        this.gait_state.step_z = command[1] * 100
+        this.gait_state.step_y = command[1] * 100
         this.gait_state.step_angle = command[2] * 0.8
         this.gait_state.step_speed = command[5] + 1
         this.gait_state.step_height = (command[6] + 1) * 20

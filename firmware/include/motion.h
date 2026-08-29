@@ -79,13 +79,13 @@ class MotionService {
                 target_body_state.ym = -c.ly * 50.f;
                 target_body_state.phi = c.rx * 0.254f;
                 target_gait_state.step_x = 0;
-                target_gait_state.step_z = 0;
+                target_gait_state.step_y = 0;
                 target_gait_state.step_angle = 0;
                 break;
             }
             case MOTION_STATE::WALK: {
                 target_gait_state.step_x = -c.lx * 100;
-                target_gait_state.step_z = c.ly * 100;
+                target_gait_state.step_y = c.ly * 100;
                 target_gait_state.step_angle = c.rx * 0.8;
                 target_gait_state.step_speed = c.s + 1.f;
                 if (gait_state.gait_type == GaitType::TUNED) {
@@ -98,7 +98,7 @@ class MotionService {
                     float a[6];
                     tuned_gait::velocity_to_gait(cmd, a);
                     target_gait_state.step_x = a[0] * tuned_gait::STEP_XY_MM;
-                    target_gait_state.step_z = a[1] * tuned_gait::STEP_XY_MM;
+                    target_gait_state.step_y = a[1] * tuned_gait::STEP_XY_MM;
                     target_gait_state.step_angle = a[2] * tuned_gait::STEP_ANGLE_RAD;
                     // s1 trims foot lift around the searched value rather than setting it from
                     // zero; the old (s1+1)*20 mapping tops out at 40 mm and cannot express 68 mm.
@@ -215,7 +215,7 @@ class MotionService {
         target_body_state.phi = 0;
         target_body_state.omega = 0;
         target_gait_state.step_x = 0;
-        target_gait_state.step_z = 0;
+        target_gait_state.step_y = 0;
         target_gait_state.step_angle = 0;
         target_gait_state.step_speed = 1.f;
         target_gait_state.step_height = 15.f;

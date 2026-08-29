@@ -27,13 +27,13 @@ constexpr float STEP_DEPTH_MM = 1.868632f;     // stance-phase downward push (tr
 constexpr float RIDE_MM = 18.8152f;              // + raises the body: body_state.zm = -RIDE_MM
 
 // --- action-scale constants this gait assumes (mirror of hexapod_mj_env) ---
-constexpr float STEP_XY_MM = 100.0f;              // joystick [-1,1] -> step_x / step_z (mm)
+constexpr float STEP_XY_MM = 100.0f;              // joystick [-1,1] -> step_x / step_y (mm)
 constexpr float STEP_ANGLE_RAD = 0.8f;       // joystick [-1,1] -> step_angle (rad)
 constexpr float STEP_HEIGHT_MIN_MM = 10.0f, STEP_HEIGHT_MAX_MM = 80.0f;
 constexpr float PHASE_RATE_MIN = 0.0f, PHASE_RATE_MAX = 3.5f;  // cyc/s
 
 // --- velocity-command gains (UNUSED by the joystick WALK path; for a future velocity mode) ---
-// cmd = [vx forward m/s, vy lateral m/s, yaw rad/s]; the robot faces +Y, so vx drives step_z.
+// cmd = [vx forward m/s, vy lateral m/s, yaw rad/s]; the robot faces +Y, so vx drives step_y.
 constexpr float GX0 = 0.269029f, GX1 = 0.213827f;      // forward-axis stride gain, slow/fast
 constexpr float GY0 = 0.503691f, GY1 = 0.341345f;      // lateral-axis stride gain
 constexpr float GYAW0 = 2.273614f, GYAW1 = 1.663115f;
@@ -42,7 +42,7 @@ constexpr float PR_BASE = -0.324986f, PR_SLOPE = 0.928120f, PR_YAW = 0.191999f;
 constexpr float YAW_COMP = 0.027392f;
 
 // Port of GaitSchedule.gait_action: velocity command -> normalized gait params in [-1,1].
-// out = [step_x, step_z, step_angle, step_height, blend, phase_rate]; decode with the scales above.
+// out = [step_x, step_y, step_angle, step_height, blend, phase_rate]; decode with the scales above.
 inline float clip1(float v) { return v > 1.f ? 1.f : (v < -1.f ? -1.f : v); }
 
 inline void velocity_to_gait(const float cmd[3], float out[6]) {
@@ -54,7 +54,7 @@ inline void velocity_to_gait(const float cmd[3], float out[6]) {
     const float gy = GY0 + (GY1 - GY0) * b;
     const float gyaw = GYAW0 + (GYAW1 - GYAW0) * b;
     out[0] = clip1(vy / gy);                       // step_x  = body-X = lateral
-    out[1] = clip1(vx / gx);                       // step_z  = body-Y = forward
+    out[1] = clip1(vx / gx);                       // step_y  = body-Y = forward
     out[2] = clip1(yaw / gyaw + YAW_COMP * vx);
     out[3] = 0.664207f;                 // normalized step height
     out[4] = b * 2.f - 1.f;

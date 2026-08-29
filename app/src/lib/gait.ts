@@ -40,7 +40,7 @@ export const default_stand_frac: Record<GaitType, number> = {
 export interface gait_state_t {
   step_height: number
   step_x: number
-  step_z: number
+  step_y: number
   step_angle: number
   step_speed: number
   step_depth: number
@@ -89,8 +89,8 @@ export class GaitController {
   }
 
   step(gait: gait_state_t, body: body_state_t, dt: number) {
-    const { step_x, step_z, step_angle: angle } = gait
-    const isMoving = Math.abs(step_x) >= 2 || Math.abs(step_z) >= 2 || angle !== 0
+    const { step_x, step_y, step_angle: angle } = gait
+    const isMoving = Math.abs(step_x) >= 2 || Math.abs(step_y) >= 2 || angle !== 0
     const isRepositioning = !isMoving && this.hasPendingStanceChange()
 
     if (!isMoving && !isRepositioning) {
@@ -101,7 +101,7 @@ export class GaitController {
       return
     }
 
-    const lengthRaw = Math.hypot(step_x, step_z)
+    const lengthRaw = Math.hypot(step_x, step_y)
     const length = step_x < 0 ? -lengthRaw : lengthRaw
     const speed =
       isRepositioning ?
@@ -142,7 +142,7 @@ export class GaitController {
         gait.step_height
       )
       const strokeX = step_x + angle * -defaultFoot[1]
-      const strokeY = step_z + angle * defaultFoot[0]
+      const strokeY = step_y + angle * defaultFoot[0]
       const stroke = Math.hypot(strokeX, strokeY)
       const direction = Math.atan2(strokeY, strokeX)
       const delta = curveFn(stroke / 2, direction, amp, phNorm)
@@ -183,11 +183,11 @@ export class GaitController {
     }
 
     const m = gait_state
-    const moving = m.step_x !== 0 || m.step_z !== 0 || m.step_angle !== 0
+    const moving = m.step_x !== 0 || m.step_y !== 0 || m.step_angle !== 0
 
     if (moving) {
       const step_displacement_x_local = m.step_x * this.walkTranslationScale * m.step_speed * dt
-      const step_displacement_z_local = m.step_z * this.walkTranslationScale * m.step_speed * dt
+      const step_displacement_z_local = m.step_y * this.walkTranslationScale * m.step_speed * dt
       const step_displacement_yaw = m.step_angle * m.step_speed * dt
 
       const cos_yaw = Math.cos(this.cumulative_orientation.yaw)

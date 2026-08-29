@@ -11,7 +11,7 @@ static constexpr float default_offset[6] = {0, 0.52, 0.08, 0.58, 0.16, 0.66};
 static constexpr float default_stand_frac = 3.1 / 6;
 
 struct gait_state_t {
-    float step_height, step_x, step_z, step_angle, step_speed, step_depth, stand_frac;
+    float step_height, step_x, step_y, step_angle, step_speed, step_depth, stand_frac;
     GaitType gait_type;
     float offset[6];
     // Explicit cadence in cycles/s. 0 = use the legacy stride-derived law below. The searched gaits
@@ -32,7 +32,7 @@ struct gait_state_t {
 inline void approachGaitCommand(gait_state_t& current, const gait_state_t& target, float dt, float tau) {
     const float a = (tau <= 0.0f || dt <= 0.0f) ? 1.0f : 1.0f - expf(-dt / tau);
     current.step_x = lerpf(current.step_x, target.step_x, a);
-    current.step_z = lerpf(current.step_z, target.step_z, a);
+    current.step_y = lerpf(current.step_y, target.step_y, a);
     current.step_angle = lerpf(current.step_angle, target.step_angle, a);
     current.step_speed = lerpf(current.step_speed, target.step_speed, a);
     current.step_height = lerpf(current.step_height, target.step_height, a);
@@ -240,7 +240,7 @@ class GaitController {
             const float rx = defaultPosition[i][0];
             const float ry = defaultPosition[i][1];
             const float strokeX = gait.step_x + gait.step_angle * (-ry);
-            const float strokeY = gait.step_z + gait.step_angle * (rx);
+            const float strokeY = gait.step_y + gait.step_angle * (rx);
             const float stroke = std::hypot(strokeX, strokeY);
             const float direction = std::atan2(strokeY, strokeX);
 
@@ -263,7 +263,7 @@ class GaitController {
     float getPhase() const { return phase; }
 
     void step(gait_state_t& gait, BodyStateMsg& body, float dt) {
-        const bool isMoving = std::fabs(gait.step_x) >= 2 || std::fabs(gait.step_z) >= 2 || gait.step_angle;
+        const bool isMoving = std::fabs(gait.step_x) >= 2 || std::fabs(gait.step_y) >= 2 || gait.step_angle;
         const bool isRepositioning = !isMoving && hasPendingStanceChange();
 
         if (!isMoving && !isRepositioning) {
@@ -276,7 +276,7 @@ class GaitController {
             return;
         }
 
-        const float length = std::hypot(gait.step_x, gait.step_z) * (gait.step_x < 0 ? -1 : 1);
+        const float length = std::hypot(gait.step_x, gait.step_y) * (gait.step_x < 0 ? -1 : 1);
         const float speed_factor = std::max(std::abs(length) / 25.f, std::abs(gait.step_angle) * 1.5f);
         const float speed =
             isRepositioning ? gait.step_speed
