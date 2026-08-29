@@ -44,7 +44,15 @@ export interface Decoded {
 }
 
 export const decodeMessage = (bytes: Uint8Array): Decoded | null => {
-  const msg = Message.decode(bytes) as Record<string, unknown>
+  let msg: Record<string, unknown>
+  try {
+    msg = Message.decode(bytes) as Record<string, unknown>
+  } catch (error) {
+    // A truncated frame or a firmware built against a stale schema must cost one frame,
+    // not the whole connection.
+    console.error('Dropping undecodable message frame:', error)
+    return null
+  }
   for (const [key, value] of Object.entries(msg)) {
     if (value === undefined) continue
     const tag = KEY_TO_TAG.get(key)

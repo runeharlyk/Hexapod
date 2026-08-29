@@ -26,7 +26,11 @@ export class DataBroker {
   private correlationId = 0
   private pending = new Map<
     number,
-    { resolve: (r: CorrelationResponse) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }
+    {
+      resolve: (r: CorrelationResponse) => void
+      reject: (e: Error) => void
+      timer: ReturnType<typeof setTimeout>
+    }
   >()
   // Held while no transport is connected, sent once one connects, so requests aren't lost.
   private deferred: Array<{ id: number; send: () => void; reject: (e: Error) => void }> = []
@@ -140,7 +144,9 @@ export class DataBroker {
   }
 
   private sendSubscribe(tag: number) {
-    this.broadcast(encodeMessage(Message.create({ subNotif: SubscribeNotification.create({ tag }) })))
+    this.broadcast(
+      encodeMessage(Message.create({ subNotif: SubscribeNotification.create({ tag }) }))
+    )
   }
 
   private sendUnsubscribe(tag: number) {

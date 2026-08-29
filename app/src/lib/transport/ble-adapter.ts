@@ -1,15 +1,18 @@
-import { derived, writable } from 'svelte/store'
+import { derived, writable, type Readable } from 'svelte/store'
 import { type ITransport, type LinkStatus } from '../interfaces/transport.interface'
 
 export const SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e'
 const CHARACTERISTIC_TX_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'
 const CHARACTERISTIC_RX_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'
 
-function createBLEAdapter(): ITransport {
+type BLEAdapter = ITransport & { deviceName: Readable<string | null> }
+
+function createBLEAdapter(): BLEAdapter {
   const dataCallbacks: ((data: Uint8Array) => void)[] = []
   const connectCallbacks: (() => void)[] = []
   const disconnectCallbacks: (() => void)[] = []
   const status = writable<LinkStatus>('disconnected')
+  const deviceName = writable<string | null>(null)
   const connected = derived(status, $s => $s === 'connected')
 
   let device: BluetoothDevice | undefined
@@ -29,13 +32,22 @@ function createBLEAdapter(): ITransport {
       const len = rxBuffer[0] | (rxBuffer[1] << 8)
       if (rxBuffer.length < 2 + len) break
       const message = rxBuffer.slice(2, 2 + len)
-      dataCallbacks.forEach(cb => cb(message))
+      // Consume the frame before dispatching: a throwing handler must not leave the buffer
+      // parked on the same head frame, which would kill the receive path for good.
       rxBuffer = rxBuffer.slice(2 + len)
+      dataCallbacks.forEach(cb => {
+        try {
+          cb(message)
+        } catch (error) {
+          console.error('BLE receive handler error:', error)
+        }
+      })
     }
   }
 
   const markDisconnected = () => {
     status.set('disconnected')
+    deviceName.set(null)
     disconnectCallbacks.forEach(cb => cb())
   }
 
@@ -68,6 +80,7 @@ function createBLEAdapter(): ITransport {
       throw error
     }
 
+    deviceName.set(device?.name ?? null)
     status.set('connected')
     connectCallbacks.forEach(cb => cb())
   }
@@ -101,6 +114,7 @@ function createBLEAdapter(): ITransport {
   return {
     status,
     connected,
+    deviceName,
     connect,
     disconnect,
     send,
