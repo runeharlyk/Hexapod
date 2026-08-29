@@ -2,7 +2,6 @@
 
 #include <esp_http_server.h>
 #include <wifi/wifi_idf.h>
-#include <mdns.h>
 #include <string>
 
 #include <filesystem.h>
@@ -23,7 +22,6 @@ class WiFiService : public StatefulService<WiFiSettings> {
     void begin();
     void loop();
 
-    void setupMDNS(const char *hostname);
     void selectNetwork(uint32_t index);
 
     const char *getHostname() { return state().hostname; }
@@ -46,6 +44,11 @@ class WiFiService : public StatefulService<WiFiSettings> {
 
     unsigned long _lastConnectionAttempt;
     bool _stopping;
+    uint8_t _failedAttempts {0};
 
+    // Each STA retry toggles AP<->APSTA, which churns internal DMA RAM and can starve the BT
+    // controller. Back off exponentially from reconnectDelay up to maxReconnectDelay so a
+    // persistently-failing network (e.g. wrong password) stops thrashing the radio.
     constexpr static uint16_t reconnectDelay {10000};
+    constexpr static uint32_t maxReconnectDelay {60000};
 };

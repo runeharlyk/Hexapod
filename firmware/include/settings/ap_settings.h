@@ -95,7 +95,51 @@ inline APSettings APSettings_defaults() {
 
 inline void APSettings_read(const APSettings &settings, APSettings &proto) { proto = settings; }
 
+inline bool APSettings_equals(const APSettings &a, const APSettings &b) {
+    return a.provision_mode == b.provision_mode && strncmp(a.ssid, b.ssid, sizeof(a.ssid)) == 0 &&
+           strncmp(a.password, b.password, sizeof(a.password)) == 0 && a.channel == b.channel &&
+           a.ssid_hidden == b.ssid_hidden && a.max_clients == b.max_clients && a.local_ip == b.local_ip &&
+           a.gateway_ip == b.gateway_ip && a.subnet_mask == b.subnet_mask;
+}
+
 inline StateUpdateResult APSettings_update(const APSettings &proto, APSettings &settings) {
-    settings = proto;
+    APSettings candidate = proto;
+
+    switch (candidate.provision_mode) {
+        case AP_MODE_ALWAYS:
+        case AP_MODE_DISCONNECTED:
+        case AP_MODE_NEVER: break;
+        default: candidate.provision_mode = AP_MODE_DISCONNECTED;
+    }
+
+    size_t ssid_length = strnlen(candidate.ssid, sizeof(candidate.ssid));
+    if (ssid_length < 1 || ssid_length > 32) {
+        ESP_LOGE("APSettings", "AP SSID length is invalid");
+        return StateUpdateResult::ERROR;
+    }
+
+    // softAP() picks WPA2 as soon as the password is non-empty, and WPA2 needs 8..63 characters.
+    size_t password_length = strnlen(candidate.password, sizeof(candidate.password));
+    if (password_length > 0 && (password_length < 8 || password_length > 63)) {
+        ESP_LOGE("APSettings", "AP password length is invalid");
+        return StateUpdateResult::ERROR;
+    }
+
+    if (candidate.channel < 1 || candidate.channel > 13) candidate.channel = FACTORY_AP_CHANNEL;
+    if (candidate.max_clients < 1 || candidate.max_clients > ESP_WIFI_MAX_CONN_NUM) {
+        candidate.max_clients = FACTORY_AP_MAX_CLIENTS;
+    }
+
+    // An unreachable AP is worse than a non-default one, so an incomplete address falls back wholesale.
+    if (candidate.local_ip == 0 || candidate.gateway_ip == 0 || candidate.subnet_mask == 0) {
+        ESP_LOGW("APSettings", "Incomplete AP IP configuration - using factory addresses");
+        candidate.local_ip = parseIPv4(FACTORY_AP_LOCAL_IP);
+        candidate.gateway_ip = parseIPv4(FACTORY_AP_GATEWAY_IP);
+        candidate.subnet_mask = parseIPv4(FACTORY_AP_SUBNET_MASK);
+    }
+
+    if (APSettings_equals(candidate, settings)) return StateUpdateResult::UNCHANGED;
+
+    settings = candidate;
     return StateUpdateResult::CHANGED;
 }

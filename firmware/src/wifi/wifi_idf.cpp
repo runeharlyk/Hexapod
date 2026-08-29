@@ -1,4 +1,5 @@
 #include <wifi/wifi_idf.h>
+#include <string.h>
 
 static const char* TAG = "WiFiIDF";
 
@@ -11,16 +12,23 @@ WiFiClass::WiFiClass()
       _autoReconnect(false),
       _persistent(false),
       _status(WL_DISCONNECTED),
-      _mode(WIFI_MODE_NULL),
+      _started(false),
+      _scanMutex(xSemaphoreCreateMutex()),
       _scanResult(nullptr),
       _scanCount(0),
       _scanStatus(-2),
       _useStaticIp(false) {}
 
 WiFiClass::~WiFiClass() {
-    if (_scanResult) {
+    {
+        ScanGuard guard(_scanMutex);
         free(_scanResult);
         _scanResult = nullptr;
+        _scanCount = 0;
+    }
+    if (_scanMutex) {
+        vSemaphoreDelete(_scanMutex);
+        _scanMutex = nullptr;
     }
 }
 
@@ -104,16 +112,9 @@ void WiFiClass::eventHandler(void* arg, esp_event_base_t event_base, int32_t eve
             case WIFI_EVENT_SCAN_DONE: {
                 wifi_event_sta_scan_done_t* event = (wifi_event_sta_scan_done_t*)event_data;
                 if (event->status == 0) {
-                    self->_scanCount = event->number;
-                    if (self->_scanResult) {
-                        free(self->_scanResult);
-                    }
-                    self->_scanResult = (wifi_ap_record_t*)malloc(sizeof(wifi_ap_record_t) * self->_scanCount);
-                    if (self->_scanResult) {
-                        esp_wifi_scan_get_ap_records(&self->_scanCount, self->_scanResult);
-                    }
-                    self->_scanStatus = self->_scanCount;
+                    self->captureScanResults(event->number);
                 } else {
+                    ScanGuard guard(self->_scanMutex);
                     self->_scanStatus = -2;
                 }
                 break;
@@ -147,26 +148,64 @@ void WiFiClass::onEvent(WiFiEventCb callback, int32_t event_id) { _eventHandlers
 bool WiFiClass::mode(wifi_mode_t m) {
     if (!_initialized) init();
 
-    if (_mode == m) return true;
-
-    esp_err_t err;
-    if (_mode == WIFI_MODE_NULL) {
-        err = esp_wifi_set_mode(m);
-        if (err == ESP_OK) {
-            err = esp_wifi_start();
+    if (m == WIFI_MODE_NULL) {
+        if (_started) {
+            esp_err_t err = esp_wifi_stop();
+            if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
+                ESP_LOGE(TAG, "Failed to stop WiFi: %s", esp_err_to_name(err));
+                return false;
+            }
+            _started = false;
         }
-    } else if (m == WIFI_MODE_NULL) {
-        err = esp_wifi_stop();
-    } else {
-        err = esp_wifi_set_mode(m);
-    }
-
-    if (err == ESP_OK) {
-        _mode = m;
+        // esp_wifi_stop() keeps the configured mode, which would leave every getMode() caller
+        // believing the radio is still up.
+        esp_err_t err = esp_wifi_set_mode(WIFI_MODE_NULL);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to clear mode: %s", esp_err_to_name(err));
+            return false;
+        }
         return true;
     }
-    ESP_LOGE(TAG, "Failed to set mode: %s", esp_err_to_name(err));
-    return false;
+
+    if (getMode() != m) {
+        esp_err_t err = esp_wifi_set_mode(m);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to set mode: %s", esp_err_to_name(err));
+            return false;
+        }
+    }
+
+    return ensureStarted();
+}
+
+bool WiFiClass::ensureStarted() {
+    if (_started) return true;
+
+    esp_err_t err = esp_wifi_start();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start WiFi: %s", esp_err_to_name(err));
+        return false;
+    }
+    _started = true;
+    return true;
+}
+
+bool WiFiClass::enableSta() {
+    wifi_mode_t current = getMode();
+    wifi_mode_t wanted = (current == WIFI_MODE_AP || current == WIFI_MODE_APSTA) ? WIFI_MODE_APSTA : WIFI_MODE_STA;
+    if (current == wanted && _started) return true;
+
+    if (!mode(wanted)) return false;
+    vTaskDelay(500 / portTICK_PERIOD_MS);
+    return true;
+}
+
+bool WiFiClass::enableAp() {
+    wifi_mode_t current = getMode();
+    wifi_mode_t wanted = (current == WIFI_MODE_STA || current == WIFI_MODE_APSTA) ? WIFI_MODE_APSTA : WIFI_MODE_AP;
+    if (current == wanted && _started) return true;
+
+    return mode(wanted);
 }
 
 wifi_mode_t WiFiClass::getMode() {
@@ -181,16 +220,12 @@ wifi_mode_t WiFiClass::getMode() {
 bool WiFiClass::begin(const char* ssid, const char* password, int32_t channel, const uint8_t* bssid) {
     if (!_initialized) init();
 
-    wifi_mode_t currentMode = getMode();
-    if (currentMode == WIFI_MODE_NULL || currentMode == WIFI_MODE_AP) {
-        mode(currentMode == WIFI_MODE_AP ? WIFI_MODE_APSTA : WIFI_MODE_STA);
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-    }
+    if (!enableSta()) return false;
 
     wifi_config_t wifi_config = {};
-    strncpy((char*)wifi_config.sta.ssid, ssid, sizeof(wifi_config.sta.ssid) - 1);
+    memcpy(wifi_config.sta.ssid, ssid, strnlen(ssid, sizeof(wifi_config.sta.ssid)));
     if (password) {
-        strncpy((char*)wifi_config.sta.password, password, sizeof(wifi_config.sta.password) - 1);
+        memcpy(wifi_config.sta.password, password, strnlen(password, sizeof(wifi_config.sta.password)));
     }
     if (channel > 0) {
         wifi_config.sta.channel = channel;
@@ -203,6 +238,10 @@ bool WiFiClass::begin(const char* ssid, const char* password, int32_t channel, c
     wifi_config.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
     wifi_config.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
     wifi_config.sta.threshold.authmode = password && strlen(password) > 0 ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+    // PMF-capable: WPA2/WPA3-transition routers reject a non-PMF station at association (reason 202)
+    // even with correct credentials. The Arduino WiFi library this shim replaced defaulted to this.
+    wifi_config.sta.pmf_cfg.capable = true;
+    wifi_config.sta.pmf_cfg.required = false;
 
     esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
     if (err != ESP_OK) {
@@ -368,13 +407,12 @@ uint8_t WiFiClass::channel() {
 int16_t WiFiClass::scanNetworks(bool async) {
     if (!_initialized) init();
 
-    wifi_mode_t currentMode = getMode();
-    if (currentMode == WIFI_MODE_NULL || currentMode == WIFI_MODE_AP) {
-        mode(currentMode == WIFI_MODE_AP ? WIFI_MODE_APSTA : WIFI_MODE_STA);
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-    }
+    if (!enableSta()) return -2;
 
-    _scanStatus = -1;
+    {
+        ScanGuard guard(_scanMutex);
+        _scanStatus = -1;
+    }
 
     wifi_scan_config_t scan_config = {};
     scan_config.show_hidden = true;
@@ -382,39 +420,57 @@ int16_t WiFiClass::scanNetworks(bool async) {
     esp_err_t err = esp_wifi_scan_start(&scan_config, !async);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Scan start failed: %s", esp_err_to_name(err));
+        ScanGuard guard(_scanMutex);
         _scanStatus = -2;
         return -2;
     }
 
     if (!async) {
-        if (_scanResult) {
-            free(_scanResult);
-            _scanResult = nullptr;
+        // The SCAN_DONE handler may have captured the records already; only take them if it has not.
+        uint16_t found = 0;
+        if (esp_wifi_scan_get_ap_num(&found) == ESP_OK && found > 0) {
+            captureScanResults(found);
         }
-        esp_wifi_scan_get_ap_num(&_scanCount);
-        _scanResult = (wifi_ap_record_t*)malloc(sizeof(wifi_ap_record_t) * _scanCount);
-        if (_scanResult) {
-            esp_wifi_scan_get_ap_records(&_scanCount, _scanResult);
-        }
-        _scanStatus = _scanCount;
-        return _scanCount;
+        ScanGuard guard(_scanMutex);
+        return _scanStatus;
     }
 
     return -1;
 }
 
-int16_t WiFiClass::scanComplete() { return _scanStatus; }
+void WiFiClass::captureScanResults(uint16_t count) {
+    ScanGuard guard(_scanMutex);
 
-void WiFiClass::scanDelete() {
-    if (_scanResult) {
-        free(_scanResult);
-        _scanResult = nullptr;
-    }
+    free(_scanResult);
+    _scanResult = nullptr;
     _scanCount = 0;
-    _scanStatus = -2;
+
+    if (count > 0) {
+        _scanResult = (wifi_ap_record_t*)malloc(sizeof(wifi_ap_record_t) * count);
+        if (!_scanResult) {
+            ESP_LOGE(TAG, "Failed to allocate %u scan records", count);
+        } else {
+            _scanCount = count;
+            esp_err_t err = esp_wifi_scan_get_ap_records(&_scanCount, _scanResult);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to read scan records: %s", esp_err_to_name(err));
+                free(_scanResult);
+                _scanResult = nullptr;
+                _scanCount = 0;
+            }
+        }
+    }
+
+    _scanStatus = static_cast<int16_t>(_scanCount);
+}
+
+int16_t WiFiClass::scanComplete() {
+    ScanGuard guard(_scanMutex);
+    return _scanStatus;
 }
 
 std::string WiFiClass::SSID(uint8_t i) {
+    ScanGuard guard(_scanMutex);
     if (i < _scanCount && _scanResult) {
         return std::string((char*)_scanResult[i].ssid);
     }
@@ -422,6 +478,7 @@ std::string WiFiClass::SSID(uint8_t i) {
 }
 
 int32_t WiFiClass::RSSI(uint8_t i) {
+    ScanGuard guard(_scanMutex);
     if (i < _scanCount && _scanResult) {
         return _scanResult[i].rssi;
     }
@@ -429,6 +486,7 @@ int32_t WiFiClass::RSSI(uint8_t i) {
 }
 
 wifi_enc_type_t WiFiClass::encryptionType(uint8_t i) {
+    ScanGuard guard(_scanMutex);
     if (i < _scanCount && _scanResult) {
         switch (_scanResult[i].authmode) {
             case WIFI_AUTH_OPEN: return WIFI_AUTH_OPEN_IDF;
@@ -441,6 +499,7 @@ wifi_enc_type_t WiFiClass::encryptionType(uint8_t i) {
 }
 
 std::string WiFiClass::BSSIDstr(uint8_t i) {
+    ScanGuard guard(_scanMutex);
     if (i < _scanCount && _scanResult) {
         char buf[18];
         snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X", _scanResult[i].bssid[0], _scanResult[i].bssid[1],
@@ -451,34 +510,21 @@ std::string WiFiClass::BSSIDstr(uint8_t i) {
 }
 
 int32_t WiFiClass::channel(uint8_t i) {
+    ScanGuard guard(_scanMutex);
     if (i < _scanCount && _scanResult) {
         return _scanResult[i].primary;
     }
     return 0;
 }
 
-void WiFiClass::getNetworkInfo(uint8_t i, std::string& ssid, uint8_t& encType, int32_t& rssi, uint8_t*& bssid,
-                               int32_t& ch) {
-    if (i < _scanCount && _scanResult) {
-        ssid = std::string((char*)_scanResult[i].ssid);
-        encType = static_cast<uint8_t>(encryptionType(i));
-        rssi = _scanResult[i].rssi;
-        bssid = _scanResult[i].bssid;
-        ch = _scanResult[i].primary;
-    }
-}
-
 bool WiFiClass::softAP(const char* ssid, const char* password, int channel, bool ssid_hidden, int max_connection) {
     if (!_initialized) init();
 
-    wifi_mode_t currentMode = getMode();
-    if (currentMode == WIFI_MODE_NULL || currentMode == WIFI_MODE_STA) {
-        mode(currentMode == WIFI_MODE_STA ? WIFI_MODE_APSTA : WIFI_MODE_AP);
-    }
+    if (!enableAp()) return false;
 
     wifi_config_t wifi_config = {};
-    strncpy((char*)wifi_config.ap.ssid, ssid, sizeof(wifi_config.ap.ssid) - 1);
-    wifi_config.ap.ssid_len = strlen(ssid);
+    wifi_config.ap.ssid_len = strnlen(ssid, sizeof(wifi_config.ap.ssid));
+    memcpy(wifi_config.ap.ssid, ssid, wifi_config.ap.ssid_len);
     wifi_config.ap.channel = channel;
     wifi_config.ap.ssid_hidden = ssid_hidden ? 1 : 0;
     wifi_config.ap.max_connection = max_connection;

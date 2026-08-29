@@ -6,94 +6,128 @@
 #include <utils/ip_address.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <string>
 #include <atomic>
+#include <memory>
 
 #define DNS_PORT 53
 #define DNS_MAX_PACKET_SIZE 512
 
+// Wildcard captive-portal resolver: every A query is answered with the soft-AP address.
 class DNSServer {
   public:
-    DNSServer() : _socket(-1), _running(false), _task(nullptr) {}
+    DNSServer() = default;
     ~DNSServer() { stop(); }
 
+    DNSServer(const DNSServer&) = delete;
+    DNSServer& operator=(const DNSServer&) = delete;
+
     bool start(uint16_t port, const char* domainName, const IPAddress& resolvedIP) {
-        if (_running) return true;
+        if (_session) return true;
 
-        _port = port;
-        _resolvedIP = resolvedIP;
-        _domainName = domainName ? domainName : "*";
-
-        _socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        if (_socket < 0) {
-            ESP_LOGE("DNSServer", "Failed to create socket");
+        int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (sock < 0) {
+            ESP_LOGE(TAG, "Failed to create socket");
             return false;
         }
 
-        int opt = 1;
-        setsockopt(_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        auto session = std::make_shared<Session>(sock, resolvedIP);
 
+        int opt = 1;
+        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+        // Bounds how long stop() waits: the worker only observes the stop flag between receives.
         struct timeval tv;
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
-        setsockopt(_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        tv.tv_sec = 0;
+        tv.tv_usec = receiveTimeoutMs * 1000;
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
         struct sockaddr_in serverAddr = {};
         serverAddr.sin_family = AF_INET;
         serverAddr.sin_addr.s_addr = INADDR_ANY;
-        serverAddr.sin_port = htons(_port);
+        serverAddr.sin_port = htons(port);
 
-        if (bind(_socket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
-            ESP_LOGE("DNSServer", "Failed to bind socket");
-            close(_socket);
-            _socket = -1;
+        if (bind(sock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
+            ESP_LOGE(TAG, "Failed to bind socket");
             return false;
         }
 
-        _running = true;
-        xTaskCreate(dnsTask, "dns_server", 4096, this, 3, &_task);
+        // The worker owns a reference of its own, so the session outlives a stop() that gives up waiting.
+        auto* workerRef = new std::shared_ptr<Session>(session);
+        if (xTaskCreate(dnsTask, "dns_server", 4096, workerRef, 3, nullptr) != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create task");
+            delete workerRef;
+            return false;
+        }
 
-        ESP_LOGI("DNSServer", "Started on port %d, resolving to %s", _port, _resolvedIP.toString().c_str());
+        _session = std::move(session);
+        ESP_LOGI(TAG, "Started on port %u, resolving %s to %s", port, domainName ? domainName : "*",
+                 resolvedIP.toString().c_str());
         return true;
     }
 
     void stop() {
-        _running = false;
-        if (_task) {
-            vTaskDelay(100 / portTICK_PERIOD_MS);
-            _task = nullptr;
+        if (!_session) return;
+
+        _session->running = false;
+        for (uint32_t waited = 0; waited < stopTimeoutMs && !_session->exited; waited += stopPollMs) {
+            vTaskDelay(pdMS_TO_TICKS(stopPollMs));
         }
-        if (_socket >= 0) {
-            close(_socket);
-            _socket = -1;
+        if (!_session->exited) {
+            ESP_LOGW(TAG, "Worker still running after %u ms; releasing ownership to it", stopTimeoutMs);
         }
-        ESP_LOGI("DNSServer", "Stopped");
+
+        _session.reset();
+        ESP_LOGI(TAG, "Stopped");
     }
 
-    void processNextRequest() {}
-
   private:
+    static constexpr const char* TAG = "DNSServer";
+    static constexpr uint32_t receiveTimeoutMs = 250;
+    static constexpr uint32_t stopPollMs = 10;
+    static constexpr uint32_t stopTimeoutMs = 2000;
+    static constexpr int headerSize = 12;
+    static constexpr int answerSize = 16;
+
+    // Shared by the owner and the worker task; whichever releases its reference last closes the socket.
+    struct Session {
+        Session(int sock, const IPAddress& ip) : socket(sock), resolvedIP(ip) {}
+        ~Session() { close(socket); }
+
+        Session(const Session&) = delete;
+        Session& operator=(const Session&) = delete;
+
+        const int socket;
+        const IPAddress resolvedIP;
+        std::atomic<bool> running {true};
+        std::atomic<bool> exited {false};
+    };
+
     static void dnsTask(void* param) {
-        DNSServer* self = static_cast<DNSServer*>(param);
-        self->run();
+        std::shared_ptr<Session> session = *static_cast<std::shared_ptr<Session>*>(param);
+        delete static_cast<std::shared_ptr<Session>*>(param);
+
+        run(*session);
+
+        session->exited = true;
+        session.reset();
         vTaskDelete(nullptr);
     }
 
-    void run() {
+    static void run(Session& session) {
         uint8_t buffer[DNS_MAX_PACKET_SIZE];
         struct sockaddr_in clientAddr;
-        socklen_t clientAddrLen = sizeof(clientAddr);
 
-        while (_running) {
-            int len = recvfrom(_socket, buffer, DNS_MAX_PACKET_SIZE, 0, (struct sockaddr*)&clientAddr, &clientAddrLen);
+        while (session.running) {
+            socklen_t addrLen = sizeof(clientAddr);
+            int len = recvfrom(session.socket, buffer, sizeof(buffer), 0, (struct sockaddr*)&clientAddr, &addrLen);
             if (len > 0) {
-                processRequest(buffer, len, &clientAddr);
+                processRequest(session, buffer, len, clientAddr);
             }
         }
     }
 
-    void processRequest(uint8_t* buffer, int len, struct sockaddr_in* clientAddr) {
-        if (len < 12) return;
+    static void processRequest(Session& session, const uint8_t* buffer, int len, const sockaddr_in& clientAddr) {
+        if (len < headerSize || len > DNS_MAX_PACKET_SIZE - answerSize) return;
 
         uint16_t flags = (buffer[2] << 8) | buffer[3];
         if ((flags & 0x8000) != 0) return;
@@ -103,42 +137,31 @@ class DNSServer {
 
         response[2] = 0x81;
         response[3] = 0x80;
-
         response[6] = 0x00;
         response[7] = 0x01;
 
-        int responseLen = len;
+        // Answer record: name pointer to the question, type A, class IN, TTL 60 s, rdlength 4, address.
+        const uint32_t ip = static_cast<uint32_t>(session.resolvedIP);
+        const uint8_t answer[answerSize] = {0xC0,
+                                            0x0C,
+                                            0x00,
+                                            0x01,
+                                            0x00,
+                                            0x01,
+                                            0x00,
+                                            0x00,
+                                            0x00,
+                                            0x3C,
+                                            0x00,
+                                            0x04,
+                                            static_cast<uint8_t>(ip),
+                                            static_cast<uint8_t>(ip >> 8),
+                                            static_cast<uint8_t>(ip >> 16),
+                                            static_cast<uint8_t>(ip >> 24)};
+        memcpy(response + len, answer, answerSize);
 
-        response[responseLen++] = 0xC0;
-        response[responseLen++] = 0x0C;
-
-        response[responseLen++] = 0x00;
-        response[responseLen++] = 0x01;
-
-        response[responseLen++] = 0x00;
-        response[responseLen++] = 0x01;
-
-        response[responseLen++] = 0x00;
-        response[responseLen++] = 0x00;
-        response[responseLen++] = 0x00;
-        response[responseLen++] = 0x3C;
-
-        response[responseLen++] = 0x00;
-        response[responseLen++] = 0x04;
-
-        uint32_t ip = static_cast<uint32_t>(_resolvedIP);
-        response[responseLen++] = ip & 0xFF;
-        response[responseLen++] = (ip >> 8) & 0xFF;
-        response[responseLen++] = (ip >> 16) & 0xFF;
-        response[responseLen++] = (ip >> 24) & 0xFF;
-
-        sendto(_socket, response, responseLen, 0, (struct sockaddr*)clientAddr, sizeof(*clientAddr));
+        sendto(session.socket, response, len + answerSize, 0, (const struct sockaddr*)&clientAddr, sizeof(clientAddr));
     }
 
-    int _socket;
-    uint16_t _port;
-    IPAddress _resolvedIP;
-    std::string _domainName;
-    std::atomic<bool> _running;
-    TaskHandle_t _task;
+    std::shared_ptr<Session> _session;
 };

@@ -1,6 +1,7 @@
 #include <ap_service.h>
 #include <communication/webserver.h>
 #include <event_bus.h>
+#include <esp_heap_caps.h>
 
 static const char *TAG = "APService";
 
@@ -81,6 +82,12 @@ void APService::manageAP() {
 }
 
 void APService::startAP() {
+    // SoftAP beacon/hostap buffers must come from internal DMA RAM; log headroom so an OOM
+    // (ieee80211_hostap_attach null-deref) is diagnosable rather than a bare panic.
+    ESP_LOGI(TAG, "startAP mem: internal=%u DMA=%u largestDMA=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
     ESP_LOGI(TAG, "Starting software access point: %s", state().ssid);
     WiFi.softAPConfig(IPAddress(state().local_ip), IPAddress(state().gateway_ip), IPAddress(state().subnet_mask));
     WiFi.softAP(state().ssid, state().password, state().channel, state().ssid_hidden, state().max_clients);

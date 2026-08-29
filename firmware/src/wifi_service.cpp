@@ -26,17 +26,16 @@ void WiFiService::begin() {
     _persistence.readFromFS();
     _lastConnectionAttempt = 0;
 
+    // manageSTA() owns every connection attempt; connecting here too raced its first tick and failed
+    // the second esp_wifi_connect() with ESP_ERR_WIFI_CONN, charging a false hit against the backoff.
     if (state().wifi_networks_count >= 1) {
         WiFi.mode(WIFI_MODE_STA);
-        vTaskDelay(100 / portTICK_PERIOD_MS);
-        uint32_t idx = state().selected_network;
-        if (idx >= state().wifi_networks_count) idx = 0;
-        configureNetwork(state().wifi_networks[idx]);
     }
 }
 
 void WiFiService::reconfigureWiFiConnection() {
     _lastConnectionAttempt = 0;
+    _failedAttempts = 0;
     if (WiFi.disconnect(true)) _stopping = true;
 }
 
@@ -72,16 +71,6 @@ int WiFiService::networksProto(api_WifiNetworkScan *buf, size_t maxCount) {
     return static_cast<int>(count);
 }
 
-void WiFiService::setupMDNS(const char *hostname) {
-    mdns_init();
-    mdns_hostname_set(state().hostname);
-    mdns_instance_name_set(hostname);
-    mdns_service_add(nullptr, "_http", "_tcp", 80, nullptr, 0);
-    mdns_service_add(nullptr, "_ws", "_tcp", 80, nullptr, 0);
-    mdns_txt_item_t txtData = {"Firmware Version", APP_VERSION};
-    mdns_service_txt_set("_http", "_tcp", &txtData, 1);
-}
-
 void WiFiService::statusProto(api_WifiStatus &wifiStatus) {
     wl_status_t status = WiFi.status();
     wifiStatus.status = static_cast<uint32_t>(status);
@@ -107,13 +96,21 @@ void WiFiService::statusProto(api_WifiStatus &wifiStatus) {
 }
 
 void WiFiService::manageSTA() {
-    if (WiFi.isConnected() || state().wifi_networks_count == 0) return;
+    if (WiFi.isConnected()) {
+        _failedAttempts = 0;
+        return;
+    }
+    if (state().wifi_networks_count == 0) return;
     if (_stopping) return;
 
-    // Throttle to reconnectDelay; reconfigureWiFiConnection() zeroes the timestamp to reconnect now.
+    // Throttle to the current backoff; reconfigureWiFiConnection() zeroes the timestamp to retry now.
+    uint32_t shift = _failedAttempts < 3 ? _failedAttempts : 3;
+    uint32_t delay = static_cast<uint32_t>(reconnectDelay) << shift;
+    if (delay > maxReconnectDelay) delay = maxReconnectDelay;
     uint32_t now = esp_timer_get_time() / 1000;
-    if (_lastConnectionAttempt != 0 && (now - _lastConnectionAttempt) < reconnectDelay) return;
+    if (_lastConnectionAttempt != 0 && (now - _lastConnectionAttempt) < delay) return;
     _lastConnectionAttempt = now;
+    if (_failedAttempts < 0xFF) _failedAttempts++;
 
     wifi_mode_t mode = WiFi.getMode();
     if (mode == WIFI_MODE_AP) WiFi.mode(WIFI_MODE_APSTA);
