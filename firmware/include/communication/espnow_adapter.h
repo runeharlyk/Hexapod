@@ -30,5 +30,7 @@ class EspNowAdapter {
   private:
     // Pins the radio when it is ours to pin, warns when the STA holds it elsewhere.
     static void applyChannel();
+    // Periodic broadcast of the current channel, so the controller can find us after a WiFi join.
+    static void sendBeacon(void* arg);
     static void onRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len);
 };

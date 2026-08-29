@@ -1,6 +1,7 @@
 #include <communication/espnow_adapter.h>
 
 #include <esp_wifi.h>
+#include <esp_timer.h>
 #include <esp_log.h>
 #include <atomic>
 #include <cstring>
@@ -104,6 +105,23 @@ void EspNowAdapter::begin() {
     }
     esp_now_register_recv_cb(onRecv);
 
+    // Broadcast peer with channel 0 == "whatever the radio is on", so the beacon follows the radio
+    // through every WiFi join without needing to be re-registered.
+    esp_now_peer_info_t peer {};
+    memset(peer.peer_addr, 0xFF, ESP_NOW_ETH_ALEN);
+    peer.channel = 0;
+    peer.ifidx = WIFI_IF_STA;
+    peer.encrypt = false;
+    if (esp_now_add_peer(&peer) != ESP_OK) ESP_LOGW(TAG, "broadcast peer not added; beacon disabled");
+
+    const esp_timer_create_args_t beaconArgs {
+        .callback = &EspNowAdapter::sendBeacon, .arg = nullptr, .dispatch_method = ESP_TIMER_TASK,
+        .name = "espnow_beacon", .skip_unhandled_events = true};
+    esp_timer_handle_t beacon = nullptr;
+    if (esp_timer_create(&beaconArgs, &beacon) == ESP_OK) {
+        esp_timer_start_periodic(beacon, HEXAPOD_BEACON_PERIOD_MS * 1000);
+    }
+
     EventBus<ModeMsg>::consume([](const ModeMsg& m) { s_mode.store(m.mode, std::memory_order_relaxed); });
     EventBus<GaitMsg>::consume([](const GaitMsg& g) { s_gait.store(g.gait, std::memory_order_relaxed); });
 
@@ -113,6 +131,18 @@ void EspNowAdapter::begin() {
     WiFi.onEvent([](int32_t, void *) { applyChannel(); }, WIFI_EVENT_STA_CONNECTED);
     WiFi.onEvent([](int32_t, void *) { applyChannel(); }, WIFI_EVENT_STA_DISCONNECTED);
     applyChannel();
+}
+
+// Announces the current channel so a hunting controller can lock onto it. The controller cannot be
+// told to move -- it would have to already be on our channel to hear that -- so it hunts instead.
+void EspNowAdapter::sendBeacon(void*) {
+    uint8_t ch = 0;
+    wifi_second_chan_t sc;
+    if (esp_wifi_get_channel(&ch, &sc) != ESP_OK) return;
+
+    static const uint8_t broadcast[ESP_NOW_ETH_ALEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    hexapod_beacon_t b {HEXAPOD_BEACON_MAGIC, HEXAPOD_BEACON_VERSION, ch, 0};
+    esp_now_send(broadcast, reinterpret_cast<const uint8_t*>(&b), sizeof(b));
 }
 
 void EspNowAdapter::applyChannel() {
