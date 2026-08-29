@@ -25,6 +25,7 @@
     DNS,
     Bluetooth
   } from '$lib/components/icons'
+  import type { IconComponent } from '$lib/components/icons'
 
   const features = useFeatureFlags()
   const base = resolve('/')
@@ -37,7 +38,7 @@
 
   type menuItem = {
     title: string
-    icon: ConstructorOfATypedSvelteComponent
+    icon: IconComponent
     href?: string
     feature: boolean
     active?: boolean

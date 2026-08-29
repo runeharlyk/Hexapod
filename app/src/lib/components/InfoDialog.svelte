@@ -2,15 +2,15 @@
   import { focusTrap } from 'svelte-focus-trap'
   import { fly } from 'svelte/transition'
   import { Check } from './icons'
+  import type { IconComponent } from './icons'
   import { exitBeforeEnter } from 'svelte-modals'
-
 
   interface Props {
     isOpen: boolean
     title: string
     message: string
-    onDismiss: any
-    dismiss?: any
+    onDismiss: () => void
+    dismiss?: { label: string; icon: IconComponent }
   }
 
   let {

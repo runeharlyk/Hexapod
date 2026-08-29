@@ -58,7 +58,9 @@
     <div class="flex items-center gap-2">
       <Connection class="h-5 w-5 shrink-0" />
       <span class="flex-1 text-sm font-semibold">WiFi</span>
-      <span class="text-xs opacity-70">{statusText($wsStatus, $wsStatus === 'connected' ? $latencyMs : null)}</span>
+      <span class="text-xs opacity-70"
+        >{statusText($wsStatus, $wsStatus === 'connected' ? $latencyMs : null)}</span
+      >
     </div>
 
     <div class="mt-2 flex gap-2">
@@ -81,7 +83,9 @@
       <div class="flex items-center gap-2">
         <Bluetooth class="h-5 w-5 shrink-0" />
         <span class="flex-1 text-sm font-semibold">Bluetooth</span>
-        <span class="text-xs opacity-70">{statusText($bleStatus, $bleStatus === 'connected' ? $latencyMs : null)}</span>
+        <span class="text-xs opacity-70"
+          >{statusText($bleStatus, $bleStatus === 'connected' ? $latencyMs : null)}</span
+        >
       </div>
 
       <div class="mt-2 flex justify-end">

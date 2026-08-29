@@ -17,11 +17,10 @@
     sky?: boolean
     orbit?: boolean
     panel?: boolean
-    debug?: boolean
     ground?: boolean
   }
 
-  let { sky = true, orbit = false, panel = true, debug = false, ground = true }: Props = $props()
+  let { sky = true, orbit = false, panel = true, ground = true }: Props = $props()
 
   let sceneManager = $state(new SceneBuilder())
   let canvas: HTMLCanvasElement | null = $state(null)

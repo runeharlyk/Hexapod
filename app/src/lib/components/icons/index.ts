@@ -1,3 +1,9 @@
+import type { ComponentType, SvelteComponent } from 'svelte'
+import type { SvelteHTMLElements } from 'svelte/elements'
+
+// unplugin-icons declares `~icons/*` as a legacy class component over an <svg> prop set.
+export type IconComponent = ComponentType<SvelteComponent<SvelteHTMLElements['svg']>>
+
 export { default as Connection } from '~icons/mdi/connection'
 export { default as Users } from '~icons/mdi/users'
 export { default as Settings } from '~icons/mdi/settings'
@@ -11,6 +17,7 @@ export { default as Folder } from '~icons/mdi/folder-outline'
 export { default as Update } from '~icons/mdi/reload'
 export { default as Router } from '~icons/mdi/router'
 export { default as AP } from '~icons/mdi/access-point'
+export { default as Compass } from '~icons/mdi/compass-outline'
 export { default as Remote } from '~icons/mdi/network'
 export { default as Copyright } from '~icons/mdi/copyright'
 export { default as NTP } from '~icons/mdi/clock-check'

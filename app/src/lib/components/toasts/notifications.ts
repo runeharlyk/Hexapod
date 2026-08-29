@@ -9,7 +9,7 @@ type State = {
 }
 
 function createNotificationStore() {
-  const { subscribe, update, set } = writable<State[]>([])
+  const { subscribe, update } = writable<State[]>([])
 
   function send(message: string, type: StateType = 'info', timeout: number) {
     const id = generateId()

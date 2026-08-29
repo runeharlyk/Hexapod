@@ -1,8 +1,9 @@
 <script lang="ts">
+  import type { IconComponent } from '$lib/components/icons'
   import MenuList from './MenuList.svelte'
   type MenuItem = {
     title: string
-    icon: ConstructorOfATypedSvelteComponent
+    icon: IconComponent
     href?: string
     feature: boolean
     active?: boolean
@@ -17,7 +18,7 @@
 </script>
 
 <ul class={klass + ' menu w-full'}>
-  {#each menuItems as MenuItem[] as menuItem, i (menuItem.title)}
+  {#each menuItems as MenuItem[] as menuItem (menuItem.title)}
     {#if menuItem.feature}
       <li>
         {#if menuItem.submenu}
