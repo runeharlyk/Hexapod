@@ -9,11 +9,43 @@
   import { PasswordInput } from '$lib/components/input'
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte'
   import ScanNetworks from './Scan.svelte'
+  import ConnectDialog from './ConnectDialog.svelte'
+  import type { NetworkItem } from '$lib/types/models'
   import Spinner from '$lib/components/Spinner.svelte'
   import InfoDialog from '$lib/components/InfoDialog.svelte'
-  import type { KnownNetworkItem, WifiSettings, WifiStatus } from '$lib/types/models'
-  import { socket } from '$lib/stores'
-  import { api } from '$lib/api'
+  import type { KnownNetworkItem, WifiStatus as WifiStatusView } from '$lib/types/models'
+  import { ipToString, ipToU32 } from '$lib/proto-api'
+  import { dataBroker } from '$lib/transport/databroker'
+  import { WifiStatus, type WifiNetwork } from '$lib/platform_shared/api'
+
+  // The page keeps the UI's snake_case shape; the proto carries IPs as uint32.
+  type WifiSettingsForm = {
+    hostname: string
+    priority_rssi: boolean
+    selected_network: number
+    wifi_networks: KnownNetworkItem[]
+  }
+
+  const netToForm = (n: WifiNetwork): KnownNetworkItem => ({
+    ssid: n.ssid,
+    password: n.password,
+    static_ip_config: n.staticIpConfig,
+    local_ip: ipToString(n.localIp),
+    subnet_mask: ipToString(n.subnetMask),
+    gateway_ip: ipToString(n.gatewayIp),
+    dns_ip_1: ipToString(n.dnsIp1),
+    dns_ip_2: ipToString(n.dnsIp2)
+  })
+  const formToNet = (n: KnownNetworkItem) => ({
+    ssid: n.ssid,
+    password: n.password,
+    staticIpConfig: n.static_ip_config,
+    localIp: ipToU32(n.local_ip ?? '0.0.0.0'),
+    subnetMask: ipToU32(n.subnet_mask ?? '0.0.0.0'),
+    gatewayIp: ipToU32(n.gateway_ip ?? '0.0.0.0'),
+    dnsIp1: ipToU32(n.dns_ip_1 ?? '0.0.0.0'),
+    dnsIp2: ipToU32(n.dns_ip_2 ?? '0.0.0.0')
+  })
   import {
     Cancel,
     Delete,
@@ -51,14 +83,30 @@
   let newNetwork: boolean = $state(true)
   let showNetworkEditor: boolean = $state(false)
 
-  let wifiStatus: WifiStatus = $state()
-  let wifiSettings: WifiSettings = $state()
+  let wifiStatus: WifiStatusView = $state({
+    status: 0,
+    local_ip: '',
+    mac_address: '',
+    rssi: 0,
+    ssid: '',
+    bssid: '',
+    channel: 0,
+    subnet_mask: '',
+    gateway_ip: '',
+    dns_ip_1: ''
+  })
+  let wifiSettings: WifiSettingsForm = $state({
+    hostname: 'hexapod',
+    priority_rssi: true,
+    selected_network: 0,
+    wifi_networks: []
+  })
 
   let dndNetworkList: KnownNetworkItem[] = $state([])
 
   let showWifiDetails = $state(false)
 
-  let formField: any = $state()
+  let formField: HTMLFormElement | undefined = $state()
 
   let formErrors = $state({
     ssid: false,
@@ -71,45 +119,72 @@
 
   let formErrorhostname = $state(false)
 
-  async function getWifiStatus() {
-    const result = await api.get<WifiStatus>('/api/wifi/sta/status')
-    if (result.isErr()) {
-      console.error(`Error occurred while fetching: `, result.inner)
-      return
+  const pageAbort = new AbortController()
+  onDestroy(() => pageAbort.abort())
+
+  const applyWifiStatus = (s: WifiStatus) => {
+    wifiStatus = {
+      status: s.status,
+      local_ip: ipToString(s.localIp),
+      mac_address: s.macAddress,
+      rssi: s.rssi,
+      ssid: s.ssid,
+      bssid: s.bssid,
+      channel: s.channel,
+      subnet_mask: ipToString(s.subnetMask),
+      gateway_ip: ipToString(s.gatewayIp),
+      dns_ip_1: ipToString(s.dnsIp1),
+      dns_ip_2: ipToString(s.dnsIp2)
     }
-    wifiStatus = result.inner
+  }
+
+  async function getWifiStatus() {
+    const res = await dataBroker
+      .request({ wifiStatusGet: {} }, { signal: pageAbort.signal })
+      .catch(() => null)
+    if (res?.wifiStatus) applyWifiStatus(res.wifiStatus)
     return wifiStatus
   }
 
+  onMount(() => dataBroker.on(WifiStatus, applyWifiStatus))
+
   async function getWifiSettings() {
-    const result = await api.get<WifiSettings>('/api/wifi/sta/settings')
-    if (result.isErr()) {
-      console.error(`Error occurred while fetching: `, result.inner)
-      return
+    try {
+      const res = await dataBroker.request({ wifiSettingsGet: {} }, { signal: pageAbort.signal })
+      const w = res.wifiSettings
+      if (!w) return
+      wifiSettings = {
+        hostname: w.hostname,
+        priority_rssi: w.priorityRssi,
+        selected_network: w.selectedNetwork,
+        wifi_networks: (w.wifiNetworks ?? []).map(netToForm)
+      }
+      dndNetworkList = wifiSettings.wifi_networks
+      return wifiSettings
+    } catch (e) {
+      if ((e as Error)?.name === 'AbortError') return
+      notifications.error('Could not read Wi-Fi settings — is the robot connected?', 3000)
     }
-    wifiSettings = result.inner
-    dndNetworkList = wifiSettings.wifi_networks
-    return wifiSettings
   }
 
-  onDestroy(() => socket.off('WiFiSettings'))
-
-  onMount(() => {
-    socket.on<WifiSettings>('WiFiSettings', data => {
-      wifiSettings = data
-      dndNetworkList = wifiSettings.wifi_networks
-    })
-  })
-
-  async function postWiFiSettings(data: WifiSettings) {
-    const result = await api.post<WifiSettings>('/api/wifi/sta/settings', data)
-    if (result.isErr()) {
-      console.error(`Error occurred while fetching: `, result.inner)
-      notifications.error('User not authorized.', 3000)
-      return
+  async function postWiFiSettings(data: WifiSettingsForm) {
+    try {
+      const res = await dataBroker.request({
+        wifiSettingsUpdate: {
+          hostname: data.hostname,
+          priorityRssi: data.priority_rssi ?? true,
+          selectedNetwork: data.selected_network ?? 0,
+          wifiNetworks: (data.wifi_networks ?? []).map(formToNet)
+        }
+      })
+      if (!res.wifiSettings) {
+        notifications.error('Failed to update Wi-Fi settings.', 3000)
+        return
+      }
+      notifications.success('Wi-Fi settings updated.', 3000)
+    } catch {
+      notifications.error('Failed to update Wi-Fi settings — is the robot connected?', 3000)
     }
-    wifiSettings = result.inner
-    notifications.success('Wi-Fi settings updated.', 3000)
   }
 
   function validateHostName() {
@@ -117,9 +192,7 @@
       formErrorhostname = true
     } else {
       formErrorhostname = false
-      // Update global wifiSettings object
       wifiSettings.wifi_networks = dndNetworkList
-      // Post to REST API
       postWiFiSettings(wifiSettings)
       console.log(wifiSettings)
     }
@@ -129,7 +202,6 @@
     event.preventDefault()
     let valid = true
 
-    // Validate SSID
     if (networkEditable.ssid.length < 3 || networkEditable.ssid.length > 32) {
       valid = false
       formErrors.ssid = true
@@ -140,11 +212,9 @@
     networkEditable.static_ip_config = static_ip_config
 
     if (networkEditable.static_ip_config) {
-      // RegEx for IPv4
       const regexExp =
         /\b(?:(?:2(?:[0-4][0-9]|5[0-5])|[0-1]?[0-9]?[0-9])\.){3}(?:(?:2([0-4][0-9]|5[0-5])|[0-1]?[0-9]?[0-9]))\b/
 
-      // Validate gateway IP
       if (!regexExp.test(networkEditable.gateway_ip!)) {
         valid = false
         formErrors.gateway_ip = true
@@ -152,7 +222,6 @@
         formErrors.gateway_ip = false
       }
 
-      // Validate Subnet Mask
       if (!regexExp.test(networkEditable.subnet_mask!)) {
         valid = false
         formErrors.subnet_mask = true
@@ -160,7 +229,6 @@
         formErrors.subnet_mask = false
       }
 
-      // Validate local IP
       if (!regexExp.test(networkEditable.local_ip!)) {
         valid = false
         formErrors.local_ip = true
@@ -168,7 +236,6 @@
         formErrors.local_ip = false
       }
 
-      // Validate DNS 1
       if (!regexExp.test(networkEditable.dns_ip_1!)) {
         valid = false
         formErrors.dns_1 = true
@@ -176,7 +243,6 @@
         formErrors.dns_1 = false
       }
 
-      // Validate DNS 2
       if (!regexExp.test(networkEditable.dns_ip_2!)) {
         valid = false
         formErrors.dns_2 = true
@@ -190,7 +256,6 @@
       formErrors.dns_1 = false
       formErrors.dns_2 = false
     }
-    // Submit JSON to REST API
     if (valid) {
       if (newNetwork) {
         dndNetworkList.push(networkEditable)
@@ -210,8 +275,65 @@
         networkEditable.ssid = network
         showNetworkEditor = true
         modals.close()
-      }
+      },
+      connect: connectToScanned
     })
+  }
+
+  function connectToScanned(network: NetworkItem) {
+    modals.close()
+    if (network.encryption_type === 0) {
+      connectWithPassword(network.ssid, '')
+    } else {
+      modals.open(ConnectDialog, {
+        ssid: network.ssid,
+        onConfirm: (password: string) => connectWithPassword(network.ssid, password)
+      })
+    }
+  }
+
+  async function connectToSaved(index: number) {
+    wifiSettings = {
+      hostname: wifiSettings?.hostname ?? 'hexapod',
+      priority_rssi: wifiSettings?.priority_rssi ?? true,
+      selected_network: index,
+      wifi_networks: dndNetworkList
+    }
+    await postWiFiSettings(wifiSettings)
+  }
+
+  async function connectWithPassword(ssid: string, password: string) {
+    let index = dndNetworkList.findIndex(n => n.ssid === ssid)
+    if (index === -1) {
+      if (dndNetworkList.length >= 5) {
+        notifications.error('At most 5 networks can be saved. Remove one first.', 3000)
+        return
+      }
+      dndNetworkList = [
+        ...dndNetworkList,
+        {
+          ssid,
+          password,
+          static_ip_config: false,
+          local_ip: undefined,
+          subnet_mask: undefined,
+          gateway_ip: undefined,
+          dns_ip_1: undefined,
+          dns_ip_2: undefined
+        }
+      ]
+      index = dndNetworkList.length - 1
+    } else {
+      dndNetworkList[index] = { ...dndNetworkList[index], password }
+      dndNetworkList = [...dndNetworkList]
+    }
+    wifiSettings = {
+      hostname: wifiSettings?.hostname ?? 'hexapod',
+      priority_rssi: wifiSettings?.priority_rssi ?? true,
+      selected_network: index,
+      wifi_networks: dndNetworkList
+    }
+    await postWiFiSettings(wifiSettings)
   }
 
   function addNetwork() {
@@ -243,11 +365,9 @@
         confirm: { label: 'Delete', icon: Delete }
       },
       onConfirm: () => {
-        // Check if network is currently been edited and delete as well
         if (dndNetworkList[index].ssid === networkEditable.ssid) {
           addNetwork()
         }
-        // Remove network from array
         dndNetworkList.splice(index, 1)
         dndNetworkList = [...dndNetworkList] //Trigger reactivity
         showNetworkEditor = false
@@ -395,6 +515,17 @@
               <StatusItem icon={Router} title={dndNetworkList[index].ssid}>
                 <div class="space-x-0 px-0 mx-0">
                   <button
+                    class="btn btn-sm {wifiSettings?.selected_network === index ?
+                      'btn-primary'
+                    : 'btn-ghost'}"
+                    title={wifiSettings?.selected_network === index ?
+                      'Selected network'
+                    : 'Connect'}
+                    onclick={() => connectToSaved(index)}
+                  >
+                    <WiFi class="h-6 w-6" /></button
+                  >
+                  <button
                     class="btn btn-ghost btn-sm"
                     onclick={() => {
                       handleEdit(index)
@@ -450,7 +581,7 @@
             <label class="label inline-flex cursor-pointer content-end justify-start gap-4">
               <input
                 type="checkbox"
-                bind:checked={wifiSettings.priority_RSSI}
+                bind:checked={wifiSettings.priority_rssi}
                 class="checkbox checkbox-primary sm:-mb-5"
               />
               <span class="sm:-mb-5">Connect to strongest WiFi</span>

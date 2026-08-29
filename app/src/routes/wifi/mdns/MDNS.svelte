@@ -1,40 +1,33 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { api } from '$lib/api'
   import SettingsCard from '$lib/components/SettingsCard.svelte'
   import { AP, Home, MAC, Devices } from '$lib/components/icons'
-  import Spinner from '$lib/components/Spinner.svelte'
   import StatusItem from '$lib/components/StatusItem.svelte'
   import { cubicOut } from 'svelte/easing'
   import { slide } from 'svelte/transition'
-  import type { MDNSStatus, MDNSServiceItem, MDNSServiceQuery } from '$lib/types/models'
   import { compareIp } from '$lib/utilities'
+  import { dataBroker } from '$lib/transport/databroker'
+  import type { MDNSQueryResult, MDNSStatus } from '$lib/platform_shared/api'
 
   let mdnsStatus: MDNSStatus | undefined = $state()
-  let services: MDNSServiceItem[] = $state([])
+  let services: MDNSQueryResult[] = $state([])
   let isLoading = $state(false)
 
   const getMDNSStatus = async () => {
-    const result = await api.get<MDNSStatus>('/api/mdns/status')
-    if (result.isErr()) {
-      console.error('Error:', result.inner)
-      return
-    }
-    mdnsStatus = result.inner
+    const res = await dataBroker.request({ mdnsStatusGet: {} }).catch(() => null)
+    if (res?.mdnsStatus) mdnsStatus = res.mdnsStatus
   }
 
   const queryMDNSServices = async () => {
     isLoading = true
-    const result = await api.post<MDNSServiceQuery>('/api/mdns/query', {
-      service: 'http',
-      protocol: 'tcp'
-    })
-    if (result.isErr()) {
-      console.error('Error:', result.inner)
-      return
+    try {
+      const res = await dataBroker.request({ mdnsQuery: { service: 'http', protocol: 'tcp' } })
+      services = (res?.mdnsQueryResponse?.services ?? []).sort((a, b) => compareIp(a.ip, b.ip))
+    } catch {
+      services = []
+    } finally {
+      isLoading = false
     }
-    services = result.inner.services.sort((a, b) => compareIp(a.ip, b.ip))
-    isLoading = false
   }
 
   onMount(async () => {

@@ -2,16 +2,18 @@
   import Folder from './Folder.svelte'
   import File from './File.svelte'
   import { FolderIcon, FolderOpenOutline } from '$lib/components/icons'
+  import type { Directory } from '$lib/types/models'
 
   interface Props {
     expanded?: boolean
     name: string
-    files: any
-    selected: (name: string) => void
-    onDelete: (name: string) => void
+    path?: string
+    files: Directory
+    selected: (path: string) => void
+    onDelete: (path: string) => void
   }
 
-  let { expanded = $bindable(false), name, files, selected, onDelete }: Props = $props()
+  let { expanded = $bindable(false), name, path = '', files, selected, onDelete }: Props = $props()
 
   function toggle() {
     expanded = !expanded
@@ -33,9 +35,15 @@
       {#each Object.entries(files) as [itemName, content]}
         <li class="py-1">
           {#if typeof content === 'object'}
-            <Folder name={itemName} files={content} {selected} {onDelete} />
+            <Folder
+              name={itemName}
+              path={`${path}/${itemName}`}
+              files={content}
+              {selected}
+              {onDelete}
+            />
           {:else}
-            <File name={itemName} {selected} {onDelete} />
+            <File name={itemName} path={`${path}/${itemName}`} {selected} {onDelete} />
           {/if}
         </li>
       {/each}

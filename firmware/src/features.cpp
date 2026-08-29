@@ -1,38 +1,26 @@
 #include <features.h>
 
+#include <esp_log.h>
+
+#ifndef APP_NAME
+#define APP_NAME "Hexapod"
+#endif
+#ifndef APP_VERSION
+#define APP_VERSION "0.0.1"
+#endif
+
 namespace feature_service {
 
-// New function to print all feature flags to log
 void printFeatureConfiguration() {
     ESP_LOGI("Features", "====================== FEATURE FLAGS ======================");
     ESP_LOGI("Features", "Firmware version: %s, name: %s", APP_VERSION, APP_NAME);
-
-    // Sensors
+    ESP_LOGI("Features", "USE_CAMERA:  %s", USE_CAMERA ? "enabled" : "disabled");
     ESP_LOGI("Features", "USE_MPU6050: %s", USE_MPU6050 ? "enabled" : "disabled");
-    ESP_LOGI("Features", "USE_MAG: %s", USE_MAG ? "enabled" : "disabled");
-
-    // Web services
-    ESP_LOGI("Features", "USE_MDNS: %s", USE_MDNS ? "enabled" : "disabled");
+    ESP_LOGI("Features", "USE_MAG:     %s", USE_MAG ? "enabled" : "disabled");
+    ESP_LOGI("Features", "USE_MDNS:    %s", USE_MDNS ? "enabled" : "disabled");
+    ESP_LOGI("Features", "USE_ESPNOW:  %s", USE_ESPNOW ? "enabled" : "disabled");
+    ESP_LOGI("Features", "EMBED_WEBAPP:%s", EMBED_WEBAPP ? "enabled" : "disabled");
     ESP_LOGI("Features", "==========================================================");
-}
-
-void features(JsonObject &root) {
-    root["imu"] = USE_MPU6050;
-    root["mag"] = USE_MAG;
-#if defined(USE_CAMERA) && USE_CAMERA
-    root["camera"] = true;
-#else
-    root["camera"] = false;
-#endif
-    root["firmware_version"] = APP_VERSION;
-    root["firmware_name"] = APP_NAME;
-}
-
-esp_err_t getFeatures(PsychicRequest *request) {
-    PsychicJsonResponse response = PsychicJsonResponse(request, false);
-    JsonObject root = response.getRoot();
-    features(root);
-    return response.send();
 }
 
 } // namespace feature_service

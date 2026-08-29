@@ -1,105 +1,196 @@
+import { writable } from 'svelte/store'
+import type { ITransport } from '$lib/interfaces/transport.interface'
 import {
-  MessageType,
-  type ITransport,
-  type MessageTopic
-} from '$lib/interfaces/transport.interface'
+  CorrelationRequest,
+  type CorrelationResponse,
+  Message,
+  PingMsg,
+  SubscribeNotification,
+  UnsubscribeNotification,
+  type MessageFns
+} from '$lib/platform_shared/message'
+import { decodeMessage, encodeMessage, keyOf, tagOf } from './message-codec'
 
-export type DataBrokerCallback<T> = (type: MessageType, topic: MessageTopic, payload: T) => void
+const PING_INTERVAL_MS = 4000
+const PONG_TIMEOUT_MS = 12000
 
 export class DataBroker {
-  private transports: Map<ITransport, string> = new Map()
-  private subscriptions: Map<MessageTopic, Map<string, DataBrokerCallback<unknown>>> = new Map()
-  private subscriptionCounter = 0
+  private transports: ITransport[] = []
+  private listeners = new Map<number, Set<(data: unknown) => void>>()
 
-  private dispatchTransport(
-    transport: ITransport,
-    type: MessageType,
-    topic?: MessageTopic,
-    payload?: unknown,
-    reliable?: boolean
-  ) {
-    transport.sendEvent(type, topic, payload, reliable).catch(error => {
-      console.error('Transport send failed', { type, topic, payload, error })
+  readonly latencyMs = writable<number | null>(null)
+  private lastPingAt = 0
+  private lastPongAt = 0
+  private pingTimer: ReturnType<typeof setInterval> | undefined
+
+  private correlationId = 0
+  private pending = new Map<
+    number,
+    {
+      resolve: (r: CorrelationResponse) => void
+      reject: (e: Error) => void
+      timer: ReturnType<typeof setTimeout>
+    }
+  >()
+  // Held while no transport is connected, sent once one connects, so requests aren't lost.
+  private deferred: Array<{ id: number; send: () => void; reject: (e: Error) => void }> = []
+  private static readonly MAX_DEFERRED = 16
+
+  request(
+    payload: Omit<CorrelationRequest, 'correlationId'>,
+    opts?: { signal?: AbortSignal }
+  ): Promise<CorrelationResponse> {
+    return new Promise((resolve, reject) => {
+      if (opts?.signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'))
+      const id = ++this.correlationId
+
+      const cancel = () => {
+        this.deferred = this.deferred.filter(d => d.id !== id)
+        const p = this.pending.get(id)
+        if (p) {
+          clearTimeout(p.timer)
+          this.pending.delete(id)
+        }
+        reject(new DOMException('Aborted', 'AbortError'))
+      }
+      opts?.signal?.addEventListener('abort', cancel, { once: true })
+
+      // Timeout starts only once the request is on the wire, so a deferred request doesn't
+      // expire before it's sent.
+      const send = () => {
+        const timer = setTimeout(() => {
+          this.pending.delete(id)
+          reject(new Error(`request ${id} timed out`))
+        }, 15000)
+        this.pending.set(id, { resolve, reject, timer })
+        this.emit(CorrelationRequest, { correlationId: id, ...payload })
+      }
+      if (this.anyConnected()) {
+        send()
+        return
+      }
+      this.deferred.push({ id, send, reject })
+      if (this.deferred.length > DataBroker.MAX_DEFERRED) {
+        this.deferred.shift()!.reject(new Error('request dropped: not connected'))
+      }
     })
   }
 
-  constructor() {
-    this.transports = new Map()
+  private flushDeferred() {
+    const queued = this.deferred
+    this.deferred = []
+    queued.forEach(({ send }) => send())
   }
 
   addTransport(transport: ITransport) {
-    const transportId = `transport_${this.subscriptionCounter++}`
-    this.transports.set(transport, transportId)
-
+    this.transports.push(transport)
+    transport.onData(bytes => this.handleIncoming(bytes))
     transport.onConnect(() => {
-      this.subscribeTransport(transport)
+      this.resubscribeAll()
+      this.startPinging()
+      this.flushDeferred()
     })
-
-    transport.onData((type: MessageType, topic: MessageTopic, payload: unknown) => {
-      this.emit(topic, payload, transportId)
-    })
-  }
-
-  private subscribeTransport(transport: ITransport) {
-    const activeTopics = Array.from(this.subscriptions.keys())
-    activeTopics.forEach(topic => {
-      this.dispatchTransport(transport, MessageType.CONNECT, topic, undefined, true)
+    transport.onDisconnect(() => {
+      if (!this.anyConnected()) this.stopPinging()
     })
   }
 
-  on<T>(topic: MessageTopic, callback: (data: T) => void): string {
-    const subscriptionId = `sub_${this.subscriptionCounter++}`
-
-    const topicSubscriptions =
-      this.subscriptions.get(topic) || new Map<string, DataBrokerCallback<unknown>>()
-
-    topicSubscriptions.set(subscriptionId, (_t, _tp, payload) => {
-      callback(payload as T)
-    })
-
-    this.subscriptions.set(topic, topicSubscriptions)
-
-    this.transports.forEach((_, transport) => {
-      this.dispatchTransport(transport, MessageType.CONNECT, topic, undefined, true)
-    })
-
-    return subscriptionId
+  on<T>(fns: MessageFns<T>, callback: (data: T) => void): () => void {
+    const tag = tagOf(fns)
+    let set = this.listeners.get(tag)
+    if (!set) {
+      set = new Set()
+      this.listeners.set(tag, set)
+      this.sendSubscribe(tag)
+    }
+    set.add(callback as (data: unknown) => void)
+    return () => this.off(tag, callback as (data: unknown) => void)
   }
 
-  off(subscriptionId: string) {
-    for (const [topic, subscriptions] of this.subscriptions.entries()) {
-      if (subscriptions.delete(subscriptionId)) {
-        if (subscriptions.size === 0) {
-          this.subscriptions.delete(topic)
-          this.transports.forEach((_, transport) => {
-            this.dispatchTransport(transport, MessageType.DISCONNECT, topic, undefined, true)
-          })
-        }
-        break
-      }
+  private off(tag: number, callback: (data: unknown) => void) {
+    const set = this.listeners.get(tag)
+    if (!set) return
+    set.delete(callback)
+    if (set.size === 0) {
+      this.listeners.delete(tag)
+      this.sendUnsubscribe(tag)
     }
   }
 
-  send<T>(topic: MessageTopic, data: T, reliable?: boolean) {
-    this.transports.forEach((_, transport) => {
-      this.dispatchTransport(transport, MessageType.EVENT, topic, data, reliable)
-    })
+  emit<T>(fns: MessageFns<T>, data: T) {
+    const message = Message.create({ [keyOf(fns)]: data })
+    this.broadcast(encodeMessage(message))
   }
 
-  emit<T>(topic: MessageTopic, data: T, excludeSubscriptionId?: string, reliable?: boolean) {
-    this.transports.forEach((transportId, transport) => {
-      if (transportId !== excludeSubscriptionId) {
-        this.dispatchTransport(transport, MessageType.EVENT, topic, data, reliable)
+  private handleIncoming(bytes: Uint8Array) {
+    const decoded = decodeMessage(bytes)
+    if (!decoded) return
+    if (decoded.key === 'pongmsg') {
+      this.lastPongAt = performance.now()
+      this.latencyMs.set(Math.max(0, Math.round(this.lastPongAt - this.lastPingAt)))
+      return
+    }
+    if (decoded.key === 'correlationResponse') {
+      const res = decoded.value as CorrelationResponse
+      const p = this.pending.get(res.correlationId)
+      if (p) {
+        clearTimeout(p.timer)
+        this.pending.delete(res.correlationId)
+        p.resolve(res)
       }
-    })
-    const subscriptions = this.subscriptions.get(topic)
-    if (!subscriptions) return
+      return
+    }
+    this.listeners.get(decoded.tag)?.forEach(listener => listener(decoded.value))
+  }
 
-    subscriptions.forEach((callback, subscriptionId) => {
-      if (subscriptionId !== excludeSubscriptionId) {
-        callback(MessageType.EVENT, topic, data)
-      }
+  private sendSubscribe(tag: number) {
+    this.broadcast(
+      encodeMessage(Message.create({ subNotif: SubscribeNotification.create({ tag }) }))
+    )
+  }
+
+  private sendUnsubscribe(tag: number) {
+    this.broadcast(
+      encodeMessage(Message.create({ unsubNotif: UnsubscribeNotification.create({ tag }) }))
+    )
+  }
+
+  private resubscribeAll() {
+    for (const tag of this.listeners.keys()) this.sendSubscribe(tag)
+  }
+
+  private broadcast(bytes: Uint8Array) {
+    this.transports.forEach(t => t.send(bytes))
+  }
+
+  private anyConnected() {
+    let connected = false
+    this.transports.forEach(t => {
+      const unsub = t.connected.subscribe(v => (connected = connected || v))
+      unsub()
     })
+    return connected
+  }
+
+  private startPinging() {
+    if (this.pingTimer) return
+    this.lastPongAt = performance.now()
+    this.pingTimer = setInterval(() => {
+      if (performance.now() - this.lastPongAt > PONG_TIMEOUT_MS) this.latencyMs.set(null)
+      this.ping()
+    }, PING_INTERVAL_MS)
+    this.ping()
+  }
+
+  private stopPinging() {
+    if (this.pingTimer) clearInterval(this.pingTimer)
+    this.pingTimer = undefined
+    this.latencyMs.set(null)
+  }
+
+  private ping() {
+    this.lastPingAt = performance.now()
+    this.broadcast(encodeMessage(Message.create({ pingmsg: PingMsg.create({}) })))
   }
 }
 

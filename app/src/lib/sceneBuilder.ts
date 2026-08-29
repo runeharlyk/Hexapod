@@ -58,7 +58,7 @@ export default class SceneBuilder {
   public ground!: Mesh
   public renderer!: WebGLRenderer
   public orbit: OrbitControls
-  public callback: Function | undefined
+  public callback: (() => void) | undefined
   public gridHelper!: GridHelper
   public model!: URDFRobot
   public liveStreamTexture!: CanvasTexture
@@ -229,7 +229,7 @@ export default class SceneBuilder {
     return this
   }
 
-  public addRenderCb = (callback: Function) => {
+  public addRenderCb = (callback: () => void) => {
     this.callback = callback
     return this
   }

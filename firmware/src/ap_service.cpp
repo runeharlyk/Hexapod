@@ -1,49 +1,63 @@
 #include <ap_service.h>
+#include <communication/webserver.h>
+#include <event_bus.h>
+#include <esp_heap_caps.h>
 
 static const char *TAG = "APService";
 
 APService::APService()
-    : endpoint(APSettings::read, APSettings::update, this),
-      _persistence(APSettings::read, APSettings::update, this, AP_SETTINGS_FILE) {
-    addUpdateHandler([&](const String &originId) { reconfigureAP(); }, false);
+    : _persistence(APSettings_read, APSettings_update, this, AP_SETTINGS_FILE, api_APSettings_fields,
+                   api_APSettings_size, APSettings_defaults()),
+      _dnsServer(nullptr),
+      _lastManaged(0),
+      _reconfigureAp(false),
+      _recoveryMode(false) {
+    addUpdateHandler([&](const std::string &originId) { reconfigureAP(); }, false);
 }
 
-APService::~APService() {}
+APService::~APService() = default;
 
-void APService::begin() { _persistence.readFromFS(); }
-
-esp_err_t APService::getStatus(PsychicRequest *request) {
-    PsychicJsonResponse response = PsychicJsonResponse(request, false);
-    JsonObject root = response.getRoot();
-    status(root);
-    return response.send();
+void APService::begin() {
+    _persistence.readFromFS();
+    WiFi.onEvent([this](int32_t, void *) { publishStatus(); }, WIFI_EVENT_AP_START);
+    WiFi.onEvent([this](int32_t, void *) { publishStatus(); }, WIFI_EVENT_AP_STOP);
+    WiFi.onEvent([this](int32_t, void *) { publishStatus(); }, WIFI_EVENT_AP_STACONNECTED);
+    WiFi.onEvent([this](int32_t, void *) { publishStatus(); }, WIFI_EVENT_AP_STADISCONNECTED);
 }
 
-void APService::status(JsonObject &root) {
-    root["status"] = getAPNetworkStatus();
-    root["ip_address"] = WiFi.softAPIP().toString();
-    root["mac_address"] = WiFi.softAPmacAddress();
-    root["station_num"] = WiFi.softAPgetStationNum();
+void APService::publishStatus() {
+    api_APStatus status = api_APStatus_init_zero;
+    statusProto(status);
+    EventBus<api_APStatus>::publish(status);
+}
+
+void APService::statusProto(api_APStatus &proto) {
+    proto.status = getAPNetworkStatus();
+    proto.ip_address = static_cast<uint32_t>(WiFi.softAPIP());
+    std::string mac = WiFi.softAPmacAddress();
+    strncpy(proto.mac_address, mac.c_str(), sizeof(proto.mac_address) - 1);
+    proto.mac_address[sizeof(proto.mac_address) - 1] = '\0';
+    proto.station_num = WiFi.softAPgetStationNum();
 }
 
 APNetworkStatus APService::getAPNetworkStatus() {
-    WiFiMode_t currentWiFiMode = WiFi.getMode();
-    bool apActive = currentWiFiMode == WIFI_AP || currentWiFiMode == WIFI_AP_STA;
-    if (apActive && state().provisionMode != AP_MODE_ALWAYS && WiFi.status() == WL_CONNECTED) {
-        return APNetworkStatus::LINGERING;
+    wifi_mode_t currentWiFiMode = WiFi.getMode();
+    bool apActive = currentWiFiMode == WIFI_MODE_AP || currentWiFiMode == WIFI_MODE_APSTA;
+    if (apActive && state().provision_mode != AP_MODE_ALWAYS && WiFi.status() == WL_CONNECTED) {
+        return LINGERING;
     }
-    return apActive ? APNetworkStatus::ACTIVE : APNetworkStatus::INACTIVE;
+    return apActive ? ACTIVE : INACTIVE;
 }
 
 void APService::reconfigureAP() {
-    _lastManaged = millis() - MANAGE_NETWORK_DELAY;
+    _lastManaged = esp_timer_get_time() / 1000 - MANAGE_NETWORK_DELAY;
     _reconfigureAp = true;
     _recoveryMode = false;
 }
 
 void APService::recoveryMode() {
     ESP_LOGI(TAG, "Recovery Mode needed");
-    _lastManaged = millis() - MANAGE_NETWORK_DELAY;
+    _lastManaged = esp_timer_get_time() / 1000 - MANAGE_NETWORK_DELAY;
     _recoveryMode = true;
     _reconfigureAp = true;
 }
@@ -54,13 +68,13 @@ void APService::loop() {
 }
 
 void APService::manageAP() {
-    WiFiMode_t currentWiFiMode = WiFi.getMode();
-    if (state().provisionMode == AP_MODE_ALWAYS ||
-        (state().provisionMode == AP_MODE_DISCONNECTED && WiFi.status() != WL_CONNECTED) || _recoveryMode) {
-        if (_reconfigureAp || currentWiFiMode == WIFI_OFF || currentWiFiMode == WIFI_STA) {
+    wifi_mode_t currentWiFiMode = WiFi.getMode();
+    if (state().provision_mode == AP_MODE_ALWAYS ||
+        (state().provision_mode == AP_MODE_DISCONNECTED && WiFi.status() != WL_CONNECTED) || _recoveryMode) {
+        if (_reconfigureAp || currentWiFiMode == WIFI_MODE_NULL || currentWiFiMode == WIFI_MODE_STA) {
             startAP();
         }
-    } else if ((currentWiFiMode == WIFI_AP || currentWiFiMode == WIFI_AP_STA) &&
+    } else if ((currentWiFiMode == WIFI_MODE_AP || currentWiFiMode == WIFI_MODE_APSTA) &&
                (_reconfigureAp || !WiFi.softAPgetStationNum())) {
         stopAP();
     }
@@ -68,33 +82,34 @@ void APService::manageAP() {
 }
 
 void APService::startAP() {
-    ESP_LOGI(TAG, "Starting software access point: %s", state().ssid.c_str());
-    WiFi.softAPConfig(state().localIP, state().gatewayIP, state().subnetMask);
-    WiFi.softAP(state().ssid.c_str(), state().password.c_str(), state().channel, state().ssidHidden,
-                state().maxClients);
+    // SoftAP beacon/hostap buffers must come from internal DMA RAM; log headroom so an OOM
+    // (ieee80211_hostap_attach null-deref) is diagnosable rather than a bare panic.
+    ESP_LOGI(TAG, "startAP mem: internal=%u DMA=%u largestDMA=%u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
+    ESP_LOGI(TAG, "Starting software access point: %s", state().ssid);
+    WiFi.softAPConfig(IPAddress(state().local_ip), IPAddress(state().gateway_ip), IPAddress(state().subnet_mask));
+    WiFi.softAP(state().ssid, state().password, state().channel, state().ssid_hidden, state().max_clients);
 #if CONFIG_IDF_TARGET_ESP32C3
-    WiFi.setTxPower(WIFI_POWER_8_5dBm); // https://www.wemos.cc/en/latest/c3/c3_mini_1_0_0.html#about-wifi
+    WiFi.setTxPower(8);
 #endif
-    if (!_dnsActive) {
+    if (!_dnsServer) {
         IPAddress apIp = WiFi.softAPIP();
         ESP_LOGI(TAG, "Starting captive portal on %s", apIp.toString().c_str());
-        _dnsServer.start(DNS_PORT, "*", apIp);
-        _dnsActive = true;
+        _dnsServer = std::make_unique<DNSServer>();
+        _dnsServer->start(DNS_PORT, "*", apIp);
     }
 }
 
 void APService::stopAP() {
-    if (_dnsActive) {
+    if (_dnsServer) {
         ESP_LOGI(TAG, "Stopping captive portal");
-        _dnsServer.stop();
-        _dnsActive = false;
+        _dnsServer->stop();
+        _dnsServer.reset();
     }
     ESP_LOGI(TAG, "Stopping AP");
     WiFi.softAPdisconnect(true);
 }
 
-void APService::handleDNS() {
-    if (_dnsActive) {
-        _dnsServer.processNextRequest();
-    }
-}
+void APService::handleDNS() {}

@@ -40,7 +40,9 @@ export default class Motion {
     this.mode = MotionModes.STAND
     this.kinematics = new Kinematics(config)
     this.baseDefaultPosition = this.kinematics.genPosture(degToRad(60), degToRad(75))
-    this.defaultPosition = this.baseDefaultPosition.map(foot => [...foot] as [number, number, number, number])
+    this.defaultPosition = this.baseDefaultPosition.map(
+      foot => [...foot] as [number, number, number, number]
+    )
     this.gait = new GaitController(this.defaultPosition)
     this.body_state = {
       omega: 0,

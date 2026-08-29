@@ -1,32 +1,40 @@
 import type { body_state_t } from './kinematic'
 import type { Matrix } from './math'
 
+// Declaration order IS the wire contract: GaitData.gait carries the GaitEnum position from
+// platform_shared/message.proto, which control.ts and +layout.svelte map via Object.values order.
+// Append new gaits at the end and mirror them in the proto.
 export enum GaitType {
   TRI_GATE = 'Tri Gate',
   BI_GATE = 'Bi Gate',
   WAVE = 'Wave',
-  RIPPLE = 'Ripple'
+  RIPPLE = 'Ripple',
+  TUNED = 'Tuned'
 }
 
 export const GaitLabels: Record<string, GaitType> = {
   'Tri Gate': GaitType.TRI_GATE,
   'Bi Gate': GaitType.BI_GATE,
   Wave: GaitType.WAVE,
-  Ripple: GaitType.RIPPLE
+  Ripple: GaitType.RIPPLE,
+  Tuned: GaitType.TUNED
 }
 
 export const default_offset: Record<GaitType, number[]> = {
   [GaitType.TRI_GATE]: [0, 0.52, 0.08, 0.58, 0.16, 0.66],
   [GaitType.BI_GATE]: [0, 1 / 3, 2 / 3, 2 / 3, 1 / 3, 0],
   [GaitType.WAVE]: [0, 1 / 6, 2 / 6, 5 / 6, 4 / 6, 3 / 6],
-  [GaitType.RIPPLE]: [0, 4 / 6, 2 / 6, 1 / 6, 5 / 6, 3 / 6]
+  [GaitType.RIPPLE]: [0, 4 / 6, 2 / 6, 1 / 6, 5 / 6, 3 / 6],
+  // Mirrors tuned_gait::OFFSET in firmware/include/gait_tuned.h (CMA-ES search result).
+  [GaitType.TUNED]: [0.0, 0.485762, 0.971525, 0.478937, 0.958527, 0.438118]
 }
 
 export const default_stand_frac: Record<GaitType, number> = {
   [GaitType.TRI_GATE]: 3.1 / 6,
   [GaitType.BI_GATE]: 2.1 / 6,
   [GaitType.WAVE]: 5 / 6,
-  [GaitType.RIPPLE]: 5 / 6
+  [GaitType.RIPPLE]: 5 / 6,
+  [GaitType.TUNED]: 0.500313
 }
 
 export interface gait_state_t {

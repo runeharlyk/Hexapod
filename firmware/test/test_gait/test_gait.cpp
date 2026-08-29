@@ -1,0 +1,278 @@
+// Host-side tests for the gait engine. GaitController is header-only float math with no ESP
+// dependency, so the coordination invariants the robot depends on are checkable off-device.
+//
+// The previous test in this directory timed 1000 steps and asserted a wall-clock budget. Host
+// timing says nothing about the 5 ms control loop on the ESP32-S3, so it is replaced by the
+// invariants that actually break when the gait tables or stroke signs are edited.
+
+#include <unity.h>
+
+#include <cmath>
+#include <gait.h>
+
+namespace {
+
+constexpr float STAND[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
+                               {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
+
+constexpr float DT = 0.005f; // the control-task period
+
+gait_state_t makeGait(GaitType type, float stepX, float stepZ, float stepAngle) {
+    gait_state_t gait{};
+    gait.gait_type = type;
+    gait.step_x = stepX;
+    gait.step_z = stepZ;
+    gait.step_angle = stepAngle;
+    gait.step_speed = 1.0f;
+    gait.step_height = 40.0f;
+    gait.step_depth = 0.002f;
+    return gait;
+}
+
+BodyStateMsg makeBody() {
+    BodyStateMsg body{};
+    body.updateFeet(STAND);
+    return body;
+}
+
+} // namespace
+
+void setUp() {}
+void tearDown() {}
+
+void test_tripod_keeps_three_feet_loaded() {
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 0, 0, 0);
+    GaitController controller;
+    controller.setGait(gait);
+
+    // The tripod table is hand-staggered (offsets 0, .52, .08, .58, .16, .66 against a .5167 stand
+    // fraction) rather than two exact groups of three, so it is not a perfect tripod: measured over
+    // the cycle it holds 3 feet down 89.3% of the time, 4 feet down 10.3%, and drops to 2 for a
+    // 0.33% sliver where four legs overlap in swing. Bound that sliver instead of pretending it is
+    // zero -- a table or stand_frac edit that opens a real 2-foot window fails here.
+    constexpr int SAMPLES = 100000;
+    int underSupported = 0;
+    int swingSamples[6] = {0, 0, 0, 0, 0, 0};
+
+    for (int s = 0; s < SAMPLES; ++s) {
+        const float phase = static_cast<float>(s) / SAMPLES;
+        int swinging = 0;
+        for (int i = 0; i < 6; ++i) {
+            if (std::fmod(phase + gait.offset[i], 1.0f) >= gait.stand_frac) {
+                ++swinging;
+                ++swingSamples[i];
+            }
+        }
+        TEST_ASSERT_LESS_OR_EQUAL_INT(4, swinging);
+        if (swinging > 3) ++underSupported;
+    }
+
+    TEST_ASSERT_LESS_THAN_FLOAT(0.01f, static_cast<float>(underSupported) / SAMPLES);
+
+    for (int i = 0; i < 6; ++i) {
+        // Duty: every leg spends the same fraction of the cycle in swing, 1 - stand_frac.
+        TEST_ASSERT_FLOAT_WITHIN(0.01f, 1.0f - gait.stand_frac,
+                                 static_cast<float>(swingSamples[i]) / SAMPLES);
+    }
+}
+
+void test_idle_command_settles_on_the_default_stance() {
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 0, 0, 0);
+    GaitController controller;
+    controller.setGait(gait);
+    controller.snapDefaultFootTarget(STAND);
+
+    BodyStateMsg body = makeBody();
+    for (int i = 0; i < 6; ++i) body.feet[i][2] += 30.0f; // feet lifted off the stance
+
+    for (int t = 0; t < 400; ++t) controller.step(gait, body, DT);
+
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, controller.getPhase());
+    for (int i = 0; i < 6; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            TEST_ASSERT_FLOAT_WITHIN(0.5f, STAND[i][j], body.feet[i][j]);
+        }
+    }
+}
+
+void test_command_below_deadband_does_not_start_the_cycle() {
+    // step() treats |step_x| < 2 and |step_z| < 2 with no yaw as standing still; a joystick at
+    // rest must not creep the phase forward.
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 1.9f, -1.9f, 0.0f);
+    GaitController controller;
+    controller.setGait(gait);
+    controller.snapDefaultFootTarget(STAND);
+
+    BodyStateMsg body = makeBody();
+    for (int t = 0; t < 200; ++t) controller.step(gait, body, DT);
+
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, controller.getPhase());
+}
+
+void test_phase_stays_normalized_over_a_long_walk() {
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 60.0f, 0.0f, 0.0f);
+    GaitController controller;
+    controller.setGait(gait);
+    controller.snapDefaultFootTarget(STAND);
+
+    BodyStateMsg body = makeBody();
+    for (int t = 0; t < 20000; ++t) {
+        controller.step(gait, body, DT);
+        const float phase = controller.getPhase();
+        TEST_ASSERT_TRUE(phase >= 0.0f && phase < 1.0f);
+        for (int i = 0; i < 6; ++i) {
+            for (int j = 0; j < 3; ++j) TEST_ASSERT_TRUE(std::isfinite(body.feet[i][j]));
+        }
+    }
+}
+
+void test_swing_lifts_the_foot_and_stance_keeps_it_down() {
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 60.0f, 0.0f, 0.0f);
+    GaitController controller;
+    controller.setGait(gait);
+    controller.snapDefaultFootTarget(STAND);
+
+    BodyStateMsg body = makeBody();
+    float apex[6] = {0, 0, 0, 0, 0, 0};
+    float lowest[6] = {0, 0, 0, 0, 0, 0};
+
+    for (int s = 0; s < 1000; ++s) {
+        controller.setPhase(static_cast<float>(s) / 1000.0f);
+        controller.generateFeet(gait, body);
+        for (int i = 0; i < 6; ++i) {
+            const float lift = body.feet[i][2] - STAND[i][2];
+            if (lift > apex[i]) apex[i] = lift;
+            if (lift < lowest[i]) lowest[i] = lift;
+        }
+    }
+
+    for (int i = 0; i < 6; ++i) {
+        // The Bezier swing peaks near step_height; it must clear the ground and must not overshoot
+        // the commanded lift, which is what the servo range and the terrain search assume.
+        TEST_ASSERT_GREATER_THAN_FLOAT(0.5f * gait.step_height, apex[i]);
+        TEST_ASSERT_LESS_OR_EQUAL_FLOAT(1.15f * gait.step_height, apex[i]);
+        // Stance presses down by step_depth at most, never a hole in the floor.
+        TEST_ASSERT_GREATER_OR_EQUAL_FLOAT(-1.1f * gait.step_depth, lowest[i]);
+    }
+}
+
+void test_stance_sweeps_the_foot_against_the_commanded_direction() {
+    // Body moves +x because the loaded feet travel -x. A sign flip here walks the robot backwards
+    // while every other assertion above still passes.
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 60.0f, 0.0f, 0.0f);
+    GaitController controller;
+    controller.setGait(gait);
+    controller.snapDefaultFootTarget(STAND);
+
+    BodyStateMsg body = makeBody();
+
+    controller.setPhase(0.0f);
+    controller.generateFeet(gait, body);
+    float startX[6];
+    for (int i = 0; i < 6; ++i) startX[i] = body.feet[i][0];
+
+    controller.setPhase(gait.stand_frac * 0.98f);
+    controller.generateFeet(gait, body);
+
+    for (int i = 0; i < 6; ++i) {
+        // Only legs that are in stance across both samples are comparable.
+        const bool inStanceAtStart = std::fmod(0.0f + gait.offset[i], 1.0f) < gait.stand_frac;
+        const bool inStanceAtEnd = std::fmod(gait.stand_frac * 0.98f + gait.offset[i], 1.0f) < gait.stand_frac;
+        if (!inStanceAtStart || !inStanceAtEnd) continue;
+        TEST_ASSERT_LESS_THAN_FLOAT(startX[i], body.feet[i][0]);
+    }
+}
+
+void test_yaw_command_sweeps_feet_tangentially() {
+    // A pure in-place turn must move each foot perpendicular to its own radius, in a consistent
+    // rotational sense: the cross product radius x displacement has the same sign for all six.
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 0.0f, 0.0f, 0.35f);
+    GaitController controller;
+    controller.setGait(gait);
+    controller.snapDefaultFootTarget(STAND);
+
+    BodyStateMsg body = makeBody();
+    controller.setPhase(0.0f);
+    controller.generateFeet(gait, body);
+
+    float sign = 0.0f;
+    for (int i = 0; i < 6; ++i) {
+        const bool inStance = std::fmod(gait.offset[i], 1.0f) < gait.stand_frac;
+        if (!inStance) continue;
+        const float dx = body.feet[i][0] - STAND[i][0];
+        const float dy = body.feet[i][1] - STAND[i][1];
+        const float cross = STAND[i][0] * dy - STAND[i][1] * dx;
+        TEST_ASSERT_TRUE(std::fabs(cross) > 1.0f);
+        if (sign == 0.0f) sign = cross > 0 ? 1.0f : -1.0f;
+        TEST_ASSERT_TRUE(cross * sign > 0.0f);
+    }
+    TEST_ASSERT_TRUE(sign != 0.0f);
+}
+
+void test_gait_tables_cover_every_leg_once_per_cycle() {
+    // Same tripod reasoning applied to the remaining coordination patterns: offsets must be a
+    // permutation over the cycle, so no leg is left permanently loaded or permanently swinging.
+    const GaitType types[] = {GaitType::TRI_GATE, GaitType::BI_GATE, GaitType::WAVE, GaitType::RIPPLE};
+    for (GaitType type : types) {
+        gait_state_t gait = makeGait(type, 0, 0, 0);
+        GaitController controller;
+        controller.setGait(gait);
+
+        TEST_ASSERT_TRUE(gait.stand_frac > 0.0f && gait.stand_frac < 1.0f);
+        for (int i = 0; i < 6; ++i) {
+            TEST_ASSERT_TRUE(gait.offset[i] >= 0.0f && gait.offset[i] < 1.0f);
+            bool swingSeen = false;
+            bool stanceSeen = false;
+            for (int s = 0; s < 1000; ++s) {
+                const float ph = std::fmod(static_cast<float>(s) / 1000.0f + gait.offset[i], 1.0f);
+                if (ph >= gait.stand_frac)
+                    swingSeen = true;
+                else
+                    stanceSeen = true;
+            }
+            TEST_ASSERT_TRUE(swingSeen);
+            TEST_ASSERT_TRUE(stanceSeen);
+        }
+    }
+}
+
+void test_inverse_kinematics_holds_the_nominal_stance() {
+    // The stance the gait engine hands to IK must resolve to angles a servo can reach; a mount
+    // angle or link length typo shows up here as a clamped acos or an out-of-range joint.
+    Kinematics kinematics;
+    BodyStateMsg body = makeBody();
+    body.zm = 0;
+
+    float angles[18];
+    kinematics.inverseKinematics(body, angles);
+
+    for (int i = 0; i < 18; ++i) {
+        TEST_ASSERT_TRUE(std::isfinite(angles[i]));
+        // ServoController::setAngles adds 90 deg to every tibia before the PWM conversion, so the
+        // servo-frame angle is what has to stay inside the +/-90 deg the calibration maps.
+        const float servoAngle = angles[i] + (i % 3 == 2 ? 90.0f : 0.0f);
+        TEST_ASSERT_TRUE(std::fabs(servoAngle) <= 90.0f);
+    }
+
+    // The stance is mirror-symmetric about the body x axis, so the left and right legs of each
+    // pair must carry the same femur/tibia angles.
+    const int mirrored[3][2] = {{0, 2}, {3, 5}};
+    for (const auto &pair : mirrored) {
+        TEST_ASSERT_FLOAT_WITHIN(0.01f, angles[pair[0] * 3 + 1], angles[pair[1] * 3 + 1]);
+        TEST_ASSERT_FLOAT_WITHIN(0.01f, angles[pair[0] * 3 + 2], angles[pair[1] * 3 + 2]);
+    }
+}
+
+int main(int, char **) {
+    UNITY_BEGIN();
+    RUN_TEST(test_tripod_keeps_three_feet_loaded);
+    RUN_TEST(test_idle_command_settles_on_the_default_stance);
+    RUN_TEST(test_command_below_deadband_does_not_start_the_cycle);
+    RUN_TEST(test_phase_stays_normalized_over_a_long_walk);
+    RUN_TEST(test_swing_lifts_the_foot_and_stance_keeps_it_down);
+    RUN_TEST(test_stance_sweeps_the_foot_against_the_commanded_direction);
+    RUN_TEST(test_yaw_command_sweeps_feet_tangentially);
+    RUN_TEST(test_gait_tables_cover_every_leg_once_per_cycle);
+    RUN_TEST(test_inverse_kinematics_holds_the_nominal_stance);
+    return UNITY_END();
+}

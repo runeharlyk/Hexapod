@@ -1,8 +1,8 @@
 <script lang="ts">
-  import SettingsCard from '$lib/components/SettingsCard.svelte'
   import Spinner from '$lib/components/Spinner.svelte'
   import Folder from './Folder.svelte'
   import { api } from '$lib/api'
+  import { resolveUrl } from '$lib/proto-api'
   import type { Directory } from '$lib/types/models'
   import { FolderIcon, Add, FileIcon } from '$lib/components/icons'
   import { modals } from 'svelte-modals'
@@ -15,36 +15,29 @@
 
   const getFiles = async () => {
     const result = await api.get<Directory>('/api/files')
-    if (result.isOk()) {
-      return result.inner
-    }
-    return { root: {} }
+    return result.isOk() ? result.inner : { root: {} }
   }
 
-  const getContent = async (name: string) => {
-    if (!name) return ''
-    const result = await api.get(`/api/config/${name}`)
-    if (result.isOk()) {
-      content = JSON.stringify(result.inner, null, 4)
-      return content
+  const getContent = async (path: string) => {
+    if (!path) return ''
+    try {
+      const res = await fetch(resolveUrl('/api/files/content?path=' + path))
+      content = res.ok ? await res.text() : ''
+    } catch {
+      content = ''
     }
-    return ''
+    return content
   }
 
   const saveContent = async () => {
     if (!filename) return
-    const result = await api.post('/api/files/edit', {
-      file: '/config/' + filename,
-      content
-    })
-    if (result.isOk()) {
-      isEditing = false
-    }
+    const result = await api.post('/api/files/edit', { path: filename, content })
+    if (result.isOk()) isEditing = false
   }
 
-  const deleteFile = async (name: string) => {
-    if (!confirm(`Are you sure you want to delete ${name}?`)) return
-    const result = await api.post('/api/files/delete', { file: '/config/' + name })
+  const deleteFile = async (path: string) => {
+    if (!confirm(`Are you sure you want to delete ${path}?`)) return
+    const result = await api.post('/api/files/delete', { path })
     if (result.isOk()) {
       filename = ''
       content = ''
@@ -53,19 +46,14 @@
 
   const createFolder = async (folderName: string) => {
     if (!folderName) return
-    const result = await api.post('/api/files/mkdir', {
-      path: '/config/' + folderName
-    })
-    if (result.isOk()) {
-      // Refresh the file list
-      await getFiles()
-    }
+    const result = await api.post('/api/files/mkdir', { path: '/' + folderName })
+    if (result.isOk()) await getFiles()
   }
 
-  const updateSelected = async (name: string) => {
-    filename = name
+  const updateSelected = async (path: string) => {
+    filename = path
     isEditing = false
-    await getContent(name)
+    await getContent(path)
   }
 
   const openNewFolderDialog = () => {
@@ -76,14 +64,11 @@
 
   const createFile = async (fileName: string) => {
     if (!fileName) return
-    const result = await api.post('/api/files/edit', {
-      file: '/config/' + fileName,
-      content: '{}' // Default empty JSON object
-    })
+    const path = '/' + fileName
+    const result = await api.post('/api/files/edit', { path, content: '' })
     if (result.isOk()) {
-      // Refresh the file list and select the new file
       await getFiles()
-      await updateSelected(fileName)
+      await updateSelected(path)
     }
   }
 
@@ -124,7 +109,8 @@
     {:then files}
       <Folder
         name="/"
-        files={files.root}
+        path=""
+        files={files.root as Directory}
         expanded
         selected={updateSelected}
         onDelete={deleteFile}
@@ -156,7 +142,7 @@
 
       {#await getContent(filename)}
         <Spinner />
-      {:then _}
+      {:then}
         {#if isEditing}
           <textarea
             class="w-full h-[300px] sm:h-[500px] font-mono p-2 bg-gray-800 text-white"

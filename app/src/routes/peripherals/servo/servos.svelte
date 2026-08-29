@@ -1,11 +1,10 @@
 <script lang="ts">
   import SettingsCard from '$lib/components/SettingsCard.svelte'
   import Spinner from '$lib/components/Spinner.svelte'
-  import { socket } from '$lib/stores'
-  import { throttler as Throttler } from '$lib/utilities'
   import { MotorOutline } from '$lib/components/icons'
+  import { throttler as Throttler } from '$lib/utilities'
   import { dataBroker } from '$lib/transport/databroker'
-  import { MessageTopic } from '$lib/interfaces/transport.interface'
+  import { ServoPWMData, ServoStateData } from '$lib/platform_shared/message'
 
   let isLoading = false
 
@@ -15,19 +14,11 @@
 
   const throttler = new Throttler()
 
-  const activateServo = () => {
-    socket.sendEvent('servoState', { active: 1 })
-  }
+  const activateServo = () => dataBroker.emit(ServoStateData, { active: true })
+  const deactivateServo = () => dataBroker.emit(ServoStateData, { active: false })
 
-  const deactivateServo = () => {
-    socket.sendEvent('servoState', { active: 0 })
-  }
-
-  const updatePWM = () => {
-    throttler.throttle(() => {
-      dataBroker.emit(MessageTopic.SERVO, { id: servoId, pwm })
-    }, 10)
-  }
+  const updatePWM = () =>
+    throttler.throttle(() => dataBroker.emit(ServoPWMData, { servoId, servoPwm: pwm }), 10)
 </script>
 
 <SettingsCard collapsible={false}>

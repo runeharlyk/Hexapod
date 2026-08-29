@@ -1,26 +1,24 @@
 #pragma once
 
-#include <WiFi.h>
-#include <IPAddress.h>
-#include <ArduinoJson.h>
-#include <utils/json_utils.h>
-#include <utils/string_utils.h>
-#include <utils/ip_utils.h>
+#include <wifi/wifi_idf.h>
+#include <wifi/dns_server.h>
 #include <template/state_result.h>
-
-#include <DNSServer.h>
-#include <IPAddress.h>
+#include <platform_shared/api.pb.h>
+#include <esp_mac.h>
+#include <cstdio>
+#include <cstring>
+#include <string>
 
 #ifndef FACTORY_AP_PROVISION_MODE
-#define FACTORY_AP_PROVISION_MODE AP_MODE_DISCONNECTED
+#define FACTORY_AP_PROVISION_MODE api_APProvisionMode_AP_MODE_DISCONNECTED
 #endif
 
 #ifndef FACTORY_AP_SSID
-#define FACTORY_AP_SSID "ESP32-SvelteKit-#{unique_id}"
+#define FACTORY_AP_SSID "Hexapod-#{unique_id}"
 #endif
 
 #ifndef FACTORY_AP_PASSWORD
-#define FACTORY_AP_PASSWORD "esp-sveltekit"
+#define FACTORY_AP_PASSWORD "hexapod1"
 #endif
 
 #ifndef FACTORY_AP_LOCAL_IP
@@ -47,69 +45,101 @@
 #define FACTORY_AP_MAX_CLIENTS 4
 #endif
 
-#define AP_MODE_ALWAYS 0
-#define AP_MODE_DISCONNECTED 1
-#define AP_MODE_NEVER 2
+#define AP_MODE_ALWAYS api_APProvisionMode_AP_MODE_ALWAYS
+#define AP_MODE_DISCONNECTED api_APProvisionMode_AP_MODE_DISCONNECTED
+#define AP_MODE_NEVER api_APProvisionMode_AP_MODE_NEVER
 
 #define MANAGE_NETWORK_DELAY 10000
 #define DNS_PORT 53
 
-enum APNetworkStatus { ACTIVE = 0, INACTIVE, LINGERING };
+using APNetworkStatus = api_APNetworkStatus;
+#define ACTIVE api_APNetworkStatus_AP_ACTIVE
+#define INACTIVE api_APNetworkStatus_AP_INACTIVE
+#define LINGERING api_APNetworkStatus_AP_LINGERING
 
-class APSettings {
-  public:
-    uint8_t provisionMode;
-    String ssid;
-    String password;
-    uint8_t channel;
-    bool ssidHidden;
-    uint8_t maxClients;
+inline uint32_t parseIPv4(const char *str) {
+    IPAddress ip;
+    ip.fromString(str);
+    return (uint32_t)ip;
+}
 
-    IPAddress localIP;
-    IPAddress gatewayIP;
-    IPAddress subnetMask;
+using APSettings = api_APSettings;
 
-    bool operator==(const APSettings &settings) const {
-        return provisionMode == settings.provisionMode && ssid == settings.ssid && password == settings.password &&
-               channel == settings.channel && ssidHidden == settings.ssidHidden && maxClients == settings.maxClients &&
-               localIP == settings.localIP && gatewayIP == settings.gatewayIP && subnetMask == settings.subnetMask;
+// Substitute "#{unique_id}" with the MAC suffix so each device gets a distinct AP SSID.
+inline std::string substituteUniqueId(const char *tmpl) {
+    std::string out(tmpl);
+    const std::string token = "#{unique_id}";
+    auto pos = out.find(token);
+    if (pos == std::string::npos) return out;
+    uint8_t mac[6] = {};
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    char id[7];
+    snprintf(id, sizeof(id), "%02X%02X%02X", mac[3], mac[4], mac[5]);
+    out.replace(pos, token.length(), id);
+    return out;
+}
+
+inline APSettings APSettings_defaults() {
+    APSettings settings = {};
+    settings.provision_mode = FACTORY_AP_PROVISION_MODE;
+    strncpy(settings.ssid, substituteUniqueId(FACTORY_AP_SSID).c_str(), sizeof(settings.ssid) - 1);
+    strncpy(settings.password, FACTORY_AP_PASSWORD, sizeof(settings.password) - 1);
+    settings.channel = FACTORY_AP_CHANNEL;
+    settings.ssid_hidden = FACTORY_AP_SSID_HIDDEN;
+    settings.max_clients = FACTORY_AP_MAX_CLIENTS;
+    settings.local_ip = parseIPv4(FACTORY_AP_LOCAL_IP);
+    settings.gateway_ip = parseIPv4(FACTORY_AP_GATEWAY_IP);
+    settings.subnet_mask = parseIPv4(FACTORY_AP_SUBNET_MASK);
+    return settings;
+}
+
+inline void APSettings_read(const APSettings &settings, APSettings &proto) { proto = settings; }
+
+inline bool APSettings_equals(const APSettings &a, const APSettings &b) {
+    return a.provision_mode == b.provision_mode && strncmp(a.ssid, b.ssid, sizeof(a.ssid)) == 0 &&
+           strncmp(a.password, b.password, sizeof(a.password)) == 0 && a.channel == b.channel &&
+           a.ssid_hidden == b.ssid_hidden && a.max_clients == b.max_clients && a.local_ip == b.local_ip &&
+           a.gateway_ip == b.gateway_ip && a.subnet_mask == b.subnet_mask;
+}
+
+inline StateUpdateResult APSettings_update(const APSettings &proto, APSettings &settings) {
+    APSettings candidate = proto;
+
+    switch (candidate.provision_mode) {
+        case AP_MODE_ALWAYS:
+        case AP_MODE_DISCONNECTED:
+        case AP_MODE_NEVER: break;
+        default: candidate.provision_mode = AP_MODE_DISCONNECTED;
     }
 
-    static void read(APSettings &settings, JsonObject &root) {
-        root["provision_mode"] = settings.provisionMode;
-        root["ssid"] = settings.ssid;
-        root["password"] = settings.password;
-        root["channel"] = settings.channel;
-        root["ssid_hidden"] = settings.ssidHidden;
-        root["max_clients"] = settings.maxClients;
-        root["local_ip"] = settings.localIP.toString();
-        root["gateway_ip"] = settings.gatewayIP.toString();
-        root["subnet_mask"] = settings.subnetMask.toString();
+    size_t ssid_length = strnlen(candidate.ssid, sizeof(candidate.ssid));
+    if (ssid_length < 1 || ssid_length > 32) {
+        ESP_LOGE("APSettings", "AP SSID length is invalid");
+        return StateUpdateResult::ERROR;
     }
 
-    static StateUpdateResult update(JsonObject &root, APSettings &settings) {
-        APSettings newSettings = {};
-        newSettings.provisionMode = root["provision_mode"] | FACTORY_AP_PROVISION_MODE;
-        switch (settings.provisionMode) {
-            case AP_MODE_ALWAYS:
-            case AP_MODE_DISCONNECTED:
-            case AP_MODE_NEVER: break;
-            default: newSettings.provisionMode = AP_MODE_DISCONNECTED;
-        }
-        newSettings.ssid = root["ssid"] | format(FACTORY_AP_SSID);
-        newSettings.password = root["password"] | FACTORY_AP_PASSWORD;
-        newSettings.channel = root["channel"] | FACTORY_AP_CHANNEL;
-        newSettings.ssidHidden = root["ssid_hidden"] | FACTORY_AP_SSID_HIDDEN;
-        newSettings.maxClients = root["max_clients"] | FACTORY_AP_MAX_CLIENTS;
-
-        JsonUtils::readIP(root, "local_ip", newSettings.localIP, FACTORY_AP_LOCAL_IP);
-        JsonUtils::readIP(root, "gateway_ip", newSettings.gatewayIP, FACTORY_AP_GATEWAY_IP);
-        JsonUtils::readIP(root, "subnet_mask", newSettings.subnetMask, FACTORY_AP_SUBNET_MASK);
-
-        if (newSettings == settings) {
-            return StateUpdateResult::UNCHANGED;
-        }
-        settings = newSettings;
-        return StateUpdateResult::CHANGED;
+    // softAP() picks WPA2 as soon as the password is non-empty, and WPA2 needs 8..63 characters.
+    size_t password_length = strnlen(candidate.password, sizeof(candidate.password));
+    if (password_length > 0 && (password_length < 8 || password_length > 63)) {
+        ESP_LOGE("APSettings", "AP password length is invalid");
+        return StateUpdateResult::ERROR;
     }
-};
+
+    if (candidate.channel < 1 || candidate.channel > 13) candidate.channel = FACTORY_AP_CHANNEL;
+    if (candidate.max_clients < 1 || candidate.max_clients > ESP_WIFI_MAX_CONN_NUM) {
+        candidate.max_clients = FACTORY_AP_MAX_CLIENTS;
+    }
+
+    // An unreachable AP is worse than a non-default one, so an incomplete address falls back wholesale.
+    if (candidate.local_ip == 0 || candidate.gateway_ip == 0 || candidate.subnet_mask == 0) {
+        ESP_LOGW("APSettings", "Incomplete AP IP configuration - using factory addresses");
+        candidate.local_ip = parseIPv4(FACTORY_AP_LOCAL_IP);
+        candidate.gateway_ip = parseIPv4(FACTORY_AP_GATEWAY_IP);
+        candidate.subnet_mask = parseIPv4(FACTORY_AP_SUBNET_MASK);
+    }
+
+    if (APSettings_equals(candidate, settings)) return StateUpdateResult::UNCHANGED;
+
+    settings = candidate;
+    return StateUpdateResult::CHANGED;
+}

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <esp_now.h>
-#include <esp_idf_version.h>
 #include <cstdint>
 
 /*
@@ -15,23 +14,21 @@
  *   - both buttons -> emergency stop (DEACTIVATED)
  *
  * Channel: ESP-NOW only hears traffic on the radio's current channel, and the
- * controller broadcasts on a fixed channel (ESPNOW_WIFI_CHANNEL). For reliable
- * reception the robot's radio must be on that channel — easiest is AP mode with
- * the AP channel set to ESPNOW_WIFI_CHANNEL and no STA join (a STA connection
- * forces the radio to the router's channel). begin() logs the active channel
- * and, when not connected as STA, locks it to ESPNOW_WIFI_CHANNEL.
+ * controller broadcasts on a fixed channel (ESPNOW_WIFI_CHANNEL). One radio
+ * serves STA, AP and ESP-NOW, so joining a router on any other channel silently
+ * stops reception — there is no way to listen on two channels at once. Run the
+ * robot AP-only, or put the router on ESPNOW_WIFI_CHANNEL.
+ *
+ * The channel is re-evaluated on every STA connect/disconnect, not just at
+ * startup: at boot the join has not happened yet, so a check there would always
+ * see "not connected", pin the channel, and then be silently overridden.
  */
 class EspNowAdapter {
   public:
     void begin();
 
-    static bool controllerActive(uint32_t windowMs = 1500);
-
   private:
-// Arduino-ESP32 3.x / IDF 5.x changed the recv-callback signature.
-#if ESP_IDF_VERSION_MAJOR >= 5
+    // Pins the radio when it is ours to pin, warns when the STA holds it elsewhere.
+    static void applyChannel();
     static void onRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len);
-#else
-    static void onRecv(const uint8_t* mac, const uint8_t* data, int len);
-#endif
 };

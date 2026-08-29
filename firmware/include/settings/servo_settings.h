@@ -1,53 +1,66 @@
 #pragma once
 
-#include <ArduinoJson.h>
+#include <platform_shared/api.pb.h>
 #include <template/state_result.h>
+#include <event_bus.h>
+#include <esp_log.h>
+#include <cstring>
 
-typedef struct {
-    int16_t centerPwm;
-    int8_t direction;
-    uint8_t pin;
-    float conversion;
-    String name;
-} servo_settings_t;
+using ServoSettings = api_ServoSettings;
 
-class ServoSettings {
-  public:
-    servo_settings_t servos[18] = {
-        {306, 1, 8, 2, "left_1_1"},  {306, 1, 9, 2, "left_1_2"},   {306, 1, 10, 2, "left_1_3"},
-        {306, 1, 2, 2, "left_2_1"},  {306, -1, 3, 2, "left_2_2"},  {306, -1, 4, 2, "left_2_3"},
-        {306, 1, 5, 2, "left_3_1"},  {306, -1, 6, 2, "left_3_2"},  {306, -1, 7, 2, "left_3_3"},
-        {306, 1, 8, 2, "right_1_1"}, {306, 1, 9, 2, "right_1_2"},  {306, 1, 10, 2, "right_1_3"},
-        {306, 1, 2, 2, "right_2_1"}, {306, -1, 3, 2, "right_2_2"}, {306, -1, 4, 2, "right_2_3"},
-        {306, 1, 5, 2, "right_3_1"}, {306, -1, 6, 2, "right_3_2"}, {306, -1, 7, 2, "right_3_3"}};
+// Shallow shared bus: calibration is a rare full snapshot, not a stream (default depth would waste
+// ~7 KB static on the ~720 B payload). One definition so the service and controller share it.
+using ServoSettingsBus = EventBus<ServoSettings, 2, 2, 1>;
 
-    static void read(ServoSettings &settings, JsonObject &root) {
-        JsonArray servos = root["servos"].to<JsonArray>();
-        for (auto &servo : settings.servos) {
-            JsonObject newServo = servos.add<JsonObject>();
-            newServo["name"] = servo.name;
-            newServo["center_pwm"] = servo.centerPwm;
-            newServo["direction"] = servo.direction;
-            newServo["pin"] = servo.pin;
-            newServo["conversion"] = servo.conversion;
+inline ServoSettings ServoSettings_defaults() {
+    ServoSettings settings = api_ServoSettings_init_zero;
+    settings.servos_count = 18;
+    // Factory calibration reproducing the ServoController defaults; direction is the old l_dir/r_dir.
+    static const float direction[18] = {-1, -1, 1, -1, -1, 1, -1, -1, 1, -1, 1, -1, -1, 1, -1, -1, 1, -1};
+    for (int i = 0; i < 18; i++) {
+        settings.servos[i].center_pwm = 306;
+        settings.servos[i].conversion = 2;
+        settings.servos[i].direction = direction[i];
+        settings.servos[i].center_angle = 0;
+    }
+    return settings;
+}
+
+inline void ServoSettings_read(const ServoSettings &settings, ServoSettings &proto) { proto = settings; }
+
+// Written as inclusive range tests so a NaN arriving over the wire fails instead of propagating into
+// the PWM math and driving a servo into its endstop.
+inline bool Servo_isValid(const api_Servo &servo) {
+    if (!(servo.center_pwm >= 0.0f && servo.center_pwm <= 4095.0f)) return false;
+    if (!(servo.conversion > 0.0f && servo.conversion <= 100.0f)) return false;
+    if (servo.direction != 1.0f && servo.direction != -1.0f) return false;
+    if (!(servo.center_angle >= -180.0f && servo.center_angle <= 180.0f)) return false;
+    return true;
+}
+
+inline bool Servo_equals(const api_Servo &a, const api_Servo &b) {
+    return a.center_pwm == b.center_pwm && a.conversion == b.conversion && a.direction == b.direction &&
+           a.center_angle == b.center_angle && strncmp(a.name, b.name, sizeof(a.name)) == 0;
+}
+
+inline StateUpdateResult ServoSettings_update(const ServoSettings &proto, ServoSettings &settings) {
+    // Calibration is an all-or-nothing set: a partially applied one leaves the robot in a pose it was
+    // never commanded into, so a single bad entry rejects the whole payload.
+    for (pb_size_t i = 0; i < proto.servos_count; i++) {
+        if (!Servo_isValid(proto.servos[i])) {
+            ESP_LOGE("ServoSettings", "Servo %u calibration out of range", (unsigned)i);
+            return StateUpdateResult::ERROR;
         }
     }
-    static StateUpdateResult update(JsonObject &root, ServoSettings &settings) {
-        if (root["servos"].is<JsonArray>()) {
-            JsonArray servosJson = root["servos"];
-            int i = 0;
-            for (auto servo : servosJson) {
-                JsonObject servoObject = servo.as<JsonObject>();
-                uint8_t servoId = i; // servoObject["id"].as<uint8_t>();
-                settings.servos[servoId].name = servoObject[""].as<String>();
-                settings.servos[servoId].centerPwm = servoObject["center_pwm"].as<float>();
-                settings.servos[servoId].pin = servoObject["pin"].as<uint8_t>();
-                settings.servos[servoId].direction = servoObject["direction"].as<float>();
-                settings.servos[servoId].conversion = servoObject["conversion"].as<float>();
-                i++;
-            }
+
+    if (proto.servos_count == settings.servos_count) {
+        bool identical = true;
+        for (pb_size_t i = 0; i < proto.servos_count && identical; i++) {
+            identical = Servo_equals(proto.servos[i], settings.servos[i]);
         }
-        ESP_LOGI("ServoController", "Updating servo data");
-        return StateUpdateResult::CHANGED;
-    };
-};
+        if (identical) return StateUpdateResult::UNCHANGED;
+    }
+
+    settings = proto;
+    return StateUpdateResult::CHANGED;
+}

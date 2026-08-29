@@ -1,234 +1,126 @@
-#ifndef Peripherals_h
-#define Peripherals_h
+#pragma once
 
-#include <template/stateful_socket.h>
-#include <template/stateful_persistence.h>
-#include <template/stateful_service.h>
-#include <utils/math_utils.h>
-#include <utils/timing.h>
-#include <filesystem.h>
+#include <esp_log.h>
+#include <vector>
+
 #include <features.h>
+#include <message_types.h>
+#include <peripherals/i2c_bus.h>
 #include <settings/peripherals_settings.h>
-#include <template/stateful_endpoint.h>
 
-#include <list>
-#include <SPI.h>
-#include <Wire.h>
+#if FT_ENABLED(USE_MPU6050)
+#include <peripherals/drivers/mpu6050.h>
+#endif
 
-#include <NewPing.h>
-#include <peripherals/imu.h>
-#include <peripherals/magnetometer.h>
+#if FT_ENABLED(USE_MAG)
+#include <peripherals/drivers/hmc5883.h>
+#endif
 
-#define EVENT_CONFIGURATION_SETTINGS "peripheralSettings"
+#ifndef SDA_PIN
+#define SDA_PIN 47
+#endif
+#ifndef SCL_PIN
+#define SCL_PIN 21
+#endif
 
-#define EVENT_I2C_SCAN "i2cScan"
-
-#define I2C_INTERVAL 250
-#define MAX_ESP_IMU_SIZE 500
-#define EVENT_IMU "imu"
-
-/*
- * OLED Settings
- */
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-#define SCREEN_RESET -1
-
-/*
- * Ultrasonic Sensor Settings
- */
-#define MAX_DISTANCE 200
-
-class Peripherals : public StatefulService<PeripheralsConfiguration> {
+class Peripherals {
   public:
-    Peripherals()
-        : endpoint(PeripheralsConfiguration::read, PeripheralsConfiguration::update, this),
-          _eventEndpoint(PeripheralsConfiguration::read, PeripheralsConfiguration::update, this,
-                         EVENT_CONFIGURATION_SETTINGS),
-          _persistence(PeripheralsConfiguration::read, PeripheralsConfiguration::update, this, DEVICE_CONFIG_FILE) {
-        _accessMutex = xSemaphoreCreateMutex();
-        addUpdateHandler([&](const String &originId) { updatePins(); }, false);
-    };
-
     void begin() {
-        _eventEndpoint.begin();
-        _persistence.readFromFS();
-
-        // socket.onEvent(EVENT_I2C_SCAN, [&](JsonObject &root, int originId) {
-        //     scanI2C();
-        //     emitI2C();
-        // });
-
-        // socket.onSubscribe(EVENT_I2C_SCAN, [&](const String &originId, bool sync) {
-        //     scanI2C();
-        //     emitI2C(originId, sync);
-        // });
-
-        updatePins();
-
+        if (!I2CBus::instance().isInitialized()) {
+            PeripheralSettings cfg = PeripheralSettings_defaults();
+            PeripheralSettingsBus::peek(cfg);  // stored config if the service published first
+            ESP_LOGI(TAG, "I2C bus sda=%d scl=%d %d Hz", (int)cfg.sda, (int)cfg.scl, (int)cfg.frequency);
+            I2CBus::instance().begin(static_cast<gpio_num_t>(cfg.sda), static_cast<gpio_num_t>(cfg.scl),
+                                     (uint32_t)cfg.frequency);
+        }
 #if FT_ENABLED(USE_MPU6050)
-        if (!_imu.initialize()) ESP_LOGE("IMUService", "IMU initialize failed");
+        _imuReady = _imu.begin();
+        if (!_imuReady) ESP_LOGW(TAG, "MPU6050 init failed");
+        else ESP_LOGI(TAG, "MPU6050 ready");
 #endif
 #if FT_ENABLED(USE_MAG)
-        if (!_mag.initialize()) ESP_LOGE("IMUService", "MAG initialize failed");
+        _magReady = _mag.begin();
+        if (!_magReady) ESP_LOGW(TAG, "HMC5883 init failed");
+        else ESP_LOGI(TAG, "HMC5883 ready");
 #endif
-#if FT_ENABLED(USE_USS)
-        _left_sonar = new NewPing(USS_LEFT_PIN, USS_LEFT_PIN, MAX_DISTANCE);
-        _right_sonar = new NewPing(USS_RIGHT_PIN, USS_RIGHT_PIN, MAX_DISTANCE);
-#endif
-    };
-
-    void loop() {
-        EXECUTE_EVERY_N_MS(_updateInterval, {
-            beginTransaction();
-            emitIMU();
-            readSonar();
-            emitSonar();
-            endTransaction();
-        });
     }
 
-    void updatePins() {
-        if (i2c_active) {
-            Wire.end();
-        }
+    std::vector<uint8_t> scanI2C() { return I2CBus::instance().scan(1, 127); }
 
-        if (state().sda != -1 && state().scl != -1) {
-            Wire.begin(state().sda, state().scl, state().frequency);
-            i2c_active = true;
-        }
-    }
-
-    void emitI2C(const String &originId = "", bool sync = false) {
-        char output[150];
-        JsonDocument doc;
-        JsonObject root = doc.to<JsonObject>();
-        root["sda"] = state().sda;
-        root["scl"] = state().scl;
-        JsonArray addresses = root["addresses"].to<JsonArray>();
-        for (auto &address : addressList) {
-            addresses.add(address);
-        }
-        serializeJson(root, output);
-        ESP_LOGI("Peripherals", "Emitting I2C scan results, %s %d", originId.c_str(), sync);
-        // socket.emit(EVENT_I2C_SCAN, output, originId.c_str(), sync);
-    }
-
-    void scanI2C(uint8_t lower = 1, uint8_t higher = 127) {
-        addressList.clear();
-        for (uint8_t address = lower; address < higher; address++) {
-            Wire.beginTransmission(address);
-            if (Wire.endTransmission() == 0) {
-                addressList.emplace_back(address);
-                ESP_LOGI("Peripherals", "I2C device found at address 0x%02X", address);
-            }
-        }
-        uint8_t nDevices = addressList.size();
-        if (nDevices == 0)
-            ESP_LOGI("Peripherals", "No I2C devices found");
-        else
-            ESP_LOGI("Peripherals", "Scan complete - Found %d devices", nDevices);
-    }
-
-    /* IMU FUNCTIONS */
     bool readIMU() {
-        bool updated = false;
 #if FT_ENABLED(USE_MPU6050)
-        beginTransaction();
-        updated = _imu.readIMU();
-        endTransaction();
-#endif
-        return updated;
-    }
-
-    bool readMag() {
-        bool updated = false;
-#if FT_ENABLED(USE_MAG)
-        beginTransaction();
-        updated = _mag.readMagnetometer();
-        endTransaction();
-#endif
-        return updated;
-    }
-
-    bool readBMP() {
-        bool updated = false;
-#if FT_ENABLED(USE_BMP)
-        beginTransaction();
-        updated = _bmp.readBarometer();
-        endTransaction();
-#endif
-        return updated;
-    }
-
-    void readSonar() {
-#if FT_ENABLED(USE_USS)
-        _left_distance = _left_sonar->ping_cm();
-        delay(50);
-        _right_distance = _right_sonar->ping_cm();
+        if (!_imuReady) return false;
+        return _imu.update();
+#else
+        return false;
 #endif
     }
 
-    float leftDistance() { return _left_distance; }
-    float rightDistance() { return _right_distance; }
-
-    float angleX() { return _imu.getAngleX(); }
-    float angleZ() { return _imu.getAngleZ(); }
-    float angleY() { return _imu.getAngleY(); }
-
-    void gyroRad(float out[3]) { _imu.getGyroRad(out); }
-    void gravityBody(float out[3]) { _imu.getGravity(out); }
-
-    IMUAnglesMsg getIMUAngles() { return _imu.getIMUAngles(); }
-
-    StatefulHttpEndpoint<PeripheralsConfiguration> endpoint;
-
-    void emitIMU() {
+    float angleX() {
 #if FT_ENABLED(USE_MPU6050)
-        _imu.readIMU();
-#endif
-#if FT_ENABLED(USE_MAG)
-        _mag.readMagnetometer();
-#endif
-#if FT_ENABLED(USE_BMP)
-        _bmp.readBarometer();
+        return _imu.getRoll();
+#else
+        return 0.0f;
 #endif
     }
 
-    void emitSonar() {
-#if FT_ENABLED(USE_USS)
-
-        char output[16];
-        snprintf(output, sizeof(output), "[%.1f,%.1f]", _left_distance, _right_distance);
-        socket.emit("sonar", output);
+    float angleY() {
+#if FT_ENABLED(USE_MPU6050)
+        return _imu.getPitch();
+#else
+        return 0.0f;
 #endif
+    }
+
+    bool readMagnetometer() {
+#if FT_ENABLED(USE_MAG)
+        if (!_magReady) return false;
+        return _mag.update();
+#else
+        return false;
+#endif
+    }
+
+    bool magActive() const {
+#if FT_ENABLED(USE_MAG)
+        return _magReady;
+#else
+        return false;
+#endif
+    }
+
+    // Compass heading in degrees, 0 = magnetic north + declination. 0 when absent.
+    float heading() const {
+#if FT_ENABLED(USE_MAG)
+        return _magReady ? _mag.getHeading() : 0.0f;
+#else
+        return 0.0f;
+#endif
+    }
+
+    IMUAnglesMsg getIMUAngles() {
+        IMUAnglesMsg msg;
+#if FT_ENABLED(USE_MPU6050)
+        msg.rpy[0] = _imu.getRoll();
+        msg.rpy[1] = _imu.getPitch();
+        msg.rpy[2] = _imu.getYaw();
+        msg.temperature = _imu.getTemperature();
+        msg.success = _imuReady;
+#endif
+#if FT_ENABLED(USE_MAG)
+        msg.heading = heading();
+#endif
+        return msg;
     }
 
   private:
-    EventEndpoint<PeripheralsConfiguration> _eventEndpoint;
-    FSPersistence<PeripheralsConfiguration> _persistence;
-
-    SemaphoreHandle_t _accessMutex;
-    inline void beginTransaction() { xSemaphoreTakeRecursive(_accessMutex, portMAX_DELAY); }
-
-    inline void endTransaction() { xSemaphoreGiveRecursive(_accessMutex); }
-
+    static constexpr const char *TAG = "Peripherals";
 #if FT_ENABLED(USE_MPU6050)
-    IMU _imu;
+    MPU6050Driver _imu;
+    bool _imuReady{false};
 #endif
 #if FT_ENABLED(USE_MAG)
-    Magnetometer _mag;
+    HMC5883Driver _mag;
+    bool _magReady{false};
 #endif
-#if FT_ENABLED(USE_USS)
-    NewPing *_left_sonar;
-    NewPing *_right_sonar;
-#endif
-    float _left_distance {MAX_DISTANCE};
-    float _right_distance {MAX_DISTANCE};
-
-    std::list<uint8_t> addressList;
-    bool i2c_active = false;
-    unsigned long _updateInterval {I2C_INTERVAL};
 };
-
-#endif

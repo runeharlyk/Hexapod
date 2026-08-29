@@ -1,36 +1,57 @@
 <script lang="ts">
-  import { Cancel, Edit, EditOff, Power } from '$lib/components/icons'
-  import { socket } from '$lib/stores'
-  import type { PeripheralsConfiguration } from '$lib/types/models'
   import { onMount } from 'svelte'
   import { modals } from 'svelte-modals'
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte'
+  import { Cancel, Edit, EditOff, Power } from '$lib/components/icons'
+  import { notifications } from '$lib/components/toasts/notifications'
+  import { dataBroker } from '$lib/transport/databroker'
+  import type { PeripheralSettings } from '$lib/platform_shared/api'
 
-  let settings: PeripheralsConfiguration | null = $state(null)
+  let settings: PeripheralSettings | null = $state(null)
   let isEditing = $state(false)
 
-  onMount(() => {
-    socket.on('peripheralSettings', handleSettings)
-    socket.sendEvent('peripheralSettings', '')
-    return () => socket.off('peripheralSettings', handleSettings)
-  })
+  const load = async () => {
+    const res = await dataBroker.request({ peripheralSettingsGet: {} }).catch(() => null)
+    if (res?.peripheralSettings) settings = res.peripheralSettings
+  }
+  onMount(load)
 
-  const handleSettings = (data: any) => {
-    settings = data
+  const save = async () => {
+    if (!settings) return
+    const res = await dataBroker
+      .request({
+        peripheralSettingsUpdate: {
+          sda: Number(settings.sda),
+          scl: Number(settings.scl),
+          frequency: Number(settings.frequency),
+          pins: []
+        }
+      })
+      .catch(() => null)
+
+    // The firmware rejects out-of-range pins or frequencies with 400 and keeps the stored config.
+    if (!res || res.statusCode >= 400) {
+      notifications.error('The robot rejected the I2C configuration.', 4000)
+      return
+    }
+    if (res.peripheralSettings) settings = res.peripheralSettings
+    // The bus is opened once at boot, so new pins take effect on the next restart.
+    notifications.success('I2C configuration saved - restart the robot to apply it.', 5000)
+    isEditing = false
   }
 
   const handleSave = () => {
     modals.open(ConfirmDialog, {
       title: 'Confirm configuration',
       message:
-        'Are you sure you want to save this configuration? The operation cannot be undone. Please make sure you have the correct settings.',
+        'Saving wrong pins leaves the robot without servos or IMU until you correct them over serial. Continue?',
       labels: {
         cancel: { label: 'Cancel', icon: Cancel },
         confirm: { label: 'Confirm', icon: Power }
       },
       onConfirm: () => {
         modals.close()
-        socket.sendEvent('peripheralSettings', settings)
+        save()
       }
     })
   }
@@ -51,7 +72,7 @@
             id="sda"
             type="number"
             required
-            placeholder="Type a number between 1 to 48"
+            placeholder="Type a number between 0 to 48"
             min="0"
             max="48"
             title="SDA pin number (0-48)"
@@ -66,8 +87,8 @@
             id="scl"
             type="number"
             required
-            placeholder="Type a number between 1 to 48"
-            min="1"
+            placeholder="Type a number between 0 to 48"
+            min="0"
             max="48"
             title="SCL pin number (0-48)"
             disabled={!isEditing}
@@ -80,9 +101,9 @@
             id="frequency"
             type="number"
             required
-            placeholder="Type a number between 100000 to 430000"
+            placeholder="Type a number between 100000 to 1000000"
             min="100000"
-            max="430000"
+            max="1000000"
             title="I2C frequency in Hz"
             disabled={!isEditing}
             bind:value={settings.frequency}

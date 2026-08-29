@@ -1,32 +1,27 @@
 #pragma once
 
-#include <PsychicHttp.h>
+#include <string>
 
-#include <LittleFS.h>
+// LittleFS mounted at MOUNT_POINT on the "spiffs" partition.
+#define MOUNT_POINT "/littlefs"
+#define FS_PARTITION_LABEL "spiffs"
 
-#define ESP_FS LittleFS
-
-#define AP_SETTINGS_FILE "/config/apSettings.json"
-#define CAMERA_SETTINGS_FILE "/config/cameraSettings.json"
-#define FS_CONFIG_DIRECTORY "/config"
-#define DEVICE_CONFIG_FILE "/config/peripheral.json"
-#define WIFI_SETTINGS_FILE "/config/wifiSettings.json"
-#define SERVO_SETTINGS_FILE "/config/servoSettings.json"
-#define MDNS_SETTINGS_FILE "/config/mdnsSettings.json"
-#define BLUETOOTH_SETTINGS_FILE "/config/bluetoothSettings.json"
+#define FS_CONFIG_DIRECTORY MOUNT_POINT "/config"
+#define AP_SETTINGS_FILE FS_CONFIG_DIRECTORY "/apSettings.json"
+#define CAMERA_SETTINGS_FILE FS_CONFIG_DIRECTORY "/cameraSettings.json"
+#define DEVICE_CONFIG_FILE FS_CONFIG_DIRECTORY "/peripheral.json"
+#define WIFI_SETTINGS_FILE FS_CONFIG_DIRECTORY "/wifiSettings.json"
+#define SERVO_SETTINGS_FILE FS_CONFIG_DIRECTORY "/servoSettings.json"
+#define MDNS_SETTINGS_FILE FS_CONFIG_DIRECTORY "/mdnsSettings.json"
+#define PERIPHERAL_SETTINGS_FILE FS_CONFIG_DIRECTORY "/peripheralSettings.json"
+#define BLUETOOTH_SETTINGS_FILE FS_CONFIG_DIRECTORY "/bluetoothSettings.json"
 
 namespace FileSystem {
-extern PsychicUploadHandler *uploadHandler;
 
-String listFiles(const String &directory, bool isRoot = true);
-bool deleteFile(const char *filename);
-bool editFile(const char *filename, const char *content);
-esp_err_t uploadFile(PsychicRequest *request, const String &filename, uint64_t index, uint8_t *data, size_t len,
-                     bool last);
+bool init();
+bool exists(const char *path);
+bool readFile(const char *path, std::string &out);
+bool writeFile(const char *path, const char *content);
+bool mkdirRecursive(const char *path);
 
-esp_err_t getFiles(PsychicRequest *request);
-esp_err_t handleDelete(PsychicRequest *request, JsonVariant &json);
-esp_err_t handleEdit(PsychicRequest *request, JsonVariant &json);
-
-esp_err_t mkdir(PsychicRequest *request, JsonVariant &json);
 } // namespace FileSystem

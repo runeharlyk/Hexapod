@@ -1,10 +1,11 @@
 #include <communication/espnow_adapter.h>
 
-#include <Arduino.h>
-#include <WiFi.h>
 #include <esp_wifi.h>
 #include <esp_log.h>
 #include <atomic>
+#include <cstring>
+
+#include <wifi/wifi_idf.h>
 
 #include <event_bus.h>
 #include <message_types.h>
@@ -12,8 +13,6 @@
 #include <features.h>
 
 static const char* TAG = "espnow";
-
-static std::atomic<uint32_t> s_lastRxMs {0};
 
 static std::atomic<MOTION_STATE> s_mode {MOTION_STATE::DEACTIVATED};
 static std::atomic<GaitType> s_gait {GaitType::TRI_GATE};
@@ -33,8 +32,6 @@ static void handlePacket(const uint8_t* data, int len) {
     controller_packet_t pkt;
     memcpy(&pkt, data, sizeof(pkt));
     if (pkt.version != CONTROLLER_PACKET_VERSION) return;
-
-    s_lastRxMs.store(millis(), std::memory_order_relaxed);  // mark controller "active"
 
     const bool rightHeld = pkt.buttons & BTN_RIGHT;
     const bool inStand = s_mode.load(std::memory_order_relaxed) == MOTION_STATE::STAND;
@@ -87,15 +84,17 @@ static void handlePacket(const uint8_t* data, int len) {
     }
 }
 
-#if ESP_IDF_VERSION_MAJOR >= 5
-void EspNowAdapter::onRecv(const esp_now_recv_info_t*, const uint8_t* data, int len) { handlePacket(data, len); }
-#else
-void EspNowAdapter::onRecv(const uint8_t*, const uint8_t* data, int len) { handlePacket(data, len); }
-#endif
-
-bool EspNowAdapter::controllerActive(uint32_t windowMs) {
-    uint32_t last = s_lastRxMs.load(std::memory_order_relaxed);
-    return last != 0 && (millis() - last) < windowMs;
+void EspNowAdapter::onRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
+    // One line the first time a frame lands, so "no reaction" can be told apart from "not heard".
+    // Silence after boot means the radio left the controller's channel -- see applyChannel().
+    static bool announced = false;
+    if (!announced && info && info->src_addr) {
+        announced = true;
+        const uint8_t* m = info->src_addr;
+        ESP_LOGI(TAG, "controller heard: %02x:%02x:%02x:%02x:%02x:%02x len=%d ver=%u", m[0], m[1], m[2], m[3],
+                 m[4], m[5], len, len > 0 ? data[0] : 0);
+    }
+    handlePacket(data, len);
 }
 
 void EspNowAdapter::begin() {
@@ -108,21 +107,42 @@ void EspNowAdapter::begin() {
     EventBus<ModeMsg>::consume([](const ModeMsg& m) { s_mode.store(m.mode, std::memory_order_relaxed); });
     EventBus<GaitMsg>::consume([](const GaitMsg& g) { s_gait.store(g.gait, std::memory_order_relaxed); });
 
+    // A STA join retunes the radio, so re-check on every connect and disconnect rather than only
+    // here -- at boot the join is still seconds away and this would always take the "free to pin"
+    // branch, then be overridden without a word.
+    WiFi.onEvent([](int32_t, void *) { applyChannel(); }, WIFI_EVENT_STA_CONNECTED);
+    WiFi.onEvent([](int32_t, void *) { applyChannel(); }, WIFI_EVENT_STA_DISCONNECTED);
+    applyChannel();
+}
+
+void EspNowAdapter::applyChannel() {
     uint8_t ch = 0;
     wifi_second_chan_t sc;
     esp_wifi_get_channel(&ch, &sc);
 
-    if (ch != ESPNOW_WIFI_CHANNEL) {
-        if (WiFi.status() != WL_CONNECTED) {
-            // AP-only / not joined to a router: safe to pin the radio.
-            esp_wifi_set_channel(ESPNOW_WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
-            ESP_LOGW(TAG, "locked radio to channel %d for ESP-NOW", ESPNOW_WIFI_CHANNEL);
-        } else {
-            ESP_LOGW(TAG,
-                     "STA connected on channel %u but controller uses %d — they MUST match; "
-                     "put the robot in AP mode on channel %d or the router on channel %d",
-                     ch, ESPNOW_WIFI_CHANNEL, ESPNOW_WIFI_CHANNEL, ESPNOW_WIFI_CHANNEL);
-        }
+    if (ch == ESPNOW_WIFI_CHANNEL) {
+        ESP_LOGI(TAG, "listening for the controller on channel %u", ch);
+        return;
     }
-    ESP_LOGI(TAG, "ESP-NOW controller receiver ready on channel %d", ESPNOW_WIFI_CHANNEL);
+
+    // Ask the driver whether the STA is associated rather than WiFi.isConnected(): our own status
+    // only flips on GOT_IP, which is a second or more after the join has already retuned the radio.
+    wifi_ap_record_t ap;
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+        // One radio serves STA, AP and ESP-NOW; the router owns the channel while joined.
+        ESP_LOGW(TAG,
+                 "DEAF to the controller: STA holds channel %u, controller broadcasts on %d. "
+                 "Run AP-only or move the router to channel %d.",
+                 ch, ESPNOW_WIFI_CHANNEL, ESPNOW_WIFI_CHANNEL);
+        return;
+    }
+
+    esp_err_t err = esp_wifi_set_channel(ESPNOW_WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
+    if (err != ESP_OK) {
+        // Usually a scan or join in flight; the next STA event re-runs this.
+        ESP_LOGI(TAG, "channel %u busy, deferring the move to %d (%s)", ch, ESPNOW_WIFI_CHANNEL,
+                 esp_err_to_name(err));
+        return;
+    }
+    ESP_LOGI(TAG, "moved radio from channel %u to %d for the controller", ch, ESPNOW_WIFI_CHANNEL);
 }

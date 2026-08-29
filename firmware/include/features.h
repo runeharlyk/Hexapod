@@ -1,48 +1,36 @@
 #ifndef Features_h
 #define Features_h
 
-#include <WiFi.h>
-#include <ArduinoJson.h>
-#include <PsychicHttp.h>
-
 #define FT_ENABLED(feature) feature
 
-// CAMERA off by default
 #ifndef USE_CAMERA
 #define USE_CAMERA 0
 #endif
 
-// IMU (MPU6050) on by default
 #ifndef USE_MPU6050
 #define USE_MPU6050 1
 #endif
 
-// IMU (BNO055) off by default
-#ifndef USE_BNO055
-#define USE_BNO055 0
-#endif
-
-// Magnetometer off by default
 #ifndef USE_MAG
 #define USE_MAG 0
 #endif
 
-// MDNS on by default
 #ifndef USE_MDNS
 #define USE_MDNS 1
 #endif
 
-// WEBAPP not embedded by default
 #ifndef EMBED_WEBAPP
 #define EMBED_WEBAPP 0
 #endif
 
-// ESP-NOW handheld controller receiver off by default
 #ifndef USE_ESPNOW
 #define USE_ESPNOW 0
 #endif
 
-// Wi-Fi channel the ESP-NOW controller broadcasts on (must match the controller)
+#ifndef USE_POLICY
+#define USE_POLICY 0
+#endif
+
 #ifndef ESPNOW_WIFI_CHANNEL
 #define ESPNOW_WIFI_CHANNEL 1
 #endif
@@ -50,10 +38,6 @@
 namespace feature_service {
 
 void printFeatureConfiguration();
-
-void features(JsonObject &root);
-
-esp_err_t getFeatures(PsychicRequest *request);
 
 } // namespace feature_service
 

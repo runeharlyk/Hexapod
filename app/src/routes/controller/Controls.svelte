@@ -3,6 +3,7 @@
   import { onDestroy, onMount } from 'svelte'
   import { capitalize } from '$lib/utilities'
   import { input, outControllerData, mode, gait } from '$lib/stores'
+  import { isLinked } from '$lib/stores/link'
   import type { ControllerInput, vector } from '$lib/types/models'
   import { VerticalSlider } from '$lib/components/input'
   import { MotionModes } from '$lib/motion'
@@ -232,6 +233,12 @@
         </div>
       {/if}
     </div>
+
+    {#if !$isLinked}
+      <div class="bg-base-300/70 flex shrink-0 items-center gap-2 rounded-tr-xl p-3">
+        <span class="badge badge-warning badge-sm shrink-0">Preview</span>
+      </div>
+    {/if}
   </div>
 </div>
 

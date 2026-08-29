@@ -7,6 +7,8 @@
 
   import { daisyColor } from '$lib/utilities'
   import { analytics } from '$lib/stores/analytics'
+  import { AnalyticsData } from '$lib/platform_shared/message'
+  import { dataBroker } from '$lib/transport/databroker'
   import { Metrics } from '$lib/components/icons'
 
   Chart.register(...registerables)
@@ -24,10 +26,11 @@
   let temperatureChart: Chart
 
   onMount(() => {
+    const unsubscribe = dataBroker.on(AnalyticsData, data => analytics.addData(data))
     cpuChart = new Chart(cpuChartElement, {
       type: 'line',
       data: {
-        labels: $analytics.cpu_usage,
+        labels: $analytics.uptime,
         datasets: [
           {
             label: 'Cpu usage core 0',
@@ -39,8 +42,8 @@
           },
           {
             label: 'Cpu usage core 1',
-            borderColor: daisyColor('--p'),
-            backgroundColor: daisyColor('--p', 50),
+            borderColor: daisyColor('--a'),
+            backgroundColor: daisyColor('--a', 50),
             borderWidth: 2,
             data: $analytics.cpu1_usage,
             yAxisID: 'y'
@@ -59,27 +62,14 @@
         maintainAspectRatio: false,
         responsive: true,
         plugins: {
-          legend: {
-            display: true
-          },
-          tooltip: {
-            mode: 'index',
-            intersect: false
-          }
+          legend: { display: true },
+          tooltip: { mode: 'index', intersect: false }
         },
-        elements: {
-          point: {
-            radius: 0
-          }
-        },
+        elements: { point: { radius: 0 } },
         scales: {
           x: {
-            grid: {
-              color: daisyColor('--bc', 10)
-            },
-            ticks: {
-              color: daisyColor('--bc')
-            },
+            grid: { color: daisyColor('--bc', 10) },
+            ticks: { color: daisyColor('--bc') },
             display: false
           },
           y: {
@@ -88,18 +78,13 @@
               display: true,
               text: 'Cpu usage [%]',
               color: daisyColor('--bc'),
-              font: {
-                size: 16,
-                weight: 'bold'
-              }
+              font: { size: 16, weight: 'bold' }
             },
             position: 'left',
             min: 0,
             max: 100,
             grid: { color: daisyColor('--bc', 10) },
-            ticks: {
-              color: daisyColor('--bc')
-            },
+            ticks: { color: daisyColor('--bc') },
             border: { color: daisyColor('--bc', 10) }
           }
         }
@@ -302,11 +287,15 @@
         }
       }
     })
-    setInterval(updateData, 500)
+    const interval = setInterval(updateData, 500)
+    return () => {
+      unsubscribe()
+      clearInterval(interval)
+    }
   })
 
   function updateData() {
-    cpuChart.data.labels = $analytics.cpu_usage
+    cpuChart.data.labels = $analytics.uptime
     cpuChart.data.datasets[0].data = $analytics.cpu0_usage
     cpuChart.data.datasets[1].data = $analytics.cpu1_usage
     cpuChart.data.datasets[2].data = $analytics.cpu_usage

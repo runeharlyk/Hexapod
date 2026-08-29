@@ -1,76 +1,91 @@
-#ifndef FSPersistence_h
-#define FSPersistence_h
+#pragma once
 
-/**
- *   ESP32 SvelteKit
- *
- *   A simple, secure and extensible framework for IoT projects for ESP32 platforms
- *   with responsive Sveltekit front-end built with TailwindCSS and DaisyUI.
- *   https://github.com/theelims/ESP32-sveltekit
- *
- *   Copyright (C) 2018 - 2023 rjwats
- *   Copyright (C) 2023 theelims
- *   Copyright (C) 2024 runeharlyk
- *
- *   All Rights Reserved. This software may be modified and distributed under
- *   the terms of the LGPL v3 license. See the LICENSE file for details.
- **/
-
-#include <FS.h>
 #include <template/stateful_service.h>
+#include <template/state_result.h>
 #include <filesystem.h>
+#include <pb_encode.h>
+#include <pb_decode.h>
+#include <cstdio>
+#include <sys/stat.h>
+#include <esp_log.h>
+#include <vector>
+
+static const char *TAG_PERSISTENCE = "FSPersistencePB";
 
 template <class T>
-class FSPersistence {
+class FSPersistencePB {
   public:
-    FSPersistence(JsonStateReader<T> stateReader, JsonStateUpdater<T> stateUpdater, StatefulService<T> *statefulService,
-                  const char *filePath)
+    using ProtoStateReader = std::function<void(const T &, T &)>;
+    using ProtoStateUpdater = std::function<StateUpdateResult(const T &, T &)>;
+
+    FSPersistencePB(ProtoStateReader stateReader, ProtoStateUpdater stateUpdater, StatefulService<T> *statefulService,
+                    const char *filePath, const pb_msgdesc_t *msgDescriptor, size_t maxSize, const T &defaultState)
         : _stateReader(stateReader),
           _stateUpdater(stateUpdater),
           _statefulService(statefulService),
           _filePath(filePath),
+          _msgDescriptor(msgDescriptor),
+          _maxSize(maxSize),
+          _defaultState(defaultState),
           _updateHandlerId(0) {
         enableUpdateHandler();
     }
 
     void readFromFS() {
-        File settingsFile = _fs->open(_filePath, "r");
+        FILE *file = fopen(_filePath, "rb");
 
-        if (settingsFile) {
-            JsonDocument jsonDocument;
-            DeserializationError error = deserializeJson(jsonDocument, settingsFile);
-            if (error == DeserializationError::Ok && jsonDocument.is<JsonObject>()) {
-                JsonObject jsonObject = jsonDocument.as<JsonObject>();
-                _statefulService->updateWithoutPropagation(jsonObject, _stateUpdater);
-                settingsFile.close();
-                return;
+        if (file) {
+            fseek(file, 0, SEEK_END);
+            size_t fileSize = ftell(file);
+            fseek(file, 0, SEEK_SET);
+
+            if (fileSize > 0 && fileSize <= _maxSize) {
+                std::vector<uint8_t> buffer(fileSize);
+                size_t bytesRead = fread(buffer.data(), 1, fileSize, file);
+                fclose(file);
+
+                if (bytesRead == fileSize) {
+                    T protoMsg = {};
+                    pb_istream_t stream = pb_istream_from_buffer(buffer.data(), bytesRead);
+
+                    if (pb_decode(&stream, _msgDescriptor, &protoMsg)) {
+                        _statefulService->updateWithoutPropagation(
+                            [this, &protoMsg](T &state) { return _stateUpdater(protoMsg, state); });
+                        return;
+                    }
+                }
+            } else {
+                fclose(file);
             }
-            settingsFile.close();
         }
 
-        // If we reach here we have not been successful in loading the config
-        // and hard-coded defaults are now applied. The settings are then
-        // written back to the file system so the defaults persist between
-        // resets. This last step is required as in some cases defaults contain
-        // randomly generated values which would otherwise be modified on reset.
         applyDefaults();
         writeToFS();
     }
 
     bool writeToFS() {
-        JsonDocument jsonDocument;
-        JsonObject jsonObject = jsonDocument.to<JsonObject>();
-        _statefulService->read(jsonObject, _stateReader);
+        std::vector<uint8_t> buffer(_maxSize);
+        pb_ostream_t stream = pb_ostream_from_buffer(buffer.data(), _maxSize);
+
+        T protoMsg = {};
+        _statefulService->read([this, &protoMsg](const T &state) { _stateReader(state, protoMsg); });
+
+        if (!pb_encode(&stream, _msgDescriptor, &protoMsg)) {
+            return false;
+        }
 
         mkdirs();
 
-        File file = _fs->open(_filePath, "w");
+        FILE *file = fopen(_filePath, "wb");
+        if (!file) {
+            ESP_LOGE(TAG_PERSISTENCE, "Failed to open file for writing: %s", _filePath);
+            return false;
+        }
 
-        if (!file) return false;
+        size_t written = fwrite(buffer.data(), 1, stream.bytes_written, file);
+        fclose(file);
 
-        serializeJson(jsonDocument, file);
-        file.close();
-        return true;
+        return written == stream.bytes_written;
     }
 
     void disableUpdateHandler() {
@@ -82,39 +97,34 @@ class FSPersistence {
 
     void enableUpdateHandler() {
         if (!_updateHandlerId) {
-            _updateHandlerId = _statefulService->addUpdateHandler([&](const String &originId) { writeToFS(); });
+            _updateHandlerId = _statefulService->addUpdateHandler([&](const std::string &originId) { writeToFS(); });
         }
     }
 
   private:
-    JsonStateReader<T> _stateReader;
-    JsonStateUpdater<T> _stateUpdater;
+    ProtoStateReader _stateReader;
+    ProtoStateUpdater _stateUpdater;
     StatefulService<T> *_statefulService;
-    FS *_fs {&ESP_FS};
     const char *_filePath;
-    size_t _bufferSize;
+    const pb_msgdesc_t *_msgDescriptor;
+    size_t _maxSize;
+    T _defaultState;
     HandlerId _updateHandlerId;
 
-    // We assume we have a _filePath with format
-    // "/directory1/directory2/filename" We create a directory for each missing
-    // parent
     void mkdirs() {
-        String path(_filePath);
-        int index = 0;
-        while ((index = path.indexOf('/', index + 1)) != -1) {
-            String segment = path.substring(0, index);
-            if (!_fs->exists(segment)) _fs->mkdir(segment);
+        std::string path(_filePath);
+        size_t index = 0;
+        while ((index = path.find('/', index + 1)) != std::string::npos) {
+            std::string segment = path.substr(0, index);
+            struct stat st;
+            if (stat(segment.c_str(), &st) != 0) {
+                FileSystem::mkdirRecursive(segment.c_str());
+            }
         }
     }
 
   protected:
-    // We assume the updater supplies sensible defaults if an empty object
-    // is supplied, this virtual function allows that to be changed.
-    virtual void applyDefaults() {
-        JsonDocument jsonDocument;
-        JsonObject jsonObject = jsonDocument.as<JsonObject>();
-        _statefulService->updateWithoutPropagation(jsonObject, _stateUpdater);
+    void applyDefaults() {
+        _statefulService->updateWithoutPropagation([this](T &state) { return _stateUpdater(_defaultState, state); });
     }
 };
-
-#endif // end FSPersistence

@@ -1,9 +1,14 @@
+#pragma once
+
 #include <template/stateful_service.h>
-#include <template/stateful_endpoint.h>
 #include <template/stateful_persistence.h>
 #include <settings/ap_settings.h>
 #include <utils/timing.h>
-#include <WiFi.h>
+#include <wifi/wifi_idf.h>
+#include <wifi/dns_server.h>
+#include <esp_timer.h>
+#include <string>
+#include <memory>
 
 class APService : public StatefulService<APSettings> {
   public:
@@ -14,22 +19,17 @@ class APService : public StatefulService<APSettings> {
     void loop();
     void recoveryMode();
 
-    esp_err_t getStatus(PsychicRequest *request);
-    void status(JsonObject &root);
+    void statusProto(api_APStatus &proto);
     APNetworkStatus getAPNetworkStatus();
-
-    StatefulHttpEndpoint<APSettings> endpoint;
+    void publishStatus();
 
   private:
-    PsychicHttpServer *_server;
-    FSPersistence<APSettings> _persistence;
-
-    DNSServer _dnsServer;
-    bool _dnsActive = false;
+    FSPersistencePB<APSettings> _persistence;
+    std::unique_ptr<DNSServer> _dnsServer;
 
     volatile unsigned long _lastManaged;
-    volatile boolean _reconfigureAp;
-    volatile boolean _recoveryMode = false;
+    volatile bool _reconfigureAp;
+    volatile bool _recoveryMode = false;
 
     void reconfigureAP();
     void manageAP();

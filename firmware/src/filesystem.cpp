@@ -1,108 +1,87 @@
 #include <filesystem.h>
 
-static const char *TAG = "FileService";
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
+#include <sys/stat.h>
+
+#include <esp_littlefs.h>
+#include <esp_log.h>
+
+static const char *TAG = "FileSystem";
 
 namespace FileSystem {
 
-PsychicUploadHandler *uploadHandler;
+bool mkdirRecursive(const char *path) {
+    char buf[256];
+    strncpy(buf, path, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = '\0';
 
-class Initializer {
-  public:
-    Initializer() {
-        uploadHandler = new PsychicUploadHandler();
-        uploadHandler->onUpload(uploadFile);
-        uploadHandler->onRequest([](PsychicRequest *request) { return request->reply(200); });
-    }
-};
-
-static Initializer initializer;
-
-esp_err_t getFiles(PsychicRequest *request) { return request->reply(200, "application/json", listFiles("/").c_str()); }
-
-esp_err_t handleDelete(PsychicRequest *request, JsonVariant &json) {
-    if (json.is<JsonObject>()) {
-        const char *filename = json["file"].as<const char *>();
-        ESP_LOGI(TAG, "Deleting file: %s", filename);
-        return deleteFile(filename) ? request->reply(200) : request->reply(500);
-    }
-    return request->reply(400);
-}
-
-esp_err_t handleEdit(PsychicRequest *request, JsonVariant &json) {
-    if (json.is<JsonObject>()) {
-        const char *filename = json["file"].as<const char *>();
-        const char *content = json["content"].as<const char *>();
-        ESP_LOGI(TAG, "Editing file: %s", filename);
-        return editFile(filename, content) ? request->reply(200) : request->reply(500);
-    }
-    return request->reply(400);
-}
-
-/* Helpers */
-
-bool deleteFile(const char *filename) { return ESP_FS.remove(filename); }
-
-String listFiles(const String &directory, bool isRoot) {
-    File root = ESP_FS.open(directory.startsWith("/") ? directory : "/" + directory);
-    if (!root.isDirectory()) return "{}";
-
-    File file = root.openNextFile();
-    String output = isRoot ? "{ \"root\": {" : "{";
-
-    while (file) {
-        if (file.isDirectory()) {
-            output += "\"" + String(file.name()) + "\": " + listFiles(file.name(), false) + ", ";
-        } else {
-            output += "\"" + String(file.name()) + "\": " + String(file.size()) + ", ";
+    for (char *p = buf + 1; *p; ++p) {
+        if (*p != '/') continue;
+        *p = '\0';
+        if (mkdir(buf, 0775) != 0 && errno != EEXIST) {
+            ESP_LOGE(TAG, "mkdir %s failed (errno %d)", buf, errno);
+            return false;
         }
-        file = root.openNextFile();
+        *p = '/';
     }
-
-    if (output.endsWith(", ")) {
-        output.remove(output.length() - 2);
+    if (mkdir(buf, 0775) != 0 && errno != EEXIST) {
+        ESP_LOGE(TAG, "mkdir %s failed (errno %d)", buf, errno);
+        return false;
     }
-
-    output += "}";
-    if (isRoot) output += "}";
-
-    return output;
-}
-
-esp_err_t uploadFile(PsychicRequest *request, const String &filename, uint64_t index, uint8_t *data, size_t len,
-                     bool last) {
-    File file;
-    String path = "/www/" + filename;
-    ESP_LOGI(TAG, "Writing %d/%d bytes to: %s\n", (int)index + (int)len, request->contentLength(), path.c_str());
-
-    if (last) ESP_LOGI(TAG, "%s is finished. Total bytes: %d\n", path.c_str(), (int)index + (int)len);
-
-    file = LittleFS.open(path, !index ? FILE_WRITE : FILE_APPEND);
-    if (!file) {
-        ESP_LOGE(TAG, "Failed to open file");
-        return ESP_FAIL;
-    }
-
-    if (!file.write(data, len)) {
-        ESP_LOGE(TAG, "Write failed");
-        return ESP_FAIL;
-    }
-
-    return ESP_OK;
-}
-
-bool editFile(const char *filename, const char *content) {
-    File file = ESP_FS.open(filename, FILE_WRITE);
-    if (!file) return false;
-
-    file.print(content);
-    file.close();
     return true;
 }
 
-esp_err_t mkdir(PsychicRequest *request, JsonVariant &json) {
-    const char *path = json["path"].as<const char *>();
-    ESP_LOGI(TAG, "Creating directory: %s", path);
-    return ESP_FS.mkdir(path) ? request->reply(200) : request->reply(500);
+bool init() {
+    esp_vfs_littlefs_conf_t conf = {
+        .base_path = MOUNT_POINT,
+        .partition_label = FS_PARTITION_LABEL,
+        .format_if_mount_failed = true,
+        .dont_mount = false,
+    };
+
+    esp_err_t ret = esp_vfs_littlefs_register(&conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to mount LittleFS (%s)", esp_err_to_name(ret));
+        return false;
+    }
+
+    size_t total = 0, used = 0;
+    if (esp_littlefs_info(FS_PARTITION_LABEL, &total, &used) == ESP_OK) {
+        ESP_LOGI(TAG, "LittleFS mounted at %s: %u/%u bytes used", MOUNT_POINT, (unsigned)used, (unsigned)total);
+    }
+
+    mkdirRecursive(FS_CONFIG_DIRECTORY);
+    return true;
+}
+
+bool exists(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0;
+}
+
+bool readFile(const char *path, std::string &out) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+    char buf[512];
+    size_t n;
+    out.clear();
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) out.append(buf, n);
+    fclose(f);
+    return true;
+}
+
+bool writeFile(const char *path, const char *content) {
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        ESP_LOGE(TAG, "Failed to open %s for writing", path);
+        return false;
+    }
+    size_t len = strlen(content);
+    bool ok = fwrite(content, 1, len, f) == len;
+    fclose(f);
+    return ok;
 }
 
 } // namespace FileSystem

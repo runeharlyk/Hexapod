@@ -5,7 +5,6 @@
   import { Cancel } from './icons'
   import { modals, exitBeforeEnter, onBeforeClose } from 'svelte-modals'
 
-  // provided by <Modals />
   interface Props {
     isOpen: boolean
   }
@@ -37,7 +36,6 @@
     } else if ($telemetry.download_ota.status == 'finished') {
       message = 'Restarting ...'
       progress = 0
-      // Reload page after 5 sec
       setTimeout(() => {
         modals.closeAll()
         location.reload()
@@ -47,7 +45,6 @@
 
   onBeforeClose(() => {
     if (updating) {
-      // prevents modal from closing
       return false
     } else {
       $telemetry.download_ota.status = 'idle'

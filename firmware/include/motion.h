@@ -1,13 +1,19 @@
 #ifndef MotionService_h
 #define MotionService_h
 
+#include <esp_log.h>
+#include <esp_timer.h>
 #include <kinematics.h>
 #include <peripherals/servo_controller.h>
+#include <peripherals/peripherals.h>
 #include <utils/timing.h>
 #include <utils/math_utils.h>
 #include <gait.h>
 #include <event_bus.h>
 #include <message_types.h>
+
+static inline unsigned long millis() { return (unsigned long)(esp_timer_get_time() / 1000); }
+static inline unsigned long micros() { return (unsigned long)esp_timer_get_time(); }
 
 class MotionService {
   public:
@@ -17,26 +23,22 @@ class MotionService {
     void begin() {
         ESP_LOGI("MotionService", "Subscribing to event buses...");
         _cmdSubHandle = EventBus<CommandMsg>::subscribe([&](CommandMsg const &c) {
-            ESP_LOGI("MotionService", "COMMAND callback called");
+            ESP_LOGD("MotionService", "COMMAND callback called");
             handleCommand(c);
         });
         _modeSubHandle = EventBus<ModeMsg>::subscribe([&](ModeMsg const &c) {
-            ESP_LOGI("MotionService", "MODE callback called with mode %d", (int)c.mode);
+            ESP_LOGD("MotionService", "MODE callback called with mode %d", (int)c.mode);
             handleInputMode(c);
         });
         _gaitSubHandle = EventBus<GaitMsg>::subscribe([&](GaitMsg const &c) {
-            ESP_LOGI("MotionService", "GAIT callback called with gait %d", (int)c.gait);
+            ESP_LOGD("MotionService", "GAIT callback called with gait %d", (int)c.gait);
             handleInputGait(c);
         });
         _angleSubHandle = EventBus<ServoAnglesMsg>::subscribe([&](ServoAnglesMsg const &s) {
-            ESP_LOGI("MotionService", "ANGLES callback called");
+            ESP_LOGD("MotionService", "ANGLES callback called");
             handleAnglesEvent(s);
         });
         ESP_LOGI("MotionService", "Event bus subscriptions completed");
-        // TODO: Add body state
-        // _positionSubHandle = EventBus::subscribe<Gait>([&](Gait const &c) { handleInputGait(c); });
-
-        // TODO: Send joint angles on subscribe
         body_state.updateFeet(default_feet_pos);
         EventBus<ModeMsg>::publish({motionState});
         EventBus<GaitMsg>::publish({gait_state.gait_type});
@@ -81,10 +83,36 @@ class MotionService {
                 gait_state.step_z = c.ly * 100;
                 gait_state.step_angle = c.rx * 0.8;
                 gait_state.step_speed = c.s + 1.f;
-                gait_state.step_height = (c.s1 + 1.f) * 20.f;
-                gait_state.step_depth = 0.002f;
+                if (gait_state.gait_type == GaitType::TUNED) {
+                    // The searched gait is a VELOCITY -> gait map, not a direct stride map: stride
+                    // and cadence were optimized together, so driving stride from the stick while
+                    // leaving cadence to the legacy law reproduces neither. The stick therefore
+                    // becomes a velocity command over the range the search covered.
+                    const float cmd[3] = {c.ly * TUNED_CMD_VX_MAX, -c.lx * TUNED_CMD_VY_MAX,
+                                          c.rx * TUNED_CMD_YAW_MAX};
+                    float a[6];
+                    tuned_gait::velocity_to_gait(cmd, a);
+                    gait_state.step_x = a[0] * tuned_gait::STEP_XY_MM;
+                    gait_state.step_z = a[1] * tuned_gait::STEP_XY_MM;
+                    gait_state.step_angle = a[2] * tuned_gait::STEP_ANGLE_RAD;
+                    // s1 trims foot lift around the searched value rather than setting it from
+                    // zero; the old (s1+1)*20 mapping tops out at 40 mm and cannot express 68 mm.
+                    gait_state.step_height =
+                        CLIP(tuned_gait::STEP_HEIGHT_MM + c.s1 * TUNED_LIFT_TRIM_MM,
+                             tuned_gait::STEP_HEIGHT_MIN_MM, tuned_gait::STEP_HEIGHT_MAX_MM);
+                    gait_state.step_depth = tuned_gait::STEP_DEPTH_MM;
+                    gait_state.phase_rate =
+                        tuned_gait::PHASE_RATE_MIN +
+                        (a[5] + 1.f) * 0.5f * (tuned_gait::PHASE_RATE_MAX - tuned_gait::PHASE_RATE_MIN);
+                    target_body_state.zm = -tuned_gait::RIDE_MM;
+                } else {
+                    gait_state.step_height = (c.s1 + 1.f) * 20.f;
+                    gait_state.step_depth = 0.002f;
+                    gait_state.phase_rate = 0.f;  // legacy stride-derived cadence
+                }
                 break;
             }
+            default: break;
         }
     }
 
@@ -96,23 +124,23 @@ class MotionService {
             case MOTION_STATE::IDLE: return false;
             case MOTION_STATE::POSE: _servoController->setCenterPwm(); return false;
             case MOTION_STATE::STAND: {
-                body_state.xm = lerp(body_state.xm, target_body_state.xm, smoothing_factor);
-                body_state.ym = lerp(body_state.ym, target_body_state.ym, smoothing_factor);
-                body_state.zm = lerp(body_state.zm, target_body_state.zm, smoothing_factor);
-                body_state.phi = lerp(body_state.phi, target_body_state.phi + _peripherals->angleY(), smoothing_factor);
+                body_state.xm = lerpf(body_state.xm, target_body_state.xm, smoothing_factor);
+                body_state.ym = lerpf(body_state.ym, target_body_state.ym, smoothing_factor);
+                body_state.zm = lerpf(body_state.zm, target_body_state.zm, smoothing_factor);
+                body_state.phi = lerpf(body_state.phi, target_body_state.phi + _peripherals->angleY(), smoothing_factor);
                 body_state.omega =
-                    lerp(body_state.omega, target_body_state.omega + _peripherals->angleX(), smoothing_factor);
+                    lerpf(body_state.omega, target_body_state.omega + _peripherals->angleX(), smoothing_factor);
                 gait.step(gait_state, body_state, dt);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
             }
             case MOTION_STATE::WALK: {
-                body_state.xm = lerp(body_state.xm, target_body_state.xm, smoothing_factor);
-                body_state.ym = lerp(body_state.ym, target_body_state.ym, smoothing_factor);
-                body_state.zm = lerp(body_state.zm, target_body_state.zm, smoothing_factor);
-                body_state.phi = lerp(body_state.phi, target_body_state.phi + _peripherals->angleY(), smoothing_factor);
+                body_state.xm = lerpf(body_state.xm, target_body_state.xm, smoothing_factor);
+                body_state.ym = lerpf(body_state.ym, target_body_state.ym, smoothing_factor);
+                body_state.zm = lerpf(body_state.zm, target_body_state.zm, smoothing_factor);
+                body_state.phi = lerpf(body_state.phi, target_body_state.phi + _peripherals->angleY(), smoothing_factor);
                 body_state.omega =
-                    lerp(body_state.omega, target_body_state.omega + _peripherals->angleX(), smoothing_factor);
+                    lerpf(body_state.omega, target_body_state.omega + _peripherals->angleX(), smoothing_factor);
                 gait.step(gait_state, body_state, dt);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
@@ -142,6 +170,16 @@ class MotionService {
 
     const float smoothing_factor = 0.06f;
     static constexpr unsigned long COMMAND_TIMEOUT_MS = 2000;
+    // GaitType::TUNED fixes foot lift at tuned_gait::STEP_HEIGHT_MM; the s1 slider trims around it
+    // rather than setting it from zero, so the operator keeps authority without being able to
+    // discard the one parameter the terrain search cared most about.
+    static constexpr float TUNED_LIFT_TRIM_MM = 15.0f;
+    // Stick -> velocity command ranges for GaitType::TUNED. These mirror CMD_VX/CMD_VY/CMD_YAW in
+    // hexapod_mj_env.py: the envelope the gait was actually searched over. Commanding outside it
+    // asks for a gait nobody measured.
+    static constexpr float TUNED_CMD_VX_MAX = 0.45f;   // m/s forward
+    static constexpr float TUNED_CMD_VY_MAX = 0.12f;   // m/s lateral
+    static constexpr float TUNED_CMD_YAW_MAX = 1.0f;   // rad/s
     static constexpr float FEET_DISTANCE_SCALE_MIN = 0.75f;
     static constexpr float FEET_DISTANCE_SCALE_MAX = 1.25f;
     static constexpr float FEET_DISTANCE_SCALE_RANGE = FEET_DISTANCE_SCALE_MAX - FEET_DISTANCE_SCALE_MIN;

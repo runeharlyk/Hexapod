@@ -2,12 +2,13 @@
   import { useFeatureFlags } from '$lib/stores'
   import { modals } from 'svelte-modals'
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte'
-  import { api } from '$lib/api'
+  import { SystemCommandData, SystemCommand } from '$lib/platform_shared/message'
+  import { dataBroker } from '$lib/transport/databroker'
   import { Cancel, Power } from '../icons'
 
   const features = useFeatureFlags()
 
-  const postSleep = async () => await api.post('/api/system/sleep')
+  const postSleep = () => dataBroker.emit(SystemCommandData, { command: SystemCommand.SYS_SLEEP })
 
   const confirmSleep = () => {
     modals.open(ConfirmDialog, {
