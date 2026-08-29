@@ -10,3 +10,4 @@ socket_message.StaticSystemInformation.sdk_version max_size:16
 socket_message.StaticSystemInformation.cpu_reset_reason max_size:24
 socket_message.FeaturesDataResponse.firmware_name max_size:32
 socket_message.FeaturesDataResponse.firmware_version max_size:16
+socket_message.OtaStatusData.error max_size:48

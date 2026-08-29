@@ -30,6 +30,7 @@ enum GaitEnum {
   BI_GATE = 1;
   WAVE = 2;
   RIPPLE = 3;
+  TUNED = 4;
 }
 
 message ControllerInputData {
@@ -129,6 +130,8 @@ message CorrelationRequest {
     api.MDNSQueryRequest mdns_query = 71;
     api.ServoSettingsRequest servo_settings_get = 80;
     api.ServoSettings servo_settings_update = 81;
+    api.PeripheralSettingsRequest peripheral_settings_get = 90;
+    api.PeripheralSettings peripheral_settings_update = 91;
   }
 }
 
@@ -147,7 +150,21 @@ message CorrelationResponse {
     api.MDNSStatus mdns_status = 70;
     api.MDNSQueryResponse mdns_query_response = 71;
     api.ServoSettings servo_settings = 80;
+    api.PeripheralSettings peripheral_settings = 90;
   }
+}
+
+// Progress of a firmware update the robot is applying itself (github download or upload).
+enum OtaState {
+  OTA_IDLE = 0;
+  OTA_PROGRESS = 1;
+  OTA_FINISHED = 2;
+  OTA_ERROR = 3;
+}
+message OtaStatusData {
+  OtaState state = 1;
+  uint32 progress = 2;  // percent of the image written, 0-100
+  string error = 3;
 }
 
 // SYS_NONE=0 is a no-op so an empty frame can't trigger a reboot.
@@ -181,5 +198,6 @@ message Message {
     SystemCommandData system_command = 120;
     api.WifiStatus wifi_status = 250;  // observable status: pushed on change (connect/disconnect)
     api.APStatus ap_status = 251;      // observable status: pushed on AP up/down/station change
+    OtaStatusData ota_status = 270;    // observable status: pushed while a firmware update runs
   }
 }

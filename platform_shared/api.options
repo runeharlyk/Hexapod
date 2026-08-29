@@ -61,4 +61,6 @@ api.PinConfig.mode max_size:16
 api.PinConfig.type max_size:16
 api.PinConfig.role max_size:16
 
-api.PeripheralSettings.pins max_count:32
+# Firmware does not implement per-pin configuration; skip the field rather than
+# statically allocating 32 PinConfig entries in every copy of the message.
+api.PeripheralSettings.pins type:FT_IGNORE

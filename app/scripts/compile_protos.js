@@ -3,7 +3,7 @@
 // compiles with nanopb. Uses python's grpc_tools.protoc as the protoc (the same dependency
 // the firmware pipeline already needs) with a small node wrapper for the ts-proto plugin —
 // the npm-bundled protoc mishandles the plugin stdio on Windows.
-import { execFileSync, execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import { createRequire } from 'module'
 import fs from 'fs'
 import os from 'os'
