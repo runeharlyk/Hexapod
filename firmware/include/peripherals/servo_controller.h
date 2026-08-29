@@ -37,7 +37,12 @@ enum class SERVO_CONTROL_STATE { DEACTIVATED, PWM, ANGLE };
 
 class ServoController {
   public:
-    ServoController() : _left_pca(0x40), _right_pca(0x41) {}
+    // The PCA9685 channel span is a property of the wiring, not of whether calculatePWM() has run yet.
+    ServoController() : _left_pca(0x40), _right_pca(0x41) {
+        for (const ServoCfg &servo : cfg) {
+            if (servo.pin + 1 > channel_count) channel_count = servo.pin + 1;
+        }
+    }
 
     void begin() {
         if (!I2CBus::instance().isInitialized()) {
@@ -93,12 +98,9 @@ class ServoController {
             left_pwm[sl.pin] = (uint16_t)((target_angles[i] + sl.centerAngle) * sl.direction * sl.conversion + sl.centerPwm);
             right_pwm[sr.pin] =
                 (uint16_t)((target_angles[i + 9] + sr.centerAngle) * sr.direction * sr.conversion + sr.centerPwm);
-
-            if (sl.pin > max_pin_used) max_pin_used = sl.pin;
-            if (sr.pin > max_pin_used) max_pin_used = sr.pin;
         }
-        _left_pca.setMultiplePWM(left_pwm, max_pin_used + 1);
-        _right_pca.setMultiplePWM(right_pwm, max_pin_used + 1);
+        _left_pca.setMultiplePWM(left_pwm, channel_count);
+        _right_pca.setMultiplePWM(right_pwm, channel_count);
     }
 
     // Pins are hardware; only the angle->PWM fields come from the proto.
@@ -117,8 +119,8 @@ class ServoController {
             left_pwm[cfg[i].pin] = cfg[i].centerPwm;
             right_pwm[cfg[i + 9].pin] = cfg[i + 9].centerPwm;
         }
-        _left_pca.setMultiplePWM(left_pwm, max_pin_used + 1);
-        _right_pca.setMultiplePWM(right_pwm, max_pin_used + 1);
+        _left_pca.setMultiplePWM(left_pwm, channel_count);
+        _right_pca.setMultiplePWM(right_pwm, channel_count);
     }
 
     void updateServoState() {
@@ -127,6 +129,10 @@ class ServoController {
 
   private:
     void pcaWrite(int index, int value) {
+        if (index < 0 || index >= NUM_SERVO) {
+            ESP_LOGE(TAG, "Invalid servo id %d (0-%d)", index, NUM_SERVO - 1);
+            return;
+        }
         if (value < 0 || value > 4096) {
             ESP_LOGE(TAG, "Invalid PWM %d for servo %d (0-4096)", value, index);
             return;
@@ -150,7 +156,7 @@ class ServoController {
 
     uint16_t left_pwm[16] = {0};
     uint16_t right_pwm[16] = {0};
-    uint8_t max_pin_used = 0;
+    uint8_t channel_count = 0;
 
     SERVO_CONTROL_STATE control_state = SERVO_CONTROL_STATE::DEACTIVATED;
     bool is_active{false};

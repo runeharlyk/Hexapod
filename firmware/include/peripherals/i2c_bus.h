@@ -9,6 +9,29 @@
 #include <cstring>
 
 class I2CBus {
+    static constexpr const char* TAG = "I2CBus";
+    static constexpr TickType_t TRANSFER_TIMEOUT = pdMS_TO_TICKS(200);
+    static constexpr TickType_t LOCK_TIMEOUT = pdMS_TO_TICKS(50);
+
+    // Bounded acquisition: a caller that cannot get the bus fails its transfer instead of blocking the
+    // 5 ms control loop. Recursive because begin() -> end() and scan() -> probe() re-enter.
+    class Lock {
+      public:
+        explicit Lock(SemaphoreHandle_t mutex)
+            : _mutex(mutex), _held(xSemaphoreTakeRecursive(mutex, LOCK_TIMEOUT) == pdTRUE) {}
+        ~Lock() {
+            if (_held) xSemaphoreGiveRecursive(_mutex);
+        }
+        Lock(const Lock&) = delete;
+        Lock& operator=(const Lock&) = delete;
+
+        bool held() const { return _held; }
+
+      private:
+        SemaphoreHandle_t _mutex;
+        bool _held;
+    };
+
   public:
     static I2CBus& instance() {
         static I2CBus inst;
@@ -16,6 +39,9 @@ class I2CBus {
     }
 
     esp_err_t begin(gpio_num_t sda, gpio_num_t scl, uint32_t freq = 100000, i2c_port_t port = I2C_NUM_0) {
+        Lock lock(_mutex);
+        if (!lock.held()) return ESP_ERR_TIMEOUT;
+
         if (_initialized) {
             end();
         }
@@ -48,6 +74,9 @@ class I2CBus {
     }
 
     void end() {
+        Lock lock(_mutex);
+        if (!lock.held()) return;
+
         if (_initialized) {
             if (_dev) {
                 i2c_master_bus_rm_device(_dev);
@@ -62,19 +91,25 @@ class I2CBus {
 
     bool isInitialized() const { return _initialized; }
 
-    i2c_master_bus_handle_t busHandle() const { return _bus; }
 
     esp_err_t writeBytes(uint8_t addr, const uint8_t* data, size_t len) {
+        Lock lock(_mutex);
+        if (!lock.held()) return ESP_ERR_TIMEOUT;
         if (!_initialized) return ESP_ERR_INVALID_STATE;
+
         esp_err_t err = ensureDevice(addr);
         if (err != ESP_OK) return err;
-        return i2c_master_transmit(_dev, data, len, pdMS_TO_TICKS(200));
+        return i2c_master_transmit(_dev, data, len, TRANSFER_TIMEOUT);
     }
 
     esp_err_t writeReg(uint8_t addr, uint8_t reg, const uint8_t* data, size_t len) {
-        if (!_initialized) return ESP_ERR_INVALID_STATE;
         // Bounded stack buffer (no VLA); 64 covers the largest write (PCA9685).
         if (len > 64) return ESP_ERR_INVALID_SIZE;
+
+        Lock lock(_mutex);
+        if (!lock.held()) return ESP_ERR_TIMEOUT;
+        if (!_initialized) return ESP_ERR_INVALID_STATE;
+
         esp_err_t err = ensureDevice(addr);
         if (err != ESP_OK) return err;
 
@@ -83,21 +118,29 @@ class I2CBus {
         if (len > 0 && data != nullptr) {
             memcpy(buf + 1, data, len);
         }
-        return i2c_master_transmit(_dev, buf, len + 1, pdMS_TO_TICKS(200));
+        return i2c_master_transmit(_dev, buf, len + 1, TRANSFER_TIMEOUT);
     }
 
     esp_err_t readReg(uint8_t addr, uint8_t reg, uint8_t* data, size_t len) {
+        Lock lock(_mutex);
+        if (!lock.held()) return ESP_ERR_TIMEOUT;
         if (!_initialized) return ESP_ERR_INVALID_STATE;
+
         esp_err_t err = ensureDevice(addr);
         if (err != ESP_OK) return err;
-        return i2c_master_transmit_receive(_dev, &reg, 1, data, len, pdMS_TO_TICKS(200));
+        return i2c_master_transmit_receive(_dev, &reg, 1, data, len, TRANSFER_TIMEOUT);
     }
 
     bool probe(uint8_t addr) {
+        Lock lock(_mutex);
+        if (!lock.held()) return false;
         if (!_initialized) return false;
-        return i2c_master_probe(_bus, addr, pdMS_TO_TICKS(200)) == ESP_OK;
+
+        return i2c_master_probe(_bus, addr, TRANSFER_TIMEOUT) == ESP_OK;
     }
 
+    // Deliberately unlocked: each probe() takes the lock on its own so a 127-address sweep from the
+    // service task cannot starve the 5 ms control loop for the whole scan.
     std::vector<uint8_t> scan(uint8_t lower = 1, uint8_t upper = 127) {
         std::vector<uint8_t> devices;
         if (!_initialized) return devices;
@@ -112,18 +155,17 @@ class I2CBus {
         return devices;
     }
 
-    i2c_port_t port() const { return _port; }
-    gpio_num_t sda() const { return _sda; }
-    gpio_num_t scl() const { return _scl; }
-    uint32_t freq() const { return _freq; }
 
   private:
-    I2CBus() = default;
-    ~I2CBus() { end(); }
+    I2CBus() : _mutex(xSemaphoreCreateRecursiveMutex()) {}
+    ~I2CBus() {
+        end();
+        vSemaphoreDelete(_mutex);
+    }
     I2CBus(const I2CBus&) = delete;
     I2CBus& operator=(const I2CBus&) = delete;
 
-    static constexpr const char* TAG = "I2CBus";
+    SemaphoreHandle_t _mutex;
     i2c_port_t _port = I2C_NUM_0;
     gpio_num_t _sda = GPIO_NUM_NC;
     gpio_num_t _scl = GPIO_NUM_NC;

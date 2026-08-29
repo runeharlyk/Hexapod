@@ -1,49 +1,43 @@
 #pragma once
 
-#include <vector>
-#include <ArduinoJson.h>
+#include <platform_shared/api.pb.h>
 #include <template/state_result.h>
+#include <event_bus.h>
 
-/*
- * I2C software connection
- */
 #ifndef SDA_PIN
-#define SDA_PIN SDA
+#define SDA_PIN 47
 #endif
 #ifndef SCL_PIN
-#define SCL_PIN SCL
-#endif
-#ifndef I2C_FREQUENCY
-#define I2C_FREQUENCY 1000000UL
+#define SCL_PIN 21
 #endif
 
-class PinConfig {
-  public:
-    int pin;
-    String mode;
-    String type;
-    String role;
+using PeripheralSettings = api_PeripheralSettings;
 
-    PinConfig(int p, String m, String t, String r) : pin(p), mode(m), type(t), role(r) {}
-};
+// One shallow slot: the I2C pin/frequency config is a rare snapshot, not a stream.
+using PeripheralSettingsBus = EventBus<PeripheralSettings, 2, 2, 1>;
 
-class PeripheralsConfiguration {
-  public:
-    int sda = SDA_PIN;
-    int scl = SCL_PIN;
-    long frequency = I2C_FREQUENCY;
-    std::vector<PinConfig> pins;
+inline PeripheralSettings PeripheralSettings_defaults() {
+    PeripheralSettings settings = api_PeripheralSettings_init_zero;
+    settings.sda = SDA_PIN;
+    settings.scl = SCL_PIN;
+    settings.frequency = 400000;
+    return settings;
+}
 
-    static void read(PeripheralsConfiguration &settings, JsonObject &root) {
-        root["sda"] = settings.sda;
-        root["scl"] = settings.scl;
-        root["frequency"] = settings.frequency;
+inline void PeripheralSettings_read(const PeripheralSettings &settings, PeripheralSettings &proto) {
+    proto = settings;
+}
+
+inline StateUpdateResult PeripheralSettings_update(const PeripheralSettings &proto, PeripheralSettings &settings) {
+    // Bounds match the app's form: any GPIO on the S3, and the I2C standard/fast/fast-plus range.
+    if (proto.sda < 0 || proto.sda > 48 || proto.scl < 0 || proto.scl > 48) return StateUpdateResult::ERROR;
+    if (proto.sda == proto.scl) return StateUpdateResult::ERROR;
+    if (proto.frequency < 100000 || proto.frequency > 1000000) return StateUpdateResult::ERROR;
+
+    if (proto.sda == settings.sda && proto.scl == settings.scl && proto.frequency == settings.frequency) {
+        return StateUpdateResult::UNCHANGED;
     }
 
-    static StateUpdateResult update(JsonObject &root, PeripheralsConfiguration &settings) {
-        settings.sda = root["sda"] | SDA_PIN;
-        settings.scl = root["scl"] | SCL_PIN;
-        settings.frequency = root["frequency"] | I2C_FREQUENCY;
-        return StateUpdateResult::CHANGED;
-    };
-};
+    settings = proto;
+    return StateUpdateResult::CHANGED;
+}

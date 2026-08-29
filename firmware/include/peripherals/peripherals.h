@@ -6,9 +6,14 @@
 #include <features.h>
 #include <message_types.h>
 #include <peripherals/i2c_bus.h>
+#include <settings/peripherals_settings.h>
 
 #if FT_ENABLED(USE_MPU6050)
 #include <peripherals/drivers/mpu6050.h>
+#endif
+
+#if FT_ENABLED(USE_MAG)
+#include <peripherals/drivers/hmc5883.h>
 #endif
 
 #ifndef SDA_PIN
@@ -22,12 +27,21 @@ class Peripherals {
   public:
     void begin() {
         if (!I2CBus::instance().isInitialized()) {
-            I2CBus::instance().begin(static_cast<gpio_num_t>(SDA_PIN), static_cast<gpio_num_t>(SCL_PIN), 400000);
+            PeripheralSettings cfg = PeripheralSettings_defaults();
+            PeripheralSettingsBus::peek(cfg);  // stored config if the service published first
+            ESP_LOGI(TAG, "I2C bus sda=%d scl=%d %d Hz", (int)cfg.sda, (int)cfg.scl, (int)cfg.frequency);
+            I2CBus::instance().begin(static_cast<gpio_num_t>(cfg.sda), static_cast<gpio_num_t>(cfg.scl),
+                                     (uint32_t)cfg.frequency);
         }
 #if FT_ENABLED(USE_MPU6050)
         _imuReady = _imu.begin();
         if (!_imuReady) ESP_LOGW(TAG, "MPU6050 init failed");
         else ESP_LOGI(TAG, "MPU6050 ready");
+#endif
+#if FT_ENABLED(USE_MAG)
+        _magReady = _mag.begin();
+        if (!_magReady) ESP_LOGW(TAG, "HMC5883 init failed");
+        else ESP_LOGI(TAG, "HMC5883 ready");
 #endif
     }
 
@@ -58,6 +72,32 @@ class Peripherals {
 #endif
     }
 
+    bool readMagnetometer() {
+#if FT_ENABLED(USE_MAG)
+        if (!_magReady) return false;
+        return _mag.update();
+#else
+        return false;
+#endif
+    }
+
+    bool magActive() const {
+#if FT_ENABLED(USE_MAG)
+        return _magReady;
+#else
+        return false;
+#endif
+    }
+
+    // Compass heading in degrees, 0 = magnetic north + declination. 0 when absent.
+    float heading() const {
+#if FT_ENABLED(USE_MAG)
+        return _magReady ? _mag.getHeading() : 0.0f;
+#else
+        return 0.0f;
+#endif
+    }
+
     IMUAnglesMsg getIMUAngles() {
         IMUAnglesMsg msg;
 #if FT_ENABLED(USE_MPU6050)
@@ -67,6 +107,9 @@ class Peripherals {
         msg.temperature = _imu.getTemperature();
         msg.success = _imuReady;
 #endif
+#if FT_ENABLED(USE_MAG)
+        msg.heading = heading();
+#endif
         return msg;
     }
 
@@ -75,5 +118,9 @@ class Peripherals {
 #if FT_ENABLED(USE_MPU6050)
     MPU6050Driver _imu;
     bool _imuReady{false};
+#endif
+#if FT_ENABLED(USE_MAG)
+    HMC5883Driver _mag;
+    bool _magReady{false};
 #endif
 };
