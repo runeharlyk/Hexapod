@@ -76,6 +76,4 @@
       </button>
     {/if}
   </div>
-
-  <button class="btn btn-primary" onclick={() => ble.send('hello')}>Send</button>
 </SettingsCard>

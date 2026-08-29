@@ -3,10 +3,11 @@
   import { RotateCcw, RotateCw } from '$lib/components/icons'
   import { dataBroker } from '$lib/transport/databroker'
   import { notifications } from '$lib/components/toasts/notifications'
+  import type { Servo } from '$lib/platform_shared/api'
 
   let { pwm = $bindable(306), servoId = $bindable(0) } = $props()
 
-  let servos: any[] = $state([])
+  let servos: Servo[] = $state([])
 
   const load = async () => {
     const res = await dataBroker.request({ servoSettingsGet: {} }).catch(() => null)
@@ -30,7 +31,9 @@
   const toggleDirection = (index: number) =>
     (servos[index].direction = servos[index].direction === 1 ? -1 : 1)
 
-  const updateValue = (event: Event, index: number, key: string) =>
+  type NumericServoField = 'centerPwm' | 'centerAngle' | 'conversion'
+
+  const updateValue = (event: Event, index: number, key: NumericServoField) =>
     (servos[index][key] = Number((event.target as HTMLInputElement).value))
 </script>
 

@@ -3,16 +3,27 @@
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte'
   import SettingsCard from '$lib/components/SettingsCard.svelte'
 
-  import { api } from '$lib/api'
+  import { resolveUrl } from '$lib/proto-api'
+  import { notifications } from '$lib/components/toasts/notifications'
   import { Cancel, OTA, Warning } from '$lib/components/icons'
 
-  let files: FileList = $state()
+  let files: FileList | undefined = $state()
 
   async function uploadBIN() {
-    const formData = new FormData()
-    formData.append('file', files[0])
-    const result = await api.post('/api/firmware', formData)
-    if (result.isErr()) console.error('Error:', result.inner)
+    const file = files?.[0]
+    if (!file) return
+    // Sent as the raw request body: /api/firmware streams it into the inactive OTA slot, so there
+    // is no multipart envelope for the firmware to unwrap.
+    const res = await fetch(resolveUrl('/api/firmware'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: file
+    }).catch(() => null)
+    if (!res?.ok) {
+      notifications.error('Firmware upload failed.', 5000)
+      return
+    }
+    notifications.success('Firmware written - the robot is restarting.', 5000)
   }
 
   function confirmBinUpload() {
@@ -41,8 +52,8 @@
   <div class="alert alert-warning shadow-lg">
     <Warning class="h-6 w-6 shrink-0" />
     <span
-      >Uploading a new firmware (.bin) file will replace the existing firmware. You may upload a
-      (.md5) file first to verify the uploaded firmware.
+      >Uploading a new firmware (.bin) file will replace the existing firmware. The bootloader
+      verifies the image, and a firmware that fails to boot rolls back to the running one.
     </span>
   </div>
 
@@ -51,7 +62,7 @@
     id="binFile"
     class="file-input file-input-bordered file-input-secondary mt-4 w-full"
     bind:files
-    accept=".bin,.md5"
+    accept=".bin"
     onchange={confirmBinUpload}
   />
 </SettingsCard>

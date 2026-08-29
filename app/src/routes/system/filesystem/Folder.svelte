@@ -2,12 +2,13 @@
   import Folder from './Folder.svelte'
   import File from './File.svelte'
   import { FolderIcon, FolderOpenOutline } from '$lib/components/icons'
+  import type { Directory } from '$lib/types/models'
 
   interface Props {
     expanded?: boolean
     name: string
     path?: string
-    files: any
+    files: Directory
     selected: (path: string) => void
     onDelete: (path: string) => void
   }
@@ -34,7 +35,13 @@
       {#each Object.entries(files) as [itemName, content]}
         <li class="py-1">
           {#if typeof content === 'object'}
-            <Folder name={itemName} path={`${path}/${itemName}`} files={content} {selected} {onDelete} />
+            <Folder
+              name={itemName}
+              path={`${path}/${itemName}`}
+              files={content}
+              {selected}
+              {onDelete}
+            />
           {:else}
             <File name={itemName} path={`${path}/${itemName}`} {selected} {onDelete} />
           {/if}

@@ -2,15 +2,15 @@
   import { onMount } from 'svelte'
   import SettingsCard from '$lib/components/SettingsCard.svelte'
   import { AP, Home, MAC, Devices } from '$lib/components/icons'
-  import Spinner from '$lib/components/Spinner.svelte'
   import StatusItem from '$lib/components/StatusItem.svelte'
   import { cubicOut } from 'svelte/easing'
   import { slide } from 'svelte/transition'
   import { compareIp } from '$lib/utilities'
   import { dataBroker } from '$lib/transport/databroker'
+  import type { MDNSQueryResult, MDNSStatus } from '$lib/platform_shared/api'
 
-  let mdnsStatus: any = $state()
-  let services: any[] = $state([])
+  let mdnsStatus: MDNSStatus | undefined = $state()
+  let services: MDNSQueryResult[] = $state([])
   let isLoading = $state(false)
 
   const getMDNSStatus = async () => {

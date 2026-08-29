@@ -1,5 +1,4 @@
 <script lang="ts">
-  import SettingsCard from '$lib/components/SettingsCard.svelte'
   import Spinner from '$lib/components/Spinner.svelte'
   import Folder from './Folder.svelte'
   import { api } from '$lib/api'
@@ -111,7 +110,7 @@
       <Folder
         name="/"
         path=""
-        files={files.root}
+        files={files.root as Directory}
         expanded
         selected={updateSelected}
         onDelete={deleteFile}
@@ -143,7 +142,7 @@
 
       {#await getContent(filename)}
         <Spinner />
-      {:then _}
+      {:then}
         {#if isEditing}
           <textarea
             class="w-full h-[300px] sm:h-[500px] font-mono p-2 bg-gray-800 text-white"

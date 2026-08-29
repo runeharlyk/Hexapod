@@ -63,8 +63,6 @@
     </button>
   {/snippet}
 
-  <I2CSetting />
-
   <div class="grid">
     {#if active_devices.length === 0}
       <div>No I2C devices found</div>
@@ -75,3 +73,5 @@
     {/if}
   </div>
 </SettingsCard>
+
+<I2CSetting />

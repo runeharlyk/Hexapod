@@ -13,12 +13,20 @@
   import type { NetworkItem } from '$lib/types/models'
   import Spinner from '$lib/components/Spinner.svelte'
   import InfoDialog from '$lib/components/InfoDialog.svelte'
-  import type { KnownNetworkItem } from '$lib/types/models'
+  import type { KnownNetworkItem, WifiStatus as WifiStatusView } from '$lib/types/models'
   import { ipToString, ipToU32 } from '$lib/proto-api'
   import { dataBroker } from '$lib/transport/databroker'
-  import { WifiStatus } from '$lib/platform_shared/api'
+  import { WifiStatus, type WifiNetwork } from '$lib/platform_shared/api'
 
-  const netToForm = (n: any): KnownNetworkItem => ({
+  // The page keeps the UI's snake_case shape; the proto carries IPs as uint32.
+  type WifiSettingsForm = {
+    hostname: string
+    priority_rssi: boolean
+    selected_network: number
+    wifi_networks: KnownNetworkItem[]
+  }
+
+  const netToForm = (n: WifiNetwork): KnownNetworkItem => ({
     ssid: n.ssid,
     password: n.password,
     static_ip_config: n.staticIpConfig,
@@ -75,14 +83,30 @@
   let newNetwork: boolean = $state(true)
   let showNetworkEditor: boolean = $state(false)
 
-  let wifiStatus: any = $state()
-  let wifiSettings: any = $state()
+  let wifiStatus: WifiStatusView = $state({
+    status: 0,
+    local_ip: '',
+    mac_address: '',
+    rssi: 0,
+    ssid: '',
+    bssid: '',
+    channel: 0,
+    subnet_mask: '',
+    gateway_ip: '',
+    dns_ip_1: ''
+  })
+  let wifiSettings: WifiSettingsForm = $state({
+    hostname: 'hexapod',
+    priority_rssi: true,
+    selected_network: 0,
+    wifi_networks: []
+  })
 
   let dndNetworkList: KnownNetworkItem[] = $state([])
 
   let showWifiDetails = $state(false)
 
-  let formField: any = $state()
+  let formField: HTMLFormElement | undefined = $state()
 
   let formErrors = $state({
     ssid: false,
@@ -98,7 +122,7 @@
   const pageAbort = new AbortController()
   onDestroy(() => pageAbort.abort())
 
-  const applyWifiStatus = (s: any) => {
+  const applyWifiStatus = (s: WifiStatus) => {
     wifiStatus = {
       status: s.status,
       local_ip: ipToString(s.localIp),
@@ -143,7 +167,7 @@
     }
   }
 
-  async function postWiFiSettings(data: any) {
+  async function postWiFiSettings(data: WifiSettingsForm) {
     try {
       const res = await dataBroker.request({
         wifiSettingsUpdate: {
@@ -557,7 +581,7 @@
             <label class="label inline-flex cursor-pointer content-end justify-start gap-4">
               <input
                 type="checkbox"
-                bind:checked={wifiSettings.priority_RSSI}
+                bind:checked={wifiSettings.priority_rssi}
                 class="checkbox checkbox-primary sm:-mb-5"
               />
               <span class="sm:-mb-5">Connect to strongest WiFi</span>

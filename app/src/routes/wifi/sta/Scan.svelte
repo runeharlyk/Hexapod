@@ -5,7 +5,9 @@
   import RssiIndicator from '$lib/components/statusbar/RSSIIndicator.svelte'
   import type { NetworkItem } from '$lib/types/models'
   import { dataBroker } from '$lib/transport/databroker'
+  import type { CorrelationResponse } from '$lib/platform_shared/message'
   import { AP, Network, Reload, Cancel, WiFi } from '$lib/components/icons'
+  import { notifications } from '$lib/components/toasts/notifications'
   import { modals, exitBeforeEnter } from 'svelte-modals'
 
   interface Props {
@@ -33,36 +35,76 @@
   let scanActive = $state(false)
   let scanError = $state('')
 
-  let pollingId: number
+  const POLL_INTERVAL_MS = 1000
+  // A flaky link shouldn't abort a scan that is otherwise working, but an unreachable robot
+  // must not be polled forever - every attempt holds a 15 s correlation slot.
+  const MAX_CONSECUTIVE_FAILURES = 3
+  const MAX_POLL_ATTEMPTS = 20
+
+  let pollTimer: ReturnType<typeof setTimeout> | undefined
+  let consecutiveFailures = 0
+  let pollAttempts = 0
 
   function stopPolling() {
-    if (pollingId) {
-      clearInterval(pollingId)
-      pollingId = 0
-    }
+    clearTimeout(pollTimer)
+    pollTimer = undefined
+  }
+
+  function abortScan(message: string, notify = true) {
+    stopPolling()
+    scanActive = false
+    scanError = message
+    if (notify) notifications.error(message, 5000)
   }
 
   async function scanNetworks() {
+    stopPolling()
     scanActive = true
     scanError = ''
     listOfNetworks = []
-    // One wifiNetworksGet both starts the scan and returns results once ready; poll until they come.
-    if (!(await pollingResults())) {
-      pollingId = setInterval(() => pollingResults(), 1000)
-    }
+    consecutiveFailures = 0
+    pollAttempts = 0
+    await pollUntilResults()
   }
 
-  async function pollingResults() {
-    const res = await dataBroker.request({ wifiNetworksGet: {} }).catch(() => null)
-    // 503: the radio can't scan while mid-connection to a saved network — stop, don't poll forever.
-    if (res?.statusCode === 503) {
-      scanActive = false
-      scanError = "Can't scan while the robot is connecting to Wi-Fi. Fix or clear the saved network first."
-      stopPolling()
-      return 1
+  // One wifiNetworksGet both starts the scan and returns results once ready; poll until they come.
+  // The next poll is armed only after the previous one settles, so slow requests can't pile up.
+  async function pollUntilResults() {
+    if (await pollResults()) return
+    pollTimer = setTimeout(pollUntilResults, POLL_INTERVAL_MS)
+  }
+
+  /** Resolves true once the scan has reached a terminal state (results, empty, or failure). */
+  async function pollResults(): Promise<boolean> {
+    pollAttempts += 1
+    let res: CorrelationResponse
+    try {
+      res = await dataBroker.request({ wifiNetworksGet: {} })
+    } catch (error) {
+      consecutiveFailures += 1
+      if (consecutiveFailures < MAX_CONSECUTIVE_FAILURES) return false
+      const reason = error instanceof Error ? error.message : String(error)
+      abortScan(`Wi-Fi scan failed - is the robot connected? (${reason})`)
+      return true
     }
-    const networks = res?.wifiNetworkList?.networks
-    if (!networks || networks.length === 0) return 0
+    consecutiveFailures = 0
+
+    // 503: the radio can't scan while mid-connection to a saved network — stop, don't poll forever.
+    if (res.statusCode === 503) {
+      abortScan(
+        "Can't scan while the robot is connecting to Wi-Fi. Fix or clear the saved network first."
+      )
+      return true
+    }
+
+    const networks = res.wifiNetworkList?.networks
+    if (!networks?.length) {
+      // The robot answers with an empty list until the scan finishes; give it a bounded wait.
+      if (pollAttempts < MAX_POLL_ATTEMPTS) return false
+      abortScan('No Wi-Fi networks found.', false)
+      return true
+    }
+
     listOfNetworks = networks.map(
       (n): NetworkItem => ({
         rssi: n.rssi,
@@ -72,24 +114,16 @@
         encryption_type: n.encryptionType
       })
     )
+    stopPolling()
     scanActive = false
-    if (listOfNetworks.length) {
-      clearInterval(pollingId)
-      pollingId = 0
-    }
-    return listOfNetworks.length
+    return true
   }
 
   onMount(() => {
     scanNetworks()
   })
 
-  onDestroy(() => {
-    if (pollingId) {
-      clearInterval(pollingId)
-      pollingId = 0
-    }
-  })
+  onDestroy(stopPolling)
 </script>
 
 {#if isOpen}
@@ -116,7 +150,7 @@
           </div>
         {:else}
           <ul class="menu">
-            {#each listOfNetworks as network, i}
+            {#each listOfNetworks as network}
               <li>
                 <div class="bg-base-200 rounded-btn my-1 flex items-center gap-2 p-0">
                   <!-- Click the row for advanced setup (static IP etc.); the button connects directly. -->

@@ -8,21 +8,34 @@
   import SettingsCard from '$lib/components/SettingsCard.svelte'
   import { notifications } from '$lib/components/toasts/notifications'
   import Spinner from '$lib/components/Spinner.svelte'
-  import { useFeatureFlags } from '$lib/stores'
   import { AP, Devices, Home, MAC } from '$lib/components/icons'
   import StatusItem from '$lib/components/StatusItem.svelte'
   import { ipToString, ipToU32 } from '$lib/proto-api'
   import { dataBroker } from '$lib/transport/databroker'
   import { APStatus } from '$lib/platform_shared/api'
+  import type { ApSettings, ApStatus } from '$lib/types/models'
 
-  const features = useFeatureFlags()
+  let apSettings: ApSettings = $state({
+    provision_mode: 0,
+    ssid: '',
+    password: '',
+    channel: 1,
+    ssid_hidden: false,
+    max_clients: 4,
+    local_ip: '',
+    gateway_ip: '',
+    subnet_mask: ''
+  })
+  let apStatus: ApStatus = $state({
+    status: 1,
+    ip_address: '',
+    mac_address: '',
+    station_num: 0
+  })
 
-  let apSettings: any = $state()
-  let apStatus: any = $state()
+  let formField: HTMLFormElement | undefined = $state()
 
-  let formField: any = $state()
-
-  const applyApStatus = (s: any) => {
+  const applyApStatus = (s: APStatus) => {
     apStatus = {
       status: s.status,
       ip_address: ipToString(s.ipAddress),
@@ -182,7 +195,7 @@
   <div class="w-full overflow-x-auto">
     {#await getAPStatus()}
       <Spinner />
-    {:then nothing}
+    {:then}
       <div
         class="flex w-full flex-col space-y-1"
         transition:slide|local={{ duration: 300, easing: cubicOut }}
@@ -211,7 +224,7 @@
     </div>
     {#await getAPSettings()}
       <Spinner />
-    {:then nothing}
+    {:then}
       <div
         class="flex flex-col gap-2 p-0"
         transition:slide|local={{ duration: 300, easing: cubicOut }}

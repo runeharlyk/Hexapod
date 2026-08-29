@@ -32,6 +32,7 @@
     Temperature,
     Stopwatch
   } from '$lib/components/icons'
+  import type { IconComponent } from '$lib/components/icons'
   import StatusItem from '$lib/components/StatusItem.svelte'
   import ActionButton from './ActionButton.svelte'
 
@@ -47,8 +48,7 @@
     analytics = info?.analyticsData
   }
 
-  const sendCommand = (command: SystemCommand) =>
-    dataBroker.emit(SystemCommandData, { command })
+  const sendCommand = (command: SystemCommand) => dataBroker.emit(SystemCommandData, { command })
 
   const postFactoryReset = () => sendCommand(SystemCommand.SYS_RESET)
 
@@ -106,7 +106,7 @@
   }
 
   interface ActionButtonDef {
-    icon: any
+    icon: IconComponent
     label: string
     onClick: () => void
     type?: string
@@ -156,7 +156,11 @@
           description={`${staticInfo?.cpuType} (${staticInfo?.espPlatform})`}
         />
 
-        <StatusItem icon={SDK} title="SDK Version" description={`ESP-IDF ${staticInfo?.sdkVersion}`} />
+        <StatusItem
+          icon={SDK}
+          title="SDK Version"
+          description={`ESP-IDF ${staticInfo?.sdkVersion}`}
+        />
 
         <StatusItem
           icon={CPP}

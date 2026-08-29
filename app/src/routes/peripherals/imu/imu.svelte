@@ -9,7 +9,8 @@
   import { dataBroker } from '$lib/transport/databroker'
   import { IMUData } from '$lib/platform_shared/message'
   import { useFeatureFlags } from '$lib/stores/featureFlags'
-  import { Rotate3d } from '$lib/components/icons'
+  import { Compass, Rotate3d } from '$lib/components/icons'
+  import StatusItem from '$lib/components/StatusItem.svelte'
 
   const features = useFeatureFlags()
 
@@ -285,6 +286,15 @@
       >
         <canvas bind:this={angleChartElement}></canvas>
       </div>
+    </div>
+  {/if}
+  {#if $features.mag}
+    <div class="flex flex-col">
+      <StatusItem
+        icon={Compass}
+        title="Compass heading"
+        description={$imu.heading.length ? `${$imu.heading.at(-1)?.toFixed(1)} deg` : 'no reading'}
+      />
     </div>
   {/if}
   {#if $features.bmp}
