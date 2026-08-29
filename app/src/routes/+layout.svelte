@@ -106,13 +106,13 @@
 
 <Modals>
   {#snippet backdrop()}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
+    <button
+      type="button"
+      aria-label="Close modal"
       class="fixed inset-0 z-40 max-h-full max-w-full bg-black/20 backdrop-blur-sm"
       transition:fade
       onclick={modals.closeAll}
-    ></div>
+    ></button>
   {/snippet}
 </Modals>
 

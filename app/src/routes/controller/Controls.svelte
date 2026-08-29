@@ -17,8 +17,6 @@
   let left: nipplejs.JoystickManager
   let right: nipplejs.JoystickManager
 
-  const modeLabel = (value: MotionModes) => capitalize(value)
-
   const syncCommand = (i: ControllerInput) => {
     outControllerData.set([
       i.left.x,
@@ -177,7 +175,7 @@
             class:btn-error={$mode === modeValue && modeValue === MotionModes.DEACTIVATED}
             onclick={() => requestMode(modeValue)}
           >
-            {modeLabel(modeValue)}
+            {capitalize(modeValue)}
           </button>
         {/each}
         {#if $mode === MotionModes.WALK}
