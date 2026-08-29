@@ -134,6 +134,12 @@ class WebServer {
     static esp_err_t httpHandler(httpd_req_t* req);
     static esp_err_t wsHandler(httpd_req_t* req);
 
+    // httpd close_fn: runs for every terminated session, not just a graceful WebSocket CLOSE.
+    static void sessionClosed(httpd_handle_t hd, int sockfd);
+
+    // Caller must hold wsMutex_; frames from different tasks would otherwise interleave on one socket.
+    esp_err_t wsSendFrame(int sockfd, const uint8_t* data, size_t len);
+
     void applyDefaultHeaders(httpd_req_t* req);
     esp_err_t registerRoute(const HttpRoute& route);
 };

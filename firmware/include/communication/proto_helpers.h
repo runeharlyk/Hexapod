@@ -35,6 +35,7 @@ DEFINE_MESSAGE_TRAITS(AnalyticsData, analytics)
 DEFINE_MESSAGE_TRAITS(CorrelationRequest, correlation_request)
 DEFINE_MESSAGE_TRAITS(CorrelationResponse, correlation_response)
 DEFINE_MESSAGE_TRAITS(SystemCommandData, system_command)
+DEFINE_MESSAGE_TRAITS(OtaStatusData, ota_status)
 
 #undef DEFINE_MESSAGE_TRAITS
 

@@ -1,5 +1,6 @@
 #include <communication/webserver.h>
 #include <esp_log.h>
+#include <unistd.h>
 #include <cstring>
 #include <algorithm>
 
@@ -23,6 +24,21 @@ void WebServer::config(size_t maxUriHandlers, size_t stackSize) {
     config_.max_resp_headers = 16;
     config_.lru_purge_enable = true;
     config_.uri_match_fn = httpd_uri_match_wildcard;
+
+    // close_fn runs for every terminated session; the CLOSE-frame path alone misses a dropped TCP
+    // connection, leaving the client subscribed and every later emit failing to send.
+    config_.global_user_ctx = this;
+    config_.close_fn = &WebServer::sessionClosed;
+}
+
+void WebServer::sessionClosed(httpd_handle_t hd, int sockfd) {
+    auto* self = static_cast<WebServer*>(httpd_get_global_user_ctx(hd));
+    if (self) {
+        self->removeWsClient(sockfd);
+        if (self->wsCloseHandler_) self->wsCloseHandler_(sockfd);
+    }
+    // The server only closes the socket itself when no custom close_fn is set.
+    close(sockfd);
 }
 
 esp_err_t WebServer::listen(uint16_t port) {
@@ -58,15 +74,20 @@ esp_err_t WebServer::httpHandler(httpd_req_t* req) {
     WebServer* self = static_cast<WebServer*>(req->user_ctx);
     self->applyDefaultHeaders(req);
 
+    // req->uri still carries the query string, so match on the path portion only -- otherwise every
+    // endpoint taking a query parameter (e.g. /api/files/content?path=...) falls through to the 404.
+    const char* queryStart = strchr(req->uri, '?');
+    const size_t pathLen = queryStart ? static_cast<size_t>(queryStart - req->uri) : strlen(req->uri);
+
     for (const auto& route : self->routes_) {
         if (route.isWebsocket) continue;
 
         bool uriMatch = false;
         if (route.uri.back() == '*') {
-            std::string prefix = route.uri.substr(0, route.uri.length() - 1);
-            uriMatch = strncmp(req->uri, prefix.c_str(), prefix.length()) == 0;
+            size_t prefixLen = route.uri.length() - 1;
+            uriMatch = pathLen >= prefixLen && strncmp(req->uri, route.uri.c_str(), prefixLen) == 0;
         } else {
-            uriMatch = strcmp(req->uri, route.uri.c_str()) == 0;
+            uriMatch = pathLen == route.uri.length() && strncmp(req->uri, route.uri.c_str(), pathLen) == 0;
         }
 
         if (uriMatch && route.method == req->method) {
@@ -259,7 +280,7 @@ std::vector<int> WebServer::getWsClients() {
     return clients;
 }
 
-esp_err_t WebServer::wsSend(int sockfd, const uint8_t* data, size_t len) {
+esp_err_t WebServer::wsSendFrame(int sockfd, const uint8_t* data, size_t len) {
     httpd_ws_frame_t frame = {.final = true,
                               .fragmented = false,
                               .type = HTTPD_WS_TYPE_BINARY,
@@ -268,10 +289,17 @@ esp_err_t WebServer::wsSend(int sockfd, const uint8_t* data, size_t len) {
     return httpd_ws_send_frame_async(server_, sockfd, &frame);
 }
 
+esp_err_t WebServer::wsSend(int sockfd, const uint8_t* data, size_t len) {
+    xSemaphoreTake(wsMutex_, portMAX_DELAY);
+    esp_err_t result = wsSendFrame(sockfd, data, len);
+    xSemaphoreGive(wsMutex_);
+    return result;
+}
+
 esp_err_t WebServer::wsSendAll(const uint8_t* data, size_t len) {
     xSemaphoreTake(wsMutex_, portMAX_DELAY);
     for (int sockfd : wsClients_) {
-        wsSend(sockfd, data, len);
+        wsSendFrame(sockfd, data, len);
     }
     xSemaphoreGive(wsMutex_);
     return ESP_OK;
