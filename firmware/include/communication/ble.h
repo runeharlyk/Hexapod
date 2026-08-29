@@ -12,9 +12,15 @@
 #define BLE_CHARACTERISTIC_TX "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 #define BLE_CHARACTERISTIC_RX "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 
+// Upper bound for a single GATT write; the app chunks to the MTU, well below this.
 #ifndef BLE_MAX_MESSAGE_SIZE
 #define BLE_MAX_MESSAGE_SIZE 512
 #endif
+
+// A reassembled frame spans several writes and can outgrow one (a WiFi settings update is ~730 bytes), so it is
+// bounded by the same size the encoder uses. Anything longer is a corrupted length prefix.
+static constexpr size_t BLE_MAX_FRAME_SIZE = PROTO_BUFFER_SIZE;
+static constexpr size_t BLE_RX_BUFFER_LIMIT = 2 * BLE_MAX_FRAME_SIZE;
 
 struct BLEMessage {
     uint8_t data[BLE_MAX_MESSAGE_SIZE];

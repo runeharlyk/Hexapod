@@ -96,10 +96,21 @@ void BLE::messageProcessingTask(void *parameter) {
 
 // Framing is [uint16 LE length][payload] chunked to the MTU; rebuild each complete message here.
 void BLE::reassemble(const uint8_t *data, size_t len) {
+    if (_rxBuffer.size() + len > BLE_RX_BUFFER_LIMIT) {
+        ESP_LOGW(TAG, "RX buffer would exceed %u bytes, dropping stream to resync", (unsigned)BLE_RX_BUFFER_LIMIT);
+        _rxBuffer.clear();
+        return;
+    }
+
     _rxBuffer.insert(_rxBuffer.end(), data, data + len);
     size_t pos = 0;
     while (_rxBuffer.size() - pos >= 2) {
         size_t msgLen = _rxBuffer[pos] | (_rxBuffer[pos + 1] << 8);
+        if (msgLen == 0 || msgLen > BLE_MAX_FRAME_SIZE) {
+            ESP_LOGW(TAG, "Bogus frame length %u, dropping stream to resync", (unsigned)msgLen);
+            _rxBuffer.clear();
+            return;
+        }
         if (_rxBuffer.size() - pos < 2 + msgLen) break;
         handleIncoming(_rxBuffer.data() + pos + 2, msgLen, 0);
         pos += 2 + msgLen;
