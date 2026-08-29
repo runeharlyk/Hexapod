@@ -14,6 +14,8 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <functional>
+#include <map>
 #include <memory>
 #include <string>
 
@@ -280,11 +282,36 @@ static void emitAll(const T &msg) {
     bleAdapter.emit(msg);
 }
 
+// A bridge holds its EventBus subscription only while some client is listening for that tag, so
+// producers can skip work nobody will receive.
+static std::map<int32_t, std::function<void(bool)>> &bridges() {
+    static std::map<int32_t, std::function<void(bool)>> registry;
+    return registry;
+}
+
+static bool anyoneListening(int32_t tag) {
+    return wsSocket.hasSubscribers(tag) || bleAdapter.hasSubscribers(tag);
+}
+
+static void refreshBridge(int32_t tag) {
+    auto it = bridges().find(tag);
+    if (it != bridges().end()) it->second(anyoneListening(tag));
+}
+
+template <typename Msg, typename Fn>
+static void addBridge(int32_t tag, Fn fn) {
+    static typename EventBus<Msg>::Handle handle;
+    bridges()[tag] = [fn, tag](bool wanted) {
+        if (wanted == handle.valid()) return;
+        ESP_LOGD(TAG, "bridge tag %d %s", (int)tag, wanted ? "attached" : "detached");
+        if (wanted) handle = EventBus<Msg>::subscribe(fn);
+        else handle.unsubscribe();
+    };
+}
+
 template <typename ProtoT>
 static void observeStatus() {
-    // consume(), not subscribe(): the returned Handle unsubscribes on destruction, so dropping it
-    // tears the subscription down again immediately.
-    EventBus<ProtoT>::consume([](const ProtoT &s) { emitAll(s); });
+    addBridge<ProtoT>(MessageTraits<ProtoT>::tag, [](const ProtoT &s) { emitAll(s); });
 }
 
 static void initNvs() {
@@ -339,14 +366,17 @@ static void setupComm() {
     registerHandlers(wsSocket);
     registerHandlers(bleAdapter);
 
-    EventBus<ServoAnglesMsg>::consume([](const ServoAnglesMsg &a) {
+    wsSocket.onSubscriptionChange(refreshBridge);
+    bleAdapter.onSubscriptionChange(refreshBridge);
+
+    addBridge<ServoAnglesMsg>(MessageTraits<socket_message_AnglesData>::tag, [](const ServoAnglesMsg &a) {
         socket_message_AnglesData out = socket_message_AnglesData_init_zero;
         out.angles_count = NUM_SERVO;
         for (int i = 0; i < NUM_SERVO; i++) out.angles[i] = static_cast<int32_t>(lroundf(a.angles[i]));
         emitAll(out);
     });
 
-    EventBus<IMUAnglesMsg>::consume([](const IMUAnglesMsg &m) {
+    addBridge<IMUAnglesMsg>(MessageTraits<socket_message_IMUData>::tag, [](const IMUAnglesMsg &m) {
         socket_message_IMUData out = socket_message_IMUData_init_zero;
         out.x = m.rpy[0];
         out.y = m.rpy[1];
@@ -406,10 +436,14 @@ static void serviceLoop(void *) {
         wifiService.loop();
         apService.loop();
         EXECUTE_EVERY_N_MS(2000, {
-            socket_message_AnalyticsData a = socket_message_AnalyticsData_init_zero;
+            // sample() keeps running regardless: its uint32 idle-counter deltas only stay valid
+            // over short windows. fillAnalytics() stats the filesystem, so that waits for a client.
             cpuMonitor.sample();
-            fillAnalytics(a);
-            emitAll(a);
+            if (anyoneListening(MessageTraits<socket_message_AnalyticsData>::tag)) {
+                socket_message_AnalyticsData a = socket_message_AnalyticsData_init_zero;
+                fillAnalytics(a);
+                emitAll(a);
+            }
         });
         vTaskDelay(pdMS_TO_TICKS(100));
     }

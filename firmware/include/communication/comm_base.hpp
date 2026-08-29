@@ -7,6 +7,7 @@
 #include <functional>
 #include <list>
 #include <map>
+#include <vector>
 #include <type_traits>
 #include <communication/proto_helpers.h>
 
@@ -32,6 +33,9 @@ class CommAdapterBase {
     }
 
     ProtoDecoder& decoder() { return decoder_; }
+
+    // Fired when a tag gains its first subscriber or loses its last.
+    void onSubscriptionChange(std::function<void(int32_t)> cb) { tagChangeCb_ = std::move(cb); }
 
     template <typename T>
     void on(std::function<void(const T&, int)> handler) {
@@ -80,27 +84,43 @@ class CommAdapterBase {
   protected:
     virtual void send(const uint8_t* data, size_t len, int cid = -1) = 0;
 
+    // The callbacks below fire outside mutex_: a handler asks every adapter whether the tag still
+    // has listeners, which re-enters this lock.
     void subscribe(int32_t tag, int cid = 0) {
+        bool first;
         {
             ScopedLock lock(mutex_);
-            client_subscriptions_[tag].push_back(cid);
+            auto& clients = client_subscriptions_[tag];
+            first = clients.empty();
+            clients.push_back(cid);
         }
+        if (first) notifyTagChange(tag);
         ESP_LOGI("ProtoComm", "Client %d subscribed to tag %d", cid, (int)tag);
     }
 
     void unsubscribe(int32_t tag, int cid = 0) {
+        bool last;
         {
             ScopedLock lock(mutex_);
-            client_subscriptions_[tag].remove(cid);
+            auto& clients = client_subscriptions_[tag];
+            clients.remove(cid);
+            last = clients.empty();
         }
+        if (last) notifyTagChange(tag);
         ESP_LOGI("ProtoComm", "Client %d unsubscribed from tag %d", cid, (int)tag);
     }
 
     void removeClient(int cid) {
-        ScopedLock lock(mutex_);
-        for (auto& [tag, clients] : client_subscriptions_) {
-            clients.remove(cid);
+        std::vector<int32_t> emptied;
+        {
+            ScopedLock lock(mutex_);
+            for (auto& [tag, clients] : client_subscriptions_) {
+                if (clients.empty()) continue;
+                clients.remove(cid);
+                if (clients.empty()) emptied.push_back(tag);
+            }
         }
+        for (int32_t tag : emptied) notifyTagChange(tag);
     }
 
     void handleIncoming(const uint8_t* data, size_t len, int cid) {
@@ -164,6 +184,11 @@ class CommAdapterBase {
     SemaphoreHandle_t mutex_;
     SemaphoreHandle_t encodeMutex_;
     std::map<int32_t, std::list<int>> client_subscriptions_;
+    std::function<void(int32_t)> tagChangeCb_;
+
+    void notifyTagChange(int32_t tag) {
+        if (tagChangeCb_) tagChangeCb_(tag);
+    }
     ProtoDecoder decoder_;
     socket_message_Message msg_ = socket_message_Message_init_zero;
     uint8_t enc_buf_[PROTO_BUFFER_SIZE];
