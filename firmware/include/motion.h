@@ -54,6 +54,11 @@ class MotionService {
         ESP_LOGI("MotionService", "Gait %d", g.gait);
         gait_state.gait_type = g.gait;
         gait.setGait(gait_state);
+        // The schedule switches outright; only the command eases. Keep the target's identity fields
+        // in step so a later ramp never reads a stale gait.
+        target_gait_state.gait_type = gait_state.gait_type;
+        target_gait_state.stand_frac = gait_state.stand_frac;
+        for (int i = 0; i < 6; i++) target_gait_state.offset[i] = gait_state.offset[i];
     }
 
     void handleInputMode(ModeMsg const &m) {
@@ -73,16 +78,16 @@ class MotionService {
                 target_body_state.xm = c.lx * 50.f;
                 target_body_state.ym = -c.ly * 50.f;
                 target_body_state.phi = c.rx * 0.254f;
-                gait_state.step_x = 0;
-                gait_state.step_z = 0;
-                gait_state.step_angle = 0;
+                target_gait_state.step_x = 0;
+                target_gait_state.step_z = 0;
+                target_gait_state.step_angle = 0;
                 break;
             }
             case MOTION_STATE::WALK: {
-                gait_state.step_x = -c.lx * 100;
-                gait_state.step_z = c.ly * 100;
-                gait_state.step_angle = c.rx * 0.8;
-                gait_state.step_speed = c.s + 1.f;
+                target_gait_state.step_x = -c.lx * 100;
+                target_gait_state.step_z = c.ly * 100;
+                target_gait_state.step_angle = c.rx * 0.8;
+                target_gait_state.step_speed = c.s + 1.f;
                 if (gait_state.gait_type == GaitType::TUNED) {
                     // The searched gait is a VELOCITY -> gait map, not a direct stride map: stride
                     // and cadence were optimized together, so driving stride from the stick while
@@ -92,23 +97,23 @@ class MotionService {
                                           c.rx * TUNED_CMD_YAW_MAX};
                     float a[6];
                     tuned_gait::velocity_to_gait(cmd, a);
-                    gait_state.step_x = a[0] * tuned_gait::STEP_XY_MM;
-                    gait_state.step_z = a[1] * tuned_gait::STEP_XY_MM;
-                    gait_state.step_angle = a[2] * tuned_gait::STEP_ANGLE_RAD;
+                    target_gait_state.step_x = a[0] * tuned_gait::STEP_XY_MM;
+                    target_gait_state.step_z = a[1] * tuned_gait::STEP_XY_MM;
+                    target_gait_state.step_angle = a[2] * tuned_gait::STEP_ANGLE_RAD;
                     // s1 trims foot lift around the searched value rather than setting it from
                     // zero; the old (s1+1)*20 mapping tops out at 40 mm and cannot express 68 mm.
-                    gait_state.step_height =
+                    target_gait_state.step_height =
                         CLIP(tuned_gait::STEP_HEIGHT_MM + c.s1 * TUNED_LIFT_TRIM_MM,
                              tuned_gait::STEP_HEIGHT_MIN_MM, tuned_gait::STEP_HEIGHT_MAX_MM);
-                    gait_state.step_depth = tuned_gait::STEP_DEPTH_MM;
-                    gait_state.phase_rate =
+                    target_gait_state.step_depth = tuned_gait::STEP_DEPTH_MM;
+                    target_gait_state.phase_rate =
                         tuned_gait::PHASE_RATE_MIN +
                         (a[5] + 1.f) * 0.5f * (tuned_gait::PHASE_RATE_MAX - tuned_gait::PHASE_RATE_MIN);
                     target_body_state.zm = -tuned_gait::RIDE_MM;
                 } else {
-                    gait_state.step_height = (c.s1 + 1.f) * 20.f;
-                    gait_state.step_depth = 0.002f;
-                    gait_state.phase_rate = 0.f;  // legacy stride-derived cadence
+                    target_gait_state.step_height = (c.s1 + 1.f) * 20.f;
+                    target_gait_state.step_depth = 0.002f;
+                    target_gait_state.phase_rate = 0.f;  // legacy stride-derived cadence
                 }
                 break;
             }
@@ -130,6 +135,7 @@ class MotionService {
                 body_state.phi = lerpf(body_state.phi, target_body_state.phi + _peripherals->angleY(), smoothing_factor);
                 body_state.omega =
                     lerpf(body_state.omega, target_body_state.omega + _peripherals->angleX(), smoothing_factor);
+                approachGaitCommand(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
                 gait.step(gait_state, body_state, dt);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
@@ -141,6 +147,7 @@ class MotionService {
                 body_state.phi = lerpf(body_state.phi, target_body_state.phi + _peripherals->angleY(), smoothing_factor);
                 body_state.omega =
                     lerpf(body_state.omega, target_body_state.omega + _peripherals->angleX(), smoothing_factor);
+                approachGaitCommand(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
                 gait.step(gait_state, body_state, dt);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
@@ -167,8 +174,13 @@ class MotionService {
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
     BodyStateMsg target_body_state = {0, 0, 0, 0, 0, 0};
     gait_state_t gait_state = {15, 0, 0, 0, 1, 0.002, default_stand_frac, GaitType::TRI_GATE, {0, 0.5, 0, 0.5, 0, 0.5}};
+    // Commands land here; gait_state eases toward it every tick (issue #7).
+    gait_state_t target_gait_state = gait_state;
 
     const float smoothing_factor = 0.06f;
+    // Ramp time constant for the locomotion command: ~0.45 s to settle. Slow enough that a slammed
+    // stick does not jerk the stride, fast enough that the robot still feels directly driven.
+    static constexpr float GAIT_COMMAND_TAU_S = 0.15f;
     static constexpr unsigned long COMMAND_TIMEOUT_MS = 2000;
     // GaitType::TUNED fixes foot lift at tuned_gait::STEP_HEIGHT_MM; the s1 slider trims around it
     // rather than setting it from zero, so the operator keeps authority without being able to
@@ -202,12 +214,12 @@ class MotionService {
         target_body_state.zm = 0;
         target_body_state.phi = 0;
         target_body_state.omega = 0;
-        gait_state.step_x = 0;
-        gait_state.step_z = 0;
-        gait_state.step_angle = 0;
-        gait_state.step_speed = 1.f;
-        gait_state.step_height = 15.f;
-        gait_state.step_depth = 0.002f;
+        target_gait_state.step_x = 0;
+        target_gait_state.step_z = 0;
+        target_gait_state.step_angle = 0;
+        target_gait_state.step_speed = 1.f;
+        target_gait_state.step_height = 15.f;
+        target_gait_state.step_depth = 0.002f;
     }
 
     void rebuildDefaultFeet(float scale, float output[6][4]) {

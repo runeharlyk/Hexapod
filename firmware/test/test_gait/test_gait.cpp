@@ -8,6 +8,7 @@
 #include <unity.h>
 
 #include <cmath>
+#include <cstdio>
 #include <gait.h>
 
 namespace {
@@ -263,6 +264,135 @@ void test_inverse_kinematics_holds_the_nominal_stance() {
     }
 }
 
+
+// --- Locomotion command ramp (issue #7) -------------------------------------------------------
+// The command used to be written straight into gait_state, so a stick slammed forward changed the
+// stride between one 5 ms tick and the next. These pin the ramp's shape rather than just its
+// existence: a ramp that snapped, overshot, or depended on loop rate would still "smooth" but would
+// not be what the robot needs.
+
+namespace {
+gait_state_t rampState() {
+    return {15, 0, 0, 0, 1, 0.002f, default_stand_frac, GaitType::TRI_GATE, {0, 0.52f, 0.08f, 0.58f, 0.16f, 0.66f}, 0};
+}
+}  // namespace
+
+void test_command_ramp_moves_toward_target_without_jumping() {
+    gait_state_t cur = rampState();
+    gait_state_t target = rampState();
+    target.step_z = 100.0f;
+
+    approachGaitCommand(cur, target, 0.005f, 0.15f);
+    TEST_ASSERT_TRUE_MESSAGE(cur.step_z > 0.0f, "one tick should make progress");
+    TEST_ASSERT_TRUE_MESSAGE(cur.step_z < 10.0f, "one 5 ms tick must not jump most of the way");
+    TEST_ASSERT_TRUE_MESSAGE(cur.step_z <= target.step_z, "ramp must not overshoot the command");
+}
+
+void test_command_ramp_converges_on_the_command() {
+    gait_state_t cur = rampState();
+    gait_state_t target = rampState();
+    target.step_x = -70.0f;
+    target.step_z = 100.0f;
+    target.step_angle = 0.4f;
+
+    for (int i = 0; i < 200; i++) approachGaitCommand(cur, target, 0.005f, 0.15f);  // 1 s
+
+    TEST_ASSERT_FLOAT_WITHIN(0.5f, target.step_x, cur.step_x);
+    TEST_ASSERT_FLOAT_WITHIN(0.5f, target.step_z, cur.step_z);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, target.step_angle, cur.step_angle);
+}
+
+void test_command_ramp_is_independent_of_loop_rate() {
+    // Same elapsed time in different sized steps must land in the same place, or control-loop
+    // jitter would silently change how the robot accelerates.
+    gait_state_t fine = rampState(), coarse = rampState();
+    gait_state_t target = rampState();
+    target.step_z = 100.0f;
+
+    for (int i = 0; i < 20; i++) approachGaitCommand(fine, target, 0.005f, 0.15f);  // 20 x 5 ms
+    approachGaitCommand(coarse, target, 0.100f, 0.15f);                             // 1 x 100 ms
+
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, fine.step_z, coarse.step_z, "ramp depends on tick size");
+}
+
+void test_command_ramp_switches_cadence_mode_outright() {
+    // phase_rate 0 selects the stride-derived law; it is not a slow cadence. Easing across that
+    // boundary would run the robot at cadences neither law asks for.
+    gait_state_t cur = rampState();
+    gait_state_t target = rampState();
+
+    cur.phase_rate = 1.2f;
+    target.phase_rate = 0.0f;
+    approachGaitCommand(cur, target, 0.005f, 0.15f);
+    TEST_ASSERT_EQUAL_FLOAT_MESSAGE(0.0f, cur.phase_rate, "leaving explicit cadence must be instant");
+
+    target.phase_rate = 1.4f;
+    approachGaitCommand(cur, target, 0.005f, 0.15f);
+    TEST_ASSERT_EQUAL_FLOAT_MESSAGE(1.4f, cur.phase_rate, "entering explicit cadence must be instant");
+
+    gait_state_t between = rampState();
+    between.phase_rate = 1.0f;
+    target.phase_rate = 2.0f;
+    approachGaitCommand(between, target, 0.005f, 0.15f);
+    TEST_ASSERT_TRUE_MESSAGE(between.phase_rate > 1.0f && between.phase_rate < 1.2f,
+                             "between two explicit rates the cadence should ease");
+}
+
+void test_command_ramp_leaves_the_gait_schedule_alone() {
+    // Blending two leg schedules would produce a third that coordinates nothing.
+    gait_state_t cur = rampState();
+    gait_state_t target = rampState();
+    target.gait_type = GaitType::BI_GATE;
+    target.stand_frac = 0.75f;
+    for (int i = 0; i < 6; i++) target.offset[i] = 0.9f;
+    target.step_z = 100.0f;
+
+    for (int i = 0; i < 50; i++) approachGaitCommand(cur, target, 0.005f, 0.15f);
+
+    TEST_ASSERT_EQUAL_INT((int)GaitType::TRI_GATE, (int)cur.gait_type);
+    TEST_ASSERT_EQUAL_FLOAT(default_stand_frac, cur.stand_frac);
+    TEST_ASSERT_EQUAL_FLOAT(0.52f, cur.offset[1]);
+}
+
+
+// --- Stance repositioning (issue #9) ----------------------------------------------------------
+// With no locomotion command but a changed stance target, step() runs the gait anyway so each foot
+// is lifted and placed on its own swing instead of dragged. Nothing covered this path before: every
+// other test uses snapDefaultFootTarget(), which teleports the stance and skips it entirely.
+
+void test_stance_change_walks_the_feet_to_the_new_target() {
+    GaitController controller;
+    controller.snapDefaultFootTarget(STAND);
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 0, 0, 0);
+    controller.setGait(gait);
+    BodyStateMsg body = makeBody();
+
+    float wider[6][4];
+    for (int i = 0; i < 6; i++) {
+        wider[i][0] = STAND[i][0] * 1.25f;
+        wider[i][1] = STAND[i][1] * 1.25f;
+        wider[i][2] = STAND[i][2];
+        wider[i][3] = 1;
+    }
+    controller.setDefaultFootTarget(wider);
+    TEST_ASSERT_TRUE(controller.hasPendingStanceChange());
+
+    float maxLift[6] = {0, 0, 0, 0, 0, 0};
+    for (int t = 0; t < 2000 && controller.hasPendingStanceChange(); t++) {
+        controller.step(gait, body, DT);
+        for (int i = 0; i < 6; i++) {
+            const float lift = body.feet[i][2] - STAND[i][2];
+            if (lift > maxLift[i]) maxLift[i] = lift;
+        }
+    }
+
+    TEST_ASSERT_FALSE_MESSAGE(controller.hasPendingStanceChange(), "stance change never converged");
+    for (int i = 0; i < 6; i++) {
+        TEST_ASSERT_TRUE_MESSAGE(maxLift[i] > 1.0f, "a foot slid to the new stance instead of stepping");
+    }
+}
+
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_tripod_keeps_three_feet_loaded);
@@ -274,5 +404,11 @@ int main(int, char **) {
     RUN_TEST(test_yaw_command_sweeps_feet_tangentially);
     RUN_TEST(test_gait_tables_cover_every_leg_once_per_cycle);
     RUN_TEST(test_inverse_kinematics_holds_the_nominal_stance);
+    RUN_TEST(test_command_ramp_moves_toward_target_without_jumping);
+    RUN_TEST(test_command_ramp_converges_on_the_command);
+    RUN_TEST(test_command_ramp_is_independent_of_loop_rate);
+    RUN_TEST(test_command_ramp_switches_cadence_mode_outright);
+    RUN_TEST(test_command_ramp_leaves_the_gait_schedule_alone);
+    RUN_TEST(test_stance_change_walks_the_feet_to_the_new_target);
     return UNITY_END();
 }

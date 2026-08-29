@@ -22,6 +22,29 @@ struct gait_state_t {
     float phase_rate;
 };
 
+// Eases the locomotion command toward its target so a stick slammed to full deflection accelerates
+// the robot rather than stepping its stride instantly. Exponential in dt rather than a fixed
+// per-tick fraction, so control-loop jitter does not change the ramp's wall-clock shape.
+//
+// Only the continuous command moves. gait_type, stand_frac and offset[] are the gait's identity,
+// set discretely by setGait(); interpolating them would blend two leg schedules into a third that
+// describes neither.
+inline void approachGaitCommand(gait_state_t& current, const gait_state_t& target, float dt, float tau) {
+    const float a = (tau <= 0.0f || dt <= 0.0f) ? 1.0f : 1.0f - expf(-dt / tau);
+    current.step_x = lerpf(current.step_x, target.step_x, a);
+    current.step_z = lerpf(current.step_z, target.step_z, a);
+    current.step_angle = lerpf(current.step_angle, target.step_angle, a);
+    current.step_speed = lerpf(current.step_speed, target.step_speed, a);
+    current.step_height = lerpf(current.step_height, target.step_height, a);
+    current.step_depth = lerpf(current.step_depth, target.step_depth, a);
+    // phase_rate 0 means "derive cadence from stride", not "stand still", so ramping across that
+    // boundary would spend the whole transition at cadences neither law asks for. Ease only between
+    // two explicit rates; otherwise switch outright.
+    current.phase_rate = (current.phase_rate > 0.0f && target.phase_rate > 0.0f)
+                             ? lerpf(current.phase_rate, target.phase_rate, a)
+                             : target.phase_rate;
+}
+
 class GaitController {
   private:
     float phase = 0.0f;
