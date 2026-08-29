@@ -55,23 +55,28 @@ inline bool init() {
     return true;
 }
 
+#define CAMERA_STREAM_BOUNDARY "hexapodframe"
+
 inline esp_err_t stream(httpd_req_t *req) {
-    static const char *BOUNDARY = "hexapodframe";
-    char header[128];
-    snprintf(header, sizeof(header), "multipart/x-mixed-replace;boundary=%s", BOUNDARY);
-    if (httpd_resp_set_type(req, header) != ESP_OK) return ESP_FAIL;
+    // httpd_resp_set_type stores the pointer and headers are not flushed until the first send_chunk,
+    // so the content type must outlive this call -- it cannot share the per-part buffer below.
+    if (httpd_resp_set_type(req, "multipart/x-mixed-replace;boundary=" CAMERA_STREAM_BOUNDARY) != ESP_OK) {
+        return ESP_FAIL;
+    }
 
     esp_err_t res = ESP_OK;
+    char part[128];
     while (res == ESP_OK) {
         camera_fb_t *fb = esp_camera_fb_get();
         if (!fb) {
             ESP_LOGW(TAG, "frame capture failed");
             return ESP_FAIL;
         }
-        int n = snprintf(header, sizeof(header),
-                         "\r\n--%s\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n", BOUNDARY,
-                         (unsigned)fb->len);
-        res = httpd_resp_send_chunk(req, header, n);
+        int n = snprintf(
+            part, sizeof(part),
+            "\r\n--" CAMERA_STREAM_BOUNDARY "\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
+            (unsigned)fb->len);
+        res = httpd_resp_send_chunk(req, part, n);
         if (res == ESP_OK) res = httpd_resp_send_chunk(req, (const char *)fb->buf, fb->len);
         esp_camera_fb_return(fb);
     }
