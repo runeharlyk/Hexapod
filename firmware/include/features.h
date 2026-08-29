@@ -11,10 +11,6 @@
 #define USE_MPU6050 1
 #endif
 
-#ifndef USE_BNO055
-#define USE_BNO055 0
-#endif
-
 #ifndef USE_MAG
 #define USE_MAG 0
 #endif

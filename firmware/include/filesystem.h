@@ -13,6 +13,7 @@
 #define WIFI_SETTINGS_FILE FS_CONFIG_DIRECTORY "/wifiSettings.json"
 #define SERVO_SETTINGS_FILE FS_CONFIG_DIRECTORY "/servoSettings.json"
 #define MDNS_SETTINGS_FILE FS_CONFIG_DIRECTORY "/mdnsSettings.json"
+#define PERIPHERAL_SETTINGS_FILE FS_CONFIG_DIRECTORY "/peripheralSettings.json"
 #define BLUETOOTH_SETTINGS_FILE FS_CONFIG_DIRECTORY "/bluetoothSettings.json"
 
 namespace FileSystem {

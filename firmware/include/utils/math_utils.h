@@ -1,8 +1,27 @@
 #ifndef MATHUTILS_H
 #define MATHUTILS_H
 
-#include <dspm_mult.h>
 #include <cmath>
+#include <cstddef>
+
+#if __has_include(<dspm_mult.h>)
+#include <dspm_mult.h>
+#define MAT_MULT_IMPL dspm_mult_f32_ae32
+#else
+// Host builds (the native unit-test env) have no ESP-DSP. The plain triple loop computes the same
+// product; only the Xtensa assembly variant is unavailable off-device.
+inline void mat_mult_f32_portable(const float *A, const float *B, float *result, size_t rows, size_t cols,
+                                  size_t result_cols) {
+    for (size_t i = 0; i < rows; ++i) {
+        for (size_t j = 0; j < result_cols; ++j) {
+            float sum = 0.0f;
+            for (size_t k = 0; k < cols; ++k) sum += A[i * cols + k] * B[k * result_cols + j];
+            result[i * result_cols + j] = sum;
+        }
+    }
+}
+#define MAT_MULT_IMPL mat_mult_f32_portable
+#endif
 
 #define CLIP(val, low, high) ((val) < (low) ? (low) : ((val) > (high) ? (high) : (val)))
 
@@ -59,12 +78,7 @@
     } while (0)
 
 #define MAT_MULT(A, B, result, rows, cols, result_cols) \
-    dspm_mult_f32_ae32((float *)(A), (float *)(B), (float *)(result), (rows), (cols), (result_cols))
-
-#define INT_TO_STRING(state, output)      \
-    do {                                  \
-        itoa((int)(state), (output), 10); \
-    } while (0)
+    MAT_MULT_IMPL((float *)(A), (float *)(B), (float *)(result), (rows), (cols), (result_cols))
 
 #define PI_F 3.1415927f
 
@@ -84,7 +98,7 @@
 
 #define IS_ALMOST_EQUAL(a, b) IS_EQUAL((a), (b), 0.001f)
 
-inline float lerp(float start, float end, float t) { return (1 - t) * start + t * end; }
+inline float lerpf(float start, float end, float t) { return (1 - t) * start + t * end; }
 
 inline bool isEqual(float a, float b, float epsilon) { return std::fabs(a - b) < epsilon; }
 

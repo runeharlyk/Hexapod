@@ -13,10 +13,6 @@
 #include <freertos/task.h>
 #include <freertos/queue.h>
 
-#if defined(USE_JSON) && USE_JSON && defined(USE_MSGPACK) && USE_MSGPACK
-#error "Cannot set both USE_JSON and USE_MSGPACK to 1 simultaneously"
-#endif
-
 template <typename Sig, size_t MaxSize>
 class FixedFn;
 

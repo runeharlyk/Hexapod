@@ -15,7 +15,9 @@ struct ModeMsg {
     MOTION_STATE mode;
 };
 
-enum class GaitType { TRI_GATE, BI_GATE, WAVE, RIPPLE };
+// TUNED is the CMA-ES-searched gait from simulation/src/resources/gait_library.json, emitted into
+// gait_tuned.h by simulation/export_gait.py. Appended last so the existing wire values are stable.
+enum class GaitType { TRI_GATE, BI_GATE, WAVE, RIPPLE, TUNED };
 
 struct GaitMsg {
     GaitType gait;
@@ -37,6 +39,7 @@ struct ServoStateMsg {
 struct IMUAnglesMsg {
     float rpy[3]{0, 0, 0};
     float temperature{-1};
+    float heading{0};  // magnetometer compass heading in degrees; 0 when no magnetometer
     bool success{false};
 };
 
