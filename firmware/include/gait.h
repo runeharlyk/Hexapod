@@ -5,6 +5,7 @@
 #include <functional>
 #include <kinematics.h>
 #include <message_types.h>
+#include <gait_tuned.h>
 
 static constexpr float default_offset[6] = {0, 0.52, 0.08, 0.58, 0.16, 0.66};
 static constexpr float default_stand_frac = 3.1 / 6;
@@ -13,6 +14,12 @@ struct gait_state_t {
     float step_height, step_x, step_z, step_angle, step_speed, step_depth, stand_frac;
     GaitType gait_type;
     float offset[6];
+    // Explicit cadence in cycles/s. 0 = use the legacy stride-derived law below. The searched gaits
+    // set it, because that law and the one they were optimized under disagree -- mildly when walking
+    // forward (0.90-1.24x) and by 1.80x for an in-place turn, where the legacy CLIP floors cadence
+    // at 0.75 cyc/s and the tuned gait wants 1.35. Last member, so existing aggregate initializers
+    // stay valid and zero it.
+    float phase_rate;
 };
 
 class GaitController {
@@ -106,7 +113,7 @@ class GaitController {
     void updateDefaultPositionTarget(int footIndex, float swingProgress) {
         for (int j = 0; j < 4; ++j) {
             defaultPosition[footIndex][j] =
-                lerp(swingStartPosition[footIndex][j], targetDefaultPosition[footIndex][j], swingProgress);
+                lerpf(swingStartPosition[footIndex][j], targetDefaultPosition[footIndex][j], swingProgress);
         }
     }
 
@@ -162,6 +169,12 @@ class GaitController {
                 gait.offset[4] = 5.0f / 6.0f;
                 gait.offset[5] = 3.0f / 6.0f;
                 gait.stand_frac = 5.0f / 6.0f;
+                break;
+            case GaitType::TUNED:
+                // Searched coordination; the caller must also apply tuned_gait::STEP_HEIGHT_MM,
+                // STEP_DEPTH_MM and RIDE_MM, which is what MotionService's WALK branch does.
+                for (uint8_t i = 0; i < 6; ++i) gait.offset[i] = tuned_gait::OFFSET[i];
+                gait.stand_frac = tuned_gait::STAND_FRAC;
                 break;
             default: break;
         }
@@ -229,7 +242,9 @@ class GaitController {
         const float length = std::hypot(gait.step_x, gait.step_z) * (gait.step_x < 0 ? -1 : 1);
         const float speed_factor = std::max(std::abs(length) / 25.f, std::abs(gait.step_angle) * 1.5f);
         const float speed =
-            isRepositioning ? gait.step_speed : gait.step_speed * CLIP(speed_factor, 0.75, 1.5f);
+            isRepositioning ? gait.step_speed
+            : gait.phase_rate > 0.f ? gait.phase_rate
+                                    : gait.step_speed * CLIP(speed_factor, 0.75, 1.5f);
 
         advancePhase(dt, speed);
         generateFeet(gait, body);

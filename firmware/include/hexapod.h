@@ -17,7 +17,10 @@ class Hexapod {
 
     void readSensors() {
         EXECUTE_EVERY_N_MS(25, {
-            if (_peripherals.readIMU()) EventBus<IMUAnglesMsg>::publish(_peripherals.getIMUAngles());
+            const bool imu = _peripherals.readIMU();
+            // 15 Hz part; polling it on the 40 Hz IMU tick just returns the last sample.
+            const bool mag = _peripherals.readMagnetometer();
+            if (imu || mag) EventBus<IMUAnglesMsg>::publish(_peripherals.getIMUAngles());
         });
     }
 
@@ -31,6 +34,8 @@ class Hexapod {
     }
 
     std::vector<uint8_t> scanI2C() { return _peripherals.scanI2C(); }
+
+    bool magnetometerPresent() const { return _peripherals.magActive(); }
 
     void emitTelemetry() {
         if (updatedMotion) EXECUTE_EVERY_N_MS(20, { _motionService.publishState(); });
