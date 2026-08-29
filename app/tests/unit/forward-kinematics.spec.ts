@@ -18,6 +18,23 @@ describe('Kinematics', () => {
 
   let kinematics: Kinematics
 
+  const makeBodyState = (overrides: Partial<body_state_t> = {}): body_state_t => ({
+    omega: 0,
+    phi: 0,
+    psi: 0,
+    xm: 0,
+    ym: 0,
+    zm: 0,
+    feet: [],
+    cumulative_x: 0,
+    cumulative_y: 0,
+    cumulative_z: 0,
+    cumulative_roll: 0,
+    cumulative_pitch: 0,
+    cumulative_yaw: 0,
+    ...overrides
+  })
+
   beforeEach(() => {
     kinematics = new Kinematics(config)
   })
@@ -151,15 +168,7 @@ describe('Kinematics', () => {
 
     describe('forwardKinematics', () => {
       it('should calculate correct foot positions for zero angles', () => {
-        const bodyState: body_state_t = {
-          omega: 0,
-          phi: 0,
-          psi: 0,
-          xm: 0,
-          ym: 0,
-          zm: 0,
-          feet: []
-        }
+        const bodyState = makeBodyState()
         const angles: [number, number, number][] = Array(6).fill([0, 0, 0])
         const positions = kinematics.forwardKinematics(bodyState, angles)
 
@@ -187,15 +196,7 @@ describe('Kinematics', () => {
       })
 
       it('should handle body transformations', () => {
-        const bodyState: body_state_t = {
-          omega: 0.1,
-          phi: 0.2,
-          psi: 0.3,
-          xm: 10,
-          ym: 20,
-          zm: 30,
-          feet: []
-        }
+        const bodyState = makeBodyState({ omega: 0.1, phi: 0.2, psi: 0.3, xm: 10, ym: 20, zm: 30 })
         const angles: [number, number, number][] = Array(6).fill([0, 0, 0])
         const positions = kinematics.forwardKinematics(bodyState, angles)
 
@@ -210,15 +211,7 @@ describe('Kinematics', () => {
       })
 
       it('should handle extreme angles correctly', () => {
-        const bodyState: body_state_t = {
-          omega: 0,
-          phi: 0,
-          psi: 0,
-          xm: 0,
-          ym: 0,
-          zm: 0,
-          feet: []
-        }
+        const bodyState = makeBodyState()
         const extremeAngles: [number, number, number][] = [
           [Math.PI / 2, Math.PI / 4, -Math.PI / 4],
           [-Math.PI / 2, -Math.PI / 4, Math.PI / 4],
@@ -243,15 +236,7 @@ describe('Kinematics', () => {
 
     describe('inverseKinematics', () => {
       it('should calculate correct angles for known positions', () => {
-        const bodyState: body_state_t = {
-          omega: 0,
-          phi: 0,
-          psi: 0,
-          xm: 0,
-          ym: 0,
-          zm: 0,
-          feet: []
-        }
+        const bodyState = makeBodyState()
 
         // Use the class genPosture to get realistic foot positions
         const referenceAngles: [number, number, number][] = Array(6).fill([0, 0, 0])
@@ -272,15 +257,7 @@ describe('Kinematics', () => {
       })
 
       it('should handle body transformations in inverse kinematics', () => {
-        const bodyState: body_state_t = {
-          omega: 0.1,
-          phi: 0.2,
-          psi: 0.3,
-          xm: 10,
-          ym: 20,
-          zm: 30,
-          feet: []
-        }
+        const bodyState = makeBodyState({ omega: 0.1, phi: 0.2, psi: 0.3, xm: 10, ym: 20, zm: 30 })
 
         // Generate reasonable foot positions first
         const referenceAngles: [number, number, number][] = Array(6).fill([0.1, 0.2, -0.1])
@@ -305,13 +282,7 @@ describe('Kinematics', () => {
           config.legJoint2ToJoint3 +
           config.legJoint3ToTip
 
-        const bodyState: body_state_t = {
-          omega: 0,
-          phi: 0,
-          psi: 0,
-          xm: 0,
-          ym: 0,
-          zm: 0,
+        const bodyState = makeBodyState({
           feet: [
             [maxReach * 1.5, 0, 0, 1], // Challenging but potentially reachable
             [0, maxReach * 1.5, 0, 1],
@@ -320,7 +291,7 @@ describe('Kinematics', () => {
             [maxReach * 0.8, maxReach * 0.8, 0, 1],
             [-maxReach * 0.8, -maxReach * 0.8, 0, 1]
           ]
-        }
+        })
 
         const angles = kinematics.inverseKinematics(bodyState)
 
@@ -337,56 +308,59 @@ describe('Kinematics', () => {
   })
 
   describe('Forward and Inverse Kinematics Consistency', () => {
+    // inverseKinematics resolves the 2-link elbow with a fixed sign (a1 = base + acos(..),
+    // a2 = -(acos(..) + acos(..))), exactly as firmware/include/kinematics.h does, so its
+    // image is the knee-down branch only: a2 <= 0. Angle round-trips are therefore asserted
+    // on knee-down poses; a knee-up pose only round-trips in foot position (see below).
+    const kneeDownAngles: [number, number, number][] = [
+      [0.1, 0.2, -0.3],
+      [-0.2, 0.3, -0.4],
+      [0.15, -0.1, -0.2],
+      [-0.1, 0.25, -0.3],
+      [0.2, -0.15, -0.25],
+      [0.0, 0.1, -0.2]
+    ]
+
     it('should be consistent with inverse kinematics for small angles', () => {
-      const bodyState: body_state_t = {
-        omega: 0,
-        phi: 0,
-        psi: 0,
-        xm: 0,
-        ym: 0,
-        zm: 0,
-        feet: []
-      }
+      const bodyState = makeBodyState()
 
-      const testAngles: [number, number, number][] = [
-        [0.1, 0.2, -0.3],
-        [-0.2, 0.3, -0.4],
-        [0.15, -0.1, 0.2],
-        [-0.1, 0.25, -0.3],
-        [0.2, -0.15, 0.25],
-        [0.0, 0.1, -0.2]
-      ]
-
-      const positions = kinematics.forwardKinematics(bodyState, testAngles)
+      const positions = kinematics.forwardKinematics(bodyState, kneeDownAngles)
       bodyState.feet = positions.map(pos => [pos[0], pos[1], pos[2], 1])
 
       const recoveredAngles = kinematics.inverseKinematics(bodyState)
 
-      // First check that all angles are finite
-      for (let i = 0; i < recoveredAngles.length; i++) {
+      for (let i = 0; i < kneeDownAngles.length; i++) {
         for (let j = 0; j < 3; j++) {
-          expect(Number.isFinite(recoveredAngles[i][j])).toBe(true)
+          expect(recoveredAngles[i][j]).toBeCloseTo(kneeDownAngles[i][j], 5)
         }
       }
+    })
 
-      // Then check consistency (with more lenient tolerance due to numerical precision)
-      for (let i = 0; i < testAngles.length; i++) {
+    it('should map a knee-up pose onto the knee-down branch without moving the foot', () => {
+      const bodyState = makeBodyState()
+
+      const kneeUpAngles: [number, number, number][] = kneeDownAngles.map(
+        ([a0, a1, a2]) => [a0, a1, -a2] as [number, number, number]
+      )
+
+      const positions = kinematics.forwardKinematics(bodyState, kneeUpAngles)
+      bodyState.feet = positions.map(pos => [pos[0], pos[1], pos[2], 1])
+
+      const recoveredAngles = kinematics.inverseKinematics(bodyState)
+      const recoveredPositions = kinematics.forwardKinematics(bodyState, recoveredAngles)
+
+      for (let i = 0; i < kneeUpAngles.length; i++) {
+        // The solver cannot reproduce the knee-up joint angles ...
+        expect(recoveredAngles[i][2]).toBeLessThanOrEqual(0)
+        // ... but it must reach the same foot position.
         for (let j = 0; j < 3; j++) {
-          expect(recoveredAngles[i][j]).toBeCloseTo(testAngles[i][j], 1)
+          expect(recoveredPositions[i][j]).toBeCloseTo(positions[i][j], 5)
         }
       }
     })
 
     it('should be consistent with body transformations', () => {
-      const bodyState: body_state_t = {
-        omega: 0.05,
-        phi: 0.1,
-        psi: 0.15,
-        xm: 5,
-        ym: 10,
-        zm: 15,
-        feet: []
-      }
+      const bodyState = makeBodyState({ omega: 0.05, phi: 0.1, psi: 0.15, xm: 5, ym: 10, zm: 15 })
 
       const testAngles: [number, number, number][] = Array(6).fill([0.1, 0.15, -0.1])
 
@@ -410,36 +384,31 @@ describe('Kinematics', () => {
       }
     })
 
-    it('should maintain consistency through multiple transformations', () => {
-      const bodyState: body_state_t = {
-        omega: 0,
-        phi: 0,
-        psi: 0,
-        xm: 0,
-        ym: 0,
-        zm: 0,
-        feet: []
-      }
+    it('should reach a fixed point after one round trip', () => {
+      const bodyState = makeBodyState()
 
-      let currentAngles: [number, number, number][] = [
-        [0.05, 0.1, -0.15],
-        [0.1, -0.05, 0.2],
-        [-0.05, 0.15, -0.1],
-        [0.15, 0.05, -0.2],
-        [-0.1, 0.2, 0.05],
-        [0.05, -0.15, 0.1]
-      ]
+      // Seed with knee-up poses so the first round trip has to move the joints. Every later
+      // round trip must then be a no-op: repeated FK/IK must not accumulate drift, which is
+      // what the visualization does frame after frame.
+      let currentAngles: [number, number, number][] = kneeDownAngles.map(
+        ([a0, a1, a2]) => [a0, a1, -a2] as [number, number, number]
+      )
 
-      for (let iteration = 0; iteration < 2; iteration++) {
+      let previousAngles: [number, number, number][] | null = null
+
+      for (let iteration = 0; iteration < 3; iteration++) {
         const positions = kinematics.forwardKinematics(bodyState, currentAngles)
         bodyState.feet = positions.map(pos => [pos[0], pos[1], pos[2], 1])
         currentAngles = kinematics.inverseKinematics(bodyState)
 
-        for (const [a0, a1, a2] of currentAngles) {
-          expect(Number.isFinite(a0)).toBe(true)
-          expect(Number.isFinite(a1)).toBe(true)
-          expect(Number.isFinite(a2)).toBe(true)
+        if (previousAngles) {
+          for (let i = 0; i < currentAngles.length; i++) {
+            for (let j = 0; j < 3; j++) {
+              expect(currentAngles[i][j]).toBeCloseTo(previousAngles[i][j], 9)
+            }
+          }
         }
+        previousAngles = currentAngles
       }
     })
   })
@@ -453,15 +422,7 @@ describe('Kinematics', () => {
       const zeroKinematics = new Kinematics(zeroConfig)
 
       const angles: [number, number, number][] = Array(6).fill([0, 0, 0])
-      const bodyState: body_state_t = {
-        omega: 0,
-        phi: 0,
-        psi: 0,
-        xm: 0,
-        ym: 0,
-        zm: 0,
-        feet: []
-      }
+      const bodyState = makeBodyState()
 
       const positions = zeroKinematics.forwardKinematics(bodyState, angles)
       expect(positions).toHaveLength(6)
@@ -475,15 +436,7 @@ describe('Kinematics', () => {
     })
 
     it('should handle large body translations', () => {
-      const bodyState: body_state_t = {
-        omega: 0,
-        phi: 0,
-        psi: 0,
-        xm: 1000,
-        ym: 2000,
-        zm: 3000,
-        feet: []
-      }
+      const bodyState = makeBodyState({ xm: 1000, ym: 2000, zm: 3000 })
 
       const angles: [number, number, number][] = Array(6).fill([0, 0, 0])
       const positions = kinematics.forwardKinematics(bodyState, angles)
@@ -499,15 +452,7 @@ describe('Kinematics', () => {
     })
 
     it('should handle large body rotations', () => {
-      const bodyState: body_state_t = {
-        omega: Math.PI,
-        phi: Math.PI / 2,
-        psi: -Math.PI / 2,
-        xm: 0,
-        ym: 0,
-        zm: 0,
-        feet: []
-      }
+      const bodyState = makeBodyState({ omega: Math.PI, phi: Math.PI / 2, psi: -Math.PI / 2 })
 
       const angles: [number, number, number][] = Array(6).fill([0.1, 0.2, -0.1])
       const positions = kinematics.forwardKinematics(bodyState, angles)

@@ -11,9 +11,6 @@ importers:
       '@bufbuild/protobuf':
         specifier: ^2.10.2
         version: 2.13.0
-      '@msgpack/msgpack':
-        specifier: ^3.1.2
-        version: 3.1.2
       '@niku/vite-env-caster':
         specifier: ^1.0.2
         version: 1.0.2
@@ -523,10 +520,6 @@ packages:
 
   '@kurkle/color@0.3.2':
     resolution: {integrity: sha512-fuscdXJ9G1qb7W8VdHi+IwRqij3lBkosAm4ydQtEmbY58OzHXqQhvlxqEkoz0yssNVn38bcpRWgA9PP+OGoisw==}
-
-  '@msgpack/msgpack@3.1.2':
-    resolution: {integrity: sha512-JEW4DEtBzfe8HvUYecLU9e6+XJnKDlUAIve8FvPzF3Kzs6Xo/KuZkZJsDH0wJXl/qEZbeeE7edxDNY3kMs39hQ==}
-    engines: {node: '>= 18'}
 
   '@niku/vite-env-caster@1.0.2':
     resolution: {integrity: sha512-1K3lp+k8rzyKaEkOaozbl1leEODI2QNVxSrdLqNOOsblXVAipu90fs+4YdemAXI8chwi9hqF/zZ2mxRzUymQYg==}
@@ -2601,8 +2594,6 @@ snapshots:
       type-detect: 4.0.8
 
   '@kurkle/color@0.3.2': {}
-
-  '@msgpack/msgpack@3.1.2': {}
 
   '@niku/vite-env-caster@1.0.2': {}
 

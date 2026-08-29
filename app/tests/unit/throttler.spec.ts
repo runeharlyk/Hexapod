@@ -3,7 +3,7 @@ import { throttler } from '../../src/lib/utilities/buffer-utilities'
 
 describe('throttler', () => {
   let throttleInstance: throttler
-  let callback: Function
+  let callback: () => void
 
   beforeEach(() => {
     vitest.useFakeTimers()
