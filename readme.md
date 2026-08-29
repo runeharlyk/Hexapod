@@ -41,7 +41,7 @@ The remix moves the leg screws from the side to the top. This makes the legs eas
 ### 🎮 Controller
 
 The [controller](https://runeharlyk.github.io/Hexapod/) is a svelte app which is deployed using github pages.
-The app lets you control the robot using either JSON or MsgPack over BLE and websockets.
+The app lets you control the robot using protobuf messages over BLE and websockets.
 It includes full control over robot settings like network and calibration, and a visualization.
 
 ## Simulation

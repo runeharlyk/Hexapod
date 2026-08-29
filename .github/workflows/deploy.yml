@@ -36,6 +36,17 @@ jobs:
           cache: "pnpm"
           cache-dependency-path: "./app/pnpm-lock.yaml"
 
+      # `pnpm build` runs `pnpm proto`, which compiles platform_shared/*.proto with
+      # grpc_tools.protoc. The runner image's system python is PEP 668 externally managed, so
+      # install grpcio-tools into a setup-python interpreter rather than letting the script's
+      # pip fallback fail.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install grpcio-tools
+        working-directory: .
+
       - run: pnpm install
       - run: pnpm run build
 
