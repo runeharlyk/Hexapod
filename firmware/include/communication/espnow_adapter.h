@@ -1,7 +1,6 @@
 #pragma once
 
 #include <esp_now.h>
-#include <esp_idf_version.h>
 #include <cstdint>
 
 /*
@@ -25,13 +24,6 @@ class EspNowAdapter {
   public:
     void begin();
 
-    static bool controllerActive(uint32_t windowMs = 1500);
-
   private:
-// Arduino-ESP32 3.x / IDF 5.x changed the recv-callback signature.
-#if ESP_IDF_VERSION_MAJOR >= 5
     static void onRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len);
-#else
-    static void onRecv(const uint8_t* mac, const uint8_t* data, int len);
-#endif
 };

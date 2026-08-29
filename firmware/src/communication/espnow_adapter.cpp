@@ -1,10 +1,11 @@
 #include <communication/espnow_adapter.h>
 
-#include <Arduino.h>
-#include <WiFi.h>
 #include <esp_wifi.h>
 #include <esp_log.h>
 #include <atomic>
+#include <cstring>
+
+#include <wifi/wifi_idf.h>
 
 #include <event_bus.h>
 #include <message_types.h>
@@ -12,8 +13,6 @@
 #include <features.h>
 
 static const char* TAG = "espnow";
-
-static std::atomic<uint32_t> s_lastRxMs {0};
 
 static std::atomic<MOTION_STATE> s_mode {MOTION_STATE::DEACTIVATED};
 static std::atomic<GaitType> s_gait {GaitType::TRI_GATE};
@@ -33,8 +32,6 @@ static void handlePacket(const uint8_t* data, int len) {
     controller_packet_t pkt;
     memcpy(&pkt, data, sizeof(pkt));
     if (pkt.version != CONTROLLER_PACKET_VERSION) return;
-
-    s_lastRxMs.store(millis(), std::memory_order_relaxed);  // mark controller "active"
 
     const bool rightHeld = pkt.buttons & BTN_RIGHT;
     const bool inStand = s_mode.load(std::memory_order_relaxed) == MOTION_STATE::STAND;
@@ -87,16 +84,7 @@ static void handlePacket(const uint8_t* data, int len) {
     }
 }
 
-#if ESP_IDF_VERSION_MAJOR >= 5
 void EspNowAdapter::onRecv(const esp_now_recv_info_t*, const uint8_t* data, int len) { handlePacket(data, len); }
-#else
-void EspNowAdapter::onRecv(const uint8_t*, const uint8_t* data, int len) { handlePacket(data, len); }
-#endif
-
-bool EspNowAdapter::controllerActive(uint32_t windowMs) {
-    uint32_t last = s_lastRxMs.load(std::memory_order_relaxed);
-    return last != 0 && (millis() - last) < windowMs;
-}
 
 void EspNowAdapter::begin() {
     if (esp_now_init() != ESP_OK) {
@@ -113,7 +101,7 @@ void EspNowAdapter::begin() {
     esp_wifi_get_channel(&ch, &sc);
 
     if (ch != ESPNOW_WIFI_CHANNEL) {
-        if (WiFi.status() != WL_CONNECTED) {
+        if (!WiFi.isConnected()) {
             // AP-only / not joined to a router: safe to pin the radio.
             esp_wifi_set_channel(ESPNOW_WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
             ESP_LOGW(TAG, "locked radio to channel %d for ESP-NOW", ESPNOW_WIFI_CHANNEL);
