@@ -84,7 +84,18 @@ static void handlePacket(const uint8_t* data, int len) {
     }
 }
 
-void EspNowAdapter::onRecv(const esp_now_recv_info_t*, const uint8_t* data, int len) { handlePacket(data, len); }
+void EspNowAdapter::onRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
+    // One line the first time a frame lands, so "no reaction" can be told apart from "not heard".
+    // Silence after boot means the radio left the controller's channel -- see applyChannel().
+    static bool announced = false;
+    if (!announced && info && info->src_addr) {
+        announced = true;
+        const uint8_t* m = info->src_addr;
+        ESP_LOGI(TAG, "controller heard: %02x:%02x:%02x:%02x:%02x:%02x len=%d ver=%u", m[0], m[1], m[2], m[3],
+                 m[4], m[5], len, len > 0 ? data[0] : 0);
+    }
+    handlePacket(data, len);
+}
 
 void EspNowAdapter::begin() {
     if (esp_now_init() != ESP_OK) {
