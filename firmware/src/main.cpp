@@ -9,10 +9,18 @@
 #include <esp_sleep.h>
 #include <esp_littlefs.h>
 #include <nvs_flash.h>
+#include <dirent.h>
+#include <unistd.h>
+#include <array>
 #include <cmath>
 #include <cstring>
+#include <memory>
+#include <string>
 
 #include <features.h>
+#include <communication/espnow_adapter.h>
+#include <ota_service.h>
+#include <peripherals_settings_service.h>
 #include <filesystem.h>
 #include <wifi/wifi_idf.h>
 #include <wifi_service.h>
@@ -33,13 +41,26 @@
 
 static const char *TAG = "main";
 
+// Internal DMA RAM is the binding constraint here, and total free heap hides it -- PSRAM dominates.
+static void logHeap(const char *stage) {
+    ESP_LOGW(TAG, "HEAP %-18s internal=%6u largestInt=%6u DMA=%6u largestDMA=%6u", stage,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
+}
+
 WiFiService wifiService;
 APService apService;
 MDNSService mdnsService;
 ServoSettingsService servoSettingsService;
+PeripheralSettingsService peripheralSettingsService;
 Websocket wsSocket{server, "/api/ws"};
 BLE bleAdapter;
 Hexapod robot;
+#if FT_ENABLED(USE_ESPNOW)
+EspNowAdapter espNow;
+#endif
 CpuMonitor cpuMonitor;
 
 static void fillAnalytics(socket_message_AnalyticsData &a) {
@@ -55,7 +76,7 @@ static void fillAnalytics(socket_message_AnalyticsData &a) {
         a.fs_total = (int)total;
         a.fs_used = (int)used;
     }
-    CpuMonitor::Usage cpu = cpuMonitor.sample();
+    CpuMonitor::Usage cpu = cpuMonitor.latest();
     a.cpu0_usage = cpu.core0;
     a.cpu1_usage = cpu.core1;
     a.cpu_usage = cpu.total;
@@ -75,15 +96,34 @@ static void fillStaticInfo(socket_message_StaticSystemInformation &s) {
     s.flash_chip_size = flash_size;
 }
 
+static constexpr size_t WIFI_SCAN_RESULT_CAPACITY = 20;
+
+// Settings are persisted as JSON under FS_CONFIG_DIRECTORY, so erasing NVS alone leaves WiFi
+// credentials and servo calibration in place after a factory reset.
+static void eraseConfigDirectory() {
+    DIR *dir = opendir(FS_CONFIG_DIRECTORY);
+    if (!dir) return;
+    for (struct dirent *entry = readdir(dir); entry; entry = readdir(dir)) {
+        if (entry->d_type == DT_DIR) continue;
+        std::string path = std::string(FS_CONFIG_DIRECTORY "/") + entry->d_name;
+        if (unlink(path.c_str()) != 0) ESP_LOGW(TAG, "Failed to erase %s", path.c_str());
+    }
+    closedir(dir);
+}
+
 static void registerHandlers(CommAdapterBase &c) {
     c.on<socket_message_ControllerInputData>([](const socket_message_ControllerInputData &in, int) {
         CommandMsg cmd{in.left.x, in.left.y, in.right.x, in.right.y, in.height, in.speed, in.s1, in.feet_distance};
         EventBus<CommandMsg>::publish(cmd);
     });
-    c.on<socket_message_ModeData>(
-        [](const socket_message_ModeData &m, int) { EventBus<ModeMsg>::publish({static_cast<MOTION_STATE>(m.mode)}); });
-    c.on<socket_message_GaitData>(
-        [](const socket_message_GaitData &g, int) { EventBus<GaitMsg>::publish({static_cast<GaitType>(g.gait)}); });
+    c.on<socket_message_ModeData>([](const socket_message_ModeData &m, int) {
+        if ((int)m.mode < 0 || (int)m.mode > (int)socket_message_ModesEnum_WALK) return;
+        EventBus<ModeMsg>::publish({static_cast<MOTION_STATE>(m.mode)});
+    });
+    c.on<socket_message_GaitData>([](const socket_message_GaitData &g, int) {
+        if ((int)g.gait < 0 || (int)g.gait > (int)socket_message_GaitEnum_TUNED) return;
+        EventBus<GaitMsg>::publish({static_cast<GaitType>(g.gait)});
+    });
     c.on<socket_message_ServoPWMData>([](const socket_message_ServoPWMData &s, int) {
         EventBus<ServoSignalMsg>::publish({static_cast<int8_t>(s.servo_id), static_cast<uint16_t>(s.servo_pwm)});
     });
@@ -94,6 +134,7 @@ static void registerHandlers(CommAdapterBase &c) {
         switch (cmd.command) {
             case socket_message_SystemCommand_SYS_RESTART: esp_restart(); break;
             case socket_message_SystemCommand_SYS_RESET:
+                eraseConfigDirectory();
                 nvs_flash_erase();
                 esp_restart();
                 break;
@@ -102,7 +143,11 @@ static void registerHandlers(CommAdapterBase &c) {
         }
     });
 
-    c.on<socket_message_CorrelationRequest>([adapter = &c](const socket_message_CorrelationRequest &req, int clientId) {
+    // Owned per adapter: the response holds a pointer into it until adapter->emit returns, and the
+    // websocket and BLE decoders run on separate tasks, so a single shared buffer would tear.
+    auto scanBuffer = std::make_shared<std::array<api_WifiNetworkScan, WIFI_SCAN_RESULT_CAPACITY>>();
+    c.on<socket_message_CorrelationRequest>([adapter = &c, scanBuffer](const socket_message_CorrelationRequest &req,
+                                                                      int clientId) {
         socket_message_CorrelationResponse res = socket_message_CorrelationResponse_init_zero;
         res.correlation_id = req.correlation_id;
         res.status_code = 200;
@@ -114,7 +159,7 @@ static void registerHandlers(CommAdapterBase &c) {
                 strncpy(f.firmware_version, APP_VERSION, sizeof(f.firmware_version) - 1);
                 f.camera = USE_CAMERA;
                 f.imu = USE_MPU6050;
-                f.mag = USE_MAG;
+                f.mag = robot.magnetometerPresent();
                 f.servo = true;
                 f.mdns = USE_MDNS;
                 break;
@@ -152,9 +197,8 @@ static void registerHandlers(CommAdapterBase &c) {
                 break;
             }
             case socket_message_CorrelationRequest_wifi_networks_get_tag: {
-                // Static so the pointer survives adapter->emit; the evtbus worker is single-threaded.
-                static api_WifiNetworkScan scanBuf[20];
-                int count = WiFiService::networksProto(scanBuf, 20);
+                api_WifiNetworkScan *scanBuf = scanBuffer->data();
+                int count = WiFiService::networksProto(scanBuf, WIFI_SCAN_RESULT_CAPACITY);
                 res.which_response = socket_message_CorrelationResponse_wifi_network_list_tag;
                 res.response.wifi_network_list.networks = scanBuf;
                 res.response.wifi_network_list.networks_count = count < 0 ? 0 : count;
@@ -208,6 +252,22 @@ static void registerHandlers(CommAdapterBase &c) {
                 res.response.servo_settings = servoSettingsService.state();
                 break;
             }
+            case socket_message_CorrelationRequest_peripheral_settings_get_tag: {
+                res.which_response = socket_message_CorrelationResponse_peripheral_settings_tag;
+                res.response.peripheral_settings = peripheralSettingsService.state();
+                break;
+            }
+            case socket_message_CorrelationRequest_peripheral_settings_update_tag: {
+                StateUpdateResult r = peripheralSettingsService.update(
+                    [&req](PeripheralSettings &s) {
+                        return PeripheralSettings_update(req.request.peripheral_settings_update, s);
+                    },
+                    "correlation");
+                if (r == StateUpdateResult::ERROR) res.status_code = 400;
+                res.which_response = socket_message_CorrelationResponse_peripheral_settings_tag;
+                res.response.peripheral_settings = peripheralSettingsService.state();
+                break;
+            }
             default: res.status_code = 400; break;
         }
         adapter->emit(res, clientId);
@@ -222,7 +282,9 @@ static void emitAll(const T &msg) {
 
 template <typename ProtoT>
 static void observeStatus() {
-    EventBus<ProtoT>::subscribe([](const ProtoT &s) { emitAll(s); });
+    // consume(), not subscribe(): the returned Handle unsubscribes on destruction, so dropping it
+    // tears the subscription down again immediately.
+    EventBus<ProtoT>::consume([](const ProtoT &s) { emitAll(s); });
 }
 
 static void initNvs() {
@@ -235,7 +297,7 @@ static void initNvs() {
 }
 
 static void setupServer() {
-    server.config(50, 16384);
+    server.config(16, 8192);
     server.listen(80);
 
     // Answer the browser's CORS preflight so the cross-origin dev app can reach the robot.
@@ -251,16 +313,18 @@ static void setupServer() {
         char buf[384];
         snprintf(buf, sizeof(buf),
                  "{\"camera\":%s,\"imu\":%s,\"mag\":%s,\"bmp\":false,\"mdns\":%s,\"servo\":true,"
-                 "\"analytics\":true,\"sleep\":true,\"ota\":false,\"download_firmware\":false,"
-                 "\"upload_firmware\":false,"
+                 "\"analytics\":true,\"sleep\":true,\"ota\":true,\"download_firmware\":true,"
+                 "\"upload_firmware\":true,"
                  "\"firmware_version\":\"%s\",\"firmware_name\":\"%s\",\"firmware_built_target\":\"esp32-wroom-camera\"}",
-                 USE_CAMERA ? "true" : "false", USE_MPU6050 ? "true" : "false", USE_MAG ? "true" : "false",
+                 USE_CAMERA ? "true" : "false", USE_MPU6050 ? "true" : "false",
+                 robot.magnetometerPresent() ? "true" : "false",
                  USE_MDNS ? "true" : "false", APP_VERSION, APP_NAME);
         httpd_resp_set_type(r, "application/json");
         return httpd_resp_sendstr(r, buf);
     });
 
     fs_api::registerRoutes(server);
+    ota_service::registerRoutes(server);
 #if USE_CAMERA
     camera_service::registerRoutes(server);
 #endif
@@ -275,30 +339,28 @@ static void setupComm() {
     registerHandlers(wsSocket);
     registerHandlers(bleAdapter);
 
-    EventBus<ServoAnglesMsg>::subscribe([](const ServoAnglesMsg &a) {
+    EventBus<ServoAnglesMsg>::consume([](const ServoAnglesMsg &a) {
         socket_message_AnglesData out = socket_message_AnglesData_init_zero;
         out.angles_count = NUM_SERVO;
         for (int i = 0; i < NUM_SERVO; i++) out.angles[i] = static_cast<int32_t>(lroundf(a.angles[i]));
         emitAll(out);
     });
 
-    EventBus<IMUAnglesMsg>::subscribe([](const IMUAnglesMsg &m) {
+    EventBus<IMUAnglesMsg>::consume([](const IMUAnglesMsg &m) {
         socket_message_IMUData out = socket_message_IMUData_init_zero;
         out.x = m.rpy[0];
         out.y = m.rpy[1];
         out.z = m.rpy[2];
+        out.heading = m.heading;
         emitAll(out);
     });
 
+    observeStatus<socket_message_OtaStatusData>();
     observeStatus<api_WifiStatus>();
     observeStatus<api_APStatus>();
 
     wsSocket.begin();
 
-    // BLE HCI needs contiguous internal DMA RAM; log what's left so an init failure is diagnosable.
-    ESP_LOGI(TAG, "Before BLE: internal=%u DMA=%u largestDMA=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
     bleAdapter.begin();
 }
 
@@ -319,12 +381,23 @@ static void serviceLoop(void *) {
     wifiService.begin();
     mdnsService.begin();
     apService.begin();
+
+    // Claim the AP's internal DMA buffers before httpd/BLE/ESP-NOW/camera take theirs: those degrade
+    // cleanly when starved, ieee80211_hostap_attach null-derefs.
+    apService.loop();
+    logHeap("softap");
+
     setupServer();
     setupComm();
+
+#if FT_ENABLED(USE_ESPNOW)
+    espNow.begin();  // needs the radio started, so after wifiService/apService
+#endif
 
     // After BLE so the controller claims its internal DMA first; camera init is non-fatal.
 #if USE_CAMERA
     camera_service::init();
+    logHeap("camera");
 #endif
 
     ESP_LOGI(TAG, "Networking up, free heap %lu bytes", (unsigned long)esp_get_free_heap_size());
@@ -334,6 +407,7 @@ static void serviceLoop(void *) {
         apService.loop();
         EXECUTE_EVERY_N_MS(2000, {
             socket_message_AnalyticsData a = socket_message_AnalyticsData_init_zero;
+            cpuMonitor.sample();
             fillAnalytics(a);
             emitAll(a);
         });
@@ -350,7 +424,9 @@ extern "C" void app_main() {
         ESP_LOGE(TAG, "Filesystem mount failed");
     }
     feature_service::printFeatureConfiguration();
+    ota_service::confirmRunningImage();
     servoSettingsService.begin();
+    peripheralSettingsService.begin();
 
     xTaskCreate(serviceLoop, "service", 8192, nullptr, 2, nullptr);
     xTaskCreatePinnedToCore(controlLoop, "control", 8192, nullptr, 5, nullptr, 1);

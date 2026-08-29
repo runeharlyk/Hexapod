@@ -1,7 +1,6 @@
-# Main component. Hand-written sources are listed explicitly (not globbed) so the IDF
-# migration can proceed incrementally: Arduino .cpp files still on disk stay out of the
-# build until each is ported. Generated nanopb sources are globbed from platform_shared/,
-# which firmware/scripts/compile_protos.py regenerates via the pre_build.py pre-script.
+# Main component. Hand-written sources are listed explicitly (not globbed). Generated nanopb
+# sources are globbed from platform_shared/, which firmware/scripts/compile_protos.py
+# regenerates via the pre_build.py pre-script.
 file(GLOB PROTO_SRCS "platform_shared/*.pb.c")
 
 set(SRCS
@@ -15,6 +14,7 @@ set(SRCS
     "communication/webserver.cpp"
     "communication/websocket.cpp"
     "communication/ble.cpp"
+    "communication/espnow_adapter.cpp"
     "www_mount.cpp"
     "../../submodules/nanopb/pb_encode.c"
     "../../submodules/nanopb/pb_decode.c"
@@ -24,6 +24,10 @@ set(SRCS
 
 set(COMPONENT_REQUIRES
     nvs_flash
+    app_update
+    esp_https_ota
+    esp_http_client
+    mbedtls
     esp_timer
     esp_wifi
     esp_netif
