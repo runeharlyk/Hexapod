@@ -140,6 +140,11 @@ class HexapodSim:
     def base_height(self) -> float:
         return float(self.data.qpos[2])
 
+    def body_tilt_deg(self) -> float:
+        """Angle between the body's up axis and world up (deg) -- how far off level the robot is."""
+        up_z = self.data.xmat[self.model.site_bodyid[self.imu_site]].reshape(3, 3)[2, 2]
+        return float(np.degrees(np.arccos(np.clip(up_z, -1.0, 1.0))))
+
     def base_vz(self) -> float:
         """World-frame vertical velocity of the base (m/s)."""
         return float(self.data.qvel[2])
@@ -151,16 +156,45 @@ class HexapodSim:
         matz = self.data.geom_xmat[self.chassis_geom].reshape(3, 3)[2]  # world z of the box axes
         return float(pos[2] + (self._box_corners @ matz).min())
 
+    def contact_state(self) -> tuple[np.ndarray, float, float]:
+        """One pass over the contact list -> (per-foot normal force N, total non-foot ground-contact
+        force N, squared horizontal slip speed of planted feet).
+
+        The non-foot term is what a shin or the belly dragging on an obstacle costs; it only became
+        observable once the leg links and chassis were given collision masks.
+        """
+        d = self.data
+        foot_force = np.zeros(6)
+        nonfoot_force = 0.0
+        f6 = np.zeros(6)
+        for c in range(d.ncon):
+            g1, g2 = int(d.contact[c].geom1), int(d.contact[c].geom2)
+            if g1 == self.ground_geom_id:
+                other = g2
+            elif g2 == self.ground_geom_id:
+                other = g1
+            else:
+                continue
+            mujoco.mj_contactForce(self.model, d, c, f6)
+            fn = abs(float(f6[0]))
+            hit = np.nonzero(self.foot_geom_ids == other)[0]
+            if hit.size:
+                foot_force[hit[0]] += fn
+            else:
+                nonfoot_force += fn
+
+        slip = 0.0
+        res = np.zeros(6)
+        for i in np.nonzero(foot_force)[0]:
+            mujoco.mj_objectVelocity(
+                self.model, d, mujoco.mjtObj.mjOBJ_SITE, int(self.foot_site_ids[i]), res, 0
+            )
+            slip += res[3] ** 2 + res[4] ** 2  # world-frame x,y linear velocity
+        return foot_force, float(nonfoot_force), float(slip)
+
     def feet_in_contact(self) -> np.ndarray:
         """Boolean per-foot mask of feet touching the ground (jump env uses it to detect flight)."""
-        d = self.data
-        mask = np.zeros(6, dtype=bool)
-        for c in range(d.ncon):
-            g1, g2 = d.contact[c].geom1, d.contact[c].geom2
-            for i, fg in enumerate(self.foot_geom_ids):
-                if (g1 == fg and g2 == self.ground_geom_id) or (g2 == fg and g1 == self.ground_geom_id):
-                    mask[i] = True
-        return mask
+        return self.contact_state()[0] > 0.0
 
     def gyro(self) -> np.ndarray:
         return self.data.sensordata[
@@ -181,18 +215,4 @@ class HexapodSim:
     def foot_slip_sq(self) -> float:
         """Sum of squared horizontal foot speed over planted feet; penalizing it discourages the
         sim-only slip exploit and improves transfer."""
-        d = self.data
-        contact_feet = set()
-        for c in range(d.ncon):
-            g1, g2 = d.contact[c].geom1, d.contact[c].geom2
-            for i, fg in enumerate(self.foot_geom_ids):
-                if (g1 == fg and g2 == self.ground_geom_id) or (g2 == fg and g1 == self.ground_geom_id):
-                    contact_feet.add(i)
-        total = 0.0
-        res = np.zeros(6)
-        for i in contact_feet:
-            mujoco.mj_objectVelocity(
-                self.model, d, mujoco.mjtObj.mjOBJ_SITE, int(self.foot_site_ids[i]), res, 0
-            )
-            total += res[3] ** 2 + res[4] ** 2  # world-frame x,y linear velocity
-        return float(total)
+        return self.contact_state()[2]
