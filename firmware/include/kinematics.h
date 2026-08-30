@@ -45,6 +45,10 @@ constexpr void get_transformation_matrix(const BodyStateMsg &b, float T[4][4]) {
     T[3][3] = 1;
 }
 
+// Per-joint travel in degrees, order coxa, femur, tibia. Mirrors COXA/FEMUR/TIBIA_RANGE in
+// simulation/src/resources/build_model.py, which derives them from the servo's real travel.
+static constexpr float JOINT_LIMIT_DEG[3] = {31.5f, 90.0f, 149.0f};
+
 class Kinematics {
   private:
     float mountX[6], mountY[6], rootJ1, j1J2, j2J3, j3Tip;

@@ -448,6 +448,44 @@ void test_walking_still_swings_every_foot() {
     }
 }
 
+void test_nominal_stance_is_inside_joint_travel() {
+    // The servo path now clamps to JOINT_LIMIT_DEG. If the resting stance itself needed a clamp the
+    // robot would fight its own end stops while standing still, so pin that it does not.
+    Kinematics kin;
+    BodyStateMsg body = makeBody();
+    float angles[18];
+    kin.inverseKinematics(body, angles);
+    for (int i = 0; i < 18; ++i) {
+        const float limit = JOINT_LIMIT_DEG[i % 3];
+        TEST_ASSERT_TRUE_MESSAGE(std::fabs(angles[i]) <= limit, "nominal stance needs a clamped servo");
+    }
+}
+
+void test_walking_stays_inside_joint_travel() {
+    // A moderate walk must be executable without clamping. This is the gate the tuned gait fails at
+    // full stride (~7% of commands out of range), which is why it cannot be trusted on hardware yet.
+    GaitController controller;
+    controller.snapDefaultFootTarget(STAND);
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 0, 40, 0);
+    controller.setGait(gait);
+    Kinematics kin;
+    BodyStateMsg body = makeBody();
+
+    float worst[3] = {0, 0, 0};
+    for (int t = 0; t < 600; ++t) {
+        controller.step(gait, body, DT);
+        float angles[18];
+        kin.inverseKinematics(body, angles);
+        for (int i = 0; i < 18; ++i) {
+            const float over = std::fabs(angles[i]) - JOINT_LIMIT_DEG[i % 3];
+            if (over > worst[i % 3]) worst[i % 3] = over;
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(worst[0] <= 0.0f, "coxa exceeds travel while walking");
+    TEST_ASSERT_TRUE_MESSAGE(worst[1] <= 0.0f, "femur exceeds travel while walking");
+    TEST_ASSERT_TRUE_MESSAGE(worst[2] <= 0.0f, "tibia exceeds travel while walking");
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_tripod_keeps_three_feet_loaded);
@@ -467,5 +505,7 @@ int main(int, char **) {
     RUN_TEST(test_stance_change_walks_the_feet_to_the_new_target);
     RUN_TEST(test_settled_legs_hold_station_while_others_reposition);
     RUN_TEST(test_walking_still_swings_every_foot);
+    RUN_TEST(test_nominal_stance_is_inside_joint_travel);
+    RUN_TEST(test_walking_stays_inside_joint_travel);
     return UNITY_END();
 }

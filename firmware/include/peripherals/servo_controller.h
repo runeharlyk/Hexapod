@@ -2,6 +2,7 @@
 #define ServoController_h
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <cstdint>
 #include <event_bus.h>
 #include <message_types.h>
@@ -9,6 +10,8 @@
 #include <settings/servo_settings.h>
 #include <peripherals/i2c_bus.h>
 #include <peripherals/drivers/pca9685.h>
+#include <utils/math_utils.h>
+#include <kinematics.h>
 
 #ifndef NUM_SERVO
 #define NUM_SERVO 18
@@ -85,9 +88,33 @@ class ServoController {
 
     void setAngles(float new_angles[NUM_SERVO]) {
         control_state = SERVO_CONTROL_STATE::ANGLE;
+        bool clamped = false;
         for (int i = 0; i < NUM_SERVO; i++) {
-            target_angles[i] = new_angles[i] + (i % 3 == 2 ? 90.0f : 0.0f);
+            const float limit = JOINT_LIMIT_DEG[i % 3];
+            const float angle = CLIP(new_angles[i], -limit, limit);
+            if (angle != new_angles[i]) clamped = true;
+            target_angles[i] = angle + (i % 3 == 2 ? 90.0f : 0.0f);
         }
+        if (clamped) reportClamped();
+    }
+
+    // Commands beyond travel mean the gait is asking for motion the robot cannot make; say so, but
+    // not at 200 Hz.
+    void reportClamped() {
+        const int64_t now = esp_timer_get_time();
+        _clampedSinceLog++;
+        if (now - _lastClampLog < 2000000) return;
+        _lastClampLog = now;
+        ESP_LOGW(TAG, "%lu servo commands clamped to joint travel in the last window",
+                 (unsigned long)_clampedSinceLog);
+        _clampedSinceLog = 0;
+    }
+
+    // Float -> uint16_t is undefined for negatives, and the manual pcaWrite() path already
+    // validates this range; the gait path did not.
+    static uint16_t toPwm(float angle, const ServoCfg &cfg) {
+        const float pwm = (angle + cfg.centerAngle) * cfg.direction * cfg.conversion + cfg.centerPwm;
+        return (uint16_t)CLIP(pwm, 0.0f, 4095.0f);
     }
 
     void calculatePWM() {
@@ -95,9 +122,8 @@ class ServoController {
             const ServoCfg &sl = cfg[i];
             const ServoCfg &sr = cfg[i + 9];
 
-            left_pwm[sl.pin] = (uint16_t)((target_angles[i] + sl.centerAngle) * sl.direction * sl.conversion + sl.centerPwm);
-            right_pwm[sr.pin] =
-                (uint16_t)((target_angles[i + 9] + sr.centerAngle) * sr.direction * sr.conversion + sr.centerPwm);
+            left_pwm[sl.pin] = toPwm(target_angles[i], sl);
+            right_pwm[sr.pin] = toPwm(target_angles[i + 9], sr);
         }
         _left_pca.setMultiplePWM(left_pwm, channel_count);
         _right_pca.setMultiplePWM(right_pwm, channel_count);
@@ -160,6 +186,8 @@ class ServoController {
 
     SERVO_CONTROL_STATE control_state = SERVO_CONTROL_STATE::DEACTIVATED;
     bool is_active{false};
+    int64_t _lastClampLog{0};
+    uint32_t _clampedSinceLog{0};
     float target_angles[NUM_SERVO] = {0};
 
     EventBus<ServoSignalMsg>::Handle _signalSub;
