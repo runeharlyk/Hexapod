@@ -9,7 +9,8 @@ export enum GaitType {
   BI_GATE = 'Bi Gate',
   WAVE = 'Wave',
   RIPPLE = 'Ripple',
-  TUNED = 'Tuned'
+  TUNED = 'Tuned',
+  AUTO = 'Auto'
 }
 
 export const GaitLabels: Record<string, GaitType> = {
@@ -17,7 +18,8 @@ export const GaitLabels: Record<string, GaitType> = {
   'Bi Gate': GaitType.BI_GATE,
   Wave: GaitType.WAVE,
   Ripple: GaitType.RIPPLE,
-  Tuned: GaitType.TUNED
+  Tuned: GaitType.TUNED,
+  Auto: GaitType.AUTO
 }
 
 export const default_offset: Record<GaitType, number[]> = {
@@ -26,7 +28,9 @@ export const default_offset: Record<GaitType, number[]> = {
   [GaitType.WAVE]: [0, 1 / 6, 2 / 6, 5 / 6, 4 / 6, 3 / 6],
   [GaitType.RIPPLE]: [0, 4 / 6, 2 / 6, 1 / 6, 5 / 6, 3 / 6],
   // Mirrors tuned_gait::OFFSET in firmware/include/gait_tuned.h (CMA-ES search result).
-  [GaitType.TUNED]: [0.0, 0.485762, 0.971525, 0.478937, 0.958527, 0.438118]
+  [GaitType.TUNED]: [0.0, 0.485762, 0.971525, 0.478937, 0.958527, 0.438118],
+  // AUTO resolves to a concrete gait on the robot; the visualization shows the slowest of the set.
+  [GaitType.AUTO]: [0, 4 / 6, 2 / 6, 1 / 6, 5 / 6, 3 / 6]
 }
 
 export const default_stand_frac: Record<GaitType, number> = {
@@ -34,7 +38,8 @@ export const default_stand_frac: Record<GaitType, number> = {
   [GaitType.BI_GATE]: 2.1 / 6,
   [GaitType.WAVE]: 5 / 6,
   [GaitType.RIPPLE]: 5 / 6,
-  [GaitType.TUNED]: 0.500313
+  [GaitType.TUNED]: 0.500313,
+  [GaitType.AUTO]: 5 / 6
 }
 
 export interface gait_state_t {

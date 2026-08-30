@@ -17,7 +17,7 @@ struct ModeMsg {
 
 // TUNED is the CMA-ES-searched gait from simulation/src/resources/gait_library.json, emitted into
 // gait_tuned.h by simulation/export_gait.py. Appended last so the existing wire values are stable.
-enum class GaitType { TRI_GATE, BI_GATE, WAVE, RIPPLE, TUNED };
+enum class GaitType { TRI_GATE, BI_GATE, WAVE, RIPPLE, TUNED, AUTO };
 
 struct GaitMsg {
     GaitType gait;

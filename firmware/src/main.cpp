@@ -123,7 +123,7 @@ static void registerHandlers(CommAdapterBase &c) {
         EventBus<ModeMsg>::publish({static_cast<MOTION_STATE>(m.mode)});
     });
     c.on<socket_message_GaitData>([](const socket_message_GaitData &g, int) {
-        if ((int)g.gait < 0 || (int)g.gait > (int)socket_message_GaitEnum_TUNED) return;
+        if ((int)g.gait < 0 || (int)g.gait > (int)socket_message_GaitEnum_AUTO) return;
         EventBus<GaitMsg>::publish({static_cast<GaitType>(g.gait)});
     });
     c.on<socket_message_ServoPWMData>([](const socket_message_ServoPWMData &s, int) {

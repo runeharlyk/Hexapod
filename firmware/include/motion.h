@@ -52,7 +52,10 @@ class MotionService {
 
     void handleInputGait(GaitMsg const &g) {
         ESP_LOGI("MotionService", "Gait %d", g.gait);
-        gait_state.gait_type = g.gait;
+        _requestedGait = g.gait;
+        // AUTO has no schedule of its own; updateMotion picks one per cycle.
+        gait_state.gait_type = g.gait == GaitType::AUTO ? selectAutoGait(commandSpeed01(), gait_state.gait_type)
+                                                        : g.gait;
         gait.setGait(gait_state);
         // The schedule switches outright; only the command eases. Keep the target's identity fields
         // in step so a later ramp never reads a stale gait.
@@ -121,6 +124,37 @@ class MotionService {
         }
     }
 
+    // Normalized stride magnitude, the speed signal AUTO switches on.
+    float commandSpeed01() const {
+        const float stride = sqrtf(target_gait_state.step_x * target_gait_state.step_x +
+                                   target_gait_state.step_y * target_gait_state.step_y);
+        return CLIP(stride / 100.0f, 0.0f, 1.0f);
+    }
+
+    // Schedules cannot be swapped while stepping: changing offset[] reassigns every leg's phase at
+    // once, and a leg at the top of its swing in one gait is a stance leg in the next, so its foot is
+    // commanded straight down -- measured at 78 mm in a single tick. Retiming legs individually to
+    // avoid that is a real transition problem and is deliberately not attempted here.
+    //
+    // Instead switch only while the gait is not stepping. selectAutoGait reads the TARGET command,
+    // so the ramp's window at each start and stop is enough to choose the gait for the walk about to
+    // happen. The cost is that changing gait at speed needs a brief stop.
+    void updateAutoGait() {
+        if (_requestedGait != GaitType::AUTO) return;
+        const bool stepping = fabsf(gait_state.step_x) >= 2.0f || fabsf(gait_state.step_y) >= 2.0f ||
+                              gait_state.step_angle != 0.0f;
+        if (stepping) return;
+
+        const GaitType next = selectAutoGait(commandSpeed01(), gait_state.gait_type);
+        if (next == gait_state.gait_type) return;
+        gait_state.gait_type = next;
+        gait.setGait(gait_state);
+        target_gait_state.gait_type = next;
+        target_gait_state.stand_frac = gait_state.stand_frac;
+        for (int i = 0; i < 6; i++) target_gait_state.offset[i] = gait_state.offset[i];
+        ESP_LOGI("MotionService", "Auto gait -> %d", (int)next);
+    }
+
     bool updateMotion() {
         resetCommandIfTimedOut();
         const float dt = getMotionDeltaSeconds();
@@ -147,6 +181,8 @@ class MotionService {
                 body_state.phi = lerpf(body_state.phi, target_body_state.phi + _peripherals->angleY(), smoothing_factor);
                 body_state.omega =
                     lerpf(body_state.omega, target_body_state.omega + _peripherals->angleX(), smoothing_factor);
+                // Before the ramp: it clears the 2 mm deadband in one tick, closing the window.
+                updateAutoGait();
                 approachGaitCommand(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
                 gait.step(gait_state, body_state, dt);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
@@ -201,6 +237,7 @@ class MotionService {
     float default_feet_pos[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
                                     {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
 
+    GaitType _requestedGait = GaitType::TRI_GATE;
     MOTION_STATE motionState = MOTION_STATE::DEACTIVATED;
     unsigned long lastCommandMillis = 0;
     unsigned long lastMotionMicros = 0;

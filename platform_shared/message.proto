@@ -31,6 +31,7 @@ enum GaitEnum {
   WAVE = 2;
   RIPPLE = 3;
   TUNED = 4;
+  AUTO = 5;
 }
 
 message ControllerInputData {

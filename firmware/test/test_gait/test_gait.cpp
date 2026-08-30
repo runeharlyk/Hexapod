@@ -486,6 +486,87 @@ void test_walking_stays_inside_joint_travel() {
     TEST_ASSERT_TRUE_MESSAGE(worst[2] <= 0.0f, "tibia exceeds travel while walking");
 }
 
+void test_auto_gait_picks_by_speed_and_resists_flapping() {
+    TEST_ASSERT_EQUAL_INT((int)GaitType::RIPPLE, (int)selectAutoGait(0.10f, GaitType::RIPPLE));
+    TEST_ASSERT_EQUAL_INT((int)GaitType::TRI_GATE, (int)selectAutoGait(0.50f, GaitType::RIPPLE));
+    TEST_ASSERT_EQUAL_INT((int)GaitType::BI_GATE, (int)selectAutoGait(0.90f, GaitType::TRI_GATE));
+
+    // Sitting just past a boundary must not flip back and forth: the band a gait already holds is
+    // wider than the one it would move to.
+    const float edge = 0.32f;
+    TEST_ASSERT_EQUAL_INT((int)GaitType::RIPPLE, (int)selectAutoGait(edge, GaitType::RIPPLE));
+    TEST_ASSERT_EQUAL_INT((int)GaitType::TRI_GATE, (int)selectAutoGait(edge, GaitType::TRI_GATE));
+}
+
+namespace {
+// Walks a stop-slow-stop-fast-stop profile and reports the worst per-tick foot movement anywhere in
+// it. With autoSwitch the schedule may change; where it may change is the thing under test.
+float runGaitProfile(bool autoSwitch, GaitType fixedGait, int &switches) {
+    GaitController controller;
+    controller.snapDefaultFootTarget(STAND);
+    gait_state_t gait = makeGait(autoSwitch ? GaitType::RIPPLE : fixedGait, 0, 0, 0);
+    controller.setGait(gait);
+    BodyStateMsg body = makeBody();
+    gait_state_t target = gait;
+
+    float prev[6][3];
+    for (int i = 0; i < 6; ++i)
+        for (int j = 0; j < 3; ++j) prev[i][j] = body.feet[i][j];
+
+    const float targets[5] = {0.0f, 0.15f, 0.0f, 0.95f, 0.0f};
+    float worst = 0.0f;
+    switches = 0;
+
+    for (int leg = 0; leg < 5; ++leg) {
+        target.step_y = targets[leg] * 100.0f;
+        for (int t = 0; t < 600; ++t) {
+            const bool stepping = std::fabs(gait.step_x) >= 2.0f || std::fabs(gait.step_y) >= 2.0f ||
+                                  gait.step_angle != 0.0f;
+            if (autoSwitch && !stepping) {
+                const GaitType next = selectAutoGait(std::fabs(target.step_y) / 100.0f, gait.gait_type);
+                if (next != gait.gait_type) {
+                    gait.gait_type = next;
+                    controller.setGait(gait);
+                    target.gait_type = next;
+                    target.stand_frac = gait.stand_frac;
+                    for (int i = 0; i < 6; ++i) target.offset[i] = gait.offset[i];
+                    switches++;
+                }
+            }
+            approachGaitCommand(gait, target, DT, 0.15f);
+
+            controller.step(gait, body, DT);
+            for (int i = 0; i < 6; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    const float d = std::fabs(body.feet[i][j] - prev[i][j]);
+                    if (d > worst) worst = d;
+                    prev[i][j] = body.feet[i][j];
+                }
+            }
+        }
+    }
+    return worst;
+}
+}  // namespace
+
+void test_auto_gait_switch_adds_no_discontinuity() {
+    // Starting to walk always snaps some legs into mid-swing, because at phase 0 any leg whose
+    // offset exceeds stand_frac is already swinging. That transient is pre-existing. What must be
+    // true is that switching schedules during the standstill does not make it worse -- switching
+    // mid-stride did, by ~78 mm.
+    int switches = 0, unused = 0;
+    const float withSwitching = runGaitProfile(true, GaitType::TRI_GATE, switches);
+    const float bipodOnly = runGaitProfile(false, GaitType::BI_GATE, unused);
+    const float rippleOnly = runGaitProfile(false, GaitType::RIPPLE, unused);
+    const float baseline = bipodOnly > rippleOnly ? bipodOnly : rippleOnly;
+
+    char dbg[128];
+    snprintf(dbg, sizeof(dbg), "switches=%d auto=%.2f bipod=%.2f ripple=%.2f mm", switches, withSwitching,
+             bipodOnly, rippleOnly);
+    TEST_ASSERT_TRUE_MESSAGE(switches >= 2, dbg);
+    TEST_ASSERT_TRUE_MESSAGE(withSwitching <= baseline + 1.0f, dbg);
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_tripod_keeps_three_feet_loaded);
@@ -507,5 +588,7 @@ int main(int, char **) {
     RUN_TEST(test_walking_still_swings_every_foot);
     RUN_TEST(test_nominal_stance_is_inside_joint_travel);
     RUN_TEST(test_walking_stays_inside_joint_travel);
+    RUN_TEST(test_auto_gait_picks_by_speed_and_resists_flapping);
+    RUN_TEST(test_auto_gait_switch_adds_no_discontinuity);
     return UNITY_END();
 }
