@@ -234,6 +234,10 @@ def write_header(path, control_mode, layers, mean, var, clip, eps, test_obs, tes
         f.write("#include <math.h>\n\nnamespace hexapod_policy {\n\n")
         f.write(f"constexpr int OBS_DIM = {obs_dim};\nconstexpr int ACT_DIM = {act_dim};\n")
         f.write(f"constexpr int N_LAYERS = {len(layers)};\n")
+        # Emitted as a constant, not just prose: the firmware assembles the observation by
+        # hand and a wrong stack length fails silently -- infer() still returns numbers and
+        # selfCheck() only exercises the network, not the layout.
+        f.write(f"constexpr int OBS_HISTORY = {cfg['obs_history']};\n")
         f.write(f"constexpr float OBS_CLIP = {clip:.6f}f;\nconstexpr float OBS_EPS = {eps:.3e}f;\n\n")
         f.write(constants_cpp(base))
         f.write("\n")

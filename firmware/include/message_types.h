@@ -9,7 +9,7 @@
 
 // Internal EventBus message structs (in-RAM only; the wire protocol is protobuf).
 
-enum class MOTION_STATE { DEACTIVATED, IDLE, POSE, STAND, WALK };
+enum class MOTION_STATE { DEACTIVATED, IDLE, POSE, STAND, WALK, WALK_NN };
 
 struct ModeMsg {
     MOTION_STATE mode;

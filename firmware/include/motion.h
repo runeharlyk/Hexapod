@@ -11,6 +11,7 @@
 #include <gait.h>
 #include <event_bus.h>
 #include <message_types.h>
+#include <policy_runner.h>
 
 static inline unsigned long millis() { return (unsigned long)(esp_timer_get_time() / 1000); }
 static inline unsigned long micros() { return (unsigned long)esp_timer_get_time(); }
@@ -67,6 +68,9 @@ class MotionService {
     void handleInputMode(ModeMsg const &m) {
         ESP_LOGI("MotionService", "Mode %d", m.mode);
         motionState = m.mode;
+#if FT_ENABLED(USE_POLICY)
+        if (m.mode == MOTION_STATE::WALK_NN) _policy.reset(gait, default_feet_pos);
+#endif
         motionState == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
     }
 
@@ -86,6 +90,14 @@ class MotionService {
                 target_gait_state.step_angle = 0;
                 break;
             }
+#if FT_ENABLED(USE_POLICY)
+            case MOTION_STATE::WALK_NN: {
+                _policy.setCommand(c);
+                target_body_state.xm = target_body_state.ym = 0;
+                target_body_state.phi = 0;
+                break;
+            }
+#endif
             case MOTION_STATE::WALK: {
                 target_gait_state.step_x = -c.lx * 100;
                 target_gait_state.step_y = c.ly * 100;
@@ -174,6 +186,17 @@ class MotionService {
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
             }
+#if FT_ENABLED(USE_POLICY)
+            case MOTION_STATE::WALK_NN: {
+                // The policy owns stride, lift, cadence and ride height; it was trained with the
+                // firmware's self-levelling active, so that term stays on here too.
+                body_state.phi = lerpf(body_state.phi, _peripherals->angleY(), smoothing_factor);
+                body_state.omega = lerpf(body_state.omega, _peripherals->angleX(), smoothing_factor);
+                if (!_policy.update(_peripherals, gait, body_state, msgAngles.angles)) return false;
+                kinematics.inverseKinematics(body_state, msgAngles.angles);
+                break;
+            }
+#endif
             case MOTION_STATE::WALK: {
                 body_state.xm = lerpf(body_state.xm, target_body_state.xm, smoothing_factor);
                 body_state.ym = lerpf(body_state.ym, target_body_state.ym, smoothing_factor);
@@ -205,6 +228,9 @@ class MotionService {
     EventBus<ServoAnglesMsg>::Handle _angleSubHandle;
     Kinematics kinematics;
     GaitController gait;
+#if FT_ENABLED(USE_POLICY)
+    PolicyRunner _policy;
+#endif
 
     CommandMsg command = {0, 0, 0, 0, 0, 0, 0, 0};
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};

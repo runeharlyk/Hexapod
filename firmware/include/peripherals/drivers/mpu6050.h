@@ -42,6 +42,16 @@ class MPU6050Driver {
             _temp = rawTemp / 340.0f + 36.53f;
         }
 
+        // The DMP path yields only orientation; the learned policy also needs body rates, so read
+        // the raw gyro here rather than adding a second I2C round trip on the control loop.
+        uint8_t g[6];
+        if (I2CBus::instance().readReg(_addr, REG_GYRO_XOUT_H, g, 6) == ESP_OK) {
+            for (int i = 0; i < 3; ++i) {
+                const int16_t raw = (int16_t)((g[i * 2] << 8) | g[i * 2 + 1]);
+                _gyro[i] = raw * GYRO_LSB_TO_RAD;
+            }
+        }
+
         return true;
     }
 
@@ -52,6 +62,18 @@ class MPU6050Driver {
         CalibrateAccel(6);
 
         return true;
+    }
+
+    // REG_GYRO_CONFIG is set to 0x18 (FS_SEL=3, +-2000 deg/s) => 16.4 LSB per deg/s.
+    static constexpr float GYRO_LSB_TO_RAD = (1.0f / 16.4f) * (float)M_PI / 180.0f;
+
+    void getGyro(float out[3]) const {
+        for (int i = 0; i < 3; ++i) out[i] = _gyro[i];
+    }
+
+    // Gravity unit vector in body frame, DMP convention (world-UP).
+    void getGravity(float out[3]) const {
+        for (int i = 0; i < 3; ++i) out[i] = _gravity[i];
     }
 
     float getRoll() const { return _rpy[2]; }
@@ -502,6 +524,7 @@ class MPU6050Driver {
     bool _initialized = false;
     uint8_t _fifoBuffer[DMP_PACKET_SIZE];
     float _gravity[3] = {0};
+    float _gyro[3] = {0};
     float _rpy[3] = {0};
     float _temp = 0;
 };

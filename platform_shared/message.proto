@@ -22,6 +22,7 @@ enum ModesEnum {
   POSE = 2;
   STAND = 3;
   WALK = 4;
+  WALK_NN = 5;
 }
 
 // Mirrors firmware GaitType.

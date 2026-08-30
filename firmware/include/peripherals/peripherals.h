@@ -64,6 +64,33 @@ class Peripherals {
 #endif
     }
 
+    float angleZ() {
+#if FT_ENABLED(USE_MPU6050)
+        return _imu.getYaw();
+#else
+        return 0.0f;
+#endif
+    }
+
+    // Gravity unit vector in body frame, DMP convention (world-UP). The learned policy wants
+    // world-DOWN, so its runner negates.
+    void gravityBody(float out[3]) {
+#if FT_ENABLED(USE_MPU6050)
+        _imu.getGravity(out);
+#else
+        out[0] = out[1] = 0.0f;
+        out[2] = 1.0f;
+#endif
+    }
+
+    void gyroRad(float out[3]) {
+#if FT_ENABLED(USE_MPU6050)
+        _imu.getGyro(out);
+#else
+        out[0] = out[1] = out[2] = 0.0f;
+#endif
+    }
+
     float angleY() {
 #if FT_ENABLED(USE_MPU6050)
         return _imu.getPitch();

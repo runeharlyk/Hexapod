@@ -119,7 +119,7 @@ static void registerHandlers(CommAdapterBase &c) {
         EventBus<CommandMsg>::publish(cmd);
     });
     c.on<socket_message_ModeData>([](const socket_message_ModeData &m, int) {
-        if ((int)m.mode < 0 || (int)m.mode > (int)socket_message_ModesEnum_WALK) return;
+        if ((int)m.mode < 0 || (int)m.mode > (int)socket_message_ModesEnum_WALK_NN) return;
         EventBus<ModeMsg>::publish({static_cast<MOTION_STATE>(m.mode)});
     });
     c.on<socket_message_GaitData>([](const socket_message_GaitData &g, int) {

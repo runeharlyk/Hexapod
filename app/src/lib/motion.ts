@@ -14,7 +14,8 @@ export enum MotionModes {
   IDLE = 'idle',
   POSE = 'pose',
   STAND = 'stand',
-  WALK = 'walk'
+  WALK = 'walk',
+  WALK_NN = 'walk nn'
 }
 
 export default class Motion {
