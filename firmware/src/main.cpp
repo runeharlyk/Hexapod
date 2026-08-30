@@ -31,6 +31,7 @@
 #include <communication/webserver.h>
 #include <communication/websocket.h>
 #include <communication/ble.h>
+#include <communication/serial_adapter.h>
 #include <www_mount.hpp>
 #include <hexapod.h>
 #include <cpu_stats.h>
@@ -59,6 +60,9 @@ ServoSettingsService servoSettingsService;
 PeripheralSettingsService peripheralSettingsService;
 Websocket wsSocket{server, "/api/ws"};
 BLE bleAdapter;
+#if FT_ENABLED(USE_SERIAL_LINK)
+SerialAdapter serialAdapter;
+#endif
 Hexapod robot;
 #if FT_ENABLED(USE_ESPNOW)
 EspNowAdapter espNow;
@@ -280,6 +284,9 @@ template <typename T>
 static void emitAll(const T &msg) {
     wsSocket.emit(msg);
     bleAdapter.emit(msg);
+#if FT_ENABLED(USE_SERIAL_LINK)
+    serialAdapter.emit(msg);
+#endif
 }
 
 // A bridge holds its EventBus subscription only while some client is listening for that tag, so
@@ -290,7 +297,11 @@ static std::map<int32_t, std::function<void(bool)>> &bridges() {
 }
 
 static bool anyoneListening(int32_t tag) {
-    return wsSocket.hasSubscribers(tag) || bleAdapter.hasSubscribers(tag);
+    return wsSocket.hasSubscribers(tag) || bleAdapter.hasSubscribers(tag)
+#if FT_ENABLED(USE_SERIAL_LINK)
+           || serialAdapter.hasSubscribers(tag)
+#endif
+        ;
 }
 
 static void refreshBridge(int32_t tag) {
@@ -365,6 +376,11 @@ static void setupServer() {
 static void setupComm() {
     registerHandlers(wsSocket);
     registerHandlers(bleAdapter);
+#if FT_ENABLED(USE_SERIAL_LINK)
+    registerHandlers(serialAdapter);
+    serialAdapter.onSubscriptionChange(refreshBridge);
+    serialAdapter.begin();
+#endif
 
     wsSocket.onSubscriptionChange(refreshBridge);
     bleAdapter.onSubscriptionChange(refreshBridge);

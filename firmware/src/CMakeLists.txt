@@ -15,6 +15,7 @@ set(SRCS
     "communication/websocket.cpp"
     "communication/ble.cpp"
     "communication/espnow_adapter.cpp"
+    "communication/serial_adapter.cpp"
     "www_mount.cpp"
     "../../submodules/nanopb/pb_encode.c"
     "../../submodules/nanopb/pb_decode.c"
@@ -34,6 +35,7 @@ set(COMPONENT_REQUIRES
     esp_event
     esp_http_server
     esp_driver_i2c
+    esp_driver_usb_serial_jtag
     json
     lwip
     joltwallet__littlefs

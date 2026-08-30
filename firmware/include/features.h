@@ -27,6 +27,10 @@
 #define USE_ESPNOW 0
 #endif
 
+#ifndef USE_SERIAL_LINK
+#define USE_SERIAL_LINK 0
+#endif
+
 #ifndef USE_POLICY
 #define USE_POLICY 0
 #endif
