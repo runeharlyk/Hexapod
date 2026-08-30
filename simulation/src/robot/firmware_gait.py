@@ -85,13 +85,74 @@ class BodyState:
 class GaitState:
     step_height: float = 15.0
     step_x: float = 0.0
-    step_z: float = 0.0
+    step_y: float = 0.0
     step_angle: float = 0.0
     step_speed: float = 1.0
     step_depth: float = 0.002
     stand_frac: float = DEFAULT_STAND_FRAC
     gait_type: int = TRI_GATE
     offset: np.ndarray = field(default_factory=lambda: DEFAULT_OFFSET.copy())
+
+
+@dataclass
+class ReflexConfig:
+    """Contact-driven reflexes for the analytic gait (Cruse's Walknet / Espenschied's insect
+    reflexes). These are OFF unless a config is attached to the GaitController, so the firmware
+    mirror in gait.h stays in parity until they prove themselves.
+
+    They address what a blind gait cannot: touchdown TIMING. The engine assumes ground at a fixed
+    body-frame height, so on uneven terrain a leg either lands early (body lurches) or swings
+    through air and lands late (support gap). A foot switch knows before the body does.
+    """
+
+    # MEASURED (2026-07-26, bench_terrain.py, 6 seeds), on the classical gait with no policy:
+    #   reach + ground_follow  raises the curb ceiling 30 -> 40 mm (0/6 -> 6/6) and roughly doubles
+    #                          forward reach at a 40 mm step (0.67 -> 1.40 m). A 25 mm taller stance
+    #                          alone does NOT do this, so it is genuine reflex behaviour. Cost: flat
+    #                          progress -0.12 (p<0.001); the rough-FIELD gain is not significant.
+    #   elevator               inert with foot-bottom sensors: a switch under the foot senses ground
+    #                          beneath it, not an obstacle in front of the shin. It needs a shin
+    #                          bumper or motor-current sensing to fire at all. Left on: it is free.
+    #   slow_when_unsupported  never showed a benefit; off.
+    search: bool = True            # keep reaching down until the foot actually takes load
+    ground_follow: bool = True     # carry that reach through stance, so the leg accommodates
+    elevator: bool = True          # contact while the foot should be clear -> lift higher
+    slow_when_unsupported: bool = False  # shared-clock brake while too few feet are loaded
+    # Holding a leg's phase until touchdown is the textbook version, but it fires on EVERY swing --
+    # the planned trajectory returns the foot to exactly nominal height, where it is not yet loaded --
+    # so it desynchronizes a gait that was already correct and costs progress on flat ground.
+    # Reaching further down needs no phase change, so the hold is off by default.
+    hold_phase: bool = False
+
+    # Asymmetric debounce: a touchdown is a real force and is believed immediately, while "no ground
+    # here" must survive `debounce` consecutive samples. Debouncing both directions just adds delay
+    # to the one event that needs to stop the reach promptly.
+    debounce: int = 2              # consecutive OPEN samples before concluding the ground is missing
+
+    # Reach/release form a bang-bang regulator on contact rather than a one-shot probe. Reaching
+    # alone overshoots by the sensing + actuation lag (~20 mm at 250 mm/s) and stance then holds that
+    # over-extension, which is what made reflexes cost progress on flat ground; backing off while
+    # loaded cancels it without having to know the lag.
+    search_rate: float = 250.0     # mm/s reach down while the foot should be loaded but is not
+    release_rate: float = 90.0     # mm/s back off while it IS loaded
+    search_max: float = 30.0       # mm
+    hold_max_s: float = 0.08       # s before entering stance anyway -- a dead sensor must never
+                                   # deadlock the gait (only used when hold_phase is on)
+    elev_step: float = 12.0        # mm of extra step height per bump
+    elev_max: float = 35.0
+    elev_decay: float = 0.6        # retained fraction after a clean swing
+    slow_factor: float = 0.45      # phase-rate multiplier when support is missing
+
+    # The elevator triggers on the PLANNED foot height, not on swing phase: at the start of swing the
+    # foot is legitimately still touching the ground it just left, so a phase window fires constantly
+    # on flat ground. Height is the physical criterion -- "should this foot be clear right now?".
+    elev_trigger: float = 12.0     # mm of planned lift above which contact means an obstacle
+    # The reach must fire only when a foot is genuinely LATE, never merely "not loaded yet". Contact
+    # force needs a step or two to build even on flat ground, so reaching on instantaneous absence
+    # digs every foot into the floor on every stride. Waiting `search_grace` steps past the planned
+    # touchdown costs nothing on flat and still leaves most of stance to find a hole.
+    search_grace: int = 3          # control steps past planned touchdown before reaching down
+    search_window: float = 0.5     # give up once this fraction of stance has elapsed
 
 
 def set_gait(gait: GaitState) -> None:
@@ -113,7 +174,7 @@ def set_gait(gait: GaitState) -> None:
 def command_to_walk_gait(lx, ly, rx, s, s1, gait: GaitState) -> None:
     """Port of MotionService::handleCommand WALK branch (firmware/include/motion.h)."""
     gait.step_x = -lx * 100.0
-    gait.step_z = ly * 100.0
+    gait.step_y = ly * 100.0
     gait.step_angle = rx * 0.8
     gait.step_speed = s + 1.0
     gait.step_height = (s1 + 1.0) * 20.0
@@ -216,12 +277,31 @@ class Kinematics:
 class GaitController:
     """Port of firmware/include/gait.h :: GaitController."""
 
-    def __init__(self):
+    def __init__(self, reflex: "ReflexConfig | None" = None, arc_stance: bool = False):
+        # arc_stance: during a turn, sweep the planted foot along the ARC about the instantaneous
+        # centre of rotation instead of the straight chord between the stroke endpoints.
+        # `stroke = v + omega x r` (commit c8d2b52) gives each foot the right instantaneous
+        # velocity, but _stance_curve then moves it linearly, so mid-stance the foot is off the
+        # body's true path by the arc's sagitta: 15 mm for an in-place turn at step_angle 0.8, and
+        # 20 mm for forward-plus-turn. A planted foot that cannot follow the body can only slip.
+        self.arc_stance = bool(arc_stance)
         self.phase = 0.0
         self.default_position = DEFAULT_FEET.copy()
         self.target_default_position = DEFAULT_FEET.copy()
         self.swing_start_position = DEFAULT_FEET.copy()
         self.foot_was_swinging = [False] * 6
+
+        # contact-reflex state (unused while reflex is None)
+        self.reflex = reflex
+        self.phase_adj = np.zeros(6)   # per-leg phase hold, so a leg can wait for touchdown
+        self.depth = np.zeros(6)       # mm this leg is reaching below nominal to find/keep ground
+        self.elev_z = np.zeros(6)      # mm of extra step height from the elevator reflex
+        self.hold_t = np.zeros(6)      # s each leg has been holding in late swing
+        self.phase_scale = 1.0         # caller multiplies its phase advance by this
+        self.open_run = np.zeros(6, dtype=int)    # consecutive samples reading open
+        self.closed_run = np.zeros(6, dtype=int)  # consecutive samples reading closed
+        self.stance_steps = np.zeros(6, dtype=int)  # control steps since this leg entered stance
+        self._last_phase = 0.0
 
     @staticmethod
     def _stance_curve(length, angle, depth, phase, point):
@@ -253,39 +333,139 @@ class GaitController:
         return (phase - stand_frac) / (1 - stand_frac), self._bezier_curve, height
 
     def _kinematic_params(self, gait: GaitState):
-        length = math.hypot(gait.step_x, gait.step_z) * (-1 if gait.step_x < 0 else 1)
-        turn_amplitude = math.atan2(gait.step_z, length) * 2 if length != 0 else 0.0
+        length = math.hypot(gait.step_x, gait.step_y) * (-1 if gait.step_x < 0 else 1)
+        turn_amplitude = math.atan2(gait.step_y, length) * 2 if length != 0 else 0.0
         return length, turn_amplitude
 
-    def generate_feet(self, gait: GaitState, body: BodyState) -> None:
+    def generate_feet(self, gait: GaitState, body: BodyState,
+                      contacts=None, dt: float = 0.0) -> None:
         """Generate feet at the CURRENT self.phase (does NOT advance phase).
 
-        Used by `phase_gait` control mode where the policy owns the phase.
+        Used by `phase_gait` control mode where the policy owns the phase. When a ReflexConfig is
+        attached and `contacts` (6 per-foot booleans) is supplied, per-leg contact reflexes adjust
+        phase and step height; otherwise this is the plain open-loop gait.
         """
+        reflexive = self.reflex is not None and contacts is not None
+        dphase = math.fmod(self.phase - self._last_phase + 1.0, 1.0) if reflexive else 0.0
+        self._last_phase = self.phase
+
         new_feet = self.default_position.copy()
+        n_stance = n_loaded = 0
         for i in range(6):
-            phase = math.fmod(self.phase + gait.offset[i], 1.0)
+            # `%` not fmod: phase_adj accumulates negative while a leg's phase is held, and fmod
+            # keeps the sign, which would push the phase out of [0,1) and evaluate the stance curve
+            # at a negative parameter. The firmware has no phase_adj, so the two agree without it.
+            phase = (self.phase + gait.offset[i] + self.phase_adj[i]) % 1.0
             is_swinging = phase >= gait.stand_frac
             if is_swinging and not self.foot_was_swinging[i]:
                 self.swing_start_position[i] = self.default_position[i].copy()
+            if reflexive and self.foot_was_swinging[i] and not is_swinging:
+                self._on_touchdown(i)
             self.foot_was_swinging[i] = is_swinging
 
             rx, ry = self.default_position[i][0], self.default_position[i][1]
             stroke_x = gait.step_x + gait.step_angle * (-ry)   # translation + (omega x r): radius-scaled turn
-            stroke_y = gait.step_z + gait.step_angle * (rx)
+            stroke_y = gait.step_y + gait.step_angle * (rx)
             stroke = math.hypot(stroke_x, stroke_y)
             direction = math.atan2(stroke_y, stroke_x)
 
+            height = gait.step_height + (self.elev_z[i] if reflexive else 0.0)
             ph_norm, curve_fn, amp = self._phase_params(
-                phase, gait.stand_frac, gait.step_depth, gait.step_height
+                phase, gait.stand_frac, gait.step_depth, height
             )
             delta = [0.0, 0.0, 0.0]
             curve_fn(stroke / 2.0, direction, amp, ph_norm, delta)
+            if self.arc_stance and not is_swinging and abs(gait.step_angle) > 1e-6:
+                # _arc_stance_xy returns the OFFSET from the chord, so it adds to the stance
+                # displacement rather than replacing it. delta[2] (the depth curve) is unchanged.
+                ax, ay = self._arc_stance_xy(gait, rx, ry, ph_norm)
+                delta[0] += ax
+                delta[1] += ay
+            if reflexive:
+                delta[2] += self._reflex_z(i, is_swinging, ph_norm, delta[2], bool(contacts[i]),
+                                           dphase, dt)
+                n_stance += 0 if is_swinging else 1
+                n_loaded += 1 if contacts[i] else 0
             for j in range(3):
                 new_feet[i][j] = self.default_position[i][j] + delta[j]
             new_feet[i][3] = 1.0
 
+        if reflexive and self.reflex.slow_when_unsupported:
+            # Too few feet carrying load for this part of the cycle means the last touchdown did not
+            # land where it was planned; slow the shared clock instead of striding on regardless.
+            self.phase_scale = self.reflex.slow_factor if n_loaded < n_stance - 1 else 1.0
         body.feet = new_feet
+
+    @staticmethod
+    def _arc_stance_xy(gait: GaitState, rx: float, ry: float, ph_norm: float):
+        """Foot XY displacement for a stance that follows the body's actual rotation.
+
+        The instantaneous centre of rotation is where the body-frame velocity field vanishes:
+        `v + omega x c = 0`, i.e. `c = (-step_y, step_x) / step_angle`. Over one stance the body
+        turns by `step_angle`, so relative to the body the foot rotates about `c` by the same angle
+        the other way.
+
+        Anchoring matters: the arc is re-centred so its two ENDPOINTS coincide with the linear
+        stroke's, and the curvature appears as an outward bulge at mid-stance. Anchoring at
+        mid-stance instead would move the endpoints by the full 15 mm and break the swing, which
+        still plans a straight chord between them. The residual is the 2.7 % difference between
+        arc length `ang*R` and chord `2*R*sin(ang/2)`, which is not worth correcting.
+
+        Computed as a perpendicular offset from the chord rather than by rotating about `c`.
+        Rotating about the centre means forming `c = (-step_y, step_x)/ang`, which diverges as the
+        turn rate goes to zero -- and `step_angle` is never exactly zero, because `yaw_comp` adds a
+        velocity-proportional term even on a straight command. The subtraction of two huge nearly
+        equal vectors then loses all precision, which showed up as a spurious effect on a
+        forward-only control command. Here the whole correction carries a factor that vanishes
+        linearly with `ang`, so straight-line walking is untouched by construction.
+        """
+        ang = gait.step_angle
+        stroke_x = gait.step_x + ang * (-ry)
+        stroke_y = gait.step_y + ang * rx
+        # (p0 - c) = (stroke_y, -stroke_x) / ang, so the offset from the chord is
+        #   [cos(ang*(p-1/2)) - cos(ang/2)] * (p0 - c),
+        # whose scalar factor is O(ang) and stays well conditioned.
+        k = (math.cos(ang * (ph_norm - 0.5)) - math.cos(0.5 * ang)) / ang
+        return k * stroke_y, -k * stroke_x
+
+    def _on_touchdown(self, i):
+        """Per-cycle bookkeeping at the swing->stance transition."""
+        r = self.reflex
+        self.elev_z[i] *= r.elev_decay
+        self.phase_adj[i] = 0.0
+        self.hold_t[i] = 0.0
+        self.open_run[i] = 0
+        self.closed_run[i] = 0
+
+    def _reflex_z(self, i, is_swinging, ph_norm, planned_z, contact, dphase, dt):
+        """Vertical foot correction (mm) from the contact reflexes, and the phase hold."""
+        r = self.reflex
+        if contact:
+            self.closed_run[i] += 1
+            self.open_run[i] = 0
+        else:
+            self.open_run[i] += 1
+            self.closed_run[i] = 0
+        loaded = self.closed_run[i] >= 1
+        unloaded = self.open_run[i] >= r.debounce
+
+        if is_swinging:
+            self.stance_steps[i] = 0
+            if r.elevator and loaded and planned_z >= r.elev_trigger:
+                self.elev_z[i] = min(r.elev_max, self.elev_z[i] + r.elev_step)
+            return 0.0   # mid-swing clearance is never traded away
+        self.stance_steps[i] += 1
+
+        late = r.search_grace <= self.stance_steps[i] and ph_norm < r.search_window
+        if r.search and late and unloaded:
+            self.depth[i] = min(r.search_max, self.depth[i] + r.search_rate * dt)
+            if r.hold_phase and self.hold_t[i] < r.hold_max_s:
+                self.hold_t[i] += dt
+                self.phase_adj[i] -= dphase          # hold this leg; the others keep going
+        elif loaded:
+            self.depth[i] = max(0.0, self.depth[i] - r.release_rate * dt)
+            self.hold_t[i] = 0.0
+        return -self.depth[i] if r.ground_follow else 0.0
 
     def advance_phase(self, gait: GaitState, dt: float) -> None:
         """Firmware phase advance (speed scales with step length / turn)."""
@@ -299,7 +479,7 @@ class GaitController:
 
     def step(self, gait: GaitState, body: BodyState, dt: float) -> None:
         """Faithful firmware step: ease to default when idle, else advance + generate."""
-        is_moving = abs(gait.step_x) >= 2 or abs(gait.step_z) >= 2 or gait.step_angle != 0.0
+        is_moving = abs(gait.step_x) >= 2 or abs(gait.step_y) >= 2 or gait.step_angle != 0.0
         if not is_moving:
             for i in range(6):
                 for j in range(4):
