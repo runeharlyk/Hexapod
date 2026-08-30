@@ -2,7 +2,8 @@
   import SettingsCard from '$lib/components/SettingsCard.svelte'
   import { BluetoothConnected, BluetoothDisconnected, WiFi } from '$lib/components/icons'
   import { location } from '$lib/stores'
-  import { connectBluetooth, connectWebsocket } from '$lib/stores/link'
+  import { connectBluetooth, connectWebsocket, connectSerial, serialAvailable } from '$lib/stores/link'
+  import { serial } from '$lib/transport/serial-adapter'
   import { ble, SERVICE_UUID } from '$lib/transport/ble-adapter'
   import { websocket } from '$lib/transport/websocket-adapter'
 
@@ -12,6 +13,7 @@
   }
 
   let isConnected = ble.connected
+  let isSerialConnected = serial.connected
   let isWebSocketConnected = websocket.connected
 </script>
 
@@ -74,6 +76,28 @@
       >
         <BluetoothDisconnected class="h-6 w-auto text-error" />
       </button>
+    {/if}
+  </div>
+
+  <h2>USB</h2>
+
+  <div class="flex">
+    <label class="label w-32" for="usb">Status:</label>
+    {#if !serialAvailable()}
+      <div class="text-base-content/60">Not supported in this browser &mdash; try Chrome or Edge</div>
+    {:else}
+      <div>{$isSerialConnected ? 'Connected' : 'Disconnected'}</div>
+      {#if $isSerialConnected}
+        <button
+          class="btn btn-ghost btn-circle btn-sm"
+          onclick={() => serial.disconnect()}
+          title="Disconnect USB"
+        >
+          <WiFi class="h-6 w-auto text-success" />
+        </button>
+      {:else}
+        <button class="btn btn-sm ml-2" onclick={connectSerial}>Choose port</button>
+      {/if}
     {/if}
   </div>
 </SettingsCard>

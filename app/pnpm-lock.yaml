@@ -78,6 +78,9 @@ importers:
       '@types/three':
         specifier: ^0.162.0
         version: 0.162.0
+      '@types/w3c-web-serial':
+        specifier: ^1.0.8
+        version: 1.0.8
       '@types/web-bluetooth':
         specifier: ^0.0.21
         version: 0.0.21
@@ -808,6 +811,9 @@ packages:
 
   '@types/three@0.162.0':
     resolution: {integrity: sha512-0j5yZcVukVIhrhSIC7+LmBPkkMoMuEJ1AfYBZfgNytdYqYREMuiyXWhYOMeZLBElTEAlJIZn7r2W3vqTIgjWlg==}
+
+  '@types/w3c-web-serial@1.0.8':
+    resolution: {integrity: sha512-QQOT+bxQJhRGXoZDZGLs3ksLud1dMNnMiSQtBA0w8KXvLpXX4oM4TZb6J0GgJ8UbCaHo5s9/4VQT8uXy9JER2A==}
 
   '@types/web-bluetooth@0.0.21':
     resolution: {integrity: sha512-oIQLCGWtcFZy2JW77j9k8nHzAOpqMHLQejDA48XXMWH6tjCQHz5RCFz1bzsmROyL6PUm+LLnUiI4BCn221inxA==}
@@ -2831,6 +2837,8 @@ snapshots:
       '@types/webxr': 0.5.16
       fflate: 0.6.10
       meshoptimizer: 0.18.1
+
+  '@types/w3c-web-serial@1.0.8': {}
 
   '@types/web-bluetooth@0.0.21': {}
 

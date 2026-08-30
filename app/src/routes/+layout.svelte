@@ -10,6 +10,7 @@
   import { mode, outControllerData, gait } from '$lib/stores'
   import { MotionModes } from '$lib/motion'
   import { dataBroker } from '$lib/transport/databroker'
+  import { serial } from '$lib/transport/serial-adapter'
   import { ble } from '$lib/transport/ble-adapter'
   import { websocket } from '$lib/transport/websocket-adapter'
   import { ControllerInputData, ModeData, GaitData } from '$lib/platform_shared/message'
@@ -32,6 +33,7 @@
 
   dataBroker.addTransport(ble)
   dataBroker.addTransport(websocket)
+  dataBroker.addTransport(serial)
 
   const throttle = new throttler()
   const COMMAND_HEARTBEAT_MS = 250
