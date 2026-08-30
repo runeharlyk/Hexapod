@@ -78,6 +78,15 @@ SCHED_LAG_RANGE = 0.25     # +-, on the metachronal lag and the left/right offse
 # teleports that foot along its trajectory. The policy therefore commands a TARGET phasing and the
 # env slews the actual offsets toward it -- retiming a leg is a physical act with a speed limit.
 SCHED_LAG_RATE = 0.6       # cycles/s of offset change
+
+# Firmware self-levelling (motion.h): the commanded body attitude tracks target + measured tilt,
+# lerped at `smoothing_factor` per 5 ms control tick. Without it here the policy trains against a
+# body that never auto-levels and then deploys onto one that does, competing for the same joints.
+# LEVEL_SIGN is +1 to match the firmware's `+ angleY()`; the direction that actually reduces tilt
+# is measured, not assumed -- see tools/check_self_level.py.
+SELF_LEVEL_SMOOTHING = 0.06   # firmware smoothing_factor
+SELF_LEVEL_TICK_S = 0.005     # firmware control period the factor was tuned at
+LEVEL_SIGN = 1.0
 # phase_gait scales: [step_x(mm), step_y(mm), step_angle(rad), step_height(mm), stand_frac, phase_rate(/s)]
 PG_STEP_XY = 100.0
 PG_STEP_ANGLE = 0.8
@@ -145,8 +154,13 @@ STAND_Z = 0.066  # target body height (m)
 REWARD_WEIGHTS = {
     "vel": R_VEL_WEIGHT, "yaw": 2.0, "upright": 2.0, "height": 0.5, "vz": 1.0,
     "energy": 1e-4, "power": 1e-3, "arate": 0.01, "slip": 0.05, "angvel": 0.10,
-    "res": 0.02, "knock": 0.3, "alive": 0.1,
+    "res": 0.02, "knock": 0.3, "alive": 0.1, "range": 2.0,
 }
+
+# MuJoCo clamps a joint target outside jnt_range for free, so a policy (and the CMA-ES gait search
+# before it) is rewarded for motion the servos cannot make: the shipped gait asks 68.2 mm of foot
+# lift against a ~52 mm femur limit. On hardware that command is not clamped, it drives the servo
+# into its end stop and stalls there. Price the overshoot so the search stops buying it.
 
 # Analytic command -> gait-params map (deterministic; used by residual_pure mode and BC).
 # Coefficients live in GAIT_COEF so they can be tuned by optimize_gait.py (DE/CMA search) and
@@ -212,7 +226,7 @@ class HexapodMjEnv(gym.Env):
                  obs_contact: bool = False, obs_history: int = 1, reflex: bool = False,
                  gait_schedule: "GaitSchedule | None" = None,
                  terrain_speed_floor: float = TERRAIN_SPEED_FLOOR,
-                 reward_weights: dict | None = None, reward_mode: str = "shaped",
+                 reward_weights: dict | None = None, reward_mode: str = "shaped", self_level: bool = True,
                  arc_stance: bool = False):
         super().__init__()
         assert control_mode in ACT_DIM, control_mode
@@ -232,6 +246,8 @@ class HexapodMjEnv(gym.Env):
         self.gait_schedule = gait_schedule
         self.terrain_speed_floor = float(terrain_speed_floor)
         self.reward_weights = {**REWARD_WEIGHTS, **(reward_weights or {})}
+        self._joint_over = np.zeros(18)
+        self.self_level = bool(self_level)
         assert reward_mode in ("shaped", "score"), reward_mode
         self.reward_mode = reward_mode
         # sweep the planted foot along the arc about the instantaneous centre of rotation
@@ -394,6 +410,8 @@ class HexapodMjEnv(gym.Env):
         else:
             effective = joint_cmd
         self.sim.set_joint_targets(effective)
+        lo, hi = self.sim.joint_limits
+        self._joint_over = np.maximum(np.maximum(lo - effective, effective - hi), 0.0)
 
         if self.randomize:
             self.dr.maybe_push(self.sim.model, self.sim.data, self.np_random_, self.current_step)
@@ -529,6 +547,7 @@ class HexapodMjEnv(gym.Env):
         gait.offset = self._slew_offsets(base_offset)
         self.applied_duty = float(gait.stand_frac)
         self.body.zm = -(ride_mm + self._zm_delta)  # firmware sign: negative zm raises the body
+        self._apply_self_level()
         self.gait_blend = blend
         phase_rate = np.interp(a[5], [-1, 1], PG_PHASE_RATE)
         self.applied_step_height = float(gait.step_height)
@@ -540,6 +559,19 @@ class HexapodMjEnv(gym.Env):
             self.gc.generate_feet(gait, self.body, contacts=self._contact_sensed, dt=self.dt)
         else:
             self.gc.generate_feet(gait, self.body)
+
+    def _apply_self_level(self):
+        """Mirror motion.h: lerp the commanded body attitude toward target + measured tilt.
+
+        The firmware lerps by a fixed fraction per 5 ms tick; the env's control period differs, so
+        convert to the equivalent time constant instead of reusing the raw factor.
+        """
+        if not self.self_level:
+            return
+        roll, pitch, _ = _quat_to_rpy(self.sim.base_quat())
+        k = 1.0 - (1.0 - SELF_LEVEL_SMOOTHING) ** (self.dt / SELF_LEVEL_TICK_S)
+        self.body.phi += k * ((LEVEL_SIGN * pitch) - self.body.phi)
+        self.body.omega += k * ((LEVEL_SIGN * roll) - self.body.omega)
 
     # ------------------------------------------------------------------ obs
     def _foot_contact_sensor(self):
@@ -607,6 +639,7 @@ class HexapodMjEnv(gym.Env):
         gyro = self.sim.gyro()  # clean sim value (reward never sees the DR-noised obs)
         pen_angvel = gyro[0] ** 2 + gyro[1] ** 2  # roll/pitch oscillation, not just static tilt
         pen_res = np.sum(self._residual_part(self._cur_action) ** 2)
+        pen_range = float(np.sum(self._joint_over ** 2))  # rad^2 beyond the servo's travel
 
         w = self.reward_weights
         if self.reward_mode == "score":
@@ -626,6 +659,7 @@ class HexapodMjEnv(gym.Env):
                 "p_power": 0.0, "p_arate": -w["arate"] * pen_arate, "p_slip": 0.0,
                 "p_angvel": 0.0, "p_res": 0.0,
                 "p_knock": -w["vel"] * SCORE_W_KNOCK * pen_knock,
+                "p_range": -w["range"] * pen_range,
                 "alive": -w["vel"] * SCORE_W_STUCK * stuck,
             }
             terms.update({
@@ -633,6 +667,7 @@ class HexapodMjEnv(gym.Env):
                 "bvx": fwd_vel, "bvy": lat_vel, "gait_blend": self.gait_blend,
                 "step_h": self.applied_step_height, "cadence": self.applied_cadence,
                 "duty": self.applied_duty, "body_zm": float(self.body.zm), "knock": pen_knock,
+                "joint_over_deg": float(np.degrees(self._joint_over.max())),
                 "contacts": float(np.count_nonzero(self._foot_force > CONTACT_FORCE_THRESH)),
             })
             reward = sum(v for k, v in terms.items() if k.startswith(("r_", "p_", "alive")))
@@ -654,6 +689,7 @@ class HexapodMjEnv(gym.Env):
             "p_angvel": -w["angvel"] * pen_angvel,
             "p_res": -w["res"] * pen_res,
             "p_knock": -w["knock"] * pen_knock,
+            "p_range": -w["range"] * pen_range,
             "alive": w["alive"],
             # Unweighted velocity-tracking kernel in [0,1], identical in every reward mode, so a
             # curriculum can gate on tracking quality without unpicking the reward's weighting.
@@ -667,6 +703,7 @@ class HexapodMjEnv(gym.Env):
             "duty": self.applied_duty,
             "body_zm": float(self.body.zm),
             "knock": pen_knock,
+            "joint_over_deg": float(np.degrees(self._joint_over.max())),
             "contacts": float(np.count_nonzero(self._foot_force > CONTACT_FORCE_THRESH)),
         }
         reward = sum(v for k, v in terms.items() if k.startswith(("r_", "p_", "alive")))
