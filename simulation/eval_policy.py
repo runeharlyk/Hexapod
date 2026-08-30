@@ -13,6 +13,7 @@ Loads the model once and drives a fixed command schedule in one continuous episo
 """
 
 import argparse
+import json
 import math
 import os
 import time
@@ -22,7 +23,7 @@ import mujoco
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
-from src.envs.hexapod_mj_env import ACT_DIM, HexapodMjEnv, make_env
+from src.envs.hexapod_mj_env import ACT_DIM, HexapodMjEnv, make_env, load_env_config
 from src.sim.mj_runtime import CONTROL_DT
 
 # acceptance gates defining "stable"
@@ -86,9 +87,44 @@ class _Pusher:
             self.env.sim.data.xfrc_applied[self.base_id, :3] = self.vec if active else 0.0
 
 
+def env_layout(args):
+    """Observation/action layout to evaluate under. A run dir records what it was trained with, so
+    contact sensors and history depth never have to be re-specified on the command line."""
+    cfg = {"control_mode": args.control_mode, "obs_contact": False, "obs_history": 1,
+           "gait_schedule": None}
+    if not args.zero_action:
+        cfg.update(load_env_config(os.path.join(args.logdir, args.run)))
+        if cfg["control_mode"] != args.control_mode and not env_layout.warned:
+            print(f"note: using control_mode={cfg['control_mode']} from the run config")
+            env_layout.warned = True
+    if args.gait_from:  # explicit override wins over whatever the run was trained on
+        cfg["gait_schedule"] = json.load(open(args.gait_from))["gaits"][args.gait_key]["params"]
+    return cfg
+
+
+env_layout.warned = False
+
+
+def _schedule(cfg):
+    from src.robot.gait_schedule import GaitSchedule
+    s = cfg.get("gait_schedule")
+    return GaitSchedule.from_dict(s) if s else None
+
+
+def make_eval_env(args, seed=None, terrain_kind=None):
+    cfg = env_layout(args)
+    return HexapodMjEnv(cfg["control_mode"], randomize=args.randomize,
+                        seed=args.seed if seed is None else seed, terrain=args.terrain,
+                        terrain_kind=terrain_kind or args.terrain_kind,
+                        terrain_feature=args.terrain_feature,
+                        obs_contact=cfg["obs_contact"], obs_history=cfg["obs_history"],
+                        gait_schedule=_schedule(cfg))
+
+
 def load(args):
+    cfg = env_layout(args)
     if args.zero_action:
-        return _ZeroPolicy(ACT_DIM[args.control_mode]), lambda o: o
+        return _ZeroPolicy(ACT_DIM[cfg["control_mode"]]), lambda o: o
     rundir = os.path.join(args.logdir, args.run)
     model_path = args.model or os.path.join(rundir, "final_model.zip")
     vn_path = args.vecnorm or os.path.join(rundir, "vecnormalize.pkl")
@@ -98,7 +134,9 @@ def load(args):
         device="cpu",
         custom_objects={"lr_schedule": lambda _: 0.0, "clip_range": lambda _: 0.2},
     )
-    vn = VecNormalize.load(vn_path, DummyVecEnv([make_env(args.control_mode)]))
+    vn = VecNormalize.load(vn_path, DummyVecEnv([make_env(
+        cfg["control_mode"], obs_contact=cfg["obs_contact"], obs_history=cfg["obs_history"],
+        gait_schedule=_schedule(cfg))]))
     mean, var, clip, eps = vn.obs_rms.mean, vn.obs_rms.var, vn.clip_obs, vn.epsilon
     norm = lambda o: np.clip((o - mean) / np.sqrt(var + eps), -clip, clip).astype(
         np.float32
@@ -117,8 +155,7 @@ def run_headless(args):
     rows = []  # (label, vel_err, yaw_err, fell, mean|action|)
     for i in range(args.seeds):
         seed = args.seed + i
-        env = HexapodMjEnv(args.control_mode, randomize=args.randomize, seed=seed, terrain=args.terrain,
-                           terrain_kind=args.terrain_kind, terrain_feature=args.terrain_feature)
+        env = make_eval_env(args, seed=seed)
         pusher = _Pusher(env, args.push, seed) if args.push > 0 else None
         for label, cmd, dur in schedule(args):
             env.fixed_command = np.asarray(cmd, dtype=np.float32)
@@ -241,7 +278,7 @@ def run_viewer(args):
     if args.tour or args.cmd is not None:
         return run_tour_viewer(args)
     model, norm = load(args)
-    env = HexapodMjEnv(args.control_mode, randomize=args.randomize, seed=args.seed, terrain=args.terrain)
+    env = make_eval_env(args)
     o, _ = env.reset()
     cmd = [0.0, 0.0, 0.0]
     DV = (0.03, 0.03, 0.1)
@@ -291,7 +328,7 @@ def run_tour_viewer(args):
     import mujoco.viewer
 
     model, norm = load(args)
-    env = HexapodMjEnv(args.control_mode, randomize=args.randomize, seed=args.seed, terrain=args.terrain)
+    env = make_eval_env(args)
     with mujoco.viewer.launch_passive(env.sim.model, env.sim.data) as viewer:
 
         def render():
@@ -309,7 +346,7 @@ def run_video(args):
     import mediapy, mujoco
 
     model, norm = load(args)
-    env = HexapodMjEnv(args.control_mode, randomize=args.randomize, seed=args.seed, terrain=args.terrain)
+    env = make_eval_env(args)
     renderer = mujoco.Renderer(env.sim.model, height=480, width=640)
     frames = []
 
@@ -330,7 +367,8 @@ if __name__ == "__main__":
     )
     ap.add_argument(
         "--control-mode",
-        choices=["phase_gait", "foot", "residual", "residual_pure", "residual_gait"],
+        choices=["phase_gait", "foot", "residual", "residual_pure", "residual_gait",
+                 "residual_sched"],
         default="phase_gait",
     )
     ap.add_argument("--model", default=None)
@@ -343,6 +381,10 @@ if __name__ == "__main__":
     ap.add_argument("--randomize", action="store_true")
     ap.add_argument("--seed", type=int, default=123)
     ap.add_argument("--headless", action="store_true")
+    ap.add_argument("--gait-from", default=None,
+                    help="gait_library.json: walk on a searched base gait "
+                         "(with --zero-action this evaluates that gait open-loop)")
+    ap.add_argument("--gait-key", default="__single__", help="which library entry --gait-from uses")
     ap.add_argument("--zero-action", action="store_true",
                     help="no model: zero actions = the analytic-gait baseline (residual modes)")
     ap.add_argument("--seeds", type=int, default=1, help="headless: repeat the tour over N seeds and aggregate")
@@ -350,7 +392,8 @@ if __name__ == "__main__":
                     help="headless: horizontal push force (N) on a fixed schedule (stress test)")
     ap.add_argument("--terrain", type=float, default=0.0,
                     help="max bump height (m) of per-episode random heightfield terrain (e.g. 0.02)")
-    ap.add_argument("--terrain-kind", default="bumps", choices=["bumps", "rocks", "slope"],
+    ap.add_argument("--terrain-kind", default="bumps",
+                    choices=["bumps", "rocks", "steps", "waves", "curb"],
                     help="terrain type for eval (fixed, so gait vs policy see the same ground)")
     ap.add_argument("--terrain-feature", type=float, default=1.0,
                     help="terrain bumpiness/feature (fixed for eval; e.g. 2.5)")
