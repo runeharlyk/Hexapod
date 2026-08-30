@@ -49,12 +49,23 @@ ARMATURE = 0.003      # kg.m^2, reflected rotor+gearbox inertia (estimate; DR-sc
 DAMPING = 0.02
 FRICTIONLOSS = 0.005
 COXA_RANGE = 0.55     # rad
-FEMUR_RANGE = 1.8     # rad
-TIBIA_RANGE = 2.2     # rad
+# Hinge limits follow the SERVO's travel, since the firmware applies no clamp of its own: a hobby
+# servo covers ~+/-90 deg about its center, and the firmware offsets the tibia command by +90 deg
+# (servo_controller.h), so the tibia's usable IK range is shifted far negative. The old symmetric
+# 2.2 rad tibia limit was inside the range a normal gait asks for (~134 deg at max step height), so
+# MuJoCo silently clamped the swing and the simulated foot never lifted as far as commanded.
+FEMUR_RANGE = 1.571   # rad, 90 deg: the real servo limit -- caps foot lift at ~52 mm
+TIBIA_RANGE = 2.6     # rad, 149 deg: clear of the ~134 deg the gait uses, short of folding back
 
 # --- init/contact ---
 INIT_Z = 0.075        # base spawn height (m); feet ~ -0.066 -> small clearance
 FOOT_RADIUS = 0.006   # m
+# Collision masks: feet (group 2) and the leg links/chassis (group 4) both collide with the
+# ground/terrain (group 1, affinity 6) but never with each other, so obstacles are solid against
+# shins and body while self-collision stays off (cheap, and legs cannot physically interfere).
+CT_GROUND, CA_GROUND = 1, 6
+CT_FOOT, CA_FOOT = 2, 1
+CT_LINK, CA_LINK = 4, 1
 # Silicone tape on the real foot bottoms -> grippy. Foot geoms have priority=1 so this tangential mu
 # wins over the ground's in every foot<->ground contact. High mu (no slip) but condim=3 (no torsional
 # friction) keeps it grippy, not sticky: the foot won't slide but can still pivot freely.
@@ -62,7 +73,11 @@ FOOT_FRICTION = "2.0 0.02 0.001"
 
 # --- terrain heightfield (model_terrain.xml) ---
 HF_RADIUS = 5.0       # m, half-extent (matches the plane's rendered size)
-HF_ZMAX = 0.15        # m, max elevation at hfield data = 1.0 (headroom; randomizer scales below this)
+# m, max elevation at hfield data = 1.0. Physically neutral: randomize_hfield writes h*(amp/zmax)
+# so the realized height is amp regardless of this value -- it only sets the ceiling the curb sweep
+# can probe. Raised 0.15 -> 0.30 because the searched gaits cleared a 140 mm step, i.e. the old
+# ceiling was measuring the model, not the robot.
+HF_ZMAX = 0.30
 HF_N = 257            # grid rows/cols -> ~39 mm cells
 
 
@@ -87,19 +102,23 @@ def leg_xml(i):
         <joint name="coxa_{i}" type="hinge" axis="0 0 1" range="{-COXA_RANGE} {COXA_RANGE}"
                damping="{DAMPING}" frictionloss="{FRICTIONLOSS}" armature="{ARMATURE}"/>
         <inertial pos="{l1/2:.5f} 0 0" mass="{M_COXA}" diaginertia="{ci[0]:.3e} {ci[1]:.3e} {ci[2]:.3e}"/>
-        <geom type="capsule" fromto="0 0 0 {l1:.5f} 0 0" size="0.008" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
+        <geom name="link_coxa_{i}" type="capsule" fromto="0 0 0 {l1:.5f} 0 0" size="0.008"
+              rgba="0.1 0.1 0.1 1" contype="{CT_LINK}" conaffinity="{CA_LINK}"/>
         <body name="femur_{i}" pos="{l1:.5f} 0 0">
           <joint name="femur_{i}" type="hinge" axis="0 -1 0" range="{-FEMUR_RANGE} {FEMUR_RANGE}"
                  damping="{DAMPING}" frictionloss="{FRICTIONLOSS}" armature="{ARMATURE}"/>
           <inertial pos="{l2/2:.5f} 0 0" mass="{M_FEMUR}" diaginertia="{fi[0]:.3e} {fi[1]:.3e} {fi[2]:.3e}"/>
-          <geom type="capsule" fromto="0 0 0 {l2:.5f} 0 0" size="0.007" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
+          <geom name="link_femur_{i}" type="capsule" fromto="0 0 0 {l2:.5f} 0 0" size="0.007"
+                rgba="0.1 0.1 0.1 1" contype="{CT_LINK}" conaffinity="{CA_LINK}"/>
           <body name="tibia_{i}" pos="{l2:.5f} 0 0">
             <joint name="tibia_{i}" type="hinge" axis="0 -1 0" range="{-TIBIA_RANGE} {TIBIA_RANGE}"
                    damping="{DAMPING}" frictionloss="{FRICTIONLOSS}" armature="{ARMATURE}"/>
             <inertial pos="{l3/2:.5f} 0 0" mass="{M_TIBIA}" diaginertia="{ti[0]:.3e} {ti[1]:.3e} {ti[2]:.3e}"/>
-            <geom type="capsule" fromto="0 0 0 {l3:.5f} 0 0" size="0.005" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
+            <geom name="link_tibia_{i}" type="capsule" fromto="0 0 0 {l3:.5f} 0 0" size="0.005"
+                  rgba="0.1 0.1 0.1 1" contype="{CT_LINK}" conaffinity="{CA_LINK}"/>
             <geom name="foot_{i}" type="sphere" pos="{l3:.5f} 0 0" size="{FOOT_RADIUS}"
-                  rgba="0.2 0.7 0.8 1" condim="3" friction="{FOOT_FRICTION}" priority="1"/>
+                  rgba="0.2 0.7 0.8 1" condim="3" friction="{FOOT_FRICTION}" priority="1"
+                  contype="{CT_FOOT}" conaffinity="{CA_FOOT}"/>
             <site name="foot_{i}" pos="{l3:.5f} 0 0" size="0.004"/>
           </body>
         </body>
@@ -144,15 +163,15 @@ def build(terrain=False):
     <hfield name="terrain" nrow="{HF_N}" ncol="{HF_N}" size="{HF_RADIUS} {HF_RADIUS} {HF_ZMAX} 0.1"/>
   </asset>
 """
-        ground = """<geom name="ground" type="hfield" hfield="terrain" material="grid"
-          condim="3" friction="1.0 0.02 0.001"/>"""
+        ground = f"""<geom name="ground" type="hfield" hfield="terrain" material="grid"
+          condim="3" friction="1.0 0.02 0.001" contype="{CT_GROUND}" conaffinity="{CA_GROUND}"/>"""
     else:
         asset = f"""
   <asset>{floor}
   </asset>
 """
-        ground = """<geom name="ground" type="plane" material="grid" size="5 5 0.1"
-          condim="3" friction="1.0 0.02 0.001"/>"""
+        ground = f"""<geom name="ground" type="plane" material="grid" size="5 5 0.1"
+          condim="3" friction="1.0 0.02 0.001" contype="{CT_GROUND}" conaffinity="{CA_GROUND}"/>"""
     xml = f"""<mujoco model="hexapod">
   <compiler angle="radian" meshdir="stl" autolimits="true"/>
   <option timestep="0.002" iterations="10" solver="Newton" cone="elliptic" integrator="implicitfast">
@@ -176,7 +195,7 @@ def build(terrain=False):
       <freejoint name="root"/>
       <inertial pos="0 0 0" mass="{M_BASE}" diaginertia="{bi[0]:.3e} {bi[1]:.3e} {bi[2]:.3e}"/>
       <geom name="chassis" type="box" size="{base_box_x} {base_box_y} {base_box_z}" rgba="0.9 0.9 0.9 1"
-            contype="0" conaffinity="0"/>
+            contype="{CT_LINK}" conaffinity="{CA_LINK}"/>
       <site name="imu" pos="0 0 0" size="0.005"/>{legs}
     </body>
   </worldbody>
