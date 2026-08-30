@@ -1,6 +1,7 @@
 .venv/
 runs/
 runs_test/
+logs/
 *.pkl
 __pycache__/
 *.mp4
