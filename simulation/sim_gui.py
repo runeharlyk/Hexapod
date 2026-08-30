@@ -33,9 +33,11 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from src.sim.mj_runtime import HexapodSim, CONTROL_DT
-from src.envs.hexapod_mj_env import HexapodMjEnv, make_env, CMD_VX, CMD_VY, CMD_YAW
+from src.envs.hexapod_mj_env import (HexapodMjEnv, make_env, load_env_config,
+                                     CMD_VX, CMD_VY, CMD_YAW)
 from src.envs.hexapod_jump_env import HexapodJumpEnv, make_jump_env, STAND_Z
 from src.envs.hexapod_charge_jump_env import HexapodChargeJumpEnv, make_charge_jump_env, make_body_jump_env
+from src.robot.gait_schedule import GaitSchedule
 
 # Stick -> walk command scaling. Full deflection maps to the policy's trained command
 # range (asymmetric fwd/back), so the sticks reach exactly the speeds the policy knows.
@@ -75,9 +77,19 @@ class SimGUI:
         self.shared = HexapodSim()  # one physics instance shared by every mode
         self.logdir = args.logdir
 
+        # The walk env must match the walk policy's observation layout (history depth / contact
+        # sensors), which the run dir records.
+        wcfg = load_env_config(os.path.join(args.logdir, args.walk_run))
+        walk_sched = wcfg.get("gait_schedule")
+        walk_kw = dict(obs_contact=wcfg.get("obs_contact", False),
+                       obs_history=wcfg.get("obs_history", 1),
+                       gait_schedule=GaitSchedule.from_dict(walk_sched) if walk_sched else None)
+        walk_mode = wcfg.get("control_mode", args.walk_mode)
+
         # (label, run, env-instance, norm-base-thunk); envs get their sim swapped to the shared one
         specs = {
-            "walk": ("Walk", args.walk_run, HexapodMjEnv(args.walk_mode), make_env(args.walk_mode)),
+            "walk": ("Walk", args.walk_run, HexapodMjEnv(walk_mode, **walk_kw),
+                     make_env(walk_mode, **walk_kw)),
             "vertical": ("Vertical jump", args.vertical_run, HexapodJumpEnv(), make_jump_env()),
             "charge": ("Charge jump", args.charge_run,
                        HexapodChargeJumpEnv(auto_release=False, action_mode=args.charge_mode),
@@ -152,7 +164,7 @@ class SimGUI:
             self.release()
 
         lx, ly, rx, ry = (self._dz(v) for v in b.snapshot())
-        # Mirror motion.h WALK: step_x = -lx, step_z = ly, step_angle = rx.
+        # Mirror motion.h WALK: step_x = -lx, step_y = ly, step_angle = rx.
         vx = -lx
         self.cmd[0] = vx * (CMD_VX[1] if vx >= 0 else -CMD_VX[0])
         self.cmd[1] = ly * CMD_VY[1]

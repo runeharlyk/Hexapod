@@ -8,7 +8,7 @@ Drives the classical firmware kinematics + gait engine directly with sliders. Mo
   - Jump  : a kinematic jump -- a scripted crouch-then-extend body-height trajectory.
   - Policy: run a trained policy through the env, driven by the command sliders (loaded lazily).
 
-  python sim_sandbox.py                              # default policy = residual_gait_v9
+  python sim_sandbox.py                              # default policy = residual_gait_v10
   python sim_sandbox.py --policy <run>               # choose a different policy for Policy mode
 
 Opens a MuJoCo viewer + a scrollable Tkinter panel. Uses the firmware math (firmware_gait.py) on
@@ -33,10 +33,17 @@ STAND_FRAC_PRESET = {"tripod": 3.1 / 6, "bipod": 2.1 / 6, "wave": 5.0 / 6, "ripp
 
 
 class Sandbox:
-    def __init__(self, policy_run="residual_gait_v9", walk_mode="residual_gait"):
-        from src.envs.hexapod_mj_env import HexapodMjEnv
+    def __init__(self, policy_run="residual_gait_v10", walk_mode="residual_gait"):
+        from src.envs.hexapod_mj_env import HexapodMjEnv, load_env_config
+        # The env must be built with the policy's observation layout (history depth / contact
+        # sensors), or Policy mode feeds the network the wrong number of inputs.
+        self.cfg = load_env_config(f"runs/{policy_run}") if policy_run else {}
+        self.gait_schedule = self._schedule()
         # One env/sim shared by all modes; the terrain model is loaded so terrain stays toggleable.
-        self.env = HexapodMjEnv(walk_mode, randomize=False, terrain=0.06)
+        self.env = HexapodMjEnv(self.cfg.get("control_mode", walk_mode), randomize=False, terrain=0.06,
+                                obs_contact=self.cfg.get("obs_contact", False),
+                                obs_history=self.cfg.get("obs_history", 1),
+                                gait_schedule=self.gait_schedule)
         self.env.terrain = 0.0     # the sandbox owns the hfield; env.reset won't overwrite it
         self.sim = self.env.sim
         self.walk_mode = walk_mode
@@ -60,6 +67,13 @@ class Sandbox:
         self.sim.reset_to_stand()
 
     # ------------------------------------------------------------------ helpers
+    def _schedule(self):
+        """The searched base gait the run was trained on, if any. Dropping it would run the policy
+        on a different gait from the one eval_policy.py uses."""
+        from src.robot.gait_schedule import GaitSchedule
+        s = self.cfg.get("gait_schedule")
+        return GaitSchedule.from_dict(s) if s else None
+
     def v(self, name):
         return self.vals[name].get()
 
@@ -77,7 +91,11 @@ class Sandbox:
             self.model = PPO.load(f"runs/{self.policy_run}/final_model.zip", device="cpu",
                                   custom_objects={"lr_schedule": lambda _: 0.0, "clip_range": lambda _: 0.2})
             vn = VecNormalize.load(f"runs/{self.policy_run}/vecnormalize.pkl",
-                                   DummyVecEnv([make_env(self.walk_mode)]))
+                                   DummyVecEnv([make_env(
+                                       self.cfg.get("control_mode", self.walk_mode),
+                                       obs_contact=self.cfg.get("obs_contact", False),
+                                       obs_history=self.cfg.get("obs_history", 1),
+                                       gait_schedule=self.gait_schedule)]))
             m, var, clip, eps = vn.obs_rms.mean, vn.obs_rms.var, vn.clip_obs, vn.epsilon
             self._norm = lambda o: np.clip((o - m) / np.sqrt(var + eps), -clip, clip).astype(np.float32)
             print(f"[policy] loaded {self.policy_run}")
@@ -146,7 +164,7 @@ class Sandbox:
         gait.gait_type = GAITS[self.gait_type.get()]
         set_gait(gait)                            # baseline per-leg offset for the pattern
         gait.step_x = self.v("step_lat")
-        gait.step_z = self.v("step_fwd")   # firmware step_z is the forward (long) axis
+        gait.step_y = self.v("step_fwd")   # firmware step_y is the forward (long) axis
         gait.step_angle = np.radians(self.v("step_angle"))
         gait.step_height = self.v("step_height")
         gait.stand_frac = self.v("stand_frac")    # duty factor override (fraction of cycle grounded)
@@ -259,8 +277,9 @@ class Sandbox:
         self.terrain_type = tk.StringVar(value="flat")
         row = ttk.Frame(terf); row.pack(fill="x", padx=6, pady=1)
         ttk.Label(row, text="type", width=11).pack(side="left")
-        ttk.OptionMenu(row, self.terrain_type, "flat", "flat", "bumps", "rocks", "slope").pack(side="left")
-        self._slider(terf, "height_m", 0.0, 0.15, 0.06, fmt="{:.3f}")   # bump/rock/slope height (m)
+        ttk.OptionMenu(row, self.terrain_type, "flat", "flat", "bumps", "rocks", "steps",
+                       "waves").pack(side="left")
+        self._slider(terf, "height_m", 0.0, 0.15, 0.06, fmt="{:.3f}")   # terrain amplitude (m)
         self._slider(terf, "bumpiness", 0.5, 3.0, 1.0, fmt="{:.1f}")    # feature density / frequency
         ttk.Button(terf, text="New terrain", command=self.regen_terrain).pack(fill="x", padx=8, pady=2)
 
@@ -296,7 +315,7 @@ class Sandbox:
         self._slider(gf, "step_fwd", -120, 120, 60)        # body-Y forward stride amplitude (mm)
         self._slider(gf, "step_lat", -120, 120, 0)         # body-X lateral stride amplitude (mm)
         self._slider(gf, "step_angle", -20, 20, 0)         # turn per step (deg); small + cadence = fast turn
-        self._slider(gf, "step_height", 0, 60, 20)         # swing arc height (mm)
+        self._slider(gf, "step_height", 0, 80, 20)         # swing arc height (mm)
         self._slider(gf, "stand_frac", 0.20, 0.90, STAND_FRAC_PRESET["tripod"], fmt="{:.2f}")  # duty
         self._slider(gf, "step_depth", 0, 6, 0, fmt="{:.1f}")  # stance downward push (mm, traction)
         self._slider(gf, "cadence", 0, 8, 1.5, fmt="{:.2f}")   # step speed (cycles/s)
@@ -337,7 +356,7 @@ class Sandbox:
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--policy", default="residual_gait_v9",
+    ap.add_argument("--policy", default="residual_gait_v10",
                     help="run name under runs/ used by Policy mode")
     ap.add_argument("--walk-mode", default="residual_gait", help="control mode of the policy")
     args = ap.parse_args()
