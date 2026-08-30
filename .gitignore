@@ -15,3 +15,6 @@ firmware/include/WWWData.h
 
 # Linker map files (ad-hoc size analysis output)
 *.map
+# Vendored third-party components, fetched not tracked. esp-dl is a nested clone with its own
+# .git, so a plain `git add -A` would otherwise pull ~1 GB into this repo.
+firmware/components/
