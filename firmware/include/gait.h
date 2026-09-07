@@ -22,13 +22,29 @@ struct gait_state_t {
     float phase_rate;
 };
 
-// Eases the locomotion command toward its target so a stick slammed to full deflection accelerates
-// the robot rather than stepping its stride instantly. Exponential in dt rather than a fixed
-// per-tick fraction, so control-loop jitter does not change the ramp's wall-clock shape.
-//
-// Only the continuous command moves. gait_type, stand_frac and offset[] are the gait's identity,
-// set discretely by setGait(); interpolating them would blend two leg schedules into a third that
-// describes neither.
+// Deadbands for "the gait is commanded to move". Stride is millimetres of foot travel; yaw is
+// radians of body rotation per stance, and 0.005 rad across the 171 mm leg radius is 0.9 mm of foot
+// travel -- the same order as the stride deadband. step_angle used to be tested against exact zero,
+// which the command ramp below never reaches, so a single turn command left the cycle stepping in
+// place for as long as the robot stayed powered.
+static constexpr float GAIT_STRIDE_DEADBAND_MM = 2.0f;
+static constexpr float GAIT_YAW_DEADBAND_RAD = 0.005f;
+
+inline bool gaitIsCommanded(const gait_state_t& gait) {
+    return std::fabs(gait.step_x) >= GAIT_STRIDE_DEADBAND_MM || std::fabs(gait.step_y) >= GAIT_STRIDE_DEADBAND_MM ||
+           std::fabs(gait.step_angle) >= GAIT_YAW_DEADBAND_RAD;
+}
+
+static constexpr float GAIT_SNAP_MM = 0.01f;
+static constexpr float GAIT_SNAP_RAD = 1e-5f;
+static constexpr float GAIT_SNAP_RATE = 1e-4f;
+static constexpr float GAIT_SNAP_DEPTH = 1e-6f;
+
+inline float approachf(float current, float target, float alpha, float eps) {
+    const float next = lerpf(current, target, alpha);
+    return std::fabs(target - next) <= eps ? target : next;
+}
+
 // Picks a gait from the commanded stride, slow and stable up to fast and sparse. The bands overlap
 // by AUTO_HYSTERESIS so a stick held near a boundary does not oscillate between two schedules.
 inline GaitType selectAutoGait(float speed01, GaitType current) {
@@ -42,17 +58,17 @@ inline GaitType selectAutoGait(float speed01, GaitType current) {
 
 inline void approachGaitCommand(gait_state_t& current, const gait_state_t& target, float dt, float tau) {
     const float a = (tau <= 0.0f || dt <= 0.0f) ? 1.0f : 1.0f - expf(-dt / tau);
-    current.step_x = lerpf(current.step_x, target.step_x, a);
-    current.step_y = lerpf(current.step_y, target.step_y, a);
-    current.step_angle = lerpf(current.step_angle, target.step_angle, a);
-    current.step_speed = lerpf(current.step_speed, target.step_speed, a);
-    current.step_height = lerpf(current.step_height, target.step_height, a);
-    current.step_depth = lerpf(current.step_depth, target.step_depth, a);
+    current.step_x = approachf(current.step_x, target.step_x, a, GAIT_SNAP_MM);
+    current.step_y = approachf(current.step_y, target.step_y, a, GAIT_SNAP_MM);
+    current.step_angle = approachf(current.step_angle, target.step_angle, a, GAIT_SNAP_RAD);
+    current.step_speed = approachf(current.step_speed, target.step_speed, a, GAIT_SNAP_RATE);
+    current.step_height = approachf(current.step_height, target.step_height, a, GAIT_SNAP_MM);
+    current.step_depth = approachf(current.step_depth, target.step_depth, a, GAIT_SNAP_DEPTH);
     // phase_rate 0 means "derive cadence from stride", not "stand still", so ramping across that
     // boundary would spend the whole transition at cadences neither law asks for. Ease only between
     // two explicit rates; otherwise switch outright.
     current.phase_rate = (current.phase_rate > 0.0f && target.phase_rate > 0.0f)
-                             ? lerpf(current.phase_rate, target.phase_rate, a)
+                             ? approachf(current.phase_rate, target.phase_rate, a, GAIT_SNAP_RATE)
                              : target.phase_rate;
 }
 
@@ -274,7 +290,7 @@ class GaitController {
     float getPhase() const { return phase; }
 
     void step(gait_state_t& gait, BodyStateMsg& body, float dt) {
-        const bool isMoving = std::fabs(gait.step_x) >= 2 || std::fabs(gait.step_y) >= 2 || gait.step_angle;
+        const bool isMoving = gaitIsCommanded(gait);
         const bool isRepositioning = !isMoving && hasPendingStanceChange();
 
         if (!isMoving && !isRepositioning) {

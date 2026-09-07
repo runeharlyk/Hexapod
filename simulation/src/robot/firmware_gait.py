@@ -171,6 +171,22 @@ def set_gait(gait: GaitState) -> None:
         gait.stand_frac = 5.0 / 6.0
 
 
+# Deadbands for "the gait is commanded to move", mirroring GAIT_STRIDE_DEADBAND_MM and
+# GAIT_YAW_DEADBAND_RAD in firmware/include/gait.h.
+# Stride is millimetres of foot travel, yaw radians of body rotation per stance; 0.005 rad across the
+# 171 mm leg radius is 0.9 mm of foot travel, the same order as the stride deadband.
+STRIDE_DEADBAND_MM = 2.0
+YAW_DEADBAND_RAD = 0.005
+
+
+def gait_is_commanded(gait: GaitState) -> bool:
+    return (
+        abs(gait.step_x) >= STRIDE_DEADBAND_MM
+        or abs(gait.step_y) >= STRIDE_DEADBAND_MM
+        or abs(gait.step_angle) >= YAW_DEADBAND_RAD
+    )
+
+
 def command_to_walk_gait(lx, ly, rx, s, s1, gait: GaitState) -> None:
     """Port of MotionService::handleCommand WALK branch (firmware/include/motion.h)."""
     gait.step_x = -lx * 100.0
@@ -479,7 +495,7 @@ class GaitController:
 
     def step(self, gait: GaitState, body: BodyState, dt: float) -> None:
         """Faithful firmware step: ease to default when idle, else advance + generate."""
-        is_moving = abs(gait.step_x) >= 2 or abs(gait.step_y) >= 2 or gait.step_angle != 0.0
+        is_moving = gait_is_commanded(gait)
         if not is_moving:
             for i in range(6):
                 for j in range(4):

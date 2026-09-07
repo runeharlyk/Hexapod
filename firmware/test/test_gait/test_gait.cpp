@@ -567,6 +567,101 @@ void test_auto_gait_switch_adds_no_discontinuity() {
     TEST_ASSERT_TRUE_MESSAGE(withSwitching <= baseline + 1.0f, dbg);
 }
 
+// --- Stopping ---------------------------------------------------------------------------------
+// A mode change out of WALK zeroes the locomotion command and lets the ramp bring the legs down.
+// Nothing downstream may keep the cycle alive once the operator has stopped asking for motion.
+
+void test_released_command_stops_the_cycle() {
+    // The regression this pins: step_angle was tested against exact zero, which the exponential ramp
+    // never reaches -- it decayed to a subnormal (measured 2.1e-44) and stalled there, so the gait
+    // kept stepping in place with full foot lift for as long as the robot was powered. STAND looked
+    // like it could not stop a walk that had ever been given a turn command.
+    gait_state_t cur = makeGait(GaitType::TRI_GATE, -30.0f, 80.0f, 0.4f);
+    gait_state_t target = cur;
+    GaitController controller;
+    controller.setGait(cur);
+    controller.snapDefaultFootTarget(STAND);
+
+    BodyStateMsg body = makeBody();
+    for (int t = 0; t < 400; ++t) {  // 2 s of walking with yaw
+        approachGaitCommand(cur, target, DT, 0.15f);
+        controller.step(cur, body, DT);
+    }
+
+    target.step_x = target.step_y = target.step_angle = 0.0f;  // MotionService's stop
+    for (int t = 0; t < 600; ++t) {                            // 3 s to settle
+        approachGaitCommand(cur, target, DT, 0.15f);
+        controller.step(cur, body, DT);
+    }
+
+    TEST_ASSERT_EQUAL_FLOAT_MESSAGE(0.0f, cur.step_angle, "yaw command must reach zero, not a subnormal");
+    TEST_ASSERT_EQUAL_FLOAT_MESSAGE(0.0f, controller.getPhase(), "a released command must not keep the cycle running");
+    for (int i = 0; i < 6; ++i) {
+        for (int j = 0; j < 3; ++j) TEST_ASSERT_FLOAT_WITHIN(0.5f, STAND[i][j], body.feet[i][j]);
+    }
+}
+
+void test_yaw_below_deadband_does_not_start_the_cycle() {
+    // The yaw counterpart of test_command_below_deadband_does_not_start_the_cycle: 0.004 rad over the
+    // 171 mm leg radius is 0.7 mm of foot travel, which is not a step.
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 0.0f, 0.0f, 0.004f);
+    GaitController controller;
+    controller.setGait(gait);
+    controller.snapDefaultFootTarget(STAND);
+
+    BodyStateMsg body = makeBody();
+    for (int t = 0; t < 200; ++t) controller.step(gait, body, DT);
+
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, controller.getPhase());
+}
+
+void test_yaw_above_deadband_still_steps() {
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 0.0f, 0.0f, 0.05f);
+    GaitController controller;
+    controller.setGait(gait);
+    controller.snapDefaultFootTarget(STAND);
+
+    BodyStateMsg body = makeBody();
+    for (int t = 0; t < 200; ++t) controller.step(gait, body, DT);
+
+    TEST_ASSERT_TRUE_MESSAGE(controller.getPhase() > 0.0f, "a real turn command must still walk");
+}
+
+void test_command_ramp_lands_exactly_on_a_released_command() {
+    gait_state_t cur = rampState();
+    cur.step_x = -70.0f;
+    cur.step_y = 100.0f;
+    cur.step_angle = 0.4f;
+    cur.step_height = 68.0f;
+    cur.step_speed = 2.0f;
+    cur.phase_rate = 1.35f;
+    gait_state_t target = rampState();
+
+    for (int i = 0; i < 600; i++) approachGaitCommand(cur, target, DT, 0.15f);  // 3 s
+
+    TEST_ASSERT_EQUAL_FLOAT(target.step_x, cur.step_x);
+    TEST_ASSERT_EQUAL_FLOAT(target.step_y, cur.step_y);
+    TEST_ASSERT_EQUAL_FLOAT(target.step_angle, cur.step_angle);
+    TEST_ASSERT_EQUAL_FLOAT(target.step_speed, cur.step_speed);
+    TEST_ASSERT_EQUAL_FLOAT(target.step_height, cur.step_height);
+    TEST_ASSERT_EQUAL_FLOAT(target.step_depth, cur.step_depth);
+    TEST_ASSERT_EQUAL_FLOAT(target.phase_rate, cur.phase_rate);
+}
+
+void test_collapsed_ramp_takes_the_command_outright() {
+    // How MotionService stops a mode that drives nothing: dt/tau of zero means "adopt the command
+    // now", with no residue left to resume from.
+    gait_state_t cur = rampState();
+    cur.step_x = 60.0f;
+    cur.step_angle = 0.3f;
+    gait_state_t target = rampState();
+
+    approachGaitCommand(cur, target, 0.0f, 0.0f);
+
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, cur.step_x);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, cur.step_angle);
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_tripod_keeps_three_feet_loaded);
@@ -583,6 +678,11 @@ int main(int, char **) {
     RUN_TEST(test_command_ramp_is_independent_of_loop_rate);
     RUN_TEST(test_command_ramp_switches_cadence_mode_outright);
     RUN_TEST(test_command_ramp_leaves_the_gait_schedule_alone);
+    RUN_TEST(test_command_ramp_lands_exactly_on_a_released_command);
+    RUN_TEST(test_collapsed_ramp_takes_the_command_outright);
+    RUN_TEST(test_released_command_stops_the_cycle);
+    RUN_TEST(test_yaw_below_deadband_does_not_start_the_cycle);
+    RUN_TEST(test_yaw_above_deadband_still_steps);
     RUN_TEST(test_stance_change_walks_the_feet_to_the_new_target);
     RUN_TEST(test_settled_legs_hold_station_while_others_reposition);
     RUN_TEST(test_walking_still_swings_every_foot);

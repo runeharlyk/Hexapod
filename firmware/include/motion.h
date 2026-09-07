@@ -71,6 +71,7 @@ class MotionService {
 #if FT_ENABLED(USE_POLICY)
         if (m.mode == MOTION_STATE::WALK_NN) _policy.reset(gait, default_feet_pos);
 #endif
+        if (!isWalkingMode(m.mode)) stopLocomotionCommand(!isActuatedMode(m.mode));
         motionState == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
     }
 
@@ -153,9 +154,7 @@ class MotionService {
     // happen. The cost is that changing gait at speed needs a brief stop.
     void updateAutoGait() {
         if (_requestedGait != GaitType::AUTO) return;
-        const bool stepping = fabsf(gait_state.step_x) >= 2.0f || fabsf(gait_state.step_y) >= 2.0f ||
-                              gait_state.step_angle != 0.0f;
-        if (stepping) return;
+        if (gaitIsCommanded(gait_state)) return;
 
         const GaitType next = selectAutoGait(commandSpeed01(), gait_state.gait_type);
         if (next == gait_state.gait_type) return;
@@ -235,7 +234,11 @@ class MotionService {
     CommandMsg command = {0, 0, 0, 0, 0, 0, 0, 0};
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
     BodyStateMsg target_body_state = {0, 0, 0, 0, 0, 0};
-    gait_state_t gait_state = {15, 0, 0, 0, 1, 0.002, default_stand_frac, GaitType::TRI_GATE, {0, 0.5, 0, 0.5, 0, 0.5}};
+    static constexpr float DEFAULT_STEP_HEIGHT_MM = 15.f;
+    static constexpr float DEFAULT_STEP_DEPTH = 0.002f;
+    gait_state_t gait_state = {
+        DEFAULT_STEP_HEIGHT_MM,  0, 0, 0, 1, DEFAULT_STEP_DEPTH, default_stand_frac, GaitType::TRI_GATE,
+        {0, 0.5, 0, 0.5, 0, 0.5}};
     // Commands land here; gait_state eases toward it every tick (issue #7).
     gait_state_t target_gait_state = gait_state;
 
@@ -271,18 +274,34 @@ class MotionService {
 
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
 
+    static bool isWalkingMode(MOTION_STATE mode) { return mode == MOTION_STATE::WALK || mode == MOTION_STATE::WALK_NN; }
+
+    static bool isActuatedMode(MOTION_STATE mode) { return mode == MOTION_STATE::STAND || isWalkingMode(mode); }
+
+    // Zeroes the locomotion command. `snap` collapses the live gait state onto it as well, for modes
+    // that drive nothing: there is no output to jerk, and a half-stride left frozen in gait_state
+    // would otherwise resume the moment the robot is put back into STAND. STAND itself only gets the
+    // target, so the existing ramp walks the legs down instead of dropping them in one tick.
+    void stopLocomotionCommand(bool snap) {
+        target_gait_state.step_x = 0;
+        target_gait_state.step_y = 0;
+        target_gait_state.step_angle = 0;
+        target_gait_state.step_speed = 1.f;
+        target_gait_state.step_height = DEFAULT_STEP_HEIGHT_MM;
+        target_gait_state.step_depth = DEFAULT_STEP_DEPTH;
+        target_gait_state.phase_rate = 0.f;
+        if (!snap) return;
+        approachGaitCommand(gait_state, target_gait_state, 0.f, 0.f);
+        gait.setPhase(0.f);
+    }
+
     void applyZeroCommand() {
         target_body_state.xm = 0;
         target_body_state.ym = 0;
         target_body_state.zm = 0;
         target_body_state.phi = 0;
         target_body_state.omega = 0;
-        target_gait_state.step_x = 0;
-        target_gait_state.step_y = 0;
-        target_gait_state.step_angle = 0;
-        target_gait_state.step_speed = 1.f;
-        target_gait_state.step_height = 15.f;
-        target_gait_state.step_depth = 0.002f;
+        stopLocomotionCommand(false);
     }
 
     void rebuildDefaultFeet(float scale, float output[6][4]) {

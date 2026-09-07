@@ -42,6 +42,9 @@ export const default_stand_frac: Record<GaitType, number> = {
   [GaitType.AUTO]: 5 / 6
 }
 
+export const STRIDE_DEADBAND_MM = 2
+export const YAW_DEADBAND_RAD = 0.005
+
 export interface gait_state_t {
   step_height: number
   step_x: number
@@ -95,7 +98,10 @@ export class GaitController {
 
   step(gait: gait_state_t, body: body_state_t, dt: number) {
     const { step_x, step_y, step_angle: angle } = gait
-    const isMoving = Math.abs(step_x) >= 2 || Math.abs(step_y) >= 2 || angle !== 0
+    const isMoving =
+      Math.abs(step_x) >= STRIDE_DEADBAND_MM ||
+      Math.abs(step_y) >= STRIDE_DEADBAND_MM ||
+      Math.abs(angle) >= YAW_DEADBAND_RAD
     const isRepositioning = !isMoving && this.hasPendingStanceChange()
 
     if (!isMoving && !isRepositioning) {
