@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A 6-legged (18-servo) hexapod robot built on an ESP32-S3. The repo has three independent but related parts:
 
-- **`firmware/`** — ESP32 firmware (C++/Arduino, built with PlatformIO). Runs the gait engine, kinematics, sensor reading, and the WiFi/BLE/WebSocket communication stack. This is the source of truth for gait and mode.
-- **`app/`** — SvelteKit web controller (TypeScript). Deployed to GitHub Pages, also embeddable into the firmware. Talks to the robot over BLE or WebSocket using a shared binary protocol.
+- **`firmware/`** — ESP32 firmware (C++ on ESP-IDF 5.4, built with PlatformIO via the pioarduino platform fork). Runs the gait engine, kinematics, sensor reading, and the WiFi/BLE/WebSocket communication stack. This is the source of truth for gait and mode.
+- **`app/`** — SvelteKit web controller (TypeScript). Deployed to GitHub Pages, also embeddable into the firmware. Talks to the robot over BLE or WebSocket using protobuf messages generated from `platform_shared/*.proto`.
 - **`simulation/`** — Python MuJoCo simulation + RL training (`train_mj.py`) for sim-to-real transfer to the robot; managed with `uv`. A trained policy is exported to a dependency-free C++ header (`export_policy.py`) and embedded in the firmware (`WALK_NN` mode).
 
 The NumPy kinematics/gait (`simulation/src/robot/firmware_gait.py`) is a faithful port of the firmware kinematics/gait (`firmware/include/kinematics.h`, `gait.h`) and is the sim-to-real deploy target — when changing motion math, keep both in sync.
@@ -16,14 +16,17 @@ The NumPy kinematics/gait (`simulation/src/robot/firmware_gait.py`) is a faithfu
 
 ### Firmware (run from repo root)
 ```sh
-pio run                         # build default env (esp32-camera)
-pio run -e esp32-wroom-camera   # build a specific env (esp32-camera | esp32-wroom-camera | esp32dev)
+pio run                         # build the only env, esp32-wroom-camera (ESP32-S3 WROOM cam)
 pio run -t upload               # build + flash firmware
 pio run -t uploadfs             # build + flash the LittleFS filesystem image (firmware/data -> /config etc.)
-pio test                        # run native/embedded unit tests (test_embedded is ignored by default)
+pio test -e native              # host unit tests for the gait/kinematics math (firmware/test/)
 pio device monitor              # serial monitor @ 115200 with esp32 exception decoder
 ```
-The build runs `firmware/scripts/build_app.py` as a pre-script: when `EMBED_WEBAPP=1`, it builds the Svelte app and bakes it into `firmware/include/WWWData.h`. By default `EMBED_WEBAPP=0` (see `firmware/features.ini`), so the app is served separately and the firmware build does not require Node.
+`pio` on PATH may be an older PlatformIO core that the pioarduino platform rejects; use `~/.platformio/penv/Scripts/pio` (>= 6.1.18). After switching platform versions, clear `.pio/build/<env>` — a stale `CMakeCache.txt` points at tool paths that no longer exist.
+
+The `native` test env needs a C++20 host compiler on PATH (`g++` >= 10, or set `CXX`); `utils/math_utils.h` falls back to a portable matrix multiply when ESP-DSP is absent.
+
+Two pre-scripts run on every firmware build: `firmware/scripts/pre_build.py` regenerates the nanopb sources from `platform_shared/*.proto` (needs python with `grpcio-tools`), and `firmware/scripts/build_app.py` bakes the Svelte app into `firmware/include/WWWData.h` when `EMBED_WEBAPP=1`. By default `EMBED_WEBAPP=0` (see `firmware/features.ini`), so the app is served separately and the firmware build does not require Node.
 
 ### Web app (run from `app/`)
 ```sh
@@ -56,26 +59,31 @@ See `simulation/README.md` for the full control-mode and training-flag reference
 
 **Two FreeRTOS tasks** (`firmware/src/main.cpp`):
 - *Control task* (core 1, prio 5, 5 ms loop): `robot->readSensors() → planMotion() → updateActuators()`. See `Hexapod` (`firmware/include/hexapod.h`), which owns `MotionService`, `Peripherals`, and `ServoController`.
-- *Service task* (prio 2, 100 ms loop): brings up WiFi, AP, mDNS, the PsychicHttp server, BLE, and the WebSocket adapter; then services WiFi/AP.
+- *Service task* (prio 2, 100 ms loop): brings up WiFi, AP, mDNS, the `esp_http_server` webserver, BLE (NimBLE NUS), and the WebSocket adapter; then services WiFi/AP.
 
 **EventBus** (`firmware/include/event_bus.h`) is the central decoupling mechanism — a typed, lock-protected pub/sub built on a static FreeRTOS queue + a dedicated `evtbus` worker task. Each message type (`CommandMsg`, `ModeMsg`, `GaitMsg`, `ServoAnglesMsg`, etc. from `firmware/include/message_types.h`) gets its own `EventBus<Msg>` specialization with `publish`/`subscribe`/`peek`/`take`. Subscriptions can be rate-limited and batched (`EmitMode::Latest`/`Batch`). This is how communication adapters, `MotionService`, and the control loop talk without direct coupling.
 
 **Motion pipeline** (`firmware/include/motion.h`): `MotionService` subscribes to `CommandMsg`/`ModeMsg`/`GaitMsg`/`ServoAnglesMsg`. `MOTION_STATE` (DEACTIVATED/IDLE/POSE/STAND/WALK) selects behavior. Per tick it lerps `body_state` toward `target_body_state`, runs `GaitController::step`, then `Kinematics::inverseKinematics` to produce 18 servo angles. A 2 s command timeout (`COMMAND_TIMEOUT_MS`) zeroes motion if commands stop arriving.
 
-**Communication adapters** (`firmware/include/communication/`, `comm_base.h`): `CommAdapterBase` is the shared base for `BLE`, `Websocket`, and `EventSource` adapters. Incoming messages are decoded (MsgPack or JSON, selected by build flag) into a `[MsgKind, topic, payload]` array and republished onto the EventBus; EventBus events for subscribed topics are re-emitted back to clients. `_incomingMessage` (thread-local) prevents echo loops. Topic subscriptions are reference-counted across clients so a bus subscription exists only while ≥1 client wants the topic.
+**Communication adapters** (`firmware/include/communication/`, `comm_base.hpp`): `CommAdapterBase` is the shared base for the `Websocket` and `BLE` (NimBLE NUS) transports — both carry the same protobuf `socket_message_Message` frames. Its `ProtoDecoder` dispatches decoded messages to handlers registered per type (`registerHandlers` in `main.cpp`), which republish onto the EventBus; `emitAll` fans EventBus events back out to every adapter. Tag subscriptions are tracked per client so `emit` skips encoding when nobody is listening, and ping/pong is handled in the decoder. Request/response calls (`SystemInformationRequest`, `I2CScanDataRequest`, `FeaturesDataRequest`) are correlated by id, with a 15 s timeout on the app side.
 
-**Serialization**: controlled by `firmware/features.ini` — exactly one of `USE_JSON`/`USE_MSGPACK` must be 1 (default MsgPack). The wire protocol and topic enum are mirrored in `app/src/lib/interfaces/transport.interface.ts` (`MessageType`/`MessageTopic`) — keep these enums aligned with `message_types.h`.
+**Serialization**: protobuf everywhere. `platform_shared/*.proto` is the single source of truth, compiled to nanopb C for the firmware (`firmware/scripts/compile_protos.py`, output in `firmware/src/platform_shared/`, gitignored) and to TypeScript for the app (`app/scripts/compile_protos.js` via ts-proto, output in `app/src/lib/platform_shared/`, gitignored). Both run automatically as build pre-steps. `MOTION_STATE`/`GaitType` cross the wire as enum positions, so firmware and app must be deployed together when those enums change.
 
-**Build configuration**: `platformio.ini` defines three envs differing by board/pins/partitions. Hardware feature flags (`USE_CAMERA`, `USE_MAG`, `USE_MPU6050`, pin assignments) live in env `build_flags` and `firmware/features.ini`; factory defaults (app name/version, WiFi, `NUM_SERVO`) live in `firmware/factory_settings.ini`. Vendored TensorFlow Lite Micro is in `firmware/lib/tfmicro/` and ESP-DL in `firmware/components/esp-dl/` — these are third-party, don't edit.
+**Build configuration**: `platformio.ini` defines one board env, `esp32-wroom-camera` (the ESP32-S3 WROOM cam), plus a host `native` env for unit tests. The Arduino-only classic-ESP32 envs were removed with the IDF port — recover them from the `main` branch if a classic ESP32 is needed again. Hardware feature flags (`USE_CAMERA`, `USE_MPU6050`, pin assignments) live in env `build_flags` and `firmware/features.ini`; factory defaults (app name/version, WiFi, `NUM_SERVO`) live in `firmware/factory_settings.ini`; IDF sdkconfig overrides (PSRAM, 1 kHz tick, BLE/WiFi memory placement) live in `sdkconfig.defaults`. Vendored TensorFlow Lite Micro is in `firmware/lib/tfmicro/` and ESP-DL in `firmware/components/esp-dl/` — these are third-party, don't edit.
+
+**Peripherals** (`firmware/include/peripherals/`): `Peripherals` owns the drivers behind the `USE_*` flags — MPU6050 DMP (`drivers/mpu6050.h`) and HMC5883 magnetometer (`drivers/hmc5883.h`), both over the shared `I2CBus` (`esp_driver_i2c`). Roll/pitch/yaw plus the compass heading are published together as `IMUAnglesMsg` every 25 ms. The bus pins and frequency come from `PeripheralSettingsService` (persisted, applied at boot — re-opening a live bus would invalidate every device handle).
+
+**ESP-NOW controller** (`firmware/src/communication/espnow_adapter.cpp`): receives broadcasts from the handheld controller and republishes them as `CommandMsg`/`ModeMsg`/`GaitMsg`, so it drives `MotionService` exactly like the app does. Input-only. The radio must sit on `ESPNOW_WIFI_CHANNEL` (a STA join forces the router's channel instead — `begin()` logs this). The wire format in `communication/controller_packet.h` is shared with the separate controller firmware and with `simulation/controller_bridge.py`; keep the three in sync.
+
+**OTA** (`firmware/include/ota_service.h`): `POST /api/firmware` streams a raw `.bin` request body into the inactive OTA slot; `POST /api/firmware/download` takes `{"download_url"}` (https only) and runs `esp_https_ota` against it using the mbedTLS root-CA bundle. Both publish `OtaStatusData` progress, which the app's update page feeds into the existing telemetry store. Rollback is enabled, and `confirmRunningImage()` marks the new image valid on first boot — a firmware that cannot start reverts to the previous slot.
 
 ## Web app architecture
 
-SvelteKit (Svelte 5) + Tailwind/daisyUI, static-adapter SPA. Routes under `app/src/routes/` map to controller, connection, bluetooth, and per-peripheral settings (servo/imu/camera/i2c) pages. `app/src/lib/` holds the shared logic: `transport/` (BLE + WebSocket implementations of `ITransport`), `kinematic.ts`/`gait.ts`/`motion.ts` (a TS mirror of the robot math for the 3D visualization), `sceneBuilder.ts` + `Visualization.svelte` (three.js URDF rendering), and `stores/` for app state. The controller sends `CommandMsg`-style joystick input and subscribes to telemetry topics.
+SvelteKit (Svelte 5) + Tailwind/daisyUI, static-adapter SPA. Routes under `app/src/routes/` map to controller, connection, bluetooth, and per-peripheral settings (servo/imu/camera/i2c) pages. `app/src/lib/` holds the shared logic: `transport/` (BLE + WebSocket byte-pipe implementations of `ITransport`, plus `databroker.ts` for tag-based pub/sub, `request()` correlation RPC and ping/pong), `proto-api.ts` (settings pages over proto-HTTP), `kinematic.ts`/`gait.ts`/`motion.ts` (a TS mirror of the robot math for the 3D visualization), `sceneBuilder.ts` + `Visualization.svelte` (three.js URDF rendering), and `stores/` for app state. The controller sends `Command` messages and subscribes to telemetry by message tag.
 
 ## Further documentation
 
 - `docs/connectivity.md` — how the app reaches the robot: the browser origin constraints that gate every transport, provisioning options, the `NET_STATUS`/`NET_COMMAND` topics, and the ranked plan. **Read before proposing any connection flow.**
-- `docs/idf-migration.md` — the move from Arduino to ESP-IDF, using SpotMicroESP32-Leika as reference. Includes the open ordering decision and current session state.
 - `docs/animation.md` — the procedural animation system (`ANIMATE` mode). Currently shelved; records the app/firmware sync contract, sign conventions, and known drift.
 
 ## Connection constraint (summary)
