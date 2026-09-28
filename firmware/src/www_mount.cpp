@@ -1,4 +1,5 @@
 #include "www_mount.hpp"
+#include <esp_log.h>
 
 #if EMBED_WEBAPP
 #include <cstring>
@@ -47,6 +48,16 @@ void mountWebApp(WebServer &server) {
             return ESP_FAIL;
         }
         return web_send(req, *asset);
+    });
+}
+#else
+// Without this handler the OPTIONS "/*" route registered for CORS matches a plain GET / and the
+// server answers 405 Method Not Allowed, which reads as a broken robot to anyone opening its IP.
+void mountWebApp(WebServer &server) {
+    ESP_LOGW("www", "Web app not embedded (EMBED_WEBAPP=0), UI routes return 404");
+    server.on("/*", HTTP_GET, [](httpd_req_t *req) {
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not found");
+        return ESP_FAIL;
     });
 }
 #endif

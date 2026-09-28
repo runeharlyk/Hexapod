@@ -457,9 +457,7 @@ static void setupServer() {
     camera_service::registerRoutes(server);
 #endif
 
-#if EMBED_WEBAPP
     mountWebApp(server);
-#endif
 }
 
 static void setupComm() {
