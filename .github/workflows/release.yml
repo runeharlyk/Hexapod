@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    uses: ./.github/workflows/embedded-build.yml
+
+  release:
+    needs: firmware
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-esp32-wroom-camera
+          path: firmware
+
+      - name: Collect the factory image
+        run: |
+          mkdir release
+          cp firmware/firmware.factory.bin release/esp32-wroom-camera.factory.bin
+          ls -l release
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" release/*.factory.bin --repo "${{ github.repository }}" --generate-notes
+
+      # The github-pages environment only accepts deployments from main, so the flasher is
+      # refreshed by re-running the Pages workflow there rather than deploying from the tag.
+      - name: Redeploy the web flasher from main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml --ref main --repo "${{ github.repository }}"

@@ -8,8 +8,8 @@
   </h1>
   <h4>A small hexapod robot, based on <a href="https://github.com/SmallpTsai/hexapod-v2-7697">SmallpTsai/hexapod-v2-7697</a></h4>
 
-<!-- [![Frontend Tests](https://github.com/runeharlyk/Hexapod/actions/workflows/frontend-tests.yml/badge.svg)](https://github.com/runeharlyk/Hexapod/actions/workflows/frontend-tests.yml)
-[![PlatformIO CI](https://github.com/runeharlyk/Hexapod/actions/workflows/embedded-build.yml/badge.svg)](https://github.com/runeharlyk/Hexapod/actions/workflows/embedded-build.yml) -->
+[![Deploy GitHub Pages](https://github.com/runeharlyk/Hexapod/actions/workflows/deploy.yml/badge.svg)](https://github.com/runeharlyk/Hexapod/actions/workflows/deploy.yml)
+[![PlatformIO CI](https://github.com/runeharlyk/Hexapod/actions/workflows/embedded-build.yml/badge.svg)](https://github.com/runeharlyk/Hexapod/actions/workflows/embedded-build.yml)
 
 </div>
 
@@ -68,7 +68,7 @@ See `simulation/README.md` for the full workflow.
 
 1. Upload filesystem image using platformIO
 
-1. Upload firmware using platformIO
+1. Upload firmware using platformIO, or flash the latest release from the browser at <https://runeharlyk.github.io/Hexapod/flash/> (Chrome or Edge, native USB port)
 
 ## ☕ Support
 

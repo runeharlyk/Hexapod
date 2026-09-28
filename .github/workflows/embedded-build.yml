@@ -1,0 +1,80 @@
+name: PlatformIO CI
+
+on:
+  workflow_call:
+  push:
+    branches: [main]
+    paths:
+      - "firmware/**"
+      - "platform_shared/**"
+      - "submodules/**"
+      - "platformio.ini"
+      - "sdkconfig.defaults"
+      - "CMakeLists.txt"
+      - ".github/workflows/embedded-build.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "firmware/**"
+      - "platform_shared/**"
+      - "submodules/**"
+      - "platformio.ini"
+      - "sdkconfig.defaults"
+      - "CMakeLists.txt"
+      - ".github/workflows/embedded-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  native-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      # The native env needs a C++20 host compiler; ubuntu-latest's g++ satisfies it.
+      - name: Host tests (kinematics and gait)
+        run: pio test -e native
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio-esp32-wroom-camera-${{ hashFiles('platformio.ini') }}
+          restore-keys: ${{ runner.os }}-pio-esp32-wroom-camera-
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # pre_build.py regenerates the nanopb sources from platform_shared/*.proto with
+      # grpc_tools.protoc. EMBED_WEBAPP=0 by default, so the firmware build needs no Node.
+      - name: Install PlatformIO and proto dependencies
+        run: pip install --upgrade platformio protobuf grpcio-tools
+
+      - name: Build esp32-wroom-camera
+        run: pio run -e esp32-wroom-camera
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-esp32-wroom-camera
+          path: .pio/build/esp32-wroom-camera/*.bin
+          if-no-files-found: error

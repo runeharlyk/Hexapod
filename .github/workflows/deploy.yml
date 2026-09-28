@@ -20,6 +20,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: ./app
@@ -29,13 +30,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v2
+      - uses: pnpm/action-setup@v4
         with:
           version: 9
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: "pnpm"
           cache-dependency-path: "./app/pnpm-lock.yaml"
 
@@ -56,7 +57,26 @@ jobs:
       - run: pnpm check
       - run: pnpm lint
       - run: pnpm test:unit
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:integration
       - run: pnpm run build
+
+      # The flasher page lives inside the Pages artifact because ESP Web Tools fetches the
+      # firmware with fetch(), and GitHub release downloads send no CORS headers.
+      - name: Add web flasher with the latest release firmware
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          site=app/build/flash
+          mkdir -p "$site/firmware"
+          cp flasher/index.html "$site/"
+          if tag=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName); then
+            gh release download "$tag" --repo "${{ github.repository }}" --pattern '*.factory.bin' --dir "$site/firmware"
+          else
+            tag=none
+          fi
+          python3 flasher/generate_manifest.py "$site" "$tag"
 
       - name: Setup Pages
         if: github.event_name != 'pull_request'
@@ -73,6 +93,7 @@ jobs:
   deploy:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: build
     environment:
       name: github-pages
