@@ -20,7 +20,7 @@
     "@iconify-json/mdi": "^1.1.64",
     "@iconify-json/tabler": "^1.1.109",
     "@niku/vite-env-caster": "^1.0.2",
-    "@playwright/test": "^1.49.1",
+    "@playwright/test": "^1.63.0",
     "@sveltejs/adapter-static": "^3.0.1",
     "@sveltejs/kit": "^2.49.2",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
