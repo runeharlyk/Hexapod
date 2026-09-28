@@ -3,11 +3,9 @@
 #include <wifi/wifi_idf.h>
 #include <wifi/dns_server.h>
 #include <template/state_result.h>
+#include <settings/placeholders.h>
 #include <platform_shared/api.pb.h>
-#include <esp_mac.h>
-#include <cstdio>
 #include <cstring>
-#include <string>
 
 #ifndef FACTORY_AP_PROVISION_MODE
 #define FACTORY_AP_PROVISION_MODE api_APProvisionMode_AP_MODE_DISCONNECTED
@@ -65,24 +63,10 @@ inline uint32_t parseIPv4(const char *str) {
 
 using APSettings = api_APSettings;
 
-// Substitute "#{unique_id}" with the MAC suffix so each device gets a distinct AP SSID.
-inline std::string substituteUniqueId(const char *tmpl) {
-    std::string out(tmpl);
-    const std::string token = "#{unique_id}";
-    auto pos = out.find(token);
-    if (pos == std::string::npos) return out;
-    uint8_t mac[6] = {};
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    char id[7];
-    snprintf(id, sizeof(id), "%02X%02X%02X", mac[3], mac[4], mac[5]);
-    out.replace(pos, token.length(), id);
-    return out;
-}
-
 inline APSettings APSettings_defaults() {
     APSettings settings = {};
     settings.provision_mode = FACTORY_AP_PROVISION_MODE;
-    strncpy(settings.ssid, substituteUniqueId(FACTORY_AP_SSID).c_str(), sizeof(settings.ssid) - 1);
+    strncpy(settings.ssid, substitutePlaceholders(FACTORY_AP_SSID).c_str(), sizeof(settings.ssid) - 1);
     strncpy(settings.password, FACTORY_AP_PASSWORD, sizeof(settings.password) - 1);
     settings.channel = FACTORY_AP_CHANNEL;
     settings.ssid_hidden = FACTORY_AP_SSID_HIDDEN;
@@ -104,6 +88,10 @@ inline bool APSettings_equals(const APSettings &a, const APSettings &b) {
 
 inline StateUpdateResult APSettings_update(const APSettings &proto, APSettings &settings) {
     APSettings candidate = proto;
+    // Reads redact the password, so an empty one from a client means "keep the stored password".
+    if (strnlen(candidate.password, sizeof(candidate.password)) == 0) {
+        memcpy(candidate.password, settings.password, sizeof(candidate.password));
+    }
 
     switch (candidate.provision_mode) {
         case AP_MODE_ALWAYS:

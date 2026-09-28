@@ -119,10 +119,12 @@ void MDNSService::queryProto(const api_MDNSQueryRequest &req, api_MDNSQueryRespo
         if (r->hostname) {
             strncpy(resp.services[i].name, r->hostname, sizeof(resp.services[i].name) - 1);
         }
-        if (r->addr) {
+        for (mdns_ip_addr_t *a = r->addr; a; a = a->next) {
+            if (a->addr.type != ESP_IPADDR_TYPE_V4) continue;
             char ip_str[16];
-            esp_ip4addr_ntoa(&r->addr->addr.u_addr.ip4, ip_str, sizeof(ip_str));
+            esp_ip4addr_ntoa(&a->addr.u_addr.ip4, ip_str, sizeof(ip_str));
             strncpy(resp.services[i].ip, ip_str, sizeof(resp.services[i].ip) - 1);
+            break;
         }
         resp.services[i].port = r->port;
     }

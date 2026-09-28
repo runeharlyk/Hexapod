@@ -12,6 +12,7 @@
 #include <string>
 #include <cstring>
 #include <functional>
+#include <mutex>
 #include <vector>
 
 typedef enum {
@@ -136,6 +137,8 @@ class WiFiClass {
     uint16_t _scanCount;
     int16_t _scanStatus;
 
+    // onEvent() runs on the registering task while dispatchEvent() runs on sys_evt.
+    std::mutex _eventHandlersMutex;
     std::vector<WiFiEventHandler> _eventHandlers;
 
     IPAddress _sta_static_ip;

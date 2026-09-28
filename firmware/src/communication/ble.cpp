@@ -45,8 +45,8 @@ void BLE::setup() {
     _rxCharacteristic =
         service->createCharacteristic(BLE_CHARACTERISTIC_RX, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
     _rxCharacteristic->setCallbacks(new RXCallbacks(this));
-    service->start();
 
+    // advertising->start() starts the GATT server, and with it every service created above.
     NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
     advertising->addServiceUUID(BLE_SERVICE_UUID);
     advertising->setName("Hexapod");

@@ -15,6 +15,9 @@ class PCA9685Driver {
         reset();
         setOscillatorFrequency(25000000);
         setPWMFreq(50);
+        // The chip keeps driving its last pulse widths across an ESP reset, which would leave the
+        // servos energised while the firmware starts DEACTIVATED. Every channel starts full off.
+        writeReg(REG_ALL_LED_OFF_H, FULL_OFF_BIT);
 
         _initialized = true;
         return true;
@@ -97,6 +100,7 @@ class PCA9685Driver {
     static constexpr uint8_t REG_MODE2 = 0x01;
     static constexpr uint8_t REG_PRESCALE = 0xFE;
     static constexpr uint8_t REG_LED0_ON_L = 0x06;
+    static constexpr uint8_t REG_ALL_LED_OFF_H = 0xFD;
 
     static constexpr uint8_t MODE1_RESTART = 0x80;
     static constexpr uint8_t MODE1_SLEEP = 0x10;

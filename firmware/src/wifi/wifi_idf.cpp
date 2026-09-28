@@ -136,14 +136,23 @@ void WiFiClass::eventHandler(void* arg, esp_event_base_t event_base, int32_t eve
 }
 
 void WiFiClass::dispatchEvent(int32_t event_id, void* event_data) {
-    for (auto& handler : _eventHandlers) {
+    // Dispatch from a copy so a handler may register further handlers without deadlocking.
+    std::vector<WiFiEventHandler> handlers;
+    {
+        std::lock_guard<std::mutex> lock(_eventHandlersMutex);
+        handlers = _eventHandlers;
+    }
+    for (auto& handler : handlers) {
         if (handler.event_id == event_id || handler.event_id == -1) {
             handler.callback(event_id, event_data);
         }
     }
 }
 
-void WiFiClass::onEvent(WiFiEventCb callback, int32_t event_id) { _eventHandlers.push_back({event_id, callback}); }
+void WiFiClass::onEvent(WiFiEventCb callback, int32_t event_id) {
+    std::lock_guard<std::mutex> lock(_eventHandlersMutex);
+    _eventHandlers.push_back({event_id, callback});
+}
 
 bool WiFiClass::mode(wifi_mode_t m) {
     if (!_initialized) init();

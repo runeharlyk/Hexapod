@@ -9,11 +9,14 @@ buildFlags = env.ParseFlags(env["BUILD_FLAGS"])
 
 interface_dir = f"{project_dir}/app"
 output_file = f"{project_dir}/firmware/include/WWWData.h"
-source_www_dir = f"{interface_dir}/src"
 build_dir = f"{interface_dir}/build"
-filesystem_dir = f"{project_dir}/data"
+source_dirs = [f"{interface_dir}/src", f"{interface_dir}/static", f"{project_dir}/platform_shared"]
+config_files = [
+    f"{interface_dir}/{name}"
+    for name in ("package.json", "pnpm-lock.yaml", "svelte.config.js", "vite.config.ts", "vite-plugin-littlefs.ts",
+                 "tsconfig.json")
+]
 
-Path(filesystem_dir).mkdir(exist_ok=True)
 Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 mimetypes.init()
 
@@ -32,7 +35,8 @@ def get_flag(flag, default=None):
     return default
 
 def latest_ts():
-    files = [p for p in glob.glob(f"{source_www_dir}/**/*", recursive=True) if os.path.isfile(p)]
+    files = [p for d in source_dirs for p in glob.glob(f"{d}/**/*", recursive=True) if os.path.isfile(p)]
+    files += [p for p in config_files if os.path.isfile(p)]
     return max(getmtime(p) for p in files) if files else 0
 
 def needs_rebuild():
@@ -55,8 +59,10 @@ def build_web():
     cwd = os.getcwd()
     try:
         os.chdir(interface_dir)
-        env.Execute(f"{m} install")
-        env.Execute(f"{m} run build:embedded")
+        for cmd in (f"{m} install", f"{m} run build:embedded"):
+            if env.Execute(cmd) != 0:
+                print(f"Web app build failed: {cmd}")
+                env.Exit(1)
     finally:
         os.chdir(cwd)
 

@@ -18,7 +18,9 @@ void SerialAdapter::begin() {
         ESP_LOGE(TAG, "usb_serial_jtag_driver_install failed; serial link disabled");
         return;
     }
-    xTaskCreate(rxTask, "serial_rx", 4096, this, 4, nullptr);
+    // The correlation handlers run on this task: the response union alone is ~2.2 KB, plus settings copies
+    // and LittleFS writes on the update paths.
+    xTaskCreate(rxTask, "serial_rx", 8192, this, 4, nullptr);
     ESP_LOGI(TAG, "protobuf link up on the native USB port");
 }
 

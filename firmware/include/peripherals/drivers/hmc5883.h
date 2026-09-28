@@ -16,7 +16,8 @@ class HMC5883Driver {
   public:
     static constexpr uint8_t DEFAULT_ADDR = 0x1E;
 
-    // Magnetic declination for the robot's location, radians. Positive = east.
+    // Magnetic declination in radians, positive = east. The default is a placeholder, not a value for
+    // any particular site: set it for the location the robot runs in, or headings are off by the error.
     explicit HMC5883Driver(uint8_t addr = DEFAULT_ADDR, float declination = 0.22f)
         : _addr(addr), _declination(declination) {}
 

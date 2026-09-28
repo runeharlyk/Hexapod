@@ -94,27 +94,11 @@ inline void mat_mult_f32_portable(const float *A, const float *B, float *result,
 
 #define SIN_DEG_F(deg) (sinf(DEG_TO_RAD_F(deg)))
 
-#define IS_EQUAL(a, b, epsilon) (std::fabs((a) - (b)) < (epsilon))
-
-#define IS_ALMOST_EQUAL(a, b) IS_EQUAL((a), (b), 0.001f)
-
 inline float lerpf(float start, float end, float t) { return (1 - t) * start + t * end; }
 
 inline bool isEqual(float a, float b, float epsilon) { return std::fabs(a - b) < epsilon; }
 
 inline float round2(float value) { return (int)(value * 100 + 0.5) / 100.0; }
-
-template <size_t Rows, size_t Cols>
-inline bool arrayEqual(const float (&arr1)[Rows][Cols], const float (&arr2)[Rows][Cols], float epsilon = 1e-3) {
-    for (size_t i = 0; i < Rows; ++i) {
-        for (size_t j = 0; j < Cols; ++j) {
-            if (std::fabs(arr1[i][j] - arr2[i][j]) > epsilon) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
 
 static constexpr float combinatorial_constexpr(const int n, int k) {
     if (k < 0 || k > n) return 0.0f;

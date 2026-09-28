@@ -24,13 +24,13 @@ inline MDNSSettings MDNSSettings_defaults() {
     strncpy(settings.instance, FACTORY_MDNS_INSTANCE, sizeof(settings.instance) - 1);
 
     settings.services_count = 2;
-    strncpy(settings.services[0].service, "http", sizeof(settings.services[0].service) - 1);
-    strncpy(settings.services[0].protocol, "tcp", sizeof(settings.services[0].protocol) - 1);
+    strncpy(settings.services[0].service, "_http", sizeof(settings.services[0].service) - 1);
+    strncpy(settings.services[0].protocol, "_tcp", sizeof(settings.services[0].protocol) - 1);
     settings.services[0].port = 80;
     settings.services[0].txt_records_count = 0;
 
-    strncpy(settings.services[1].service, "ws", sizeof(settings.services[1].service) - 1);
-    strncpy(settings.services[1].protocol, "tcp", sizeof(settings.services[1].protocol) - 1);
+    strncpy(settings.services[1].service, "_ws", sizeof(settings.services[1].service) - 1);
+    strncpy(settings.services[1].protocol, "_tcp", sizeof(settings.services[1].protocol) - 1);
     settings.services[1].port = 80;
     settings.services[1].txt_records_count = 0;
 
@@ -74,6 +74,16 @@ inline bool MDNSSettings_equals(const MDNSSettings& a, const MDNSSettings& b) {
     return true;
 }
 
+// IDF mdns expects DNS-SD labels with their leading underscore ("_http", "_tcp"). Older settings
+// files stored them bare, so a missing underscore is added on load and update.
+template <size_t N>
+inline void MDNS_ensureUnderscore(char (&label)[N]) {
+    const size_t len = strnlen(label, N);
+    if (len == 0 || label[0] == '_' || len + 1 >= N) return;
+    memmove(label + 1, label, len + 1);
+    label[0] = '_';
+}
+
 inline StateUpdateResult MDNSSettings_update(const MDNSSettings& proto, MDNSSettings& settings) {
     MDNSSettings candidate = proto;
 
@@ -86,7 +96,9 @@ inline StateUpdateResult MDNSSettings_update(const MDNSSettings& proto, MDNSSett
     // failing mdns_service_add on every restart.
     pb_size_t accepted = 0;
     for (pb_size_t i = 0; i < candidate.services_count; i++) {
-        const MDNSServiceDef& service = candidate.services[i];
+        MDNSServiceDef& service = candidate.services[i];
+        MDNS_ensureUnderscore(service.service);
+        MDNS_ensureUnderscore(service.protocol);
         if (strnlen(service.service, sizeof(service.service)) == 0) continue;
         if (strnlen(service.protocol, sizeof(service.protocol)) == 0) continue;
         if (service.port == 0 || service.port > 65535) continue;

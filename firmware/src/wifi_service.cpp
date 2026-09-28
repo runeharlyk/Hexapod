@@ -39,15 +39,6 @@ void WiFiService::reconfigureWiFiConnection() {
     if (WiFi.disconnect(true)) _stopping = true;
 }
 
-void WiFiService::selectNetwork(uint32_t index) {
-    if (index >= state().wifi_networks_count) return;
-    updateWithoutPropagation([&](WiFiSettings &settings) {
-        settings.selected_network = index;
-        return StateUpdateResult::CHANGED;
-    });
-    _persistence.writeToFS();
-    reconfigureWiFiConnection();
-}
 
 void WiFiService::loop() { EXECUTE_EVERY_N_MS(1000, manageSTA()); }
 

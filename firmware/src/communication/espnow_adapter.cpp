@@ -50,7 +50,7 @@ static void handlePacket(const uint8_t* data, int len) {
     }
     cmd.h = s_height;
     cmd.s = cmd.s1 = cmd.fd = 0.0f;
-    EventBus<CommandMsg>::publish(cmd);
+    if (cmd.sanitize()) EventBus<CommandMsg>::publish(cmd);
 
     static uint8_t prev = 0;
     uint8_t rising = pkt.buttons & ~prev;

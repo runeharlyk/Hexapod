@@ -13,9 +13,13 @@
 
 #define AXIS_FULL_SCALE 1000
 
-// Bit positions within controller_packet_t.buttons.
+// Bit positions within controller_packet_t.buttons, as the controller firmware
+// (esp-now-controller, components/controller_packet) assigns them. Bits 5..7 are unused.
 #define BTN_LEFT (1u << 0)  // left joystick push-switch
 #define BTN_RIGHT (1u << 1) // right joystick push-switch
+#define BTN_A (1u << 2)     // auxiliary button A
+#define BTN_B (1u << 3)     // auxiliary button B
+#define BTN_C (1u << 4)     // auxiliary button C
 
 typedef struct __attribute__((packed)) {
     uint8_t version;  // == CONTROLLER_PACKET_VERSION

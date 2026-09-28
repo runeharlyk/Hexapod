@@ -56,11 +56,6 @@ bool init() {
     return true;
 }
 
-bool exists(const char *path) {
-    struct stat st;
-    return stat(path, &st) == 0;
-}
-
 bool readFile(const char *path, std::string &out) {
     FILE *f = fopen(path, "rb");
     if (!f) return false;

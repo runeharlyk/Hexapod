@@ -36,6 +36,7 @@ set(COMPONENT_REQUIRES
     esp_http_server
     esp_driver_i2c
     esp_driver_usb_serial_jtag
+    esp_driver_tsens
     json
     lwip
     joltwallet__littlefs

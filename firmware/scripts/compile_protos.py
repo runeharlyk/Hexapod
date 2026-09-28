@@ -7,8 +7,9 @@ from pathlib import Path
 
 
 def ensure_protobuf_installed():
+    # nanopb_generator.py runs protoc through grpc_tools; google.protobuf alone is not enough.
     try:
-        import google.protobuf  # noqa: F401
+        import grpc_tools.protoc  # noqa: F401
         return True
     except ImportError:
         print("Installing protobuf dependencies...")

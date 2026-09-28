@@ -21,9 +21,15 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
 # defaulted to 1 kHz, so this restores the pre-migration timing.
 CONFIG_FREERTOS_HZ=1000
 
-# Task stacks
+# Task stacks. The sys_evt task runs the WiFi/IP event handlers, including the ESP-NOW and service
+# callbacks, which the 2304 B default leaves little headroom for.
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_PTHREAD_TASK_STACK_SIZE_DEFAULT=4096
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
+
+# Console on UART0 only. The native USB Serial/JTAG port carries the protobuf serial link
+# (communication/serial_adapter.h), so log output must not be mirrored onto it.
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
 # FreeRTOS run-time stats: per-core CPU usage in analytics (idle-task counters over esp_timer)
 CONFIG_FREERTOS_USE_TRACE_FACILITY=y
@@ -33,7 +39,7 @@ CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
 # Software AES + SHA. The hardware crypto drivers allocate DMA buffers from internal RAM, which is
 # exhausted once BLE + WiFi(STA+AP) + coexistence + camera are up, failing the WPA2 handshake
 # ("esp-aes"/"esp-sha: Failed to allocate ... memory" -> STA auth fail, reason 202). Software crypto
-# needs no DMA and the cost is trivial for occasional handshakes (no TLS here).
+# needs no DMA and the cost is trivial for occasional handshakes and the OTA download's TLS session.
 CONFIG_MBEDTLS_HARDWARE_AES=n
 CONFIG_MBEDTLS_HARDWARE_SHA=n
 
@@ -71,8 +77,10 @@ CONFIG_PARTITION_TABLE_CUSTOM=y
 # Compiler
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 
-# Long filenames on the FAT staging area
-CONFIG_FATFS_LFN_STACK=y
+# Core dumps go to the coredump partition of the partition table, in ELF so idf.py coredump-info
+# can decode them after a crash.
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
 
 # Bluetooth / NimBLE (peripheral role for the NUS transport)
 CONFIG_BT_ENABLED=y

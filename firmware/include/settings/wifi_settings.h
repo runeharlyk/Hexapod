@@ -2,6 +2,7 @@
 
 #include <wifi/wifi_idf.h>
 #include <template/state_result.h>
+#include <settings/placeholders.h>
 #include <platform_shared/api.pb.h>
 #include <esp_log.h>
 #include <cstring>
@@ -40,7 +41,7 @@ inline WiFiNetwork WiFiNetwork_defaults() {
 
 inline WiFiSettings WiFiSettings_defaults() {
     WiFiSettings settings = api_WifiSettings_init_zero;
-    strncpy(settings.hostname, FACTORY_WIFI_HOSTNAME, sizeof(settings.hostname) - 1);
+    strncpy(settings.hostname, toHostLabel(FACTORY_WIFI_HOSTNAME).c_str(), sizeof(settings.hostname) - 1);
     settings.priority_rssi = true;
     settings.wifi_networks_count = 0;
     settings.selected_network = 0;
@@ -100,17 +101,31 @@ inline bool WiFiSettings_equals(const WiFiSettings &a, const WiFiSettings &b) {
     return true;
 }
 
+// Reads redact passwords, so a network sent back with an empty password keeps the one stored for the
+// same SSID. A genuinely open network has an empty stored password, so it is unaffected.
+inline void WiFiNetwork_keepStoredPassword(WiFiNetwork &network, const WiFiSettings &stored) {
+    if (strnlen(network.password, sizeof(network.password)) != 0) return;
+    for (pb_size_t i = 0; i < stored.wifi_networks_count; i++) {
+        if (strncmp(stored.wifi_networks[i].ssid, network.ssid, sizeof(network.ssid)) == 0) {
+            memcpy(network.password, stored.wifi_networks[i].password, sizeof(network.password));
+            return;
+        }
+    }
+}
+
 inline StateUpdateResult WiFiSettings_update(const WiFiSettings &proto, WiFiSettings &settings) {
     WiFiSettings candidate = proto;
 
-    if (strnlen(candidate.hostname, sizeof(candidate.hostname)) == 0) {
-        strncpy(candidate.hostname, FACTORY_WIFI_HOSTNAME, sizeof(candidate.hostname) - 1);
-        candidate.hostname[sizeof(candidate.hostname) - 1] = '\0';
-    }
+    // Expanding here (not only in the defaults) also repairs files persisted with the raw template.
+    std::string hostname = toHostLabel(candidate.hostname);
+    if (hostname.empty()) hostname = toHostLabel(FACTORY_WIFI_HOSTNAME);
+    memset(candidate.hostname, 0, sizeof(candidate.hostname));
+    strncpy(candidate.hostname, hostname.c_str(), sizeof(candidate.hostname) - 1);
 
     pb_size_t accepted = 0;
     for (pb_size_t i = 0; i < candidate.wifi_networks_count; i++) {
         WiFiNetwork network = candidate.wifi_networks[i];
+        WiFiNetwork_keepStoredPassword(network, settings);
         if (WiFiNetwork_sanitize(network)) candidate.wifi_networks[accepted++] = network;
     }
     // Keeping the usable networks lets a partially corrupt stored config still boot; a payload where

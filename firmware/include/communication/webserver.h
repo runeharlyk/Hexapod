@@ -13,28 +13,16 @@
 #include <string>
 #include <map>
 #include <pb_encode.h>
-#include <pb_decode.h>
-#include <platform_shared/api.pb.h>
 
-using HttpGetHandler = std::function<esp_err_t(httpd_req_t*)>;
-using HttpPostHandler = std::function<esp_err_t(httpd_req_t*, api_Request*)>;
+using HttpHandler = std::function<esp_err_t(httpd_req_t*)>;
 using WsFrameHandler = std::function<esp_err_t(httpd_req_t*, httpd_ws_frame_t*)>;
 using WsOpenHandler = std::function<void(httpd_req_t*)>;
 using WsCloseHandler = std::function<void(int)>;
 
-#define STATIC_PROTO_POST_ENDPOINT(server_ref, uri, payload_type, handler)             \
-    (server_ref).on(uri, HTTP_POST, [&](httpd_req_t* request, api_Request* protoReq) { \
-        if (protoReq->which_payload != api_Request_##payload_type##_tag) {             \
-            return WebServer::sendError(request, 400, "Invalid request payload");      \
-        }                                                                              \
-        return handler(request, protoReq->payload.payload_type);                       \
-    })
-
 struct HttpRoute {
     std::string uri;
     httpd_method_t method;
-    HttpGetHandler getHandler;
-    HttpPostHandler postHandler;
+    HttpHandler handler;
     bool isWebsocket;
 };
 
@@ -47,8 +35,7 @@ class WebServer {
     esp_err_t listen(uint16_t port);
     void stop();
 
-    void on(const char* uri, httpd_method_t method, HttpGetHandler handler);
-    void on(const char* uri, httpd_method_t method, HttpPostHandler handler);
+    void on(const char* uri, httpd_method_t method, HttpHandler handler);
 
     void onWsFrame(WsFrameHandler handler);
     void onWsOpen(WsOpenHandler handler);
@@ -59,7 +46,6 @@ class WebServer {
     esp_err_t wsSendAll(const uint8_t* data, size_t len);
     void addWsClient(int sockfd);
     void removeWsClient(int sockfd);
-    std::vector<int> getWsClients();
 
     void addDefaultHeader(const char* key, const char* value);
 
@@ -90,33 +76,6 @@ class WebServer {
         esp_err_t result = send(req, status, buffer, stream.bytes_written);
         free(buffer);
         return result;
-    }
-
-    template <typename T>
-    static bool receiveProto(httpd_req_t* req, T& msg, const pb_msgdesc_t* fields) {
-        size_t contentLen = req->content_len;
-        if (contentLen == 0 || contentLen > 4096) {
-            return false;
-        }
-        uint8_t* buffer = (uint8_t*)malloc(contentLen);
-        if (!buffer) {
-            return false;
-        }
-        int received = 0;
-        int remaining = contentLen;
-        while (remaining > 0) {
-            int ret = httpd_req_recv(req, (char*)buffer + received, remaining);
-            if (ret <= 0) {
-                free(buffer);
-                return false;
-            }
-            received += ret;
-            remaining -= ret;
-        }
-        pb_istream_t stream = pb_istream_from_buffer(buffer, contentLen);
-        bool success = pb_decode(&stream, fields, &msg);
-        free(buffer);
-        return success;
     }
 
   private:

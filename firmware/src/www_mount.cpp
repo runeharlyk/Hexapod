@@ -2,6 +2,7 @@
 
 #if EMBED_WEBAPP
 #include <cstring>
+#include <string>
 
 static const WebAsset *findAsset(const char *uri) {
     for (size_t i = 0; i < WWW_ASSETS_COUNT; i++) {
@@ -27,22 +28,25 @@ static esp_err_t web_send(httpd_req_t *req, const WebAsset &asset) {
     return httpd_resp_send(req, (const char *)asset.data, asset.len);
 }
 
-void mountStaticAssets(WebServer &server) {
-    for (size_t i = 0; i < WWW_ASSETS_COUNT; i++) {
-        const WebAsset *a = &WWW_ASSETS[i];
-        server.on(a->uri, HTTP_GET, [a](httpd_req_t *req) { return web_send(req, *a); });
-    }
-}
-
-void mountSpaFallback(WebServer &server) {
+// One wildcard handler serves every asset: registering one httpd handler per file would exhaust
+// config.max_uri_handlers long before a SvelteKit build runs out of files. It is registered after the
+// API routes, so those still match first; unknown non-API paths get index.html for client routing.
+void mountWebApp(WebServer &server) {
     const WebAsset *indexAsset = findAsset(WWW_OPT.default_uri);
-    if (!indexAsset) return;
     server.on("/*", HTTP_GET, [indexAsset](httpd_req_t *req) {
         if (strncmp(req->uri, "/api/", 5) == 0) {
             httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not found");
             return ESP_FAIL;
         }
-        return web_send(req, *indexAsset);
+        const char *query = strchr(req->uri, '?');
+        const std::string path(req->uri, query ? static_cast<size_t>(query - req->uri) : strlen(req->uri));
+        const WebAsset *asset = findAsset(path.c_str());
+        if (!asset) asset = indexAsset;
+        if (!asset) {
+            httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not found");
+            return ESP_FAIL;
+        }
+        return web_send(req, *asset);
     });
 }
 #endif

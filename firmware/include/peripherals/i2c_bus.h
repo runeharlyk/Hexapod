@@ -151,7 +151,7 @@ class I2CBus {
                 ESP_LOGI(TAG, "I2C device found at address 0x%02X", addr);
             }
         }
-        ESP_LOGI(TAG, "Scan complete - Found %d device(s)", devices.size());
+        ESP_LOGI(TAG, "Scan complete - Found %zu device(s)", devices.size());
         return devices;
     }
 

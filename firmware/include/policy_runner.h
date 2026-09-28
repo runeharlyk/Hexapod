@@ -5,6 +5,7 @@
 #if FT_ENABLED(USE_POLICY)
 
 #include <math.h>
+#include <esp_timer.h>
 #include <gait.h>
 #include <message_types.h>
 #include <peripherals/peripherals.h>
@@ -29,19 +30,21 @@ class PolicyRunner {
     void reset(GaitController &gait, const float trained_feet[6][4]) {
         phase = 0.0f;
         tick = 0;
+        lastInferenceUs = 0;
         cmd[0] = cmd[1] = cmd[2] = 0.0f;
         for (int i = 0; i < hexapod_policy::ACT_DIM; ++i) prevAction[i] = 0.0f;
         histCount = 0;
         gait.snapDefaultFootTarget(trained_feet);
     }
 
-    // Joystick [-1,1] -> the command ranges the policy was trained on.
-    // Forward stick (-lx, same convention as the classic WALK mapping) reaches CMD_VX_MAX;
-    // backward reaches CMD_VX_MIN (training range is asymmetric).
+    // Joystick [-1,1] -> the command ranges the policy was trained on. The robot faces +Y, so the
+    // forward stick is ly (as in the classic WALK mapping, step_y = ly) and reaches CMD_VX_MAX;
+    // backward reaches CMD_VX_MIN (training range is asymmetric). Stick right (+lx) is a negative
+    // lateral velocity in the policy's command frame.
     void setCommand(CommandMsg const &c) {
-        const float fwd = -c.lx;
+        const float fwd = c.ly;
         cmd[0] = fwd * (fwd >= 0.0f ? hexapod_policy::CMD_VX_MAX : -hexapod_policy::CMD_VX_MIN);
-        cmd[1] = c.ly * hexapod_policy::CMD_VY_MAX;
+        cmd[1] = -c.lx * hexapod_policy::CMD_VY_MAX;
         cmd[2] = c.rx * hexapod_policy::CMD_YAW_MAX;
     }
 
@@ -51,21 +54,27 @@ class PolicyRunner {
     bool update(Peripherals *peripherals, GaitController &gait, BodyStateMsg &body, const float jointAnglesDeg[18]) {
         if (tick++ % TICKS_PER_INFERENCE != 0) return false;
 
+        namespace hp = hexapod_policy;
+        const int64_t nowUs = esp_timer_get_time();
+        const float dt = lastInferenceUs == 0 ? hp::CONTROL_DT : (float)(nowUs - lastInferenceUs) * 1e-6f;
+        lastInferenceUs = nowUs;
+
         pushSensorFrame(peripherals);
 
         float obs[hexapod_policy::OBS_DIM];
-        buildObservation(obs, peripherals, jointAnglesDeg);
+        buildObservation(obs, peripherals, jointAnglesDeg, dt);
         float action[hexapod_policy::ACT_DIM];
         hexapod_policy::infer(obs, action);
 
-        namespace hp = hexapod_policy;
         float gaitAction[6];
         hp::analytic_gait(cmd, gaitAction);
-        // residual_gait spends its last 6 channels on the gait itself. The deltas are added to the
-        // analytic map's NORMALIZED params and re-clipped, exactly as the env does.
+        // residual_gait spends its first 6 channels on the gait itself and the remaining 18 on the
+        // foot residuals. The deltas are added to the analytic map's NORMALIZED params and
+        // re-clipped, exactly as the env does.
+        constexpr int RESIDUAL_BASE = hp::ACT_DIM >= 24 ? 6 : 0;
         float zmDelta = 0.0f;
         if (hp::ACT_DIM >= 24) {
-            const float *d = action + 18;
+            const float *d = action;
             gaitAction[0] = clip1(gaitAction[0] + hp::GAIT_DELTA_GAIN[0] * d[0]);  // step_x
             gaitAction[1] = clip1(gaitAction[1] + hp::GAIT_DELTA_GAIN[1] * d[1]);  // step_y
             gaitAction[3] = clip1(gaitAction[3] + hp::GAIT_DELTA_GAIN[2] * d[2]);  // step_height
@@ -73,12 +82,10 @@ class PolicyRunner {
             gaitAction[5] = clip1(gaitAction[5] + hp::GAIT_DELTA_GAIN[4] * d[4]);  // cadence
             zmDelta = d[5] * hp::BODY_ZM_MM;
         }
-        applyGaitParams(gaitAction, gait, body, zmDelta);
+        applyGaitParams(gaitAction, gait, body, dt, zmDelta);
 
         for (int i = 0; i < 6; ++i) {
-            body.feet[i][0] += action[i * 3 + 0] * hp::FOOT_RESIDUAL_MM;
-            body.feet[i][1] += action[i * 3 + 1] * hp::FOOT_RESIDUAL_MM;
-            body.feet[i][2] += action[i * 3 + 2] * hp::FOOT_RESIDUAL_MM;
+            for (int k = 0; k < 3; ++k) body.feet[i][k] += action[RESIDUAL_BASE + i * 3 + k] * hp::FOOT_RESIDUAL_MM;
         }
         for (int i = 0; i < hexapod_policy::ACT_DIM; ++i) prevAction[i] = action[i];
         return true;
@@ -113,6 +120,7 @@ class PolicyRunner {
 
     float phase = 0.0f;
     uint32_t tick = 0;
+    int64_t lastInferenceUs = 0;
     float cmd[3] = {0.0f, 0.0f, 0.0f};
     float prevAction[hexapod_policy::ACT_DIM] = {0.0f};
     gait_state_t gait_state = {15, 0, 0, 0, 1, 0.002, default_stand_frac, GaitType::TRI_GATE,
@@ -134,7 +142,7 @@ class PolicyRunner {
     static constexpr float OBS_SIGN_PITCH = -1.0f;
     static constexpr float OBS_SIGN_YAW = -1.0f;
 
-    void buildObservation(float *obs, Peripherals *p, const float jointAnglesDeg[18]) {
+    void buildObservation(float *obs, Peripherals *p, const float jointAnglesDeg[18], float dt) {
         namespace hp = hexapod_policy;
         int o = 0;
         for (int f = 0; f < hp::OBS_HISTORY; ++f) {
@@ -151,6 +159,7 @@ class PolicyRunner {
         for (int i = 0; i < 18; ++i) obs[o++] = jointAnglesDeg[i] * DEG2RAD;
         obs[o++] = sinf(2.0f * (float)M_PI * phase);
         obs[o++] = cosf(2.0f * (float)M_PI * phase);
+        obs[o++] = dt;
         obs[o++] = cmd[0];
         obs[o++] = cmd[1];
         obs[o++] = cmd[2];
@@ -164,8 +173,8 @@ class PolicyRunner {
     }
 
     // Mirrors HexapodMjEnv._apply_gait_params: decode normalized gait actions, blend
-    // tripod<->bipod, advance the policy-owned phase, generate feet at that phase.
-    void applyGaitParams(const float a[6], GaitController &gait, BodyStateMsg &body, float zmDelta = 0.0f) {
+    // tripod<->bipod, advance the policy-owned phase by the measured dt, generate feet at that phase.
+    void applyGaitParams(const float a[6], GaitController &gait, BodyStateMsg &body, float dt, float zmDelta) {
         namespace hp = hexapod_policy;
         gait_state.step_x = a[0] * hp::PG_STEP_XY;
         gait_state.step_y = a[1] * hp::PG_STEP_XY;
@@ -179,7 +188,7 @@ class PolicyRunner {
         gait_state.stand_frac = (1.0f - blend) * hp::TRI_STAND_FRAC + blend * hp::BI_STAND_FRAC;
         const float phase_rate = hp::PG_PHASE_RATE_MIN + (a[5] + 1.0f) * 0.5f * (hp::PG_PHASE_RATE_MAX - hp::PG_PHASE_RATE_MIN);
         body.zm = -(hp::BODY_RIDE_MM + zmDelta);  // firmware sign: negative zm raises the body
-        phase = fmodf(phase + hp::CONTROL_DT * phase_rate, 1.0f);
+        phase = fmodf(phase + dt * phase_rate, 1.0f);
         gait.setPhase(phase);
         gait.generateFeet(gait_state, body);
     }

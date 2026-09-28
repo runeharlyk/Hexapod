@@ -48,11 +48,15 @@ class FSPersistencePB {
                     T protoMsg = {};
                     pb_istream_t stream = pb_istream_from_buffer(buffer.data(), bytesRead);
 
-                    if (pb_decode(&stream, _msgDescriptor, &protoMsg)) {
-                        _statefulService->updateWithoutPropagation(
-                            [this, &protoMsg](T &state) { return _stateUpdater(protoMsg, state); });
+                    // A file that decodes but fails validation would otherwise leave the state
+                    // zero-initialised, so it is replaced by the defaults like an unreadable one.
+                    if (pb_decode(&stream, _msgDescriptor, &protoMsg) &&
+                        _statefulService->updateWithoutPropagation([this, &protoMsg](T &state) {
+                            return _stateUpdater(protoMsg, state);
+                        }) != StateUpdateResult::ERROR) {
                         return;
                     }
+                    ESP_LOGW(TAG_PERSISTENCE, "Invalid settings in %s, restoring defaults", _filePath);
                 }
             } else {
                 fclose(file);

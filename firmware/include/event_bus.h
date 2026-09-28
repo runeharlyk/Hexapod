@@ -83,12 +83,6 @@ class EventBus {
     inline static std::atomic<size_t> subCount {0};
     inline static std::atomic<bool> taskStarted {false};
 
-    static void storeISR(const Msg& m) {
-        UBaseType_t s = portSET_INTERRUPT_MASK_FROM_ISR();
-        latest = m;
-        hasLatest.store(true, std::memory_order_release);
-        portCLEAR_INTERRUPT_MASK_FROM_ISR(s);
-    }
 
     static void dispatch(const Msg& m, size_t ex) {
         TickType_t now = xTaskGetTickCount();
@@ -262,11 +256,6 @@ class EventBus {
         return push(m, h.valid() ? h.idx : NO_EX);
     }
 
-    static void publishISR(const Msg& m, BaseType_t* hpw = nullptr) {
-        storeISR(m);
-        Item it {m, NO_EX};
-        xQueueSendFromISR(queue, &it, hpw);
-    }
 
     static bool peek(Msg& out) {
         if (!hasLatest.load(std::memory_order_acquire)) return false;
@@ -276,14 +265,6 @@ class EventBus {
         return true;
     }
 
-    static bool take(Msg& out) {
-        if (!hasLatest.load(std::memory_order_acquire)) return false;
-        portENTER_CRITICAL(&mux);
-        out = latest;
-        hasLatest.store(false, std::memory_order_release);
-        portEXIT_CRITICAL(&mux);
-        return true;
-    }
 
     static bool hasSubscribers() { return subCount.load(std::memory_order_acquire) > 0; }
 };

@@ -54,8 +54,6 @@ class Kinematics {
     float mountX[6], mountY[6], rootJ1, j1J2, j2J3, j3Tip;
     float ca[6], sa[6], mountPos[6][3];
 
-    BodyStateMsg currentState;
-
   public:
     Kinematics(const HexapodConfig &c = hexapodConfig) {
         rootJ1 = c.rootToJoint1;
@@ -71,17 +69,6 @@ class Kinematics {
             mountPos[i][0] = mountX[i];
             mountPos[i][1] = mountY[i];
             mountPos[i][2] = 0;
-        }
-    }
-
-    constexpr void genPosture(float j2, float j3, float p[6][4]) {
-        float ext = rootJ1 + j1J2 + j2J3 * std::sin(j2) + j3Tip * std::cos(j3);
-        float z = j2J3 * std::cos(j2) - j3Tip * std::sin(j3);
-        for (int i = 0; i < 6; i++) {
-            p[i][0] = mountX[i] + ext * ca[i];
-            p[i][1] = mountY[i] + ext * sa[i];
-            p[i][2] = z;
-            p[i][3] = 1;
         }
     }
 

@@ -8,15 +8,18 @@
 #include <esp_flash.h>
 #include <esp_sleep.h>
 #include <esp_littlefs.h>
+#include <driver/temperature_sensor.h>
 #include <nvs_flash.h>
 #include <dirent.h>
 #include <unistd.h>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 
 #include <features.h>
@@ -68,10 +71,47 @@ Hexapod robot;
 EspNowAdapter espNow;
 #endif
 CpuMonitor cpuMonitor;
+static temperature_sensor_handle_t coreTempSensor = nullptr;
+
+// Control-loop iterations since boot. The OTA image is only confirmed once this shows the loop has
+// been running for a while, not merely that app_main was reached.
+static std::atomic<uint32_t> controlTicks{0};
+static constexpr uint32_t TICKS_BEFORE_IMAGE_CONFIRM = 200;  // 1 s of the 5 ms loop
+
+static void initCoreTempSensor() {
+    temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
+    if (temperature_sensor_install(&cfg, &coreTempSensor) != ESP_OK ||
+        temperature_sensor_enable(coreTempSensor) != ESP_OK) {
+        ESP_LOGW(TAG, "Core temperature sensor unavailable");
+        coreTempSensor = nullptr;
+    }
+}
+
+static const char *resetReasonName(esp_reset_reason_t reason) {
+    switch (reason) {
+        case ESP_RST_POWERON: return "power-on";
+        case ESP_RST_EXT: return "external pin";
+        case ESP_RST_SW: return "software restart";
+        case ESP_RST_PANIC: return "panic";
+        case ESP_RST_INT_WDT: return "interrupt watchdog";
+        case ESP_RST_TASK_WDT: return "task watchdog";
+        case ESP_RST_WDT: return "other watchdog";
+        case ESP_RST_DEEPSLEEP: return "deep-sleep wake";
+        case ESP_RST_BROWNOUT: return "brownout";
+        case ESP_RST_SDIO: return "SDIO";
+        case ESP_RST_USB: return "USB peripheral";
+        case ESP_RST_JTAG: return "JTAG";
+        case ESP_RST_EFUSE: return "efuse error";
+        case ESP_RST_PWR_GLITCH: return "power glitch";
+        case ESP_RST_CPU_LOCKUP: return "CPU lockup";
+        default: return "unknown";
+    }
+}
 
 static void fillAnalytics(socket_message_AnalyticsData &a) {
-    a.free_heap = esp_get_free_heap_size();
-    a.min_free_heap = esp_get_minimum_free_heap_size();
+    // Internal RAM only, like total_heap: PSRAM would swamp the figure and hide internal exhaustion.
+    a.free_heap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    a.min_free_heap = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
     a.total_heap = heap_caps_get_total_size(MALLOC_CAP_INTERNAL);
     a.max_alloc_heap = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
     a.psram_size = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
@@ -86,6 +126,8 @@ static void fillAnalytics(socket_message_AnalyticsData &a) {
     a.cpu0_usage = cpu.core0;
     a.cpu1_usage = cpu.core1;
     a.cpu_usage = cpu.total;
+    float celsius = 0.0f;
+    if (coreTempSensor && temperature_sensor_get_celsius(coreTempSensor, &celsius) == ESP_OK) a.core_temp = celsius;
 }
 
 static void fillStaticInfo(socket_message_StaticSystemInformation &s) {
@@ -100,12 +142,14 @@ static void fillStaticInfo(socket_message_StaticSystemInformation &s) {
     uint32_t flash_size = 0;
     esp_flash_get_size(nullptr, &flash_size);
     s.flash_chip_size = flash_size;
+    strncpy(s.cpu_reset_reason, resetReasonName(esp_reset_reason()), sizeof(s.cpu_reset_reason) - 1);
 }
 
 static constexpr size_t WIFI_SCAN_RESULT_CAPACITY = 20;
 
-// Settings are persisted as JSON under FS_CONFIG_DIRECTORY, so erasing NVS alone leaves WiFi
-// credentials and servo calibration in place after a factory reset.
+// Settings are persisted as binary protobuf under FS_CONFIG_DIRECTORY (the files keep their legacy
+// .json names), so erasing NVS alone leaves WiFi credentials and servo calibration in place after a
+// factory reset.
 static void eraseConfigDirectory() {
     DIR *dir = opendir(FS_CONFIG_DIRECTORY);
     if (!dir) return;
@@ -117,13 +161,45 @@ static void eraseConfigDirectory() {
     closedir(dir);
 }
 
+// A copy taken under the service lock: the correlation handlers run on the adapter tasks while the
+// service task may be updating the same state.
+// Written straight into the response rather than returned: the correlation handler already holds a
+// ~2 KB response on its stack, and a temporary settings copy would push it past the stack budget.
+template <typename T>
+static void snapshot(StatefulService<T> &service, T &out) {
+    service.read([&out](const T &state) { out = state; });
+}
+
+// Passwords never leave the device. The update paths treat an empty password as "keep the stored
+// one" (WiFiSettings_update / APSettings_update), so a client can round-trip these unchanged.
+static void redactedWifiSettings(api_WifiSettings &out) {
+    snapshot(wifiService, out);
+    for (pb_size_t i = 0; i < out.wifi_networks_count; i++) {
+        memset(out.wifi_networks[i].password, 0, sizeof(out.wifi_networks[i].password));
+    }
+}
+
+static void redactedApSettings(api_APSettings &out) {
+    snapshot(apService, out);
+    memset(out.password, 0, sizeof(out.password));
+}
+
+// Drops the servos before the chip goes down: the PCA9685 keeps its last outputs across an ESP reset
+// and deep sleep, so a restart would otherwise leave the legs energised while the firmware reports
+// DEACTIVATED. The mode is applied on the EventBus worker, so give it a moment to reach the driver.
+static void deactivateServos() {
+    EventBus<ModeMsg>::publish({MOTION_STATE::DEACTIVATED});
+    vTaskDelay(pdMS_TO_TICKS(50));
+}
+
 static void registerHandlers(CommAdapterBase &c) {
     c.on<socket_message_ControllerInputData>([](const socket_message_ControllerInputData &in, int) {
         CommandMsg cmd{in.left.x, in.left.y, in.right.x, in.right.y, in.height, in.speed, in.s1, in.feet_distance};
-        EventBus<CommandMsg>::publish(cmd);
+        if (cmd.sanitize()) EventBus<CommandMsg>::publish(cmd);
     });
     c.on<socket_message_ModeData>([](const socket_message_ModeData &m, int) {
         if ((int)m.mode < 0 || (int)m.mode > (int)socket_message_ModesEnum_WALK_NN) return;
+        if (!FT_ENABLED(USE_POLICY) && m.mode == socket_message_ModesEnum_WALK_NN) return;
         EventBus<ModeMsg>::publish({static_cast<MOTION_STATE>(m.mode)});
     });
     c.on<socket_message_GaitData>([](const socket_message_GaitData &g, int) {
@@ -138,13 +214,20 @@ static void registerHandlers(CommAdapterBase &c) {
 
     c.on<socket_message_SystemCommandData>([](const socket_message_SystemCommandData &cmd, int) {
         switch (cmd.command) {
-            case socket_message_SystemCommand_SYS_RESTART: esp_restart(); break;
+            case socket_message_SystemCommand_SYS_RESTART:
+                deactivateServos();
+                esp_restart();
+                break;
             case socket_message_SystemCommand_SYS_RESET:
+                deactivateServos();
                 eraseConfigDirectory();
                 nvs_flash_erase();
                 esp_restart();
                 break;
-            case socket_message_SystemCommand_SYS_SLEEP: esp_deep_sleep_start(); break;
+            case socket_message_SystemCommand_SYS_SLEEP:
+                deactivateServos();
+                esp_deep_sleep_start();
+                break;
             default: break;
         }
     });
@@ -191,15 +274,16 @@ static void registerHandlers(CommAdapterBase &c) {
             }
             case socket_message_CorrelationRequest_wifi_settings_get_tag: {
                 res.which_response = socket_message_CorrelationResponse_wifi_settings_tag;
-                res.response.wifi_settings = wifiService.state();
+                redactedWifiSettings(res.response.wifi_settings);
                 break;
             }
             case socket_message_CorrelationRequest_wifi_settings_update_tag: {
-                wifiService.update(
+                StateUpdateResult r = wifiService.update(
                     [&req](WiFiSettings &s) { return WiFiSettings_update(req.request.wifi_settings_update, s); },
                     "correlation");
+                if (r == StateUpdateResult::ERROR) res.status_code = 400;
                 res.which_response = socket_message_CorrelationResponse_wifi_settings_tag;
-                res.response.wifi_settings = wifiService.state();
+                redactedWifiSettings(res.response.wifi_settings);
                 break;
             }
             case socket_message_CorrelationRequest_wifi_networks_get_tag: {
@@ -219,15 +303,16 @@ static void registerHandlers(CommAdapterBase &c) {
             }
             case socket_message_CorrelationRequest_ap_settings_get_tag: {
                 res.which_response = socket_message_CorrelationResponse_ap_settings_tag;
-                res.response.ap_settings = apService.state();
+                redactedApSettings(res.response.ap_settings);
                 break;
             }
             case socket_message_CorrelationRequest_ap_settings_update_tag: {
-                apService.update(
+                StateUpdateResult r = apService.update(
                     [&req](APSettings &s) { return APSettings_update(req.request.ap_settings_update, s); },
                     "correlation");
+                if (r == StateUpdateResult::ERROR) res.status_code = 400;
                 res.which_response = socket_message_CorrelationResponse_ap_settings_tag;
-                res.response.ap_settings = apService.state();
+                redactedApSettings(res.response.ap_settings);
                 break;
             }
             case socket_message_CorrelationRequest_ap_status_get_tag: {
@@ -247,7 +332,7 @@ static void registerHandlers(CommAdapterBase &c) {
             }
             case socket_message_CorrelationRequest_servo_settings_get_tag: {
                 res.which_response = socket_message_CorrelationResponse_servo_settings_tag;
-                res.response.servo_settings = servoSettingsService.state();
+                snapshot(servoSettingsService, res.response.servo_settings);
                 break;
             }
             case socket_message_CorrelationRequest_servo_settings_update_tag: {
@@ -255,12 +340,12 @@ static void registerHandlers(CommAdapterBase &c) {
                     [&req](ServoSettings &s) { return ServoSettings_update(req.request.servo_settings_update, s); },
                     "correlation");
                 res.which_response = socket_message_CorrelationResponse_servo_settings_tag;
-                res.response.servo_settings = servoSettingsService.state();
+                snapshot(servoSettingsService, res.response.servo_settings);
                 break;
             }
             case socket_message_CorrelationRequest_peripheral_settings_get_tag: {
                 res.which_response = socket_message_CorrelationResponse_peripheral_settings_tag;
-                res.response.peripheral_settings = peripheralSettingsService.state();
+                snapshot(peripheralSettingsService, res.response.peripheral_settings);
                 break;
             }
             case socket_message_CorrelationRequest_peripheral_settings_update_tag: {
@@ -271,7 +356,7 @@ static void registerHandlers(CommAdapterBase &c) {
                     "correlation");
                 if (r == StateUpdateResult::ERROR) res.status_code = 400;
                 res.which_response = socket_message_CorrelationResponse_peripheral_settings_tag;
-                res.response.peripheral_settings = peripheralSettingsService.state();
+                snapshot(peripheralSettingsService, res.response.peripheral_settings);
                 break;
             }
             default: res.status_code = 400; break;
@@ -290,7 +375,10 @@ static void emitAll(const T &msg) {
 }
 
 // A bridge holds its EventBus subscription only while some client is listening for that tag, so
-// producers can skip work nobody will receive.
+// producers can skip work nobody will receive. Subscription changes arrive from every adapter task,
+// so the registry and each bridge's check-then-subscribe run under one lock.
+static std::mutex bridgeMutex;
+
 static std::map<int32_t, std::function<void(bool)>> &bridges() {
     static std::map<int32_t, std::function<void(bool)>> registry;
     return registry;
@@ -305,6 +393,7 @@ static bool anyoneListening(int32_t tag) {
 }
 
 static void refreshBridge(int32_t tag) {
+    std::lock_guard<std::mutex> lock(bridgeMutex);
     auto it = bridges().find(tag);
     if (it != bridges().end()) it->second(anyoneListening(tag));
 }
@@ -312,6 +401,7 @@ static void refreshBridge(int32_t tag) {
 template <typename Msg, typename Fn>
 static void addBridge(int32_t tag, Fn fn) {
     static typename EventBus<Msg>::Handle handle;
+    std::lock_guard<std::mutex> lock(bridgeMutex);
     bridges()[tag] = [fn, tag](bool wanted) {
         if (wanted == handle.valid()) return;
         ESP_LOGD(TAG, "bridge tag %d %s", (int)tag, wanted ? "attached" : "detached");
@@ -368,8 +458,7 @@ static void setupServer() {
 #endif
 
 #if EMBED_WEBAPP
-    mountStaticAssets(server);
-    mountSpaFallback(server);
+    mountWebApp(server);
 #endif
 }
 
@@ -379,7 +468,6 @@ static void setupComm() {
 #if FT_ENABLED(USE_SERIAL_LINK)
     registerHandlers(serialAdapter);
     serialAdapter.onSubscriptionChange(refreshBridge);
-    serialAdapter.begin();
 #endif
 
     wsSocket.onSubscriptionChange(refreshBridge);
@@ -401,10 +489,28 @@ static void setupComm() {
         emitAll(out);
     });
 
+    // Mode and gait also change from the ESP-NOW controller and from other clients, so every
+    // change is pushed rather than assumed to originate from the viewing app.
+    addBridge<ModeMsg>(MessageTraits<socket_message_ModeData>::tag, [](const ModeMsg &m) {
+        socket_message_ModeData out = socket_message_ModeData_init_zero;
+        out.mode = static_cast<socket_message_ModesEnum>(m.mode);
+        emitAll(out);
+    });
+
+    addBridge<GaitMsg>(MessageTraits<socket_message_GaitData>::tag, [](const GaitMsg &g) {
+        socket_message_GaitData out = socket_message_GaitData_init_zero;
+        out.gait = static_cast<socket_message_GaitEnum>(g.gait);
+        emitAll(out);
+    });
+
     observeStatus<socket_message_OtaStatusData>();
     observeStatus<api_WifiStatus>();
     observeStatus<api_APStatus>();
 
+    // Transports start only once every bridge exists, so an early subscription finds its bridge.
+#if FT_ENABLED(USE_SERIAL_LINK)
+    serialAdapter.begin();
+#endif
     wsSocket.begin();
 
     bleAdapter.begin();
@@ -418,6 +524,7 @@ static void controlLoop(void *) {
         robot.planMotion();
         robot.updateActuators();
         robot.emitTelemetry();
+        controlTicks.fetch_add(1, std::memory_order_relaxed);
         vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
     }
 }
@@ -448,7 +555,14 @@ static void serviceLoop(void *) {
 
     ESP_LOGI(TAG, "Networking up, free heap %lu bytes", (unsigned long)esp_get_free_heap_size());
 
+    bool imageConfirmed = false;
     for (;;) {
+        // Rollback protection: only an image that brought up networking and kept the control loop
+        // running is marked valid; one that crashes before this point reverts on the next reset.
+        if (!imageConfirmed && controlTicks.load(std::memory_order_relaxed) >= TICKS_BEFORE_IMAGE_CONFIRM) {
+            ota_service::confirmRunningImage();
+            imageConfirmed = true;
+        }
         wifiService.loop();
         apService.loop();
         EXECUTE_EVERY_N_MS(2000, {
@@ -474,7 +588,10 @@ extern "C" void app_main() {
         ESP_LOGE(TAG, "Filesystem mount failed");
     }
     feature_service::printFeatureConfiguration();
-    ota_service::confirmRunningImage();
+#if FT_ENABLED(USE_POLICY)
+    PolicyRunner::verify();
+#endif
+    initCoreTempSensor();
     servoSettingsService.begin();
     peripheralSettingsService.begin();
 

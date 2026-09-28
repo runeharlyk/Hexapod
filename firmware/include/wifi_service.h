@@ -22,8 +22,6 @@ class WiFiService : public StatefulService<WiFiSettings> {
     void begin();
     void loop();
 
-    void selectNetwork(uint32_t index);
-
     const char *getHostname() { return state().hostname; }
 
     // Returns the count, -1 while a scan runs (auto-starting one), or -2 if the radio refused.

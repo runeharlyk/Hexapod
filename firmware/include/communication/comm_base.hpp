@@ -29,7 +29,8 @@ class CommAdapterBase {
 
     bool hasSubscribers(int32_t tag) {
         ScopedLock lock(mutex_);
-        return !client_subscriptions_[tag].empty();
+        auto it = client_subscriptions_.find(tag);
+        return it != client_subscriptions_.end() && !it->second.empty();
     }
 
     ProtoDecoder& decoder() { return decoder_; }
@@ -176,7 +177,9 @@ class CommAdapterBase {
 
     void sendToSubscribers(int32_t tag, const uint8_t* data, size_t len) {
         ScopedLock lock(mutex_);
-        for (int cid : client_subscriptions_[tag]) {
+        auto it = client_subscriptions_.find(tag);
+        if (it == client_subscriptions_.end()) return;
+        for (int cid : it->second) {
             send(data, len, cid);
         }
     }

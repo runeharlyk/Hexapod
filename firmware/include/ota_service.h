@@ -34,6 +34,10 @@ namespace ota_service {
 
 inline std::atomic<bool> inProgress{false};
 
+// httpd_req_recv times out after the server's recv_wait_timeout (5 s by default); a client that
+// stalls for this many in a row is treated as gone instead of holding the update slot forever.
+inline constexpr int MAX_CONSECUTIVE_RECV_TIMEOUTS = 3;
+
 inline void publish(socket_message_OtaState state, uint32_t progress, const char *error = nullptr) {
     socket_message_OtaStatusData msg = socket_message_OtaStatusData_init_zero;
     msg.state = state;
@@ -91,10 +95,18 @@ inline esp_err_t upload(httpd_req_t *req) {
     char buf[1460]; // one TCP segment; larger buffers do not speed up a socket-bound write
     int received = 0;
     uint32_t lastPercent = 0;
+    int timeouts = 0;
 
     while (received < total) {
         int chunk = httpd_req_recv(req, buf, sizeof(buf) < (size_t)(total - received) ? sizeof(buf) : total - received);
-        if (chunk == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (chunk == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts < MAX_CONSECUTIVE_RECV_TIMEOUTS) continue;
+        if (chunk == HTTPD_SOCK_ERR_TIMEOUT) {
+            esp_ota_abort(handle);
+            inProgress = false;
+            publish(socket_message_OtaState_OTA_ERROR, 0, "upload timed out");
+            return WebServer::sendError(req, 408, "upload timed out");
+        }
+        timeouts = 0;
         if (chunk <= 0) {
             esp_ota_abort(handle);
             inProgress = false;
@@ -211,10 +223,13 @@ inline esp_err_t download(httpd_req_t *req) {
 
     std::string raw(len, '\0');
     int got = 0;
+    int timeouts = 0;
     while (got < len) {
         int r = httpd_req_recv(req, &raw[got], len - got);
-        if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (r == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts < MAX_CONSECUTIVE_RECV_TIMEOUTS) continue;
+        if (r == HTTPD_SOCK_ERR_TIMEOUT) return WebServer::sendError(req, 408, "request timed out");
         if (r <= 0) return WebServer::sendError(req, 400, "recv failed");
+        timeouts = 0;
         got += r;
     }
 
@@ -245,7 +260,8 @@ inline esp_err_t download(httpd_req_t *req) {
     return WebServer::sendOk(req);
 }
 
-// Mark the running image valid on first boot, so a bricked update rolls back instead of looping.
+// Mark the running image valid once it has proven itself (main.cpp calls this after networking is up
+// and the control loop has been running), so an update that crashes early rolls back on reset.
 inline void confirmRunningImage() {
     const esp_partition_t *running = esp_ota_get_running_partition();
     esp_ota_img_states_t state;

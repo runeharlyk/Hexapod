@@ -90,51 +90,7 @@ esp_err_t WebServer::httpHandler(httpd_req_t* req) {
             uriMatch = pathLen == route.uri.length() && strncmp(req->uri, route.uri.c_str(), pathLen) == 0;
         }
 
-        if (uriMatch && route.method == req->method) {
-            if (route.getHandler) {
-                return route.getHandler(req);
-            }
-            if (route.postHandler) {
-                size_t contentLen = req->content_len;
-                if (contentLen == 0 || contentLen > 4096) {
-                    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid content length");
-                    return ESP_FAIL;
-                }
-
-                uint8_t* buffer = (uint8_t*)malloc(contentLen);
-                if (!buffer) {
-                    httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Memory allocation failed");
-                    return ESP_FAIL;
-                }
-
-                int received = 0;
-                int remaining = contentLen;
-                while (remaining > 0) {
-                    int ret = httpd_req_recv(req, (char*)buffer + received, remaining);
-                    if (ret <= 0) {
-                        free(buffer);
-                        if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
-                            httpd_resp_send_err(req, HTTPD_408_REQ_TIMEOUT, "Request timeout");
-                        }
-                        return ESP_FAIL;
-                    }
-                    received += ret;
-                    remaining -= ret;
-                }
-
-                api_Request protoReq = api_Request_init_zero;
-                pb_istream_t stream = pb_istream_from_buffer(buffer, contentLen);
-                bool success = pb_decode(&stream, api_Request_fields, &protoReq);
-                free(buffer);
-
-                if (!success) {
-                    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to decode protobuf");
-                    return ESP_FAIL;
-                }
-
-                return route.postHandler(req, &protoReq);
-            }
-        }
+        if (uriMatch && route.method == req->method) return route.handler(req);
     }
 
     httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not found");
@@ -202,12 +158,11 @@ esp_err_t WebServer::wsHandler(httpd_req_t* req) {
     return result;
 }
 
-void WebServer::on(const char* uri, httpd_method_t method, HttpGetHandler handler) {
+void WebServer::on(const char* uri, httpd_method_t method, HttpHandler handler) {
     HttpRoute route;
     route.uri = uri;
     route.method = method;
-    route.getHandler = handler;
-    route.postHandler = nullptr;
+    route.handler = std::move(handler);
     route.isWebsocket = false;
     routes_.push_back(route);
 
@@ -216,20 +171,8 @@ void WebServer::on(const char* uri, httpd_method_t method, HttpGetHandler handle
     }
 }
 
-void WebServer::on(const char* uri, httpd_method_t method, HttpPostHandler handler) {
-    HttpRoute route;
-    route.uri = uri;
-    route.method = method;
-    route.getHandler = nullptr;
-    route.postHandler = handler;
-    route.isWebsocket = false;
-    routes_.push_back(route);
-
-    if (server_) {
-        registerRoute(route);
-    }
-}
-
+// Every route is its own httpd handler, so running past config.max_uri_handlers silently loses routes
+// unless the result is checked.
 esp_err_t WebServer::registerRoute(const HttpRoute& route) {
     httpd_uri_t httpd_route = {.uri = route.uri.c_str(),
                                .method = route.method,
@@ -238,15 +181,18 @@ esp_err_t WebServer::registerRoute(const HttpRoute& route) {
                                .is_websocket = route.isWebsocket,
                                .handle_ws_control_frames = route.isWebsocket,
                                .supported_subprotocol = nullptr};
-    return httpd_register_uri_handler(server_, &httpd_route);
+    const esp_err_t err = httpd_register_uri_handler(server_, &httpd_route);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register %s (method %d): %s", route.uri.c_str(), (int)route.method,
+                 esp_err_to_name(err));
+    }
+    return err;
 }
 
 void WebServer::registerWebsocket(const char* uri) {
     HttpRoute route;
     route.uri = uri;
     route.method = HTTP_GET;
-    route.getHandler = nullptr;
-    route.postHandler = nullptr;
     route.isWebsocket = true;
     routes_.push_back(route);
 
@@ -273,12 +219,6 @@ void WebServer::removeWsClient(int sockfd) {
     xSemaphoreGive(wsMutex_);
 }
 
-std::vector<int> WebServer::getWsClients() {
-    xSemaphoreTake(wsMutex_, portMAX_DELAY);
-    std::vector<int> clients = wsClients_;
-    xSemaphoreGive(wsMutex_);
-    return clients;
-}
 
 esp_err_t WebServer::wsSendFrame(int sockfd, const uint8_t* data, size_t len) {
     httpd_ws_frame_t frame = {.final = true,
@@ -311,13 +251,23 @@ esp_err_t WebServer::sendError(httpd_req_t* req, int status, const char* message
 
 esp_err_t WebServer::sendOk(httpd_req_t* req) { return send(req, 200, nullptr, 0); }
 
+static const char* statusLine(int status) {
+    switch (status) {
+        case 200: return "200 OK";
+        case 202: return "202 Accepted";
+        case 400: return "400 Bad Request";
+        case 404: return "404 Not Found";
+        case 408: return "408 Request Timeout";
+        case 409: return "409 Conflict";
+        case 413: return "413 Content Too Large";
+        case 500: return "500 Internal Server Error";
+        case 503: return "503 Service Unavailable";
+        default: return status >= 200 && status < 300 ? "200 OK" : "500 Internal Server Error";
+    }
+}
+
 esp_err_t WebServer::send(httpd_req_t* req, int status, const uint8_t* data, size_t len) {
-    httpd_resp_set_status(req, status == 200   ? "200 OK"
-                               : status == 202 ? "202 Accepted"
-                               : status == 400 ? "400 Bad Request"
-                               : status == 404 ? "404 Not Found"
-                               : status == 500 ? "500 Internal Server Error"
-                                               : "200 OK");
+    httpd_resp_set_status(req, statusLine(status));
     httpd_resp_set_type(req, "application/x-protobuf");
     return httpd_resp_send(req, (const char*)data, len);
 }

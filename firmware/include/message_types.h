@@ -45,6 +45,18 @@ struct IMUAnglesMsg {
 
 struct CommandMsg {
     float lx, ly, rx, ry, h, s, s1, fd;
+
+    // Every field is a normalized stick or slider in [-1, 1]. Input arrives from the network, so a
+    // command carrying NaN or infinity is rejected (returns false) and the rest are clamped, since
+    // either would otherwise flow straight into the gait and IK.
+    bool sanitize() {
+        float *fields[] = {&lx, &ly, &rx, &ry, &h, &s, &s1, &fd};
+        for (float *f : fields) {
+            if (!std::isfinite(*f)) return false;
+        }
+        for (float *f : fields) *f = std::fmax(-1.0f, std::fmin(1.0f, *f));
+        return true;
+    }
 };
 
 struct BodyStateMsg {
@@ -52,13 +64,4 @@ struct BodyStateMsg {
     float feet[6][4];
 
     void updateFeet(const float newFeet[6][4]) { COPY_2D_ARRAY_6x4(feet, newFeet); }
-
-    bool operator==(const BodyStateMsg &other) const {
-        if (!IS_ALMOST_EQUAL(omega, other.omega) || !IS_ALMOST_EQUAL(phi, other.phi) ||
-            !IS_ALMOST_EQUAL(psi, other.psi) || !IS_ALMOST_EQUAL(xm, other.xm) || !IS_ALMOST_EQUAL(ym, other.ym) ||
-            !IS_ALMOST_EQUAL(zm, other.zm)) {
-            return false;
-        }
-        return arrayEqual(feet, other.feet, 0.1);
-    }
 };
