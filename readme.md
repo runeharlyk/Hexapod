@@ -76,7 +76,7 @@ If you like the project and want to follow its evolution, consider ✨-ing the p
 
 ## 📃 License
 
-[MIT](LICENSE.md)
+[MIT](LICENSE)
 
 ---
 

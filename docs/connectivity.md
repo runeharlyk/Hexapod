@@ -35,7 +35,8 @@ Corollaries that keep coming up:
 
 ## Provisioning options
 
-Verified against the Arduino-ESP32 2.0.14 / IDF 4.4.6 toolchain that was pinned at the time of writing (`platform = espressif32 @ 6.6.0`).
+Originally verified against the Arduino-ESP32 2.0.14 / IDF 4.4.6 toolchain.
+The firmware now builds on ESP-IDF 5.4 (pioarduino); the NAN row below is updated for it.
 
 | Method | Header present | Client required | Verdict |
 | --- | --- | --- | --- |
@@ -44,7 +45,7 @@ Verified against the Arduino-ESP32 2.0.14 / IDF 4.4.6 toolchain that was pinned 
 | Unified Provisioning | `wifi_provisioning` + `WiFiProv.h` | Espressif's Android/iOS app or `esp_prov` CLI — no web client | See "the unified protocol" below. **Not chosen** |
 | SmartConfig / ESP-Touch | `esp_smartconfig.h` | dedicated phone app broadcasting UDP | A browser cannot send raw UDP broadcast. Dead end |
 | DPP / Easy Connect | `esp_dpp.h` | Android 10+ at OS level, no app | ESP32 is enrollee-only and must *display* a QR; no iOS API. Skipped |
-| NAN / Wi-Fi Aware | **absent** (needs IDF ≥ 5.1) | Android Wi-Fi Aware, native only | Skipped |
+| NAN / Wi-Fi Aware | `esp_nan.h` present, but the ESP32-S3 lacks `SOC_WIFI_NAN_SUPPORT` | Android Wi-Fi Aware, native only | Skipped |
 
 ## Transports
 
@@ -53,8 +54,8 @@ Verified against the Arduino-ESP32 2.0.14 / IDF 4.4.6 toolchain that was pinned 
 | HTTP + WebSocket | yes | **http only** | yes |
 | Web Bluetooth | yes | **secure only** | no — far too slow |
 | ESP-NOW | no | — | no |
-| NAN datapath | no | — | needs IDF ≥ 5.1 anyway |
-| Web Serial / WebUSB | desktop-only / no iOS | secure | impractical |
+| NAN datapath | no | — | not supported on the ESP32-S3 |
+| Web Serial | desktop Chromium only, no iOS | secure | no |
 | **WebRTC** | yes | **works from https** | yes |
 
 WebRTC is the outlier worth understanding.
@@ -68,22 +69,18 @@ The mixed-content exemption is the load-bearing claim here and has not been prot
 
 ## What is implemented today
 
-`NET_STATUS = 16` and `NET_COMMAND = 17` (`firmware/include/message_types.h`, mirrored in `app/src/lib/interfaces/transport.interface.ts`).
-The topic enum had free slots, so nothing shifted — unlike `MOTION_STATE`.
+Web Serial is a third transport: the firmware carries the same protobuf frames over the ESP32-S3's native USB Serial/JTAG port (`firmware/include/communication/serial_adapter.h`), and the app opens it from https like Web Bluetooth.
+Provisioning is the `wifi_settings_update` `CorrelationRequest` (`platform_shared/message.proto`), which works over every transport; the app's WiFi page sends it.
+`wifi_status_get` / `ap_status_get` answer with the current state, and `WifiStatus` / `APStatus` messages are pushed on change to subscribed clients.
+Stored passwords are never sent back: reads return them empty, and an update with an empty password keeps the stored one.
 
-- `NetStatusMsg` reports `sta`/`ap` state, SSIDs and IPs. Republished only on change; `peek()` gives late subscribers the current value.
-- `NetCommandMsg` carries `REPORT` / `FORCE_AP` / `AUTO_AP`. `FORCE_AP` sets `provisionMode = AP_MODE_ALWAYS` via `apService->update`.
-- App side is `app/src/lib/stores/network.ts`. After BLE pairs, the landing page offers "Open over WiFi" (navigates to `http://<ip>/`) or "Stay on Bluetooth", which sets a persisted `preferBluetooth` so it stops asking.
-
-The offer is never forced — staying on pure Bluetooth is a first-class choice for bad-WiFi situations.
-
-**Untested against hardware.** The BLE pairing path, the `NET_STATUS` round trip, and the WiFi-upgrade branch all need a real robot.
+The `NET_STATUS` / `NET_COMMAND` topics, the `FORCE_AP` command, `app/src/lib/stores/network.ts` and the "Open over WiFi" offer described in earlier revisions of this document were never committed; they exist only in the local git stash `animation and nets`.
 
 ## Use case: demo the camera with no WiFi available
 
 Camera needs the WebSocket/HTTP transport, so BLE alone cannot carry it.
 
-1. **Join the robot's own AP.** Already automatic — `FACTORY_AP_PROVISION_MODE = AP_MODE_DISCONNECTED` (`ap_settings.h`) raises the AP at `192.168.4.1` whenever the robot is not joined to WiFi, with captive-portal DNS (`APService::handleDNS`). Yields no UI until `EMBED_WEBAPP=1`.
+1. **Join the robot's own AP.** Already automatic — `FACTORY_AP_PROVISION_MODE = AP_MODE_DISCONNECTED` (`ap_settings.h`) raises the AP at `192.168.4.1` whenever the robot is not joined to WiFi, with captive-portal DNS (`DNSServer` in `firmware/include/wifi/dns_server.h`, which runs on its own task). Yields no UI until `EMBED_WEBAPP=1`.
 2. **Phone hotspot + provision over BLE.** Start a hotspot, pair over BLE, hand the robot the SSID/password so it joins. Both ends land on one network. Needs the provisioning message; still hits the https origin problem on the last mile.
 3. **Fix the origin.** WebRTC (above), or a Capacitor/Tauri wrapper, or TLS from the ESP32.
 

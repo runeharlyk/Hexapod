@@ -8,6 +8,10 @@ It records the parts that are not obvious from the code, and the one place the t
 
 ## Where it lives
 
+None of the code below is in the repository.
+It was never committed: `animation.h`, `animation.ts`, `animations/presets.ts`, `MOTION_STATE::ANIMATE` and `AnimationMsg` exist only in the local git stash `animation and nets` (`git stash show -p stash@{0}` at the time of writing), taken on top of `95824a1`.
+The table records where each piece sat in that stash.
+
 | Concern | Firmware | App |
 | --- | --- | --- |
 | Engine | `firmware/include/animation.h` (`anim::Animator`) | `app/src/lib/animation.ts` (`Animator`) |
