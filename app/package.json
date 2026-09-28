@@ -14,22 +14,23 @@
     "lint": "prettier --check . && eslint .",
     "format": "prettier --write .",
     "test:integration": "playwright test",
-    "test:unit": "vitest"
+    "test:unit": "vitest run"
   },
   "devDependencies": {
     "@iconify-json/mdi": "^1.1.64",
     "@iconify-json/tabler": "^1.1.109",
+    "@niku/vite-env-caster": "^1.0.2",
     "@playwright/test": "^1.49.1",
     "@sveltejs/adapter-static": "^3.0.1",
     "@sveltejs/kit": "^2.49.2",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
-    "@types/eslint": "^8.56.0",
+    "@tailwindcss/vite": "^4.0.12",
     "@types/three": "^0.162.0",
     "@types/w3c-web-serial": "^1.0.8",
     "@types/web-bluetooth": "^0.0.21",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
-    "autoprefixer": "^10.4.19",
+    "cross-env": "^7.0.3",
     "eslint": "^8.56.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-svelte": "^2.45.1",
@@ -46,24 +47,19 @@
     "typescript": "^5.5.0",
     "unplugin-icons": "^0.18.5",
     "vite": "^6.2.1",
-    "vitest": "^1.2.0"
+    "vitest": "^3.2.4"
   },
   "type": "module",
   "dependencies": {
     "@bufbuild/protobuf": "^2.10.2",
-    "@niku/vite-env-caster": "^1.0.2",
-    "@sveltejs/adapter-auto": "^4.0.0",
-    "@tailwindcss/vite": "^4.0.12",
     "chart.js": "^4.4.2",
     "compare-versions": "^6.1.0",
-    "cross-env": "^7.0.3",
     "daisyui": "^5.0.0",
     "nipplejs": "^0.10.1",
     "svelte-dnd-list": "^0.1.8",
     "svelte-modals": "^2.0.0",
     "three": "^0.162.0",
     "urdf-loader": "^0.12.1",
-    "uzip": "^0.20201231.0",
     "xacro-parser": "^0.3.9"
   }
 }

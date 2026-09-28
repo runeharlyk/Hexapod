@@ -28,6 +28,7 @@
     imu.addData({ ...data, altitude: 0, bmp_temp: 0, pressure: 0 })
 
   let unsubscribeImu: () => void
+  let updateIntervalId: ReturnType<typeof setInterval> | undefined
 
   onMount(() => {
     unsubscribeImu = dataBroker.on(IMUData, handleImu)
@@ -233,13 +234,12 @@
         }
       }
     })
-    setInterval(() => {
-      updateData(), 200
-    })
+    updateIntervalId = setInterval(updateData, 200)
   })
 
   onDestroy(() => {
     unsubscribeImu?.()
+    clearInterval(updateIntervalId)
   })
 
   const updateData = () => {

@@ -13,3 +13,7 @@ vite.config.ts.timestamp-*
 src/lib/platform_shared/
 scripts/ts-proto-plugin.bat
 scripts/ts-proto-plugin.sh
+
+# Playwright output
+/test-results
+/playwright-report

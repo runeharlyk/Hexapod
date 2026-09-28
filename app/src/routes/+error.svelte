@@ -1,16 +1,15 @@
 <script lang="ts">
   import { goto } from '$app/navigation'
   import { resolve } from '$app/paths'
+  import { onDestroy, onMount } from 'svelte'
 
-  const base = resolve('/')
-
-  import { onMount } from 'svelte'
+  let redirectTimer: ReturnType<typeof setTimeout> | undefined
 
   onMount(() => {
-    setTimeout(() => {
-      goto(base)
-    }, 3000)
+    redirectTimer = setTimeout(() => goto(resolve('/')), 3000)
   })
+
+  onDestroy(() => clearTimeout(redirectTimer))
 </script>
 
 <div class="flex justify-center items-center w-full h-full">

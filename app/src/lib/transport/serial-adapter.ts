@@ -5,8 +5,7 @@ import { type ITransport, type LinkStatus } from '../interfaces/transport.interf
 // [uint16 LE length][payload].
 const MAX_FRAME = 2048
 
-export const serialSupported = () =>
-  typeof navigator !== 'undefined' && 'serial' in navigator
+export const serialSupported = () => typeof navigator !== 'undefined' && 'serial' in navigator
 
 function createSerialAdapter(): ITransport {
   const dataCallbacks: ((data: Uint8Array) => void)[] = []
@@ -60,7 +59,8 @@ function createSerialAdapter(): ITransport {
   }
 
   const connect = async () => {
-    if (!serialSupported()) throw new Error('This browser has no Web Serial support. Try Chrome or Edge.')
+    if (!serialSupported())
+      throw new Error('This browser has no Web Serial support. Try Chrome or Edge.')
     status.set('connecting')
     try {
       // requestPort must be called from a user gesture; the caller is a click handler.

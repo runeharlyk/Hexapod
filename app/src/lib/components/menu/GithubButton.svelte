@@ -2,7 +2,7 @@
   import { Github } from '../icons'
 
   interface Props {
-    github: any
+    github: { href: string; active: boolean }
   }
 
   let { github }: Props = $props()

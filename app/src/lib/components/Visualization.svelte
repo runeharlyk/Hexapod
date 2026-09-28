@@ -12,15 +12,18 @@
   import { AnglesData } from '$lib/platform_shared/message'
   import { Vector3 } from 'three'
   import { requestGait, requestMode } from '$lib/control'
+  import { isLinked } from '$lib/stores/link'
 
   interface Props {
     sky?: boolean
     orbit?: boolean
     panel?: boolean
     ground?: boolean
+    // Drives the preview locally instead of following the robot's mode store.
+    previewMode?: MotionModes
   }
 
-  let { sky = true, orbit = false, panel = true, ground = true }: Props = $props()
+  let { sky = true, orbit = false, panel = true, ground = true, previewMode }: Props = $props()
 
   let sceneManager = $state(new SceneBuilder())
   let canvas: HTMLCanvasElement | null = $state(null)
@@ -34,7 +37,6 @@
 
   let settings = {
     'Internal kinematic': true,
-    'Robot transform controls': false,
     'Auto orient robot': true,
     'Fix camera on robot': true,
     'Smooth motion': false
@@ -42,25 +44,38 @@
 
   let jointAngles: Record<string, number> = {}
   let lastRobotPosition = new Vector3()
+  let unsubscribers: (() => void)[] = []
+  let destroyed = false
 
   onMount(async () => {
     await populateModelCache()
+    if (destroyed) return
 
     jointAngles = $jointNames.reduce((prev, cur) => ({ ...prev, [cur]: 0 }), {})
 
-    await createScene()
+    createScene()
     if (panel) createPanel()
 
-    outControllerData.subscribe(data => motion.handleCommand(data))
-    dataBroker.on(AnglesData, data => {
-      settings['Internal kinematic'] = false
-      setTargetAngles(motion.order(data.angles.map(degToRad)))
-    })
-    mode.subscribe(mode => motion.setMode(mode))
-    gait.subscribe(gait => motion.setGait(gait))
+    if (previewMode) motion.setMode(previewMode)
+    unsubscribers = [
+      outControllerData.subscribe(data => motion.handleCommand(data)),
+      dataBroker.on(AnglesData, data => {
+        settings['Internal kinematic'] = false
+        setTargetAngles(motion.order(data.angles.map(degToRad)))
+      }),
+      // Without a link no angles arrive, so the local model has to animate the robot again.
+      isLinked.subscribe(linked => {
+        if (!linked) settings['Internal kinematic'] = true
+      }),
+      gait.subscribe(gait => motion.setGait(gait)),
+      ...(previewMode ? [] : [mode.subscribe(mode => motion.setMode(mode))])
+    ]
   })
 
   onDestroy(() => {
+    destroyed = true
+    unsubscribers.forEach(unsubscribe => unsubscribe())
+    sceneManager.dispose()
     canvas?.remove()
     gui_panel?.destroy()
   })
@@ -71,8 +86,7 @@
     gui_panel.domElement.id = 'three-gui-panel'
 
     const general = gui_panel.addFolder('General')
-    general.add(settings, 'Internal kinematic')
-    general.add(settings, 'Robot transform controls')
+    general.add(settings, 'Internal kinematic').listen()
     general.add(settings, 'Auto orient robot')
 
     const gait_gui = gui_panel.addFolder('Gait')
@@ -93,8 +107,8 @@
       })
 
     const kin = gui_panel.addFolder('Kinematics')
-    for (const name of ['omega', 'phi', 'psi']) {
-      kin.add(motion.body_state, name as any, -Math.PI / 10, Math.PI / 10, 0.01)
+    for (const name of ['omega', 'phi', 'psi'] as const) {
+      kin.add(motion.body_state, name, -Math.PI / 10, Math.PI / 10, 0.01)
     }
     kin.add(motion.body_state, 'xm', -60, 60, 0.01)
     kin.add(motion.body_state, 'ym', -60, 60, 0.01)
@@ -138,7 +152,7 @@
     if (sceneManager.orbit) sceneManager.orbit.autoRotate = orbit
   })
 
-  const createScene = async () => {
+  const createScene = () => {
     if (!canvas) return
     sceneManager
       .addRenderer({ antialias: true, canvas, alpha: true })
@@ -187,7 +201,7 @@
   }
 
   const orient_robot = (robot: URDFRobot) => {
-    if (settings['Robot transform controls'] || !settings['Auto orient robot']) return
+    if (!settings['Auto orient robot']) return
 
     const ORIENT_SMOOTH = 0.1
     const POSITION_SCALE = 1 / 12

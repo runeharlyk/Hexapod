@@ -13,16 +13,16 @@
 
   Chart.register(...registerables)
 
-  let cpuChartElement: HTMLCanvasElement = $state()
+  let cpuChartElement: HTMLCanvasElement
   let cpuChart: Chart
 
-  let heapChartElement: HTMLCanvasElement = $state()
+  let heapChartElement: HTMLCanvasElement
   let heapChart: Chart
 
-  let filesystemChartElement: HTMLCanvasElement = $state()
+  let filesystemChartElement: HTMLCanvasElement
   let filesystemChart: Chart
 
-  let temperatureChartElement: HTMLCanvasElement = $state()
+  let temperatureChartElement: HTMLCanvasElement
   let temperatureChart: Chart
 
   onMount(() => {

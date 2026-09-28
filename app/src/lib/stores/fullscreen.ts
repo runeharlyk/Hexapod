@@ -1,24 +1,18 @@
-import { writable } from 'svelte/store'
+import { readable } from 'svelte/store'
 
-export const isFullscreen = writable(false)
+const isDocumentFullscreen = () => typeof document !== 'undefined' && !!document.fullscreenElement
+
+// Follows the browser, so leaving fullscreen with Esc or F11 is reflected too.
+export const isFullscreen = readable(isDocumentFullscreen(), set => {
+  const update = () => set(isDocumentFullscreen())
+  document.addEventListener('fullscreenchange', update)
+  return () => document.removeEventListener('fullscreenchange', update)
+})
 
 export function toggleFullscreen() {
-  isFullscreen.update(state => {
-    !state ? document.documentElement.requestFullscreen() : document.exitFullscreen()
-    return !state
-  })
-}
-
-export function enterFullscreen() {
-  if (!document.fullscreenElement) {
-    document.documentElement.requestFullscreen()
-    isFullscreen.set(true)
-  }
-}
-
-export function exitFullscreen() {
-  if (document.fullscreenElement) {
-    document.exitFullscreen()
-    isFullscreen.set(false)
-  }
+  const request =
+    document.fullscreenElement ?
+      document.exitFullscreen()
+    : document.documentElement.requestFullscreen()
+  request.catch(error => console.warn('Fullscreen change refused:', error))
 }

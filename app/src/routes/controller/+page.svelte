@@ -3,17 +3,15 @@
   import WidgetContainer from '$lib/components/layout/WidgetContainer.svelte'
   import { selectedView, views } from '$lib/stores/application'
   import { onMount } from 'svelte'
-  import { mpu } from '$lib/stores'
   import { imu } from '$lib/stores/imu'
   import { dataBroker } from '$lib/transport/databroker'
   import { IMUData } from '$lib/platform_shared/message'
 
-  let layout = $derived($views.find(v => v.name === $selectedView)!)
+  let layout = $derived($views.find(v => v.name === $selectedView) ?? $views[0])
 
   onMount(() =>
     dataBroker.on(IMUData, data => {
       imu.addData({ ...data, altitude: 0, bmp_temp: 0, pressure: 0 })
-      if (data.heading) mpu.update(m => ({ ...m, heading: data.heading }))
     })
   )
 </script>

@@ -26,29 +26,6 @@ export interface HexapodConfig {
   legMountAngle: number[]
 }
 
-export function gen_posture(j2_angle: number, j3_angle: number, config: HexapodConfig): number[][] {
-  const mountX = config.legMountX
-  const mountY = config.legMountY
-  const rootJ1 = config.legRootToJoint1
-  const j1_j2 = config.legJoint1ToJoint2
-  const j2_j3 = config.legJoint2ToJoint3
-  const j3_tip = config.legJoint3ToTip
-  const mountAngle = config.legMountAngle.map(a => (a / 180) * Math.PI)
-  const j2_rad = (j2_angle / 180) * Math.PI
-  const j3_rad = (j3_angle / 180) * Math.PI
-  const expr = rootJ1 + j1_j2 + j2_j3 * Math.sin(j2_rad) + j3_tip * Math.cos(j3_rad)
-  const posture: number[][] = []
-  for (let i = 0; i < 6; i++) {
-    posture.push([
-      mountX[i] + expr * Math.cos(mountAngle[i]),
-      mountY[i] + expr * Math.sin(mountAngle[i]),
-      j2_j3 * Math.cos(j2_rad) - j3_tip * Math.sin(j3_rad),
-      1
-    ])
-  }
-  return posture
-}
-
 export default class Kinematics {
   mountX: number[]
   mountY: number[]

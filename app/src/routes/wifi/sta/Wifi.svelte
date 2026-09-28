@@ -511,7 +511,7 @@
             itemCount={dndNetworkList.length}
             on:drop={onDrop}
           >
-            {#snippet children({ index })}
+            {#snippet children({ index }: { index: number })}
               <StatusItem icon={Router} title={dndNetworkList[index].ssid}>
                 <div class="space-x-0 px-0 mx-0">
                   <button
@@ -621,7 +621,11 @@
                 <label class="label" for="pwd">
                   <span class="label-text text-md">Password</span>
                 </label>
-                <PasswordInput bind:value={networkEditable.password} id="pwd" />
+                <PasswordInput
+                  bind:value={networkEditable.password}
+                  id="pwd"
+                  placeholder={newNetwork ? '' : 'Unchanged'}
+                />
               </div>
               <label
                 class="label inline-flex cursor-pointer content-end justify-start gap-4 mt-2 sm:mb-4"

@@ -9,16 +9,19 @@ export interface ControllerInput {
   feetDistance: number
 }
 
-export type GithubRelease = {
-  message: string
-  tag_name: string
-  assets: Array<{
-    name: string
-    browser_download_url: string
-  }>
+export type GithubAsset = {
+  name: string
+  browser_download_url: string
 }
 
-export type angles = number[] | Int16Array
+export type GithubRelease = {
+  name: string
+  tag_name: string
+  html_url: string
+  published_at: string
+  prerelease: boolean
+  assets: GithubAsset[]
+}
 
 export type WifiStatus = {
   status: number

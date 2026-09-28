@@ -2,45 +2,65 @@ import { describe, it, expect, beforeEach, afterEach, vitest } from 'vitest'
 import { throttler } from '../../src/lib/utilities/buffer-utilities'
 
 describe('throttler', () => {
-  let throttleInstance: throttler
-  let callback: () => void
+  let throttle: throttler
+  let sent: string[]
+  const send = (value: string) => () => sent.push(value)
 
   beforeEach(() => {
     vitest.useFakeTimers()
-    throttleInstance = new throttler()
-    callback = vitest.fn()
+    throttle = new throttler()
+    sent = []
   })
 
   afterEach(() => {
     vitest.useRealTimers()
   })
 
-  it('should call the callback function after the specified time', () => {
-    throttleInstance.throttle(callback, 1000)
-    expect(callback).not.toHaveBeenCalled()
-
-    vitest.advanceTimersByTime(1000)
-    expect(callback).toHaveBeenCalledTimes(1)
+  it('runs nothing before the window closes', () => {
+    throttle.throttle(send('a'), 40)
+    vitest.advanceTimersByTime(39)
+    expect(sent).toEqual([])
   })
 
-  it('should not call the callback function if throttle is called again within the timeout period', () => {
-    throttleInstance.throttle(callback, 1000)
-    throttleInstance.throttle(callback, 1000)
-
-    vitest.advanceTimersByTime(500)
-    expect(callback).not.toHaveBeenCalled()
-
-    vitest.advanceTimersByTime(500)
-    expect(callback).toHaveBeenCalledTimes(1)
+  it('runs only the latest callback of a window', () => {
+    throttle.throttle(send('a'), 40)
+    vitest.advanceTimersByTime(10)
+    throttle.throttle(send('b'), 40)
+    vitest.advanceTimersByTime(10)
+    throttle.throttle(send('c'), 40)
+    vitest.advanceTimersByTime(20)
+    expect(sent).toEqual(['c'])
   })
 
-  it('should allow the callback to be called again after the timeout period', () => {
-    throttleInstance.throttle(callback, 1000)
-    vitest.advanceTimersByTime(1000)
-    expect(callback).toHaveBeenCalledTimes(1)
+  it('does not extend the window when called again', () => {
+    throttle.throttle(send('a'), 40)
+    vitest.advanceTimersByTime(30)
+    throttle.throttle(send('b'), 40)
+    vitest.advanceTimersByTime(10)
+    expect(sent).toEqual(['b'])
+  })
 
-    throttleInstance.throttle(callback, 1000)
-    vitest.advanceTimersByTime(1000)
-    expect(callback).toHaveBeenCalledTimes(2)
+  it('starts a new window after one fires', () => {
+    throttle.throttle(send('a'), 40)
+    vitest.advanceTimersByTime(40)
+    throttle.throttle(send('b'), 40)
+    vitest.advanceTimersByTime(40)
+    expect(sent).toEqual(['a', 'b'])
+  })
+
+  it('drops the pending callback when cancelled, so a stop sent meanwhile stays last', () => {
+    throttle.throttle(send('move'), 40)
+    throttle.cancel()
+    sent.push('stop')
+    vitest.advanceTimersByTime(100)
+    expect(sent).toEqual(['stop'])
+  })
+
+  it('accepts new callbacks after a cancel', () => {
+    throttle.throttle(send('a'), 40)
+    throttle.cancel()
+    throttle.throttle(send('b'), 40)
+    vitest.advanceTimersByTime(40)
+    expect(sent).toEqual(['b'])
   })
 })

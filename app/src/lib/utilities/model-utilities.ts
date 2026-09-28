@@ -1,11 +1,10 @@
-import { Box3, Color, Vector3 } from 'three'
+import { Box3, Vector3 } from 'three'
 import URDFLoader, { type URDFRobot } from 'urdf-loader'
 import { XacroLoader } from 'xacro-parser'
 import { Result } from '$lib/utilities'
 import { jointNames, model } from '$lib/stores'
 import { resolve } from '$app/paths'
 
-let model_xml: XMLDocument
 const base = resolve('/')
 
 export const populateModelCache = async () => {
@@ -19,9 +18,7 @@ export const populateModelCache = async () => {
   }
 }
 
-export const loadModelAsync = async (
-  url: string
-): Promise<Result<[URDFRobot, string[]], string>> => {
+const loadModelAsync = async (url: string): Promise<Result<[URDFRobot, string[]], string>> => {
   return new Promise(res => {
     const xacroLoader = new XacroLoader()
     const urdfLoader = new URDFLoader()
@@ -34,7 +31,6 @@ export const loadModelAsync = async (
     xacroLoader.load(
       url,
       async xml => {
-        model_xml = xml
         try {
           const model = urdfLoader.parse(xml)
 
@@ -58,18 +54,6 @@ export const loadModelAsync = async (
   })
 }
 
-export const toeWorldPositions = (robot: URDFRobot) => {
-  const toe_positions: Vector3[] = []
-  robot.traverse(child => {
-    if (child.name.includes('toe') && !child.name.includes('_link')) {
-      const worldPosition = new Vector3()
-      child.getWorldPosition(worldPosition)
-      toe_positions.push(worldPosition)
-    }
-  })
-  return toe_positions
-}
-
 const centerRobotPivot = (robot: URDFRobot) => {
   robot.updateMatrixWorld(true)
   const bounds = new Box3().setFromObject(robot)
@@ -77,16 +61,4 @@ const centerRobotPivot = (robot: URDFRobot) => {
 
   robot.position.x -= center.x
   robot.position.z -= center.z
-}
-
-export const footColor = () => {
-  const colorElem = model_xml.querySelector('material[name=foot_color] > color') as Element
-  const colorAttrStr = colorElem.getAttribute('rgba') as string
-  const colorStr = colorAttrStr
-    .split(' ')
-    .slice(0, 3)
-    .map(val => Math.floor(+val * 255))
-    .join(', ')
-
-  return new Color(`rgb(${colorStr})`)
 }

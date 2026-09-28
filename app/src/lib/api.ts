@@ -1,23 +1,14 @@
-import { get } from 'svelte/store'
 import { Err, Ok, type Result } from './utilities'
-import { location } from './stores'
+import { resolveUrl } from './proto-api'
 
-export namespace api {
-  export function get<TResponse>(endpoint: string, params?: RequestInit) {
-    return sendRequest<TResponse>(endpoint, 'GET', null, params)
-  }
-
-  export function post<TResponse>(endpoint: string, data?: unknown) {
-    return sendRequest<TResponse>(endpoint, 'POST', data)
-  }
-
-  export function put<TResponse>(endpoint: string, data?: unknown) {
-    return sendRequest<TResponse>(endpoint, 'PUT', data)
-  }
-
-  export function remove<TResponse>(endpoint: string) {
-    return sendRequest<TResponse>(endpoint, 'DELETE')
-  }
+export const api = {
+  get: <TResponse>(endpoint: string, params?: RequestInit) =>
+    sendRequest<TResponse>(endpoint, 'GET', undefined, params),
+  post: <TResponse>(endpoint: string, data?: unknown) =>
+    sendRequest<TResponse>(endpoint, 'POST', data),
+  put: <TResponse>(endpoint: string, data?: unknown) =>
+    sendRequest<TResponse>(endpoint, 'PUT', data),
+  remove: <TResponse>(endpoint: string) => sendRequest<TResponse>(endpoint, 'DELETE')
 }
 
 async function sendRequest<TResponse>(
@@ -26,53 +17,33 @@ async function sendRequest<TResponse>(
   data?: unknown,
   params?: RequestInit
 ): Promise<Result<TResponse, Error>> {
-  endpoint = resolveUrl(endpoint)
-  const body = data !== null && typeof data !== 'undefined' ? JSON.stringify(data) : undefined
+  const url = resolveUrl(endpoint)
+  const body = data === undefined ? undefined : JSON.stringify(data)
 
-  const request = {
-    ...params,
-    method,
-    body,
-    headers: {
-      ...params?.headers,
-      Authorization: 'Basic',
-      'Content-Type': 'application/json'
-    }
-  }
+  // Only a JSON body needs a content type; adding one to a bare GET turns a cross-origin
+  // request (the robot, api.github.com) into a CORS preflight.
+  const headers = new Headers(params?.headers)
+  if (body !== undefined) headers.set('Content-Type', 'application/json')
 
-  let response
-
+  let response: Response
   try {
-    response = await fetch(endpoint, request)
+    response = await fetch(url, { ...params, method, body, headers })
   } catch (error) {
-    return Err.new(new Error(), 'An error has occurred')
+    return Err.new(error instanceof Error ? error : new Error(String(error)), 'Request failed')
   }
 
-  const isResponseOk = response.status >= 200 && response.status < 400
-  if (!isResponseOk) {
-    if (response.status === 401) {
-      return Err.new(new ApiError(response), 'User was not authorized')
-    }
-    return Err.new(new ApiError(response), 'An error has occurred')
+  if (response.status < 200 || response.status >= 400) {
+    return Err.new(new ApiError(response), `Request failed with status ${response.status}`)
   }
 
-  const contentType = response.headers.get('Content-Type') ?? response.headers.get('Content-Type')
-  if (contentType && contentType.includes('application/json')) {
-    const data = await response.json()
-    return Ok.new(data as TResponse)
-  } else {
-    // Handle empty object as response
-    return Ok.new(null as TResponse)
+  const contentType = response.headers.get('Content-Type')
+  if (contentType?.includes('application/json')) {
+    return Ok.new((await response.json()) as TResponse)
   }
+  return Ok.new(null as TResponse)
 }
 
-function resolveUrl(url: string): string {
-  if (url.startsWith('http') || !get(location)) return url
-  const protocol = window.location.protocol
-  return `${protocol}//${get(location)}${url.startsWith('/') ? '' : '/'}${url}`
-}
-
-export class ApiError extends Error {
+class ApiError extends Error {
   constructor(public readonly response: Response) {
     super(`${response.status}`)
   }

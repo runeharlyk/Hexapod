@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store'
+import { get, writable } from 'svelte/store'
 import type { ITransport } from '$lib/interfaces/transport.interface'
 import {
   CorrelationRequest,
@@ -13,6 +13,7 @@ import { decodeMessage, encodeMessage, keyOf, tagOf } from './message-codec'
 
 const PING_INTERVAL_MS = 4000
 const PONG_TIMEOUT_MS = 12000
+const REQUEST_TIMEOUT_MS = 15000
 
 export class DataBroker {
   private transports: ITransport[] = []
@@ -41,37 +42,49 @@ export class DataBroker {
     opts?: { signal?: AbortSignal }
   ): Promise<CorrelationResponse> {
     return new Promise((resolve, reject) => {
-      if (opts?.signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'))
+      const signal = opts?.signal
+      if (signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'))
       const id = ++this.correlationId
 
-      const cancel = () => {
+      const forget = () => {
         this.deferred = this.deferred.filter(d => d.id !== id)
         const p = this.pending.get(id)
         if (p) {
           clearTimeout(p.timer)
           this.pending.delete(id)
         }
-        reject(new DOMException('Aborted', 'AbortError'))
+        signal?.removeEventListener('abort', cancel)
       }
-      opts?.signal?.addEventListener('abort', cancel, { once: true })
+      const settle = {
+        resolve: (response: CorrelationResponse) => {
+          forget()
+          resolve(response)
+        },
+        reject: (error: Error) => {
+          forget()
+          reject(error)
+        }
+      }
+      const cancel = () => settle.reject(new DOMException('Aborted', 'AbortError'))
+      signal?.addEventListener('abort', cancel, { once: true })
 
       // Timeout starts only once the request is on the wire, so a deferred request doesn't
       // expire before it's sent.
       const send = () => {
-        const timer = setTimeout(() => {
-          this.pending.delete(id)
-          reject(new Error(`request ${id} timed out`))
-        }, 15000)
-        this.pending.set(id, { resolve, reject, timer })
+        const timer = setTimeout(
+          () => settle.reject(new Error(`request ${id} timed out`)),
+          REQUEST_TIMEOUT_MS
+        )
+        this.pending.set(id, { ...settle, timer })
         this.emit(CorrelationRequest, { correlationId: id, ...payload })
       }
-      if (this.anyConnected()) {
+      if (this.activeTransport()) {
         send()
         return
       }
-      this.deferred.push({ id, send, reject })
+      this.deferred.push({ id, send, reject: settle.reject })
       if (this.deferred.length > DataBroker.MAX_DEFERRED) {
-        this.deferred.shift()!.reject(new Error('request dropped: not connected'))
+        this.deferred[0].reject(new Error('request dropped: not connected'))
       }
     })
   }
@@ -82,6 +95,12 @@ export class DataBroker {
     queued.forEach(({ send }) => send())
   }
 
+  private rejectPending() {
+    for (const { reject } of [...this.pending.values()]) reject(new Error('disconnected'))
+  }
+
+  // Registration order is priority order; keep it in step with stores/link.ts so requests and
+  // subscriptions travel on the link the UI reports.
   addTransport(transport: ITransport) {
     this.transports.push(transport)
     transport.onData(bytes => this.handleIncoming(bytes))
@@ -91,7 +110,12 @@ export class DataBroker {
       this.flushDeferred()
     })
     transport.onDisconnect(() => {
-      if (!this.anyConnected()) this.stopPinging()
+      if (this.activeTransport()) {
+        this.resubscribeAll()
+        return
+      }
+      this.stopPinging()
+      this.rejectPending()
     })
   }
 
@@ -132,15 +156,17 @@ export class DataBroker {
     }
     if (decoded.key === 'correlationResponse') {
       const res = decoded.value as CorrelationResponse
-      const p = this.pending.get(res.correlationId)
-      if (p) {
-        clearTimeout(p.timer)
-        this.pending.delete(res.correlationId)
-        p.resolve(res)
-      }
+      this.pending.get(res.correlationId)?.resolve(res)
       return
     }
-    this.listeners.get(decoded.tag)?.forEach(listener => listener(decoded.value))
+    // One throwing handler must neither starve the others nor unwind into a transport's read loop.
+    this.listeners.get(decoded.tag)?.forEach(listener => {
+      try {
+        listener(decoded.value)
+      } catch (error) {
+        console.error(`Handler for message ${decoded.key} failed:`, error)
+      }
+    })
   }
 
   private sendSubscribe(tag: number) {
@@ -160,16 +186,11 @@ export class DataBroker {
   }
 
   private broadcast(bytes: Uint8Array) {
-    this.transports.forEach(t => t.send(bytes))
+    this.activeTransport()?.send(bytes)
   }
 
-  private anyConnected() {
-    let connected = false
-    this.transports.forEach(t => {
-      const unsub = t.connected.subscribe(v => (connected = connected || v))
-      unsub()
-    })
-    return connected
+  private activeTransport() {
+    return this.transports.find(t => get(t.connected))
   }
 
   private startPinging() {

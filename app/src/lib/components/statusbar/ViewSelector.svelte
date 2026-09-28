@@ -3,4 +3,4 @@
   import Selector from '../widget/Selector.svelte'
 </script>
 
-<Selector bind:selectedOption={$selectedView} options={$views.map(v => v.name)} change={() => {}} />
+<Selector bind:selectedOption={$selectedView} options={$views.map(v => v.name)} />

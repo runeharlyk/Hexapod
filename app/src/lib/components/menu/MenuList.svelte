@@ -10,7 +10,14 @@
     submenu?: MenuItem[]
   }
 
-  let { level, menuItems, select, class: klass } = $props()
+  interface Props {
+    level: number
+    menuItems: MenuItem[]
+    select: (title: string) => void
+    class?: string
+  }
+
+  let { level, menuItems, select, class: klass = '' }: Props = $props()
 
   const selectMenuItem = (title: string) => {
     select(title)
@@ -18,7 +25,7 @@
 </script>
 
 <ul class={klass + ' menu w-full'}>
-  {#each menuItems as MenuItem[] as menuItem (menuItem.title)}
+  {#each menuItems as menuItem (menuItem.title)}
     {#if menuItem.feature}
       <li>
         {#if menuItem.submenu}

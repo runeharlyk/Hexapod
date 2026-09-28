@@ -1,38 +1,35 @@
-# create-svelte
+# Hexapod controller
 
-Everything you need to build a Svelte project, powered by [`create-svelte`](https://github.com/sveltejs/kit/tree/main/packages/create-svelte).
+SvelteKit web controller for the hexapod robot.
+It drives the robot and shows its telemetry over Web Bluetooth, WebSocket or Web Serial, all carrying the protobuf messages defined in `../platform_shared/*.proto`.
 
-## Creating a project
+## Commands
 
-If you're seeing this, you've probably already done this step. Congrats!
+Run from this directory with pnpm.
 
-```bash
-# create a new project in the current directory
-npm create svelte@latest
-
-# create a new project in my-app
-npm create svelte@latest my-app
+```sh
+pnpm install
+pnpm dev                # vite dev server, reachable on the LAN (--host)
+pnpm build              # static build into build/ (GitHub Pages)
+pnpm build:embedded     # build for embedding into the firmware (VITE_USE_HOST_NAME=true)
+pnpm check              # svelte-check type checking
+pnpm lint               # prettier --check and eslint
+pnpm format             # prettier --write
+pnpm test:unit          # vitest, single run
+pnpm test:integration   # playwright against a production preview
 ```
 
-## Developing
+`pnpm dev` and both builds first run `pnpm proto`, which regenerates `src/lib/platform_shared/` from the proto files.
+It needs a python with `grpcio-tools` on PATH.
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+## Build variables
 
-```bash
-npm run dev
+- `BASE_PATH` sets the path the app is served under, for example `/Hexapod` for GitHub Pages.
+  Leave it unset when the app is served from the root.
+- `VITE_USE_HOST_NAME=true` makes the app talk to the host that served it instead of a saved robot address.
+  Use it for the build that the robot hosts itself.
 
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
+## Transports
 
-## Building
-
-To create a production version of your app:
-
-```bash
-npm run build
-```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://kit.svelte.dev/docs/adapters) for your target environment.
+Which transport a page can use depends on its origin: an https page gets Bluetooth and USB but no WebSocket or camera, while the robot-hosted http page gets WebSocket and camera but neither Bluetooth nor USB, since both need a secure context.
+See `../docs/connectivity.md` for the full matrix and the reasoning behind it.

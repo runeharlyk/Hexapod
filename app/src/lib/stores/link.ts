@@ -54,9 +54,9 @@ export const link: Readable<LinkState> = derived(
 
     return {
       status:
-        wsStatus === 'connecting' || bleStatus === 'connecting' || serialStatus === 'connecting'
-          ? 'connecting'
-          : 'disconnected',
+        wsStatus === 'connecting' || bleStatus === 'connecting' || serialStatus === 'connecting' ?
+          'connecting'
+        : 'disconnected',
       transport: null,
       latencyMs: null,
       responsive: false

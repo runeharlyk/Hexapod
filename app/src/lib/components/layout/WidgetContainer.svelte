@@ -1,11 +1,9 @@
 <script lang="ts">
   import WidgetContainer from './WidgetContainer.svelte'
-  import {
-    WidgetComponents,
-    type WidgetContainerConfig,
-    isWidgetConfig
-  } from '$lib/stores/application'
+  import { type WidgetContainerConfig, isWidgetConfig } from '$lib/stores/application'
   import Widget from './Widget.svelte'
+  import Visualization from '$lib/components/Visualization.svelte'
+  import Stream from '$lib/components/Stream.svelte'
 
   interface Props {
     container: WidgetContainerConfig
@@ -24,8 +22,11 @@
     {#each container.widgets as widget, index (widget.id + '-' + index)}
       <Widget>
         {#if isWidgetConfig(widget)}
-          {@const SvelteComponent = WidgetComponents[widget.component]}
-          <SvelteComponent {...widget.props} />
+          {#if widget.component === 'Visualization'}
+            <Visualization />
+          {:else}
+            <Stream />
+          {/if}
         {:else if widget.widgets}
           <WidgetContainer container={widget} />
         {/if}

@@ -8,10 +8,9 @@
   import type { CorrelationResponse } from '$lib/platform_shared/message'
   import { AP, Network, Reload, Cancel, WiFi } from '$lib/components/icons'
   import { notifications } from '$lib/components/toasts/notifications'
-  import { modals, exitBeforeEnter } from 'svelte-modals'
+  import { modals, exitBeforeEnter, type ModalProps } from 'svelte-modals'
 
-  interface Props {
-    isOpen: boolean
+  interface Props extends ModalProps {
     storeNetwork: (ssid: string) => void
     connect: (network: NetworkItem) => void
   }

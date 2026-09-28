@@ -1,4 +1,4 @@
-import { derived, writable, type Readable } from 'svelte/store'
+import { derived, get, writable, type Readable } from 'svelte/store'
 import { type ITransport, type LinkStatus } from '../interfaces/transport.interface'
 
 export const SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e'
@@ -32,20 +32,14 @@ function createBLEAdapter(): BLEAdapter {
       const len = rxBuffer[0] | (rxBuffer[1] << 8)
       if (rxBuffer.length < 2 + len) break
       const message = rxBuffer.slice(2, 2 + len)
-      // Consume the frame before dispatching: a throwing handler must not leave the buffer
-      // parked on the same head frame, which would kill the receive path for good.
       rxBuffer = rxBuffer.slice(2 + len)
-      dataCallbacks.forEach(cb => {
-        try {
-          cb(message)
-        } catch (error) {
-          console.error('BLE receive handler error:', error)
-        }
-      })
+      dataCallbacks.forEach(cb => cb(message))
     }
   }
 
+  // Runs from both an explicit disconnect() and the gattserverdisconnected event it triggers.
   const markDisconnected = () => {
+    if (get(status) === 'disconnected') return
     status.set('disconnected')
     deviceName.set(null)
     disconnectCallbacks.forEach(cb => cb())
@@ -72,10 +66,11 @@ function createBLEAdapter(): BLEAdapter {
       tx.addEventListener('characteristicvaluechanged', e => {
         const value = (e.target as BluetoothRemoteGATTCharacteristic).value
         if (!value) return
-        handleChunk(new Uint8Array(value.buffer))
+        handleChunk(new Uint8Array(value.buffer, value.byteOffset, value.byteLength))
       })
       device.addEventListener('gattserverdisconnected', markDisconnected)
     } catch (error) {
+      if (device?.gatt?.connected) device.gatt.disconnect()
       status.set('disconnected')
       throw error
     }
@@ -87,7 +82,7 @@ function createBLEAdapter(): BLEAdapter {
 
   const disconnect = async () => {
     if (device?.gatt?.connected) {
-      await device.gatt.disconnect()
+      device.gatt.disconnect()
       markDisconnected()
     }
   }

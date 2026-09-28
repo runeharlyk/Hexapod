@@ -1,35 +1,11 @@
 import { get } from 'svelte/store'
 import { location } from '$lib/stores'
-import { Request, Response } from '$lib/platform_shared/api'
 
+// Points robot-relative paths at the saved robot address; absolute URLs pass through.
 export function resolveUrl(url: string): string {
   if (url.startsWith('http') || !get(location)) return url
   const protocol = typeof window !== 'undefined' ? window.location.protocol : 'http:'
   return `${protocol}//${get(location)}${url.startsWith('/') ? '' : '/'}${url}`
-}
-
-export async function protoGet(url: string): Promise<Response | null> {
-  try {
-    const res = await fetch(resolveUrl(url), { method: 'GET' })
-    if (!res.ok) return null
-    return Response.decode(new Uint8Array(await res.arrayBuffer()))
-  } catch {
-    return null
-  }
-}
-
-export async function protoPost(url: string, request: Request): Promise<Response | null> {
-  try {
-    const res = await fetch(resolveUrl(url), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-protobuf' },
-      body: Request.encode(request).finish()
-    })
-    if (!res.ok) return null
-    return Response.decode(new Uint8Array(await res.arrayBuffer()))
-  } catch {
-    return null
-  }
 }
 
 // IPv4 <-> uint32 matching the firmware IPAddress packing: little-endian, byte 0 is the first octet.

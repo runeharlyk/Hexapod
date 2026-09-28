@@ -34,11 +34,28 @@
     if ($hasGamepad) notifications.success('🎮 Gamepad connected', 3000)
   })
 
+  const GAMEPAD_DEADZONE = 0.08
+  const readAxis = (value: number | undefined) =>
+    value === undefined || !Number.isFinite(value) || Math.abs(value) < GAMEPAD_DEADZONE ? 0 : value
+
+  let gamepadWasConnected = false
   $effect(() => {
-    if (!$hasGamepad) return
+    if (!$hasGamepad) {
+      if (!gamepadWasConnected) return
+      gamepadWasConnected = false
+      input.update(i => {
+        i.left = { x: 0, y: 0 }
+        i.right = { x: 0, y: 0 }
+        syncCommand(i)
+        return i
+      })
+      return
+    }
+    gamepadWasConnected = true
+    // The standard gamepad mapping reports up as -1; the sticks and the firmware expect up as +1.
     input.update(i => {
-      i.left = { x: $gamepadAxes[0] ?? 0, y: $gamepadAxes[1] ?? 0 }
-      i.right = { x: $gamepadAxes[2] ?? 0, y: $gamepadAxes[3] ?? 0 }
+      i.left = { x: readAxis($gamepadAxes[0]), y: -readAxis($gamepadAxes[1]) }
+      i.right = { x: readAxis($gamepadAxes[2]), y: -readAxis($gamepadAxes[3]) }
       syncCommand(i)
       return i
     })
@@ -86,18 +103,44 @@
     target instanceof HTMLElement &&
     (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
 
-  const handleKey = (event: KeyboardEvent) => {
-    if (event.repeat || event.ctrlKey || event.altKey || event.metaKey) return
-    if (isTypingTarget(event.target)) return
-    const down = event.type === 'keydown'
+  // nipplejs reports +x to the right and +y up; the keys mirror the left stick.
+  const DRIVE_KEYS: Record<string, { axis: 'x' | 'y'; sign: 1 | -1 }> = {
+    KeyW: { axis: 'y', sign: 1 },
+    KeyS: { axis: 'y', sign: -1 },
+    KeyD: { axis: 'x', sign: 1 },
+    KeyA: { axis: 'x', sign: -1 }
+  }
+  const heldKeys = new Set<string>()
+
+  const syncHeldKeys = () => {
     input.update(i => {
-      if (event.key === 'w') i.left.y = down ? 1 : 0
-      if (event.key === 'a') i.left.x = down ? 1 : 0
-      if (event.key === 's') i.left.y = down ? -1 : 0
-      if (event.key === 'd') i.left.x = down ? -1 : 0
+      const stick = { x: 0, y: 0 }
+      for (const code of heldKeys) stick[DRIVE_KEYS[code].axis] += DRIVE_KEYS[code].sign
+      i.left = stick
       syncCommand(i)
       return i
     })
+  }
+
+  const handleKeyDown = (event: KeyboardEvent) => {
+    if (!(event.code in DRIVE_KEYS) || event.repeat) return
+    if (event.ctrlKey || event.altKey || event.metaKey || isTypingTarget(event.target)) return
+    heldKeys.add(event.code)
+    syncHeldKeys()
+  }
+
+  const handleKeyUp = (event: KeyboardEvent) => {
+    if (!heldKeys.delete(event.code)) return
+    syncHeldKeys()
+  }
+
+  const releaseAllKeys = () => {
+    heldKeys.clear()
+    handleJoyMove('left', { x: 0, y: 0 })
+  }
+
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === 'hidden') releaseAllKeys()
   }
 
   const handleRange = (event: Event, key: SliderKey) => {
@@ -242,4 +285,5 @@
   </div>
 </div>
 
-<svelte:window onkeyup={handleKey} onkeydown={handleKey} />
+<svelte:window onkeyup={handleKeyUp} onkeydown={handleKeyDown} onblur={releaseAllKeys} />
+<svelte:document onvisibilitychange={handleVisibilityChange} />

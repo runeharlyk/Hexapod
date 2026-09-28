@@ -2,9 +2,9 @@
   import { resolve } from '$app/paths'
   import { onDestroy, onMount } from 'svelte'
   import Visualization from '$lib/components/Visualization.svelte'
-  import { location, mode } from '$lib/stores'
+  import { location } from '$lib/stores'
   import { MotionModes } from '$lib/motion'
-  import { connectBluetooth, link } from '$lib/stores/link'
+  import { connectBluetooth, connectWebsocket, link } from '$lib/stores/link'
   import {
     addRobot,
     forgetRobot,
@@ -57,7 +57,6 @@
   )
 
   onMount(() => {
-    mode.set(MotionModes.STAND)
     prefixDraft = $subnetPrefix
     void search()
     void refreshSaved()
@@ -121,7 +120,7 @@
   const connect = async (address: string) => {
     location.set(address)
     await websocket.disconnect()
-    await websocket.connect()
+    connectWebsocket()
   }
 
   const addAndConnect = async (address: string) => {
@@ -155,7 +154,13 @@
 >
   <div class="w-full max-w-md">
     <div class="h-56 w-full sm:h-72">
-      <Visualization sky={false} orbit={anythingOnline} panel={false} ground={false} />
+      <Visualization
+        sky={false}
+        orbit={anythingOnline}
+        panel={false}
+        ground={false}
+        previewMode={MotionModes.STAND}
+      />
     </div>
 
     {#if $link.status === 'connected'}

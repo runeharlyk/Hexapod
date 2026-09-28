@@ -1,9 +1,9 @@
 <script lang="ts">
-  interface Props {
+  import type { HTMLSelectAttributes } from 'svelte/elements'
+
+  interface Props extends Omit<HTMLSelectAttributes, 'value'> {
     options?: string[]
     selectedOption?: string
-    change: () => void
-    [key: string]: any
   }
 
   let { options = [], selectedOption = $bindable(''), ...rest }: Props = $props()

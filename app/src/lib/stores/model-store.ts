@@ -1,14 +1,13 @@
 import { GaitType } from '$lib/gait'
 import { MotionModes } from '$lib/motion'
 import type { ControllerInput } from '$lib/types/models'
+import type { URDFRobot } from 'urdf-loader'
 import { persistentStore } from '$lib/utilities/svelte-utilities'
 import { writable, type Writable } from 'svelte/store'
 
-export const emulateModel = writable(true)
-
 export const jointNames = persistentStore('joint_names', <string[]>[])
 
-export const model = writable()
+export const model = writable<URDFRobot>()
 
 export const mode: Writable<MotionModes> = writable(MotionModes.DEACTIVATED)
 

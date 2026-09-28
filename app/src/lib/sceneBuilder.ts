@@ -7,14 +7,11 @@ import {
   AmbientLight,
   DirectionalLight,
   PCFSoftShadowMap,
-  type GridHelper,
-  ArrowHelper,
   Vector3,
   FogExp2,
   CanvasTexture,
   type ColorRepresentation,
   type WebGLRendererParameters,
-  MeshPhongMaterial,
   EquirectangularReflectionMapping,
   ACESFilmicToneMapping,
   MathUtils,
@@ -23,14 +20,10 @@ import {
   RepeatWrapping
 } from 'three'
 import { Sky } from 'three/addons/objects/Sky.js'
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
-import { TransformControls } from 'three/examples/jsm/controls/TransformControls'
-import { Reflector } from 'three/examples/jsm/objects/Reflector.js'
-import { type URDFJoint, type URDFMimicJoint, type URDFRobot } from 'urdf-loader'
-import { PointerURDFDragControls } from 'urdf-loader/src/URDFDragControls'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { Reflector } from 'three/addons/objects/Reflector.js'
+import { type URDFRobot } from 'urdf-loader'
 import { sunCalculator } from './utilities/position-utilities'
-
-export const addScene = () => new Scene()
 
 interface position {
   x?: number
@@ -43,13 +36,6 @@ interface light {
   intensity?: number
 }
 
-interface arrowOptions {
-  origin: position
-  direction: position
-  length?: number
-  color?: ColorRepresentation
-}
-
 type directionalLight = position & light
 
 export default class SceneBuilder {
@@ -57,17 +43,12 @@ export default class SceneBuilder {
   public camera!: PerspectiveCamera
   public ground!: Mesh
   public renderer!: WebGLRenderer
-  public orbit: OrbitControls
+  public orbit!: OrbitControls
   public callback: (() => void) | undefined
-  public gridHelper!: GridHelper
   public model!: URDFRobot
-  public liveStreamTexture!: CanvasTexture
-  private fog!: FogExp2
   private isLoaded: boolean = false
-  public isDragging: boolean = false
-  highlightMaterial: any
+  private shadowTimers: ReturnType<typeof setTimeout>[] = []
   sky!: Sky
-  transformControl: TransformControls
   public modelGroup!: Group
 
   constructor() {
@@ -212,12 +193,8 @@ export default class SceneBuilder {
   }
 
   public fillParent = () => {
-    const parentElement = this.renderer.domElement.parentElement
-    if (parentElement) {
-      const width = parentElement.clientWidth
-      const height = parentElement.clientHeight
-      this.handleResize(width, height)
-    }
+    const parentElement = this.renderer?.domElement.parentElement
+    if (parentElement) this.handleResize(parentElement.clientWidth, parentElement.clientHeight)
     return this
   }
 
@@ -239,78 +216,12 @@ export default class SceneBuilder {
       this.renderer.render(this.scene, this.camera)
       this.orbit.update()
       this.handleRobotShadow()
-      if (this.callback) this.callback()
-      if (!this.liveStreamTexture) return
+      this.callback?.()
     })
     return this
   }
 
-  public addArrowHelper = (options?: arrowOptions) => {
-    const dir = new Vector3(
-      options?.direction.x ?? 0,
-      options?.direction.y ?? 0,
-      options?.direction.z ?? 0
-    )
-    const origin = new Vector3(
-      options?.origin.x ?? 0,
-      options?.origin.y ?? 0,
-      options?.origin.z ?? 0
-    )
-    const arrowHelper = new ArrowHelper(
-      dir,
-      origin,
-      options?.length ?? 1.5,
-      options?.color ?? 0xff0000
-    )
-    this.scene.add(arrowHelper)
-    return this
-  }
-
-  private setJointValue(jointName: string, angle: number) {
-    if (!this.model) return
-    if (!this.model.joints[jointName]) return
-    this.model.joints[jointName].setJointValue(angle)
-  }
-
-  isJoint = (j: URDFJoint) => j.isURDFJoint && j.jointType !== 'fixed'
-
-  highlightLinkGeometry = (m: URDFMimicJoint, revert: boolean, material: MeshPhongMaterial) => {
-    const traverse = (c: any) => {
-      if (c.type === 'Mesh') {
-        if (revert) {
-          c.material = c.__origMaterial
-          delete c.__origMaterial
-        } else {
-          c.__origMaterial = c.material
-          c.material = material
-        }
-      }
-
-      if (c === m || !this.isJoint(c)) {
-        for (let i = 0; i < c.children.length; i++) {
-          const child = c.children[i]
-          if (!child.isURDFCollider) {
-            traverse(c.children[i])
-          }
-        }
-      }
-    }
-    traverse(m)
-  }
-
-  public addTransformControls = (model: any) => {
-    this.transformControl = new TransformControls(this.camera, this.renderer.domElement)
-    this.transformControl.addEventListener('dragging-changed', (event: any) => {
-      this.orbit.enabled = !event.value
-      this.isDragging = !event.value
-    })
-    this.transformControl.attach(model)
-    this.scene.add(this.transformControl)
-    this.transformControl.setMode('rotate')
-    return this
-  }
-
-  public addModel = (model: any) => {
+  public addModel = (model: URDFRobot) => {
     this.modelGroup = new Group()
     this.modelGroup.add(model)
     this.model = model
@@ -318,63 +229,22 @@ export default class SceneBuilder {
     return this
   }
 
-  public addDragControl = (updateAngle: any) => {
-    const highlightColor = '#FFFFFF'
-    const highlightMaterial = new MeshPhongMaterial({
-      shininess: 10,
-      color: highlightColor,
-      emissive: highlightColor,
-      emissiveIntensity: 0.9
-    })
-
-    const dragControls = new PointerURDFDragControls(
-      this.scene,
-      this.camera,
-      this.renderer.domElement
-    )
-    dragControls.updateJoint = (joint: URDFMimicJoint, angle: number) => {
-      this.setJointValue(joint.name, angle)
-      updateAngle(joint.name, angle)
-    }
-    dragControls.onDragStart = () => {
-      this.orbit.enabled = false
-      this.isDragging = true
-    }
-    dragControls.onDragEnd = () => {
-      this.orbit.enabled = true
-      this.isDragging = false
-    }
-    dragControls.onHover = (joint: URDFMimicJoint) =>
-      this.highlightLinkGeometry(joint, false, highlightMaterial)
-    dragControls.onUnhover = (joint: URDFMimicJoint) =>
-      this.highlightLinkGeometry(joint, true, highlightMaterial)
-
-    this.renderer.domElement.addEventListener(
-      'touchstart',
-      data => dragControls._mouseDown(data.touches[0]),
-      { passive: true }
-    )
-    this.renderer.domElement.addEventListener(
-      'touchmove',
-      data => dragControls._mouseMove(data.touches[0]),
-      { passive: true }
-    )
-    this.renderer.domElement.addEventListener(
-      'touchend',
-      data => dragControls._mouseUp(data.touches[0]),
-      { passive: true }
-    )
-    return this
-  }
-
-  public toggleFog = () => {
-    this.scene.fog = this.scene.fog ? null : this.fog
+  public dispose = () => {
+    this.shadowTimers.forEach(clearTimeout)
+    this.shadowTimers = []
+    this.callback = undefined
+    this.renderer?.setAnimationLoop(null)
+    this.orbit?.dispose()
+    this.renderer?.dispose()
   }
 
   private handleRobotShadow = () => {
     if (this.isLoaded) return
     const intervalId = setInterval(() => this.model?.traverse(c => (c.castShadow = true)), 10)
-    setTimeout(() => clearInterval(intervalId), 1000)
+    this.shadowTimers.push(
+      intervalId,
+      setTimeout(() => clearInterval(intervalId), 1000)
+    )
     this.isLoaded = true
   }
 }

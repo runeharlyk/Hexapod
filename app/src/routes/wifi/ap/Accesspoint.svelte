@@ -279,7 +279,7 @@
             <label class="label" for="pwd">
               <span class="label-text text-md">Password</span>
             </label>
-            <PasswordInput bind:value={apSettings.password} id="pwd" />
+            <PasswordInput bind:value={apSettings.password} id="pwd" placeholder="Unchanged" />
           </div>
           <div>
             <label class="label" for="channel">

@@ -40,6 +40,7 @@
 
   let staticInfo: StaticSystemInformation | undefined = $state()
   let analytics: AnalyticsData | undefined = $state()
+  let statusRequest = $state(getSystemStatus())
 
   async function getSystemStatus() {
     const res = await dataBroker.request({ systemInformationRequest: {} })
@@ -143,7 +144,7 @@
   {/snippet}
 
   <div class="w-full overflow-x-auto">
-    {#await getSystemStatus()}
+    {#await statusRequest}
       <Spinner />
     {:then}
       <div
@@ -221,6 +222,12 @@
           title="Reset Reason"
           description={staticInfo?.cpuResetReason ?? ''}
         />
+      </div>
+    {:catch error}
+      <div class="alert alert-error">
+        <span>System status could not be loaded: {error.message}</span>
+        <button class="btn btn-sm" onclick={() => (statusRequest = getSystemStatus())}>Retry</button
+        >
       </div>
     {/await}
   </div>

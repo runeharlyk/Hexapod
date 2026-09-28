@@ -5,6 +5,7 @@
   import type { I2CDevice } from '$lib/types/models'
   import { Connection } from '$lib/components/icons'
   import I2CSetting from './i2cSetting.svelte'
+  import { notifications } from '$lib/components/toasts/notifications'
 
   const i2cDevices = [
     { address: 30, part_number: 'HMC5883', name: '3-Axis Digital Compass/Magnetometer IC' },
@@ -39,6 +40,11 @@
             part_number: 'Unknown',
             name: 'Unknown'
           }
+      )
+    } catch (error) {
+      notifications.error(
+        `I2C scan failed: ${error instanceof Error ? error.message : error}`,
+        4000
       )
     } finally {
       isLoading = false

@@ -1,8 +1,7 @@
 import type { PageLoad } from './$types'
-import { goto } from '$app/navigation'
+import { redirect } from '@sveltejs/kit'
 import { resolve } from '$app/paths'
 
-export const load = (async () => {
-  goto(resolve('/'))
-  return
+export const load = (() => {
+  redirect(307, resolve('/'))
 }) satisfies PageLoad

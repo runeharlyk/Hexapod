@@ -76,6 +76,11 @@ function createWebSocketAdapter(): ITransport {
   }
 
   const connect = async () => {
+    // Mixed-content blocking refuses ws:// from an https page, so retrying would only fail again.
+    if (window.location.protocol === 'https:')
+      throw new Error(
+        'WiFi needs the robot-hosted http page; this https page can only use BLE or USB'
+      )
     wantConnection = true
     reconnectDelay = RECONNECT_MIN_MS
     stopReconnecting()

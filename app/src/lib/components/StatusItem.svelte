@@ -1,4 +1,7 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte'
+  import type { IconComponent } from './icons'
+
   type Variant = 'success' | 'error' | 'primary' | 'info' | 'warning'
 
   const {
@@ -9,12 +12,12 @@
     class: klass = '',
     children = null
   } = $props<{
-    icon?: any
+    icon?: IconComponent
     title: string
     description?: string | number
     variant?: Variant
     class?: string
-    children?: () => any
+    children?: Snippet | null
   }>()
 
   const Icon = $derived(icon)

@@ -16,6 +16,7 @@
   import { ControllerInputData, ModeData, GaitData } from '$lib/platform_shared/message'
   import { GaitType } from '$lib/gait'
   import { throttler } from '$lib/utilities'
+  import { connectWebsocket, isLinked } from '$lib/stores/link'
 
   // outControllerData is [lx, ly, rx, ry, height, speed, s1, feetDistance].
   const toControllerInput = (d: number[]): ControllerInputData => ({
@@ -31,20 +32,22 @@
     children?: import('svelte').Snippet
   }
 
-  dataBroker.addTransport(ble)
-  dataBroker.addTransport(websocket)
   dataBroker.addTransport(serial)
+  dataBroker.addTransport(websocket)
+  dataBroker.addTransport(ble)
 
   const throttle = new throttler()
   const COMMAND_HEARTBEAT_MS = 250
   let lastCommand = [0, 0, 0, 0, 0, 0, 0, 0]
   let currentMode = MotionModes.DEACTIVATED
+  let linked = false
   let commandHeartbeatId: ReturnType<typeof setInterval> | undefined
 
   let { children }: Props = $props()
 
-  onMount(async () => {
-    await websocket.connect()
+  onMount(() => {
+    // Only the robot-hosted http origin may open ws://; https pages reach the robot over BLE or USB.
+    if (window.location.protocol === 'http:') connectWebsocket()
 
     let wasStop = true
     outControllerData.subscribe(data => {
@@ -52,6 +55,7 @@
       const isStop = data[0] === 0 && data[1] === 0 && data[2] === 0 && data[3] === 0
 
       if (isStop) {
+        throttle.cancel()
         if (!wasStop) {
           dataBroker.emit(ControllerInputData, toControllerInput(data))
           wasStop = true
@@ -76,7 +80,12 @@
       currentMode = value
     })
 
+    isLinked.subscribe(value => {
+      linked = value
+    })
+
     commandHeartbeatId = setInterval(() => {
+      if (!linked) return
       if (currentMode !== MotionModes.STAND && currentMode !== MotionModes.WALK) return
       dataBroker.emit(ControllerInputData, toControllerInput(lastCommand))
     }, COMMAND_HEARTBEAT_MS)

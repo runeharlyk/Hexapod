@@ -54,7 +54,7 @@
       {
         title: 'Connection',
         icon: WiFi,
-        href: 'connection',
+        href: withBase('connection'),
         feature: true
       },
       {
@@ -159,7 +159,7 @@
     ] as menuItem[]
   })
 
-  const { menuClicked } = $props()
+  const { menuClicked }: { menuClicked: () => void } = $props()
 
   function setActiveMenuItem(targetTitle: string) {
     menuItems.forEach(item => {
@@ -176,9 +176,7 @@
     setActiveMenuItem(page.data.title)
   })
 
-  const updateMenu = (event: any) => {
-    setActiveMenuItem(event.details)
-  }
+  const updateMenu = (title: string) => setActiveMenuItem(title)
 </script>
 
 <div class="flex h-full w-80 flex-col p-4 bg-base-200 text-base-content">
@@ -188,7 +186,7 @@
     {menuItems}
     select={updateMenu}
     class="grow flex-nowrap overflow-y-auto overflow-x-hidden"
-    level="0"
+    level={0}
   />
 
   <div class="divider my-0"></div>

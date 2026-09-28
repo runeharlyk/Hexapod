@@ -10,49 +10,30 @@
   import { compareVersions } from 'compare-versions'
   import GithubUpdateDialog from '$lib/components/GithubUpdateDialog.svelte'
   import InfoDialog from '$lib/components/InfoDialog.svelte'
-  import { api } from '$lib/api'
+  import {
+    fetchReleases,
+    findFirmwareAsset,
+    requestFirmwareDownload
+  } from '$lib/services/firmware-update'
+  import type { GithubAsset } from '$lib/types/models'
   import { useFeatureFlags } from '$lib/stores'
   import { Error, Cancel, Check, CloudDown, Github, Prerelease } from '$lib/components/icons'
 
   const features = useFeatureFlags()
 
-  async function getGithubAPI() {
-    const headers = {
-      accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28'
-    }
-    const result = await api.get(`https://api.github.com/repos/${page.data.github}/releases`, {
-      headers
-    })
-    if (result.isErr()) {
-      console.error('Error:', result.inner)
-      return
-    }
-    return result.inner as any
+  async function getGithubReleases() {
+    const result = await fetchReleases(page.data.github)
+    if (result.isErr()) throw result.inner
+    return result.inner
   }
 
-  async function postGithubDownload(url: string) {
-    const result = await api.post('/api/firmware/download', { download_url: url })
-    if (result.isErr()) {
-      console.error('Error:', result.inner)
-      return
-    }
-  }
+  // compareVersions throws on a non-semver string, which the version is until the flags load.
+  const isInstalled = (tag: string) =>
+    !!$features.firmware_version && compareVersions($features.firmware_version, tag) === 0
 
-  function confirmGithubUpdate(assets: any) {
-    let url = ''
-    // iterate over assets and find the correct one
-    for (let i = 0; i < assets.length; i++) {
-      // check if the asset is of type *.bin
-      if (
-        assets[i].name.includes('.bin') &&
-        assets[i].name.includes($features.firmware_built_target)
-      ) {
-        url = assets[i].browser_download_url
-      }
-    }
-    if (url === '') {
-      // if no asset was found, use the first one
+  function confirmGithubUpdate(assets: GithubAsset[]) {
+    const url = findFirmwareAsset(assets, $features.firmware_built_target)?.browser_download_url
+    if (!url) {
       modals.open(InfoDialog, {
         title: 'No matching firmware found',
         message:
@@ -71,7 +52,7 @@
         confirm: { label: 'Update', icon: CloudDown }
       },
       onConfirm: () => {
-        postGithubDownload(url)
+        requestFirmwareDownload(url)
         modals.open(GithubUpdateDialog, {
           onConfirm: () => modals.closeAll()
         })
@@ -87,7 +68,7 @@
   {#snippet title()}
     <span>Github Firmware Manager</span>
   {/snippet}
-  {#await getGithubAPI()}
+  {#await getGithubReleases()}
     <Spinner />
   {:then githubReleases}
     <div class="relative w-full overflow-visible">
@@ -104,7 +85,7 @@
           <tbody>
             {#each githubReleases as release}
               <tr
-                class={compareVersions($features.firmware_version, release.tag_name) === 0 ?
+                class={isInstalled(release.tag_name) ?
                   'bg-primary text-primary-content'
                 : 'bg-base-100 h-14'}
               >
@@ -129,7 +110,7 @@
                   {/if}
                 </td>
                 <td align="center">
-                  {#if compareVersions($features.firmware_version, release.tag_name) != 0}
+                  {#if !isInstalled(release.tag_name)}
                     <button
                       class="btn btn-ghost btn-circle btn-sm"
                       onclick={() => {

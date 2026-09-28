@@ -5,13 +5,17 @@
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte'
   import GithubUpdateDialog from '$lib/components/GithubUpdateDialog.svelte'
   import { compareVersions } from 'compare-versions'
-  import { onMount } from 'svelte'
-  import { api } from '$lib/api'
-  import type { GithubRelease } from '$lib/types/models'
+  import { onDestroy, onMount } from 'svelte'
   import { useFeatureFlags } from '$lib/stores/featureFlags'
+  import {
+    fetchLatestRelease,
+    findFirmwareAsset,
+    requestFirmwareDownload
+  } from '$lib/services/firmware-update'
   import { Cancel, CloudDown, Firmware } from '../icons'
 
   const features = useFeatureFlags()
+  const CHECK_INTERVAL_MS = 60 * 60 * 1000
 
   interface Props {
     update?: boolean
@@ -21,58 +25,37 @@
 
   let firmwareVersion: string = $state('')
   let firmwareDownloadLink: string = $state('')
+  let checkIntervalId: ReturnType<typeof setInterval> | undefined
 
-  async function getGithubAPI() {
-    const headers = {
-      accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28'
-    }
-    const result = await api.get<GithubRelease>(
-      `https://api.github.com/repos/${page.data.github}/releases/latest`,
-      { headers }
-    )
-    if (result.inner.message === '404' || result.inner.message == 'Not Found') {
-      console.warn('Error: Could not find releases in the repository')
-      return
-    }
+  async function checkForUpdate() {
+    const result = await fetchLatestRelease(page.data.github)
     if (result.isErr()) {
-      console.error('Error:', result.inner)
+      console.warn('Could not fetch the latest release:', result.inner)
       return
     }
 
-    const results = result.inner
+    const release = result.inner
     update = false
     firmwareVersion = ''
 
-    if (compareVersions(results.tag_name, $features.firmware_version) === 1) {
-      for (let i = 0; i < results.assets.length; i++) {
-        if (
-          results.assets[i].name.includes('.bin') &&
-          results.assets[i].name.includes($features.firmware_built_target)
-        ) {
-          update = true
-          firmwareVersion = results.tag_name
-          firmwareDownloadLink = results.assets[i].browser_download_url
-          notifications.info('Firmware update available.', 5000)
-        }
-      }
-    }
-  }
+    if (!$features.firmware_version) return
+    if (compareVersions(release.tag_name, $features.firmware_version) !== 1) return
+    const asset = findFirmwareAsset(release.assets, $features.firmware_built_target)
+    if (!asset) return
 
-  async function postGithubDownload(url: string) {
-    const result = await api.post('/api/downloadUpdate', { download_url: url })
-    if (result.isErr()) {
-      console.error('Error:', result.inner)
-      return
-    }
+    update = true
+    firmwareVersion = release.tag_name
+    firmwareDownloadLink = asset.browser_download_url
+    notifications.info('Firmware update available.', 5000)
   }
 
   onMount(async () => {
-    if ($features.download_firmware) {
-      await getGithubAPI()
-      setInterval(async () => await getGithubAPI(), 60 * 60 * 1000) // once per hour
-    }
+    if (!$features.download_firmware) return
+    await checkForUpdate()
+    checkIntervalId = setInterval(checkForUpdate, CHECK_INTERVAL_MS)
   })
+
+  onDestroy(() => clearInterval(checkIntervalId))
 
   function confirmGithubUpdate(url: string) {
     modals.open(ConfirmDialog, {
@@ -83,7 +66,7 @@
         confirm: { label: 'Update', icon: CloudDown }
       },
       onConfirm: () => {
-        postGithubDownload(url)
+        requestFirmwareDownload(url)
         modals.open(GithubUpdateDialog, {
           onConfirm: () => modals.closeAll()
         })

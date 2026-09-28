@@ -21,7 +21,7 @@
   const queryMDNSServices = async () => {
     isLoading = true
     try {
-      const res = await dataBroker.request({ mdnsQuery: { service: 'http', protocol: 'tcp' } })
+      const res = await dataBroker.request({ mdnsQuery: { service: '_http', protocol: '_tcp' } })
       services = (res?.mdnsQueryResponse?.services ?? []).sort((a, b) => compareIp(a.ip, b.ip))
     } catch {
       services = []

@@ -3,10 +3,9 @@
   import { fly } from 'svelte/transition'
   import { Check } from './icons'
   import type { IconComponent } from './icons'
-  import { exitBeforeEnter } from 'svelte-modals'
+  import { exitBeforeEnter, type ModalProps } from 'svelte-modals'
 
-  interface Props {
-    isOpen: boolean
+  interface Props extends ModalProps {
     title: string
     message: string
     onDismiss: () => void

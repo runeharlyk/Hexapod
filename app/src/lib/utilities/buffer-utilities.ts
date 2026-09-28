@@ -1,15 +1,23 @@
+// Trailing throttle: at most one call per window, and the call that runs is the latest one
+// scheduled inside that window.
 export class throttler {
-  private _throttlePause: boolean
-  constructor() {
-    this._throttlePause = false
-  }
-  throttle = (callback: () => void, time: number) => {
-    if (this._throttlePause) return
+  private pending: (() => void) | undefined
+  private timer: ReturnType<typeof setTimeout> | undefined
 
-    this._throttlePause = true
-    setTimeout(() => {
-      callback()
-      this._throttlePause = false
+  throttle = (callback: () => void, time: number) => {
+    this.pending = callback
+    if (this.timer) return
+    this.timer = setTimeout(() => {
+      const latest = this.pending
+      this.timer = undefined
+      this.pending = undefined
+      latest?.()
     }, time)
+  }
+
+  cancel = () => {
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = undefined
+    this.pending = undefined
   }
 }

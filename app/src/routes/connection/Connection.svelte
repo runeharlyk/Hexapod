@@ -2,7 +2,12 @@
   import SettingsCard from '$lib/components/SettingsCard.svelte'
   import { BluetoothConnected, BluetoothDisconnected, WiFi } from '$lib/components/icons'
   import { location } from '$lib/stores'
-  import { connectBluetooth, connectWebsocket, connectSerial, serialAvailable } from '$lib/stores/link'
+  import {
+    connectBluetooth,
+    connectWebsocket,
+    connectSerial,
+    serialAvailable
+  } from '$lib/stores/link'
   import { serial } from '$lib/transport/serial-adapter'
   import { ble, SERVICE_UUID } from '$lib/transport/ble-adapter'
   import { websocket } from '$lib/transport/websocket-adapter'
@@ -84,7 +89,9 @@
   <div class="flex">
     <label class="label w-32" for="usb">Status:</label>
     {#if !serialAvailable()}
-      <div class="text-base-content/60">Not supported in this browser &mdash; try Chrome or Edge</div>
+      <div class="text-base-content/60">
+        Not supported in this browser &mdash; try Chrome or Edge
+      </div>
     {:else}
       <div>{$isSerialConnected ? 'Connected' : 'Disconnected'}</div>
       {#if $isSerialConnected}

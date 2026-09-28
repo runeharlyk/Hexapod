@@ -1,9 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import Kinematics, {
-  gen_posture,
-  type HexapodConfig,
-  type body_state_t
-} from '../../src/lib/kinematic'
+import Kinematics, { type HexapodConfig, type body_state_t } from '../../src/lib/kinematic'
 
 describe('Kinematics', () => {
   const config: HexapodConfig = {
@@ -39,80 +35,6 @@ describe('Kinematics', () => {
     kinematics = new Kinematics(config)
   })
 
-  describe('gen_posture function', () => {
-    it('should generate correct posture for zero angles', () => {
-      const j2Angle = 0
-      const j3Angle = 0
-      const posture = gen_posture(j2Angle, j3Angle, config)
-
-      expect(posture).toHaveLength(6)
-
-      // Debug the actual calculation for gen_posture
-      const j2_rad = (j2Angle / 180) * Math.PI
-      const j3_rad = (j3Angle / 180) * Math.PI
-      const expr =
-        config.legRootToJoint1 +
-        config.legJoint1ToJoint2 +
-        config.legJoint2ToJoint3 * Math.sin(j2_rad) +
-        config.legJoint3ToTip * Math.cos(j3_rad)
-
-      for (let i = 0; i < 6; i++) {
-        const [x, y, z, w] = posture[i]
-        expect(w).toBe(1)
-
-        const mountAngleRad = (config.legMountAngle[i] / 180) * Math.PI
-        const expectedX = config.legMountX[i] + expr * Math.cos(mountAngleRad)
-        const expectedY = config.legMountY[i] + expr * Math.sin(mountAngleRad)
-        const expectedZ =
-          config.legJoint2ToJoint3 * Math.cos(j2_rad) - config.legJoint3ToTip * Math.sin(j3_rad)
-
-        expect(x).toBeCloseTo(expectedX, 10)
-        expect(y).toBeCloseTo(expectedY, 10)
-        expect(z).toBeCloseTo(expectedZ, 10)
-      }
-    })
-
-    it('should generate different postures for different angles', () => {
-      const posture1 = gen_posture(0, 0, config)
-      const posture2 = gen_posture(Math.PI / 4, Math.PI / 6, config)
-
-      expect(posture1).not.toEqual(posture2)
-
-      for (let i = 0; i < 6; i++) {
-        expect(posture1[i][2]).not.toBeCloseTo(posture2[i][2], 5)
-      }
-    })
-
-    it('should handle negative angles correctly', () => {
-      const posture = gen_posture(-Math.PI / 4, -Math.PI / 6, config)
-
-      expect(posture).toHaveLength(6)
-
-      for (const [x, y, z, w] of posture) {
-        expect(Number.isFinite(x)).toBe(true)
-        expect(Number.isFinite(y)).toBe(true)
-        expect(Number.isFinite(z)).toBe(true)
-        expect(w).toBe(1)
-      }
-    })
-
-    it('should be consistent with class genPosture method', () => {
-      const j2 = Math.PI / 6
-      const j3 = -Math.PI / 4
-
-      const functionResult = gen_posture((j2 * 180) / Math.PI, (j3 * 180) / Math.PI, config)
-      const classResult = kinematics.genPosture(j2, j3)
-
-      expect(functionResult).toHaveLength(classResult.length)
-
-      for (let i = 0; i < functionResult.length; i++) {
-        for (let j = 0; j < 4; j++) {
-          expect(functionResult[i][j]).toBeCloseTo(classResult[i][j], 10)
-        }
-      }
-    })
-  })
-
   describe('Kinematics class methods', () => {
     describe('genPosture', () => {
       it('should generate correct posture for zero angles', () => {
@@ -140,6 +62,15 @@ describe('Kinematics', () => {
           expect(x).toBeCloseTo(expectedX, 10)
           expect(y).toBeCloseTo(expectedY, 10)
           expect(z).toBeCloseTo(expectedZ, 10)
+        }
+      })
+
+      it('should move every foot when the joint angles change', () => {
+        const posture1 = kinematics.genPosture(0, 0)
+        const posture2 = kinematics.genPosture(Math.PI / 4, Math.PI / 6)
+
+        for (let i = 0; i < 6; i++) {
+          expect(posture1[i][2]).not.toBeCloseTo(posture2[i][2], 5)
         }
       })
 

@@ -1,12 +1,9 @@
 <script lang="ts">
   import SettingsCard from '$lib/components/SettingsCard.svelte'
-  import Spinner from '$lib/components/Spinner.svelte'
   import { MotorOutline } from '$lib/components/icons'
   import { throttler as Throttler } from '$lib/utilities'
   import { dataBroker } from '$lib/transport/databroker'
   import { ServoPWMData, ServoStateData } from '$lib/platform_shared/message'
-
-  let isLoading = false
 
   let active = $state(false)
 
@@ -38,21 +35,17 @@
     class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
   />
 
-  {#if isLoading}
-    <Spinner />
-  {:else}
-    <div class="flex flex-col">
-      <h2 class="text-lg">General servo configuration</h2>
-      <span class="flex items-center gap-2">
-        <label for="servoId">Servo active {servoId}</label>
-        <input type="range" min="0" max="17" step="1" bind:value={servoId} />
-        <input
-          type="checkbox"
-          class="toggle"
-          bind:checked={active}
-          onchange={active ? activateServo : deactivateServo}
-        />
-      </span>
-    </div>
-  {/if}
+  <div class="flex flex-col">
+    <h2 class="text-lg">General servo configuration</h2>
+    <span class="flex items-center gap-2">
+      <label for="servoId">Servo active {servoId}</label>
+      <input type="range" min="0" max="17" step="1" bind:value={servoId} />
+      <input
+        type="checkbox"
+        class="toggle"
+        bind:checked={active}
+        onchange={e => (e.currentTarget.checked ? activateServo() : deactivateServo())}
+      />
+    </span>
+  </div>
 </SettingsCard>
