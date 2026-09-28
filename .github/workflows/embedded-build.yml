@@ -37,8 +37,10 @@ jobs:
         with:
           python-version: "3.12"
 
+      # PlatformIO 6.2 switches to SCons 4.11, which drops SCons.Tool.FortranCommon that the pinned
+      # pioarduino platform still imports; 6.1.19 ships SCons 4.8.1 and is what builds locally.
       - name: Install PlatformIO
-        run: pip install --upgrade platformio
+        run: pip install platformio==6.1.19
 
       # The native env needs a C++20 host compiler; ubuntu-latest's g++ satisfies it.
       - name: Host tests (kinematics and gait)
@@ -67,7 +69,7 @@ jobs:
       # pre_build.py regenerates the nanopb sources from platform_shared/*.proto with
       # grpc_tools.protoc. EMBED_WEBAPP=0 by default, so the firmware build needs no Node.
       - name: Install PlatformIO and proto dependencies
-        run: pip install --upgrade platformio protobuf grpcio-tools
+        run: pip install platformio==6.1.19 protobuf grpcio-tools
 
       - name: Build esp32-wroom-camera
         run: pio run -e esp32-wroom-camera
