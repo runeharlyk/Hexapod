@@ -7,14 +7,12 @@ This generates them instead, so `firmware/include/gait_tuned.h` is a build artif
   python export_gait.py --key __single___wide3
   python export_gait.py --key flat_tripod --out ../firmware/include/gait_tuned.h
 
-What the firmware still has to do with them:
-  * `stand_frac` and `offset[6]` -> a GaitType whose setGait() case reads these constants
-  * `step_height` -> the WALK branch caps foot lift at (s1+1)*20 = 40 mm; the tuned gaits want
-    54-72 mm, so PG_HEIGHT_MAX has to be raised for them to be expressible at all
-  * `step_depth`, `ride_mm` -> plain assignments in the WALK branch
-  * the g*/pr_* gains only matter if the firmware ever accepts a VELOCITY command; today the
-    joystick already supplies the normalized stride directly, so they are emitted for reference
-    and for a future velocity-command mode, not used by the WALK branch.
+How the firmware consumes them (GaitType::TUNED):
+  * `stand_frac` and `offset[6]` -> GaitController::setGait's TUNED case (gait.h)
+  * the g*/pr_* gains -> velocity_to_gait, which MotionService's WALK branch (motion.h) feeds with
+    the stick scaled to a velocity command, and decodes into stride, turn and cadence
+  * `step_height` -> the lift the s1 slider trims around, clipped to STEP_HEIGHT_MIN/MAX_MM
+  * `step_depth`, `ride_mm` -> plain assignments in the same branch
 """
 
 import argparse
@@ -25,6 +23,7 @@ from datetime import date
 import numpy as np
 
 from src.envs.hexapod_mj_env import PG_HEIGHT, PG_PHASE_RATE, PG_STEP_ANGLE, PG_STEP_XY
+from src.robot.firmware_gait import TUNED_GAIT_KEY
 from src.robot.gait_schedule import GaitSchedule
 
 LIB = os.path.join(os.path.dirname(__file__), "src", "resources", "gait_library.json")
@@ -53,8 +52,8 @@ def emit(key, entry, path):
 // Servo margin was checked: at HALF the modelled stall torque it still retains 93% of its score
 // (the shipped gait retains 88%), with no falls in 1512 episodes.
 //
-// The dominant term is FOOT LIFT: {lift_mm:.1f} mm here against a 15 mm default and a 40 mm ceiling
-// in the current WALK branch ((s1+1)*20). Raising that ceiling is what makes this gait expressible.
+// The dominant term is FOOT LIFT: {lift_mm:.1f} mm here against the 15 mm default. GaitType::TUNED
+// uses it as the centre of the s1 lift trim (motion.h), not the legacy (s1+1)*20 mapping.
 
 namespace tuned_gait {{
 
@@ -73,7 +72,7 @@ constexpr float STEP_ANGLE_RAD = {PG_STEP_ANGLE}f;       // joystick [-1,1] -> s
 constexpr float STEP_HEIGHT_MIN_MM = {PG_HEIGHT[0]}f, STEP_HEIGHT_MAX_MM = {PG_HEIGHT[1]}f;
 constexpr float PHASE_RATE_MIN = {PG_PHASE_RATE[0]}f, PHASE_RATE_MAX = {PG_PHASE_RATE[1]}f;  // cyc/s
 
-// --- velocity-command gains (UNUSED by the joystick WALK path; for a future velocity mode) ---
+// --- velocity-command gains, used by velocity_to_gait in the GaitType::TUNED WALK branch ---
 // cmd = [vx forward m/s, vy lateral m/s, yaw rad/s]; the robot faces +Y, so vx drives step_y.
 constexpr float GX0 = {s.gx0:.6f}f, GX1 = {s.gx1:.6f}f;      // forward-axis stride gain, slow/fast
 constexpr float GY0 = {s.gy0:.6f}f, GY1 = {s.gy1:.6f}f;      // lateral-axis stride gain
@@ -113,7 +112,7 @@ inline void velocity_to_gait(const float cmd[3], float out[6]) {{
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--key", default="__single___wide3")
+    ap.add_argument("--key", default=TUNED_GAIT_KEY)
     ap.add_argument("--lib", default=LIB)
     ap.add_argument("--out", default=OUT)
     args = ap.parse_args()
@@ -126,7 +125,7 @@ def main():
     print(f"  key         {args.key}")
     print(f"  stand_frac  {s.duty:.4f}   (firmware tripod: 0.5167, bipod: 0.35)")
     print(f"  offsets     {[round(float(o), 4) for o in s.offsets()]}")
-    print(f"  step_height {lift:.1f} mm  (firmware default 15 mm, WALK ceiling 40 mm)")
+    print(f"  step_height {lift:.1f} mm  (firmware default 15 mm, legacy WALK ceiling 40 mm)")
     print(f"  step_depth  {s.step_depth:.3f} mm   ride {s.ride_mm:+.1f} mm")
 
 

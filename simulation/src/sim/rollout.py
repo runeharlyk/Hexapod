@@ -118,12 +118,15 @@ def episode(predict, cfg, kind, height, cmd, seed, randomize, steps, reflex=Fals
 
     `predict` maps observation -> action (a zero function gives the pure open-loop gait);
     `gait_schedule` replaces the analytic command->gait map for that open-loop base.
+    `steps` is the duration in nominal CONTROL_DT steps; the loop runs on simulated time, because
+    `randomize` also randomizes the control period and a step count would change the duration.
     """
+    seconds = steps * CONTROL_DT
     env = HexapodMjEnv(cfg["control_mode"], randomize=randomize, seed=seed,
                        terrain=height, terrain_kind=kind, terrain_feature=TERRAIN_FEATURE,
                        obs_contact=cfg["obs_contact"], obs_history=cfg["obs_history"],
                        reflex=reflex, gait_schedule=gait_schedule, arc_stance=arc_stance,
-                       episode_seconds=steps * CONTROL_DT)
+                       episode_seconds=seconds)
     env.fixed_command = np.asarray(cmd, dtype=np.float32)
     o, _ = env.reset()
     d = env.sim.data
@@ -131,8 +134,10 @@ def episode(predict, cfg, kind, height, cmd, seed, randomize, steps, reflex=Fals
     fwd, lat, yawrate, tilt, knock, fell = [], [], [], [], [], False
     attitude = []   # deg off vertical: the direct "is the body staying level" readout
     gait = {"step_h": [], "cadence": [], "duty": [], "body_zm": [], "gait_blend": []}
-    for _ in range(steps):
+    elapsed = 0.0
+    while elapsed < seconds:
         o, _, term, _, info = env.step(predict(o))
+        elapsed += env.dt
         fwd.append(info["bvx"])
         lat.append(info["bvy"])
         yawrate.append(float(d.qvel[5]))
@@ -161,7 +166,7 @@ def episode(predict, cfg, kind, height, cmd, seed, randomize, steps, reflex=Fals
         "tilt_max": float(np.max(attitude)) if attitude else 0.0,
         "knock": float(np.mean(knock)),
         "fell": float(fell),
-        "alive": len(fwd) / float(steps),
+        "alive": min(elapsed / seconds, 1.0),
         "dy": float(d.qpos[1] - p0[1]),  # forward displacement (+Y); the curb test's pass criterion
         **{k: float(np.mean(v)) for k, v in gait.items()},
     }

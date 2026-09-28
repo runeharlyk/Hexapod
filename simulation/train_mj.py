@@ -26,7 +26,7 @@ from stable_baselines3.common.callbacks import EvalCallback, CheckpointCallback,
 from src.envs.hexapod_mj_env import make_env, save_env_config
 
 _TERM_KEYS = ("r_vel", "r_yaw", "p_upright", "p_height", "p_vz", "p_energy", "p_power", "p_arate", "p_slip",
-              "p_angvel", "p_res", "p_knock")
+              "p_angvel", "p_res", "p_knock", "p_range", "alive")
 
 
 class Curriculum(BaseCallback):
@@ -245,6 +245,10 @@ def main():
                             terrain=args.terrain, **obs_kw)
     eval_env.training = False
     eval_env.norm_reward = False
+    if args.terrain_curriculum or args.terrain_adaptive:
+        # The envs are built with --terrain so their model carries a heightfield, and SB3 resets
+        # them inside learn() before any callback runs; start the curriculum on flat ground here.
+        train_env.env_method("set_terrain", 0.0)
 
     model = PPO(
         "MlpPolicy",

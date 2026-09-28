@@ -7,11 +7,11 @@ servos have no encoders) and acts through the firmware gait/IK.
 ## Setup (uv)
 
 ```sh
-uv sync                 # core MuJoCo + SB3 + torch (cu118) stack
-uv sync --extra legacy  # also install pybullet for the old main.py / hexapod_env.py
+uv sync                 # core MuJoCo + SB3 + torch (cu118) stack, plus pytest (dev group)
 ```
 
 Run anything with `uv run`, e.g. `uv run python train_mj.py --smoke`.
+`uv run pytest -q` runs the sim-to-firmware parity tests (`test_firmware_gait_parity.py`).
 
 ## Workflow
 
@@ -23,6 +23,7 @@ uv run python src/resources/build_model.py --terrain  # + model_terrain.xml (hei
 # 2. Classical firmware gait walking in MuJoCo (no RL)
 uv run python replay_gait.py                 # viewer
 uv run python replay_gait.py --headless --ly 0.5
+uv run python replay_gait.py --headless --gait tuned   # the searched gait GaitType::TUNED runs
 
 # 3. (Optional) retune the analytic command->gait coefficients (writes resources/gait_coef.json)
 uv run python optimize_gait.py
@@ -64,6 +65,9 @@ grounds plus one measurement fixture, all scaled by `--terrain <max height m>`:
 | `steps` | tiled plateaus, sharp edges       | tiles per metre              |
 | `waves` | sinusoidal rolling ground         | waves per metre              |
 | `curb`  | one full-width step 0.6 m ahead   | (fixture; eval only)         |
+
+`--terrain-feature` is an `eval_policy.py` flag only.
+Training with `--randomize` draws the feature per episode, and `bench_terrain.py` uses the fixed `TERRAIN_FEATURE` of `src/sim/rollout.py`.
 
 `--terrain-kind mixed` samples a kind per episode, which is the rough-terrain training recipe:
 
@@ -201,7 +205,7 @@ The command is a body-frame velocity vector `[vx, vy]` (m/s) + yaw rate (rad/s).
 - `src/robot/firmware_gait.py` — NumPy port of the firmware gait + IK (the deploy target).
 - `src/resources/build_model.py` → `model.xml` — MuJoCo model (0.68 kg; legs 0.077 kg each).
 - `src/sim/mj_runtime.py` — MuJoCo runtime wrapper.
-- `src/sim/domain_rand.py` — domain randomization (mass/friction/motor/latency/IMU/pushes).
+- `src/sim/domain_rand.py` - domain randomization (mass/friction/latency/IMU/pushes); servo strength is randomized by the env's `set_servo_scale`.
 - `src/sim/terrain.py` — per-episode heightfield generation (bumps/rocks/steps/waves + the `curb`
   measurement fixture). The policy has no exteroception, so terrain skill comes from the IMU,
   the sensor history and (optionally) foot contacts — never from a height map.
@@ -216,10 +220,16 @@ The command is a body-frame velocity vector `[vx, vy]` (m/s) + yaw rate (rad/s).
 - `optimize_gait_terrain.py` — CMA-ES / TPE / DE search for the best gait per terrain, the best
   single gait, and the best curb-climbing gait → `src/resources/gait_library.json`.
 - `optimize_gait.py` / `export_policy.py` — tune the analytic gait map / export the actor to C++.
-- Legacy (PyBullet): `main.py`, `src/envs/hexapod_env.py`, `train.py`.
-
-## Create URDF from xacro
-
-```sh
-uv run python src/utils/xacro.py -o src/resources/model.urdf src/resources/model.xacro
-```
+- `export_gait.py` - write a `gait_library.json` entry as `firmware/include/gait_tuned.h`.
+- `test_firmware_gait_parity.py` - pytest module (and CLI) checking `gait_tuned.h` against the library and `firmware_gait.py` against the firmware headers.
+- `ik_feasibility.py` - fraction of a gait's commanded joint angles outside the servo range.
+- `servo_feasibility.py` / `servo_margin.py` - whether the real servos can run a gait, and how much torque margin it leaves.
+- `reward_alignment.py` / `reward_resolution.py` - whether the training reward ranks gaits like the benchmark, globally and near the optimum.
+- `gait_sensitivity.py` - one-parameter-at-a-time sensitivity of a searched gait.
+- `arc_stance_test.py` - arc stance versus the straight chord during turns.
+- `check_self_level.py` - whether the firmware's self-levelling term reduces body tilt.
+- `train_jump.py` / `eval_jump.py` - sim-only jump policies (vertical hop, directional charge).
+- `sim_gui.py` - one window driving walk and jump policies live, optionally from the handheld controller.
+- `sim_sandbox.py` - manual kinematics/gait sandbox and speed/stability tester, no RL.
+- `controller_bridge.py` - reads the ESP-NOW handheld controller over USB for the sim.
+- `lidar_slam.py` - standalone 2D LiDAR SLAM for the LD500 scanner, unrelated to the gait stack.

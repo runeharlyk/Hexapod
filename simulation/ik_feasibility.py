@@ -17,52 +17,23 @@ import argparse
 import json
 import os
 
-import mujoco
 import numpy as np
 
-from src.envs.hexapod_mj_env import PG_HEIGHT
-from src.robot.firmware_gait import BodyState, GaitController, GaitState, Kinematics
 from src.robot.gait_schedule import GaitSchedule
-from src.sim.mj_runtime import JOINT_NAMES, HexapodSim
+from src.sim.ik_feasibility_lite import joint_ranges, lift_mm, sample_joint_angles
 
 LIB = os.path.join(os.path.dirname(__file__), "src", "resources", "gait_library.json")
-
-
-def joint_ranges():
-    sim = HexapodSim()
-    return {n: sim.model.jnt_range[mujoco.mj_name2id(sim.model, mujoco.mjtObj.mjOBJ_JOINT, n)]
-            for n in JOINT_NAMES}
+JOINTS = ("coxa", "femur", "tibia")
 
 
 def check(sched: GaitSchedule, ranges, stride_mm=60.0, samples=200):
-    kin = Kinematics()
-    body = BodyState()
-    body.zm = -sched.ride_mm
-    gait = GaitState()
-    gait.step_y = stride_mm
-    gait.step_height = float(np.interp(sched.step_height, [-1, 1], PG_HEIGHT))
-    gait.stand_frac = sched.duty
-    gait.offset = sched.offsets()
-    gait.step_depth = sched.step_depth
-    gc = GaitController()
-    bad = tot = 0
-    worst = 0.0
-    per_joint = {"coxa": 0, "femur": 0, "tibia": 0}
-    for k in range(samples):
-        gc.set_phase(k / samples)
-        gc.generate_feet(gait, body)
-        ang = kin.inverse_kinematics(body, degrees=False).reshape(6, 3)
-        for i in range(6):
-            for j, jn in enumerate(("coxa", "femur", "tibia")):
-                lo, hi = ranges[f"{jn}_{i}"]
-                a = ang[i, j]
-                tot += 1
-                if a < lo or a > hi:
-                    bad += 1
-                    per_joint[jn] += 1
-                    worst = max(worst, float(np.rad2deg(max(lo - a, a - hi))))
-    return {"pct_out": 100.0 * bad / tot, "worst_deg": worst, "lift_mm": gait.step_height,
-            "ride_mm": sched.ride_mm, "per_joint": per_joint}
+    ang = sample_joint_angles(sched, stride_mm, samples)
+    excess = np.maximum(ranges[:, 0] - ang, ang - ranges[:, 1])   # > 0 where a command is clamped
+    out = excess > 0
+    per_joint = {jn: int(np.count_nonzero(out[:, j::3])) for j, jn in enumerate(JOINTS)}
+    worst = float(np.rad2deg(excess[out].max())) if out.any() else 0.0
+    return {"pct_out": 100.0 * np.count_nonzero(out) / out.size, "worst_deg": worst,
+            "lift_mm": lift_mm(sched), "ride_mm": sched.ride_mm, "per_joint": per_joint}
 
 
 def main():
@@ -75,8 +46,8 @@ def main():
     lib = json.load(open(LIB))["gaits"]
     keys = args.gaits or [k for k, v in lib.items() if not v.get("curb")]
 
-    print(f"femur range +-{np.rad2deg(ranges['femur_0'][1]):.0f} deg, "
-          f"coxa +-{np.rad2deg(ranges['coxa_0'][1]):.1f} deg, stride {args.stride:.0f} mm")
+    print(f"femur range +-{np.rad2deg(ranges[JOINTS.index('femur')][1]):.0f} deg, "
+          f"coxa +-{np.rad2deg(ranges[JOINTS.index('coxa')][1]):.1f} deg, stride {args.stride:.0f} mm")
     print(f"\n{'gait':22s} {'lift_mm':>8s} {'ride_mm':>8s} {'%out':>7s} {'worst':>7s}  offending joints")
     rows = []
     for k in keys:

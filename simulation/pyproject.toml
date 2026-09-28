@@ -18,7 +18,16 @@ dependencies = [
     "pyserial>=3.5",
     "optuna>=4.0",
     "cmaes>=0.11",
+    "matplotlib",
 ]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["test_*.py"]
+norecursedirs = [".*", "runs", "runs_test", "logs", "docs", "__pycache__"]
 
 [tool.uv]
 package = false

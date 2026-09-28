@@ -57,12 +57,13 @@ class HexapodJumpEnv(gym.Env):
     metadata = {"render_modes": []}
 
     def __init__(self, episode_seconds: float = 2.0, seed: int | None = None):
+        # The hop draws no random numbers, so `seed` only keeps the constructor interchangeable
+        # with HexapodChargeJumpEnv behind train_jump's ENV_FACTORY.
         super().__init__()
         self.sim = HexapodSim()
         self.stand_pose = self.sim.stand_pose.astype(np.float32)
         self.jnt_lo, self.jnt_hi = self.sim.joint_limits
         self.max_steps = int(episode_seconds / CONTROL_DT)
-        self.np_random_, _ = gym.utils.seeding.np_random(seed)
 
         self.action_space = gym.spaces.Box(-1.0, 1.0, shape=(18,), dtype=np.float32)
         obs_dim = 3 + 3 + 3 + 1 + 1 + 18 + 1 + 18
@@ -76,8 +77,6 @@ class HexapodJumpEnv(gym.Env):
 
     # ------------------------------------------------------------------ reset
     def reset(self, *, seed=None, options=None):
-        if seed is not None:
-            self.np_random_, _ = gym.utils.seeding.np_random(seed)
         self.sim.reset_to_stand()
         self.prev_action[:] = 0.0
         self.prev_joint_cmd = self.stand_pose.copy()

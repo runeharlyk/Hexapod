@@ -1,8 +1,13 @@
 """Domain randomization for sim-to-real transfer.
 
 Applied by `HexapodMjEnv` when `randomize=True`. Per-episode it perturbs the MODEL
-(masses/inertia, CoM, friction, motor strength) and sets per-episode sensor biases,
-action latency, and a push schedule. Per-step it adds IMU noise and applies pushes.
+(masses/inertia, CoM, friction) and sets per-episode sensor biases, action latency, and a
+push schedule. Per-step it adds IMU noise and applies pushes.
+
+Servo strength is deliberately NOT randomized here. The model's actuators are plain torque
+motors (build_model.py) driven by the servo model in mj_runtime, so the single strength factor
+is the env's `set_servo_scale(stall=...)`, drawn alongside stiffness and no-load speed.
+Scaling the motor gain here as well would stack a second, unlogged strength factor on top.
 
 The most important range for THIS robot (WiFi/BLE + open-loop servos) is action latency.
 """
@@ -17,9 +22,6 @@ class DomainRandomizer:
         self.base_body_inertia = model.body_inertia.copy()
         self.base_body_ipos = model.body_ipos.copy()
         self.base_geom_friction = model.geom_friction.copy()
-        self.base_gainprm = model.actuator_gainprm.copy()
-        self.base_biasprm = model.actuator_biasprm.copy()
-        self.base_forcerange = model.actuator_forcerange.copy()
         self.base_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base")
 
         # per-episode state
@@ -40,11 +42,6 @@ class DomainRandomizer:
             [-0.015, -0.015, -0.010], [0.015, 0.015, 0.010]
         )
         model.geom_friction[:, 0] = self.base_geom_friction[:, 0] * rng.uniform(0.6, 1.4)
-        # motor strength: position actuator kp lives in gainprm[:,0] and biasprm[:,1] = -kp
-        kp = rng.uniform(0.8, 1.2)
-        model.actuator_gainprm[:, 0] = self.base_gainprm[:, 0] * kp
-        model.actuator_biasprm[:, 1] = self.base_biasprm[:, 1] * kp
-        model.actuator_forcerange[:] = self.base_forcerange * rng.uniform(0.85, 1.15)
 
         # per-episode sensor biases + latency
         self.gyro_bias = rng.normal(0.0, 0.05, size=3)

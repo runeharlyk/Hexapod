@@ -63,7 +63,9 @@ def main():
     ap.add_argument("--workers", type=int, default=1, help="parallel workers (-1 = all cores)")
     args = ap.parse_args()
 
-    base = objective([GAIT_COEF[k] for k in PARAMS])
+    # objective() writes every candidate into GAIT_COEF, so keep the starting map to report against
+    original = {k: GAIT_COEF[k] for k in PARAMS}
+    base = objective([original[k] for k in PARAMS])
     print(f"baseline (hand-tuned map) mean reward/step-rollout: {-base:.2f}")
 
     # parallel workers need deferred updating (a whole generation is evaluated per map call)
@@ -75,7 +77,7 @@ def main():
     print(f"\noptimized mean reward: {-res.fun:.2f}  (baseline {-base:.2f})")
     print("optimized coefficients:")
     for k, v in best.items():
-        print(f"  {k:12s} {v:+.4f}   (was {GAIT_COEF[k] if False else ''})")
+        print(f"  {k:12s} {v:+.4f}   (was {original[k]:+.4f})")
     with open(OUT, "w", newline="\n") as f:
         json.dump(best, f, indent=2)
     print(f"\nsaved -> {OUT} (env.analytic_gait_action now uses these)")

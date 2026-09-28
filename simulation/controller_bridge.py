@@ -1,13 +1,13 @@
 """Bridge the ESP-NOW handheld controller (over USB) into the MuJoCo sim.
 
-The controller (../../Hardware/esp-now-controller) exposes a line-based CLI on
-its native USB Serial/JTAG port. Sent `stream on`, it emits one JSON telemetry
+The controller (the separate esp-now-controller firmware repository) exposes a
+line-based CLI on its native USB Serial/JTAG port. Sent `stream on`, it emits one JSON telemetry
 line per sample:
 
     {"t":"tlm","raw":[...],"n":[lx,ly,rx,ry],"btn":u,"seq":...}
 
 with axes calibrated/normalized to -1000..1000 (0 = centered) and `btn` a bitmask
-of BTN_* (see controller_packet.h). This reader thread keeps the latest axes and
+of BTN_* (see firmware/include/communication/controller_packet.h). This reader thread keeps the latest axes and
 accumulates button rising edges so the sim can be driven exactly like the robot
 (cf. firmware/src/communication/espnow_adapter.cpp), without polling losing a
 transient button press.
@@ -26,7 +26,7 @@ import threading
 import serial
 from serial.tools import list_ports
 
-# Mirrors controller_packet.h.
+# Mirrors firmware/include/communication/controller_packet.h.
 AXIS_FULL_SCALE = 1000.0
 BTN_LEFT = 1 << 0
 BTN_RIGHT = 1 << 1

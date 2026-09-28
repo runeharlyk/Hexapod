@@ -23,7 +23,8 @@ import mujoco
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
-from src.envs.hexapod_mj_env import ACT_DIM, HexapodMjEnv, make_env, load_env_config
+from src.envs.hexapod_mj_env import (ACT_DIM, CMD_VX, CMD_VY, CMD_YAW, HexapodMjEnv, make_env,
+                                     load_env_config)
 from src.sim.mj_runtime import CONTROL_DT
 
 # acceptance gates defining "stable"
@@ -37,8 +38,8 @@ DEFAULT_TOUR = [
     ("turn left", (0.0, 0.0, 0.4), 3),
     ("forward", (0.15, 0.0, 0.0), 4),
     ("turn right", (0.0, 0.0, -0.4), 3),
-    ("strafe left", (0.0, 0.10, 0.0), 4),
-    ("strafe right", (0.0, -0.10, 0.0), 4),
+    ("strafe right", (0.0, 0.10, 0.0), 4),   # +vy is body +X, the robot's right
+    ("strafe left", (0.0, -0.10, 0.0), 4),
     ("backward", (-0.10, 0.0, 0.0), 4),
     ("stop", (0.0, 0.0, 0.0), 2),
 ]
@@ -57,27 +58,31 @@ class _ZeroPolicy:
 class _Pusher:
     """Fixed-magnitude horizontal pushes on a fixed schedule (headless stress test).
 
-    Pushes `force` N for 5 control steps (0.1 s) every 2.5 s in a seeded random
-    horizontal direction, starting 1 s in. With --randomize, drives the
-    DomainRandomizer's push fields so this schedule replaces the random 3 N one.
+    Pushes `force` N for 0.1 s every 2.5 s in a seeded random horizontal direction,
+    starting 1 s in. The schedule runs on simulated time, so a randomized control period
+    does not stretch it. With --randomize, drives the DomainRandomizer's push fields so
+    this schedule replaces the random 3 N one.
     """
 
-    START, PERIOD, DUR = 50, 125, 5
+    START_S, PERIOD_S, DUR_S = 1.0, 2.5, 0.1
 
     def __init__(self, env, force, seed):
         self.env, self.force = env, force
         self.rng = np.random.default_rng(seed)
         self.base_id = mujoco.mj_name2id(env.sim.model, mujoco.mjtObj.mjOBJ_BODY, "base")
         self.vec = np.zeros(3)
+        self.push_index = -1
 
-    def apply(self, step):
-        phase = step - self.START
-        if phase < 0:
+    def apply(self, t):
+        since = t - self.START_S
+        if since < 0:
             return
-        if phase % self.PERIOD == 0:
+        index = int(since // self.PERIOD_S)
+        if index != self.push_index:
+            self.push_index = index
             ang = self.rng.uniform(0.0, 2.0 * np.pi)
             self.vec = self.force * np.array([np.cos(ang), np.sin(ang), 0.0])
-        active = phase % self.PERIOD < self.DUR
+        active = since - index * self.PERIOD_S < self.DUR_S
         dr = self.env.dr
         if dr is not None:
             dr.next_push = 10**9  # disable the random schedule (re-armed on every reset)
@@ -118,7 +123,8 @@ def make_eval_env(args, seed=None, terrain_kind=None):
                         terrain_kind=terrain_kind or args.terrain_kind,
                         terrain_feature=args.terrain_feature,
                         obs_contact=cfg["obs_contact"], obs_history=cfg["obs_history"],
-                        gait_schedule=_schedule(cfg))
+                        gait_schedule=_schedule(cfg), reflex=cfg.get("reflex", False),
+                        self_level=cfg.get("self_level", True), arc_stance=cfg.get("arc_stance", False))
 
 
 def load(args):
@@ -162,12 +168,14 @@ def run_headless(args):
             o, _ = env.reset()
             x0, y0 = env.sim.data.qpos[0], env.sim.data.qpos[1]
             bv, yaw_rate, acts, fell = [], [], [], False
-            for step in range(int(dur / CONTROL_DT)):
+            elapsed = 0.0
+            while elapsed < dur:
                 if pusher:
-                    pusher.apply(step)
+                    pusher.apply(elapsed)
                 a, _ = model.predict(norm(o), deterministic=True)
                 acts.append(np.mean(np.abs(a)))
                 o, _, t, _, info = env.step(a)
+                elapsed += env.dt
                 bv.append([info["bvx"], info["bvy"]])
                 yaw_rate.append(env.sim.data.qvel[5])  # body yaw rate (rad/s)
                 if t:
@@ -220,9 +228,11 @@ def _drive(model, norm, env, sched, render_cb, loop=True):
         for label, cmd, dur in sched:
             print(f"  command: {label} {cmd}")
             env.cmd[:] = cmd
-            for _ in range(int(dur / CONTROL_DT)):
+            elapsed = 0.0
+            while elapsed < dur:
                 a, _ = model.predict(norm(o), deterministic=True)
                 o, _, t, _, _ = env.step(a)
+                elapsed += env.dt
                 if not render_cb():
                     return
                 if t:  # fell: reset, keep touring
@@ -232,7 +242,11 @@ def _drive(model, norm, env, sched, render_cb, loop=True):
 
 
 def _draw_arrows(viewer, env, cmd, avx, avy):
-    """Red arrow = commanded velocity direction; green = (smoothed) actual velocity, world frame."""
+    """Red arrow = commanded velocity direction; green = (smoothed) actual velocity, world frame.
+
+    cmd is [forward, lateral, yaw] and the robot faces body +Y with +X to its right, so the
+    commanded body-frame velocity is (x, y) = (cmd[1], cmd[0]).
+    """
     d = env.sim.data
     base = d.qpos[0:3].copy()
     base[2] += 0.12
@@ -241,7 +255,8 @@ def _draw_arrows(viewer, env, cmd, avx, avy):
         2 * (q[0] * q[3] + q[1] * q[2]), 1 - 2 * (q[2] * q[2] + q[3] * q[3])
     )
     c, s = math.cos(yaw), math.sin(yaw)
-    cwx, cwy = c * cmd[0] - s * cmd[1], s * cmd[0] + c * cmd[1]  # body cmd -> world
+    bx, by = cmd[1], cmd[0]
+    cwx, cwy = c * bx - s * by, s * bx + c * by  # body cmd -> world
     scn = viewer.user_scn
     scn.ngeom = 0
 
@@ -282,18 +297,18 @@ def run_viewer(args):
     o, _ = env.reset()
     cmd = [0.0, 0.0, 0.0]
     DV = (0.03, 0.03, 0.1)
-    LIM = ((-0.12, 0.12), (-0.20, 0.20), (-0.5, 0.5))
+    LIM = (CMD_VX, CMD_VY, CMD_YAW)
     clamp = lambda v, lim: max(lim[0], min(lim[1], v))
 
     def key_cb(key):
         if key in (265, 87):
-            cmd[1] = clamp(cmd[1] + DV[1], LIM[1])  # Left / A
+            cmd[0] = clamp(cmd[0] + DV[0], LIM[0])  # Up / W: forward
         elif key in (264, 83):
-            cmd[1] = clamp(cmd[1] - DV[1], LIM[1])  # Right / D
+            cmd[0] = clamp(cmd[0] - DV[0], LIM[0])  # Down / S: back
         elif key in (263, 65):
-            cmd[0] = clamp(cmd[0] + DV[0], LIM[0])  # Up / W
+            cmd[1] = clamp(cmd[1] - DV[1], LIM[1])  # Left / A: strafe left (-X)
         elif key in (262, 68):
-            cmd[0] = clamp(cmd[0] - DV[0], LIM[0])  # Down / S
+            cmd[1] = clamp(cmd[1] + DV[1], LIM[1])  # Right / D: strafe right (+X)
         elif key == 81:
             cmd[2] = clamp(cmd[2] + DV[2], LIM[2])  # Q
         elif key == 69:

@@ -26,6 +26,7 @@ on the real robot). Those are used for REWARD only.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 from collections import deque
@@ -83,7 +84,7 @@ SCHED_LAG_RATE = 0.6       # cycles/s of offset change
 # lerped at `smoothing_factor` per 5 ms control tick. Without it here the policy trains against a
 # body that never auto-levels and then deploys onto one that does, competing for the same joints.
 # LEVEL_SIGN is +1 to match the firmware's `+ angleY()`; the direction that actually reduces tilt
-# is measured, not assumed -- see tools/check_self_level.py.
+# is measured, not assumed -- see check_self_level.py.
 SELF_LEVEL_SMOOTHING = 0.06   # firmware smoothing_factor
 SELF_LEVEL_TICK_S = 0.005     # firmware control period the factor was tuned at
 LEVEL_SIGN = 1.0
@@ -261,6 +262,9 @@ class HexapodMjEnv(gym.Env):
         self.episode_seconds = episode_seconds
 
         self.sim = HexapodSim(TERRAIN_MODEL_PATH) if terrain > 0 else HexapodSim()
+        # Whether the model carries the heightfield, fixed at construction. A curriculum may later
+        # set terrain to 0, and the field must then be regenerated flat rather than left rough.
+        self._has_hfield = self.sim.model.nhfield > 0
         # control-rate: base 50 Hz, randomized per episode (dt is also an observation)
         self._physics_dt = float(self.sim.model.opt.timestep)
         self._base_frame_skip = int(self.sim.frame_skip)
@@ -337,8 +341,8 @@ class HexapodMjEnv(gym.Env):
         self.dt = self.frame_skip_ep * self._physics_dt
         self.action_alpha = float(np.exp(-self.dt / ACTION_TAU))
         self.max_steps = int(self.episode_seconds / self.dt)
-        if self.terrain > 0:
-            # training randomizes bumpiness per episode; eval uses a fixed value
+        if self._has_hfield:
+            # training randomizes bumpiness per episode; eval uses a fixed value. Amplitude 0 is flat.
             feat = float(self.np_random_.uniform(1.0, 2.5)) if self.randomize else self.terrain_feature
             self.episode_terrain_kind = randomize_hfield(
                 self.sim.model, self.np_random_, self.terrain, kind=self.terrain_kind, feature=feat)
@@ -367,7 +371,8 @@ class HexapodMjEnv(gym.Env):
         self.curriculum = float(np.clip(level, 0.0, 1.0))
 
     def set_terrain(self, height):
-        """Set the next reset's max bump height (m). Only effective if built with terrain>0."""
+        """Set the next reset's max bump height (m). Only effective if built with terrain>0, which is
+        what gives the model its heightfield; 0 then regenerates it flat."""
         self.terrain = float(max(0.0, height))
 
     def _terrain_speed_scale(self):
@@ -715,28 +720,34 @@ class HexapodMjEnv(gym.Env):
 
 
 def make_env(control_mode="phase_gait", randomize=False, seed=0, resample_steps=0, terrain=0.0,
-             terrain_kind="bumps", obs_contact=False, obs_history=1, gait_schedule=None,
-             terrain_speed_floor=TERRAIN_SPEED_FLOOR, reward_weights=None,
-             reward_mode="shaped"):
+             terrain_kind="bumps", terrain_feature=1.0, obs_contact=False, obs_history=1,
+             gait_schedule=None, terrain_speed_floor=TERRAIN_SPEED_FLOOR, reward_weights=None,
+             reward_mode="shaped", reflex=False, self_level=True, arc_stance=False):
     """Factory for SubprocVecEnv (must be picklable / module-level)."""
     def _thunk():
         return HexapodMjEnv(control_mode=control_mode, randomize=randomize, seed=seed,
                             resample_steps=resample_steps, terrain=terrain, terrain_kind=terrain_kind,
+                            terrain_feature=terrain_feature,
                             obs_contact=obs_contact, obs_history=obs_history,
                             gait_schedule=gait_schedule,
                             terrain_speed_floor=terrain_speed_floor,
-                            reward_weights=reward_weights, reward_mode=reward_mode)
+                            reward_weights=reward_weights, reward_mode=reward_mode,
+                            reflex=reflex, self_level=self_level, arc_stance=arc_stance)
     return _thunk
 
 
 CONFIG_FILE = "env_config.json"
 # Constructor kwargs that change the observation/action layout or the gait the policy sits on, so
 # evaluation must reproduce them. `gait_schedule` is stored as a plain dict of floats.
-CONFIG_KEYS = ("control_mode", "obs_contact", "obs_history", "gait_schedule")
+CONFIG_KEYS = ("control_mode", "obs_contact", "obs_history", "gait_schedule", "reflex", "self_level",
+               "arc_stance")
 
 
 def save_env_config(rundir, **kw):
-    cfg = {k: kw[k] for k in CONFIG_KEYS if k in kw}
+    """Records every CONFIG_KEYS entry, taking the constructor default for any the caller omits,
+    so a run always states the full layout it was trained with."""
+    defaults = inspect.signature(HexapodMjEnv.__init__).parameters
+    cfg = {k: kw[k] if k in kw else defaults[k].default for k in CONFIG_KEYS}
     sched = cfg.get("gait_schedule")
     if sched is not None and not isinstance(sched, dict):
         cfg["gait_schedule"] = sched.to_dict()
@@ -748,7 +759,8 @@ def load_env_config(rundir):
     """Observation/action layout and base gait a run was trained with. Runs predating the file
     used the single-frame, no-contact observation on the legacy analytic gait."""
     path = os.path.join(rundir, CONFIG_FILE)
-    cfg = {"obs_contact": False, "obs_history": 1, "gait_schedule": None}
+    cfg = {"obs_contact": False, "obs_history": 1, "gait_schedule": None, "reflex": False,
+           "self_level": True, "arc_stance": False}
     if os.path.exists(path):
         cfg.update(json.load(open(path)))
     return cfg

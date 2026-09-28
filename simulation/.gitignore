@@ -5,3 +5,5 @@ logs/
 *.pkl
 __pycache__/
 *.mp4
+*.log
+src/resources/*.json.*
