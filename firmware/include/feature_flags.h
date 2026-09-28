@@ -1,5 +1,5 @@
-#ifndef Features_h
-#define Features_h
+#ifndef FEATURE_FLAGS_H
+#define FEATURE_FLAGS_H
 
 #define FT_ENABLED(feature) feature
 

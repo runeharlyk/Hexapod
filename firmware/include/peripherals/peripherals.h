@@ -3,7 +3,7 @@
 #include <esp_log.h>
 #include <vector>
 
-#include <features.h>
+#include <feature_flags.h>
 #include <message_types.h>
 #include <peripherals/i2c_bus.h>
 #include <settings/peripherals_settings.h>

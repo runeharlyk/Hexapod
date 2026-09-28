@@ -1,5 +1,5 @@
 #pragma once
-#include <features.h>
+#include <feature_flags.h>
 #include <communication/webserver.h>
 
 #if EMBED_WEBAPP

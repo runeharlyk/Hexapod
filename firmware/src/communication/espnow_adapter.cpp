@@ -11,7 +11,7 @@
 #include <event_bus.h>
 #include <message_types.h>
 #include <communication/controller_packet.h>
-#include <features.h>
+#include <feature_flags.h>
 
 static const char* TAG = "espnow";
 

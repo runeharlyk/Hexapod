@@ -1,6 +1,6 @@
 #pragma once
 
-#include <features.h>
+#include <feature_flags.h>
 
 #if FT_ENABLED(USE_POLICY)
 

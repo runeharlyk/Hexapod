@@ -22,7 +22,7 @@
 #include <mutex>
 #include <string>
 
-#include <features.h>
+#include <feature_flags.h>
 #include <communication/espnow_adapter.h>
 #include <ota_service.h>
 #include <peripherals_settings_service.h>
