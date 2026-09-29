@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest"]
+dev = ["pytest", "grpcio-tools"]
 
 [tool.pytest.ini_options]
 testpaths = ["."]
