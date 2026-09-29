@@ -446,6 +446,7 @@ class Player:
         self.t = 0.0
         self._plays_done = 0
         start = live if live is not None else self.last_pose
+        self.last_pose = start.copy()
         self._start_blend(start, self._evaluate(0.0), anim.entry_seconds(), State.ENTRY)
 
     def stop(self) -> None:

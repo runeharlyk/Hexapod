@@ -455,6 +455,15 @@ def test_play_during_exit_enters_from_the_current_blend_without_a_jump():
     assert np.allclose(after.body, before.body) and np.allclose(after.legs[0].foot, before.legs[0].foot)
 
 
+def test_stop_before_the_first_update_blends_from_the_live_pose():
+    live = an.Pose(np.array([0.05, 0, 0, 0, 0, 12.0]), [an.LegTarget(foot=np.array([10.0, 0, 5.0]))] + stance_legs()[:5])
+    p = an.Player(KIN)
+    p.play(lifted_anim(), live=live)
+    p.stop()
+    pose = p.update(0.0)
+    assert np.allclose(pose.body, live.body) and np.allclose(pose.legs[0].foot, live.legs[0].foot)
+
+
 def test_entry_toward_a_joint_leg_blends_in_joint_space():
     a = an.Animation(name="j", entry_time=0.4, keyframes=[
         an.Keyframe(0.0, legs=[an.LegTarget(joints=np.array([0, 80.0, -110.0]))] + stance_legs()[:5]),
