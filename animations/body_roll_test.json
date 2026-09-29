@@ -17,7 +17,7 @@
   "params": [
     {"id": "BODY_ROLL", "min": 0, "defaultValue": 1, "max": 1.2},
     {"id": "BODY_PITCH", "min": 0, "defaultValue": 1, "max": 1.2},
-    {"id": "BODY_YAW", "min": 0, "defaultValue": 1, "max": 1.1},
+    {"id": "BODY_YAW", "min": 0, "defaultValue": 1, "max": 1.09},
     {"id": "SPEED", "min": 0.5, "defaultValue": 1, "max": 2}
   ]
 }
