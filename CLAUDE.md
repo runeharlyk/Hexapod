@@ -10,6 +10,8 @@ A 6-legged (18-servo) hexapod robot built on an ESP32-S3. The repo has three ind
 - **`app/`** — SvelteKit web controller (TypeScript). Deployed to GitHub Pages, also embeddable into the firmware. Talks to the robot over BLE or WebSocket using protobuf messages generated from `platform_shared/*.proto`.
 - **`simulation/`** — Python MuJoCo simulation + RL training (`train_mj.py`) for sim-to-real transfer to the robot; managed with `uv`. A trained policy is exported to a dependency-free C++ header (`export_policy.py`) and embedded in the firmware (`WALK_NN` mode).
 
+The root `animations/` directory is the bundled animation library (JSON in the `platform_shared/animation.proto` schema) shared by all three platforms.
+
 The NumPy kinematics/gait (`simulation/src/robot/firmware_gait.py`) is a faithful port of the firmware kinematics/gait (`firmware/include/kinematics.h`, `gait.h`) and is the sim-to-real deploy target — when changing motion math, keep both in sync.
 
 ## Commands
@@ -26,7 +28,10 @@ pio device monitor              # serial monitor @ 115200 with esp32 exception d
 
 The `native` test env needs a C++20 host compiler on PATH (`g++` >= 10, or set `CXX`); `utils/math_utils.h` falls back to a portable matrix multiply when ESP-DSP is absent.
 
-Two pre-scripts run on every firmware build: `firmware/scripts/pre_build.py` regenerates the nanopb sources from `platform_shared/*.proto` (needs python with `grpcio-tools`), and `firmware/scripts/build_app.py` bakes the Svelte app into `firmware/include/WWWData.h` when `EMBED_WEBAPP=1`. By default `EMBED_WEBAPP=0` (see `firmware/features.ini`), so the app is served separately and the firmware build does not require Node.
+Three pre-scripts run on every firmware build.
+`firmware/scripts/pre_build.py` regenerates the nanopb sources from `platform_shared/*.proto` (needs python with `grpcio-tools`), and `firmware/scripts/pack_animations.py` packs the root `animations/*.json` into `firmware/data/animations/*.pb` for the LittleFS image.
+`firmware/scripts/build_app.py` bakes the Svelte app into `firmware/include/WWWData.h` when `EMBED_WEBAPP=1`.
+By default `EMBED_WEBAPP=0` (see `firmware/features.ini`), so the app is served separately and the firmware build does not require Node.
 
 ### Web app (run from `app/`)
 ```sh

@@ -2,6 +2,19 @@
 
 The firmware and app parity tests read that file; test_animation_fixtures.py fails when it is stale.
     uv run python gen_animation_fixtures.py
+
+Fixture contract for porters:
+- evaluate cases: for each sample time t, pose_to_angles(evaluate(animation, params, t)).
+- player cases: play(animation, params, live) once, then for each step: apply the event keyed by
+  that step index (if any), then update(dt), then record the state name, angles and mask. An event
+  applies before that step's update.
+- a chained "play" event passes no live pose, so the entry starts from the player's last_pose.
+- params are keyed by ParamId name; undeclared ids resolve to 1.
+- angles are degrees in IK order: coxa, femur, tibia per leg, legs 0..5.
+- mask bit leg * 3 + joint is set for a joint that hit its limit or was saturated by an unreachable foot.
+- the fx_*.json values are protobuf float (32-bit): a port that parses the JSON rounds every number
+  to float32 before use; dt, params and the live pose are used as written.
+- states and masks must match exactly; angles within "tolerance" (degrees).
 """
 import json
 from pathlib import Path
