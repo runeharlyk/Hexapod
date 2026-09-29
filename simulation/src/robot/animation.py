@@ -327,8 +327,30 @@ def evaluate(anim: Animation, params: np.ndarray, t: float, kin: Kinematics) -> 
     return Pose(body, legs)
 
 
+def foot_reachable(kin: Kinematics, body6: np.ndarray, foot_offset: np.ndarray, leg: int) -> bool:
+    """Whether the femur-tibia pair can reach the foot. The foot is transformed exactly as
+    Kinematics.inverse_kinematics does (body transform, mount offset, mount rotation), then
+    radial = hypot(lx - root_j1, ly) - j1_j2 and lr = hypot(radial, lz), and the foot is reachable
+    when |j2_j3 - j3_tip| <= lr <= j2_j3 + j3_tip. The IK clamps its acos arguments, so outside
+    that range it silently returns a straight or folded leg with in-limit angles."""
+    b = _body_state(body6)
+    foot = b.feet[leg].copy()
+    foot[:3] += foot_offset
+    w = kin.transformation_matrix(b) @ foot
+    wx = w[0] - kin.mount_pos[leg][0]
+    wy = w[1] - kin.mount_pos[leg][1]
+    lz = w[2] - kin.mount_pos[leg][2]
+    lx = wx * kin.ca[leg] + wy * kin.sa[leg]
+    ly = wx * kin.sa[leg] - wy * kin.ca[leg]
+    radial = math.hypot(lx - kin.root_j1, ly) - kin.j1_j2
+    lr = math.hypot(radial, lz)
+    return abs(kin.j2_j3 - kin.j3_tip) <= lr <= kin.j2_j3 + kin.j3_tip
+
+
 def pose_to_angles(pose: Pose, kin: Kinematics) -> tuple[np.ndarray, int]:
-    """18 servo angles (deg, IK order) and an 18-bit mask of the joints that hit a limit."""
+    """18 servo angles (deg, IK order) and an 18-bit mask, bit leg * 3 + joint, of the joints that
+    hit a limit. A foot leg that fails foot_reachable also sets its femur and tibia bits, the joints
+    the IK saturates. The firmware mirrors this with the same kinematics constants."""
     b = _body_state(pose.body)
     for i, leg in enumerate(pose.legs):
         if not leg.is_joints():
@@ -342,6 +364,9 @@ def pose_to_angles(pose: Pose, kin: Kinematics) -> tuple[np.ndarray, int]:
     mask = 0
     for j in np.flatnonzero(clamped != angles):
         mask |= 1 << int(j)
+    for i, leg in enumerate(pose.legs):
+        if not leg.is_joints() and not foot_reachable(kin, pose.body, leg.foot, i):
+            mask |= 0b110 << (i * 3)
     return clamped, mask
 
 

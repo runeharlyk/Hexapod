@@ -300,6 +300,23 @@ def test_pose_to_angles_overrides_joint_legs_and_clamps_with_a_mask():
     assert not mask & 0b111  # leg 0 at stance is clean
 
 
+@pytest.mark.parametrize("offset", [[100.0, 0, 0], [0, 0, -200.0]], ids=["too_far_out", "too_far_down"])
+def test_an_unreachable_foot_sets_its_femur_and_tibia_bits(offset):
+    pose = an.Pose.stance()
+    pose.legs[1] = an.LegTarget(foot=np.array(offset))
+    assert not an.foot_reachable(KIN, pose.body, pose.legs[1].foot, 1)
+    _, mask = an.pose_to_angles(pose, KIN)
+    assert mask == (1 << 4) | (1 << 5)
+
+
+def test_mixed_interpolation_from_an_unreachable_foot_evaluates():
+    a = two_keyframes()
+    a.keyframes[0].legs = [an.LegTarget(foot=np.array([0, 0, -200.0]))] + stance_legs()[:5]
+    a.keyframes[1].legs = [an.LegTarget(joints=np.array([0, 80.0, -110.0]))] + stance_legs()[:5]
+    pose = an.evaluate(a, an.resolve_params(a, None), 0.5, KIN)
+    assert pose.legs[0].is_joints() and np.all(np.isfinite(pose.legs[0].joints))
+
+
 def test_stance_pose_reproduces_the_standing_angles():
     angles, mask = an.pose_to_angles(an.Pose.stance(), KIN)
     assert mask == 0
