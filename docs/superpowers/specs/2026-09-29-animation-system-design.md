@@ -137,7 +137,7 @@ Parameter semantics:
 | `BODY_X` .. `BODY_YAW` | multiplies that body channel after interpolation and overlays |
 | `FOOT_LIFT` | multiplies every foot offset `z` |
 | `OVERLAY_AMPLITUDE` | multiplies every overlay amplitude |
-| `REPEAT` | number of plays of a non-looping animation, rounded to an integer; ignored when `loop` |
+| `REPEAT` | number of plays of a non-looping animation, rounded half up, at least 1; ignored when `loop` |
 
 A parameter the animation does not declare takes its default: 1 for every multiplier and `REPEAT`, and is not shown in any UI.
 

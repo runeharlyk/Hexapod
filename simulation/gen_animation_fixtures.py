@@ -41,6 +41,8 @@ PLAYER_CASES = [
      "events": [{"step": 40, "action": "stop"}], "steps": 80},
     {"animation": "fx_params", "params": {"SPEED": 2.0, "REPEAT": 2}, "dt": 0.025, "live": DISPLACED_LIVE,
      "events": [], "steps": 100},
+    {"animation": "fx_params", "params": {"REPEAT": 2.5, "SPEED": 2.0}, "dt": 0.025, "live": DISPLACED_LIVE,
+     "events": [], "steps": 120},
     {"animation": "fx_overlay", "params": {}, "dt": 0.02, "live": DISPLACED_LIVE,
      "events": [{"step": 110, "action": "stop"}], "steps": 150},
 ]

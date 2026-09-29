@@ -388,7 +388,11 @@ def _blend(a: Pose, b: Pose, u: float) -> Pose:
 
 
 class Player:
-    """Entry -> Playing -> Hold | Exit -> Done, around evaluate(). Mirrors the firmware AnimationPlayer."""
+    """Entry -> Playing -> Hold | Exit -> Done, around evaluate(). Mirrors the firmware AnimationPlayer.
+
+    A non-looping animation plays max(1, floor(REPEAT + 0.5)) times: REPEAT is rounded half up and
+    clamped to at least 1, so every language agrees (Python's round() would round half to even).
+    """
 
     def __init__(self, kin: Kinematics | None = None):
         self.kin = kin or Kinematics()
@@ -456,7 +460,7 @@ class Player:
         if self.t < duration:
             return evaluate(anim, self.params, self.t, self.kin)
         self._plays_done += 1
-        if self._plays_done < int(round(self.params[ParamId.REPEAT])):
+        if self._plays_done < max(1, math.floor(self.params[ParamId.REPEAT] + 0.5)):
             self.t = self.t - duration if duration > 0.0 else 0.0
             return evaluate(anim, self.params, self.t, self.kin)
         final = evaluate(anim, self.params, duration, self.kin)
