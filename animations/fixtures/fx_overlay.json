@@ -1,0 +1,13 @@
+{
+  "name": "fx_overlay",
+  "description": "Parity fixture: body and foot overlays with windows, looping",
+  "schema": 1,
+  "loop": true,
+  "keyframes": [{"time": 0}, {"time": 1.2, "body": {"z": 8}}],
+  "overlays": [
+    {"bodyAxis": 0, "amplitude": 0.12, "frequency": 1.5, "phase": 0, "start": 0, "end": 1.2},
+    {"bodyAxis": 5, "amplitude": 6, "frequency": 0.8333, "phase": 1.5708, "start": 0.2, "end": 1.0},
+    {"footChannel": 5, "amplitude": 12, "frequency": 2, "phase": 0.3, "start": 0, "end": 0.9}
+  ],
+  "params": [{"id": "OVERLAY_AMPLITUDE", "min": 0, "defaultValue": 1, "max": 2}]
+}
