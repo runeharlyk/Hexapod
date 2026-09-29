@@ -65,6 +65,13 @@ def test_validate_accepts_a_minimal_animation():
     (lambda a: a.params.extend([an.ParamSpec(an.ParamId.SPEED, 0.5, 1, 2)] * 2), "unique"),
     (lambda a: a.params.append(an.ParamSpec(an.ParamId.BODY_Z, 0.5, 3, 2)), "min <= default_value <= max"),
     (lambda a: a.params.append(an.ParamSpec(an.ParamId.SPEED, 0.0, 1, 2)), "SPEED"),
+    (lambda a: setattr(a.keyframes[1], "time", math.nan), "keyframe 1 has a non-finite value"),
+    (lambda a: a.overlays.append(an.Overlay(body_axis=0, amplitude=1, frequency=1, start=0, end=math.inf)),
+     "overlay 0 has a non-finite value"),
+    (lambda a: setattr(a, "entry_time", math.inf), "entry_time and exit_time must be finite"),
+    (lambda a: setattr(a, "description", "\u00e9" * 48 + "d"), "96 bytes"),
+    (lambda a: (setattr(a, "loop", True), setattr(a, "hold_end", True)), "loop and hold_end"),
+    (lambda a: a.params.append(an.ParamSpec(an.ParamId.REPEAT, 0, 1, 2)), "REPEAT needs min >= 1"),
 ])
 def test_validate_reports_each_structural_rule(mutate, message):
     a = two_keyframes()
@@ -73,12 +80,37 @@ def test_validate_reports_each_structural_rule(mutate, message):
     assert err is not None and message in err
 
 
+def test_description_limit_counts_utf8_bytes():
+    a = two_keyframes(description="\u00e9" * 48)
+    assert len(a.description.encode("utf-8")) == 96 and an.validate(a) is None
+
+
+def proto_with_ease_7(msg):
+    msg.keyframes[1].ease = 7
+
+
+def proto_with_param_id_12(msg):
+    msg.params.add(id=12, min=1, default_value=1, max=1)
+
+
+@pytest.mark.parametrize("mutate, message", [
+    (proto_with_ease_7, "keyframe 1 ease out of range"),
+    (proto_with_param_id_12, "param 0 id out of range"),
+])
+def test_from_proto_keeps_out_of_range_enums_for_validate_to_reject(mutate, message):
+    msg = to_proto(two_keyframes())
+    mutate(msg)
+    a = from_proto(msg)
+    assert an.validate(a) == message
+    assert to_proto(a) == msg
+
+
 def test_validate_rejects_too_many_of_everything():
     a = an.Animation(name="t", keyframes=[an.Keyframe(float(i)) for i in range(33)])
     assert "32" in an.validate(a)
     a = two_keyframes(overlays=[an.Overlay(body_axis=0, amplitude=1, frequency=1, start=0, end=1)] * 9)
     assert "8" in an.validate(a)
-    a = two_keyframes(params=[an.ParamSpec(an.ParamId(i), 0.5, 1, 2) for i in range(10)])
+    a = two_keyframes(params=[an.ParamSpec(an.ParamId(i), 1, 1, 2) for i in range(10)])
     assert an.validate(a) is None
     a.params.append(an.ParamSpec(an.ParamId.REPEAT, 1, 1, 1))
     assert "10" in an.validate(a)

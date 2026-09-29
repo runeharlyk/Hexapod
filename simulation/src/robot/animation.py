@@ -135,28 +135,61 @@ def leg_target(keyframe: Keyframe, leg: int) -> LegTarget:
     return keyframe.legs[leg] if keyframe.legs else LegTarget.stance()
 
 
+def _non_finite(anim: Animation) -> str | None:
+    if not (math.isfinite(anim.entry_time) and math.isfinite(anim.exit_time)):
+        return "entry_time and exit_time must be finite"
+    for i, k in enumerate(anim.keyframes):
+        values = [k.time, *k.body]
+        for lt in k.legs:
+            values.extend(lt.joints if lt.is_joints() else lt.foot)
+        if not all(math.isfinite(v) for v in values):
+            return f"keyframe {i} has a non-finite value"
+    for i, o in enumerate(anim.overlays):
+        if not all(math.isfinite(v) for v in (o.amplitude, o.frequency, o.phase, o.start, o.end)):
+            return f"overlay {i} has a non-finite value"
+    for i, p in enumerate(anim.params):
+        if not all(math.isfinite(v) for v in (p.min, p.default_value, p.max)):
+            return f"param {i} has a non-finite value"
+    return None
+
+
 def validate(anim: Animation) -> str | None:
-    """Returns the first structural error, or None. The firmware and app apply the same rules."""
+    """Returns the first structural error, or None. The firmware and app apply the same rules.
+
+    The description limit is DESCRIPTION_MAX bytes of UTF-8, not characters, because the nanopb
+    buffer is sized in bytes. Every float in the file must be finite. Keyframe ease and param id
+    are checked as raw integers (0..3 and 0..9) because the proto enums are open and a decoder
+    passes an unknown value through.
+    """
     if anim.schema != SCHEMA_VERSION:
         return f"schema {anim.schema} is not {SCHEMA_VERSION}"
     if not 1 <= len(anim.name) <= NAME_MAX or not set(anim.name) <= NAME_CHARS:
         return f"name must be 1-{NAME_MAX} characters of [a-z0-9_-]"
-    if len(anim.description) > DESCRIPTION_MAX:
-        return f"description longer than {DESCRIPTION_MAX}"
+    if len(anim.description.encode("utf-8")) > DESCRIPTION_MAX:
+        return f"description longer than {DESCRIPTION_MAX} bytes"
+    if anim.loop and anim.hold_end:
+        return "loop and hold_end cannot both be set"
     if not anim.keyframes:
         return "at least one keyframe is required"
     if len(anim.keyframes) > KEYFRAME_MAX:
         return f"more than {KEYFRAME_MAX} keyframes"
+    if len(anim.overlays) > OVERLAY_MAX:
+        return f"more than {OVERLAY_MAX} overlays"
+    if len(anim.params) > PARAM_MAX:
+        return f"more than {PARAM_MAX} params"
+    for i, k in enumerate(anim.keyframes):
+        if len(k.legs) not in (0, 6):
+            return f"keyframe {i} must have 0 or 6 legs"
+        if not 0 <= k.ease <= 3:
+            return f"keyframe {i} ease out of range"
+    err = _non_finite(anim)
+    if err:
+        return err
     if anim.keyframes[0].time != 0.0:
         return "first keyframe must be at time 0"
     for i in range(1, len(anim.keyframes)):
         if anim.keyframes[i].time <= anim.keyframes[i - 1].time:
             return f"keyframe {i} time must increase"
-    for i, k in enumerate(anim.keyframes):
-        if len(k.legs) not in (0, 6):
-            return f"keyframe {i} must have 0 or 6 legs"
-    if len(anim.overlays) > OVERLAY_MAX:
-        return f"more than {OVERLAY_MAX} overlays"
     for i, o in enumerate(anim.overlays):
         if (o.body_axis is None) == (o.foot_channel is None):
             return f"overlay {i} needs exactly one channel"
@@ -168,17 +201,20 @@ def validate(anim: Animation) -> str | None:
             return f"overlay {i} window must have 0 <= start < end"
         if o.end > anim.duration:
             return f"overlay {i} end is after the last keyframe"
-    if len(anim.params) > PARAM_MAX:
-        return f"more than {PARAM_MAX} params"
     seen = set()
-    for p in anim.params:
+    for i, p in enumerate(anim.params):
+        if not 0 <= p.id <= 9:
+            return f"param {i} id out of range"
+        name = ParamId(p.id).name
         if p.id in seen:
-            return f"param {p.id.name} is not unique"
+            return f"param {name} is not unique"
         seen.add(p.id)
         if not p.min <= p.default_value <= p.max:
-            return f"param {p.id.name} needs min <= default_value <= max"
+            return f"param {name} needs min <= default_value <= max"
         if p.id == ParamId.SPEED and p.min <= 0:
             return "param SPEED needs a positive min"
+        if p.id == ParamId.REPEAT and p.min < 1:
+            return "param REPEAT needs min >= 1"
     return None
 
 

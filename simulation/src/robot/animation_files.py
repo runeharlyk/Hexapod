@@ -28,7 +28,7 @@ def _overlay_from_proto(o: pb.Overlay) -> an.Overlay:
 def from_proto(msg: pb.Animation) -> an.Animation:
     keyframes = [
         an.Keyframe(
-            time=k.time, ease=an.Ease(k.ease),
+            time=k.time, ease=k.ease,
             body=np.array([k.body.roll, k.body.pitch, k.body.yaw, k.body.x, k.body.y, k.body.z], dtype=float),
             legs=[_leg_from_proto(lt) for lt in k.legs],
         )
@@ -38,7 +38,7 @@ def from_proto(msg: pb.Animation) -> an.Animation:
         name=msg.name, description=msg.description, schema=msg.schema, loop=msg.loop, hold_end=msg.hold_end,
         entry_time=msg.entry_time, exit_time=msg.exit_time, keyframes=keyframes,
         overlays=[_overlay_from_proto(o) for o in msg.overlays],
-        params=[an.ParamSpec(an.ParamId(p.id), p.min, p.default_value, p.max) for p in msg.params],
+        params=[an.ParamSpec(p.id, p.min, p.default_value, p.max) for p in msg.params],
     )
 
 

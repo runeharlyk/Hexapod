@@ -179,8 +179,9 @@ class Sandbox:
             child.destroy()
         self.animation_params = {}
         for spec in self.animation.params:
-            self._slider(self.param_frame, spec.id.name, spec.min, spec.max, spec.default_value, fmt="{:.2f}")
-            self.animation_params[spec.id] = self.vals[spec.id.name]
+            name = an.ParamId(spec.id).name
+            self._slider(self.param_frame, name, spec.min, spec.max, spec.default_value, fmt="{:.2f}")
+            self.animation_params[spec.id] = self.vals[name]
         self.vals["scrub"].set(0.0)
 
     def _animation_values(self):

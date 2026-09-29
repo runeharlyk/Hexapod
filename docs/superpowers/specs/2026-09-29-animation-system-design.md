@@ -123,6 +123,11 @@ Structural validity, checked identically on every platform:
 - parameter ids are unique and `min <= default_value <= max`; `SPEED` must have a positive `min`.
   The field is `default_value` because `default` is a C keyword and nanopb would emit it verbatim.
 - `name` matches the character set above.
+- `description` is at most 96 bytes of UTF-8, because the nanopb buffer is sized in bytes.
+- every keyframe `ease` is in 0..3 and every parameter `id` is in 0..9, checked on the raw integer because the proto enums are open.
+- every float is finite: keyframe times, body channels, foot offsets, joint angles, every overlay field, parameter `min`, `default_value` and `max`, `entry_time` and `exit_time`.
+- `loop` and `hold_end` are not both set.
+- a declared `REPEAT` has `min >= 1`.
 
 Parameter semantics:
 
