@@ -180,3 +180,109 @@ def validate(anim: Animation) -> str | None:
         if p.id == ParamId.SPEED and p.min <= 0:
             return "param SPEED needs a positive min"
     return None
+
+
+@dataclass
+class Pose:
+    body: np.ndarray                 # [roll, pitch, yaw, x, y, z] offsets
+    legs: list[LegTarget]            # exactly 6
+
+    @staticmethod
+    def stance() -> "Pose":
+        return Pose(np.zeros(6), [LegTarget.stance() for _ in range(6)])
+
+    def copy(self) -> "Pose":
+        return Pose(self.body.copy(), [l.copy() for l in self.legs])
+
+
+def ease_value(kind: Ease, t: float) -> float:
+    if kind == Ease.EASE_IN:
+        return t * t
+    if kind == Ease.EASE_OUT:
+        return t * (2.0 - t)
+    if kind == Ease.EASE_IN_OUT:
+        return 2.0 * t * t if t < 0.5 else -1.0 + (4.0 - 2.0 * t) * t
+    return t
+
+
+def resolve_params(anim: Animation, values: dict[ParamId, float] | None) -> np.ndarray:
+    """Every id gets a value: declared ids take the caller's value clamped to the spec, else the
+    default; undeclared ids are 1 (the neutral multiplier and a single play)."""
+    out = np.ones(len(ParamId))
+    for spec in anim.params:
+        v = spec.default_value if values is None or spec.id not in values else values[spec.id]
+        out[spec.id] = min(max(v, spec.min), spec.max)
+    return out
+
+
+def _body_state(body6: np.ndarray) -> BodyState:
+    return BodyState(omega=float(body6[0]), phi=float(body6[1]), psi=float(body6[2]),
+                     xm=float(body6[3]), ym=float(body6[4]), zm=float(body6[5]))
+
+
+def leg_joints_deg(kin: Kinematics, body6: np.ndarray, foot_offset: np.ndarray, leg: int) -> np.ndarray:
+    b = _body_state(body6)
+    b.feet[leg, :3] += foot_offset
+    return kin.inverse_kinematics(b)[leg * 3:leg * 3 + 3]
+
+
+def _segment(anim: Animation, t: float) -> tuple[Keyframe, Keyframe, float]:
+    """The keyframe pair bracketing t and the eased fraction between them, with t clamped."""
+    kfs = anim.keyframes
+    if t <= 0.0 or len(kfs) == 1:
+        return kfs[0], kfs[0], 0.0
+    if t >= kfs[-1].time:
+        return kfs[-1], kfs[-1], 0.0
+    i = 1
+    while kfs[i].time < t:
+        i += 1
+    k0, k1 = kfs[i - 1], kfs[i]
+    return k0, k1, ease_value(k1.ease, (t - k0.time) / (k1.time - k0.time))
+
+
+def _lerp_leg(kin: Kinematics, a: LegTarget, b: LegTarget, body_a: np.ndarray, body_b: np.ndarray,
+              leg: int, u: float) -> LegTarget:
+    if not a.is_joints() and not b.is_joints():
+        return LegTarget(foot=a.foot + (b.foot - a.foot) * u)
+    ja = a.joints if a.is_joints() else leg_joints_deg(kin, body_a, a.foot, leg)
+    jb = b.joints if b.is_joints() else leg_joints_deg(kin, body_b, b.foot, leg)
+    return LegTarget(joints=ja + (jb - ja) * u)
+
+
+def evaluate(anim: Animation, params: np.ndarray, t: float, kin: Kinematics) -> Pose:
+    k0, k1, u = _segment(anim, t)
+    t = min(max(t, 0.0), anim.duration)
+    body = k0.body + (k1.body - k0.body) * u
+    legs = [_lerp_leg(kin, leg_target(k0, i), leg_target(k1, i), k0.body, k1.body, i, u) for i in range(6)]
+    for o in anim.overlays:
+        if not o.start <= t <= o.end:
+            continue
+        v = o.amplitude * params[ParamId.OVERLAY_AMPLITUDE] * math.sin(2.0 * math.pi * o.frequency * t + o.phase)
+        if o.body_axis is not None:
+            body[o.body_axis] += v
+        elif not legs[o.foot_channel // 3].is_joints():
+            legs[o.foot_channel // 3].foot[o.foot_channel % 3] += v
+    for axis, pid in enumerate(BODY_PARAM_FOR_AXIS):
+        body[axis] *= params[pid]
+    for leg in legs:
+        if not leg.is_joints():
+            leg.foot[2] *= params[ParamId.FOOT_LIFT]
+    return Pose(body, legs)
+
+
+def pose_to_angles(pose: Pose, kin: Kinematics) -> tuple[np.ndarray, int]:
+    """18 servo angles (deg, IK order) and an 18-bit mask of the joints that hit a limit."""
+    b = _body_state(pose.body)
+    for i, leg in enumerate(pose.legs):
+        if not leg.is_joints():
+            b.feet[i, :3] += leg.foot
+    angles = kin.inverse_kinematics(b)
+    for i, leg in enumerate(pose.legs):
+        if leg.is_joints():
+            angles[i * 3:i * 3 + 3] = leg.joints
+    limit = np.tile(JOINT_LIMIT_DEG, 6)
+    clamped = np.clip(angles, -limit, limit)
+    mask = 0
+    for j in np.flatnonzero(clamped != angles):
+        mask |= 1 << int(j)
+    return clamped, mask
