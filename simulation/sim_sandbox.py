@@ -63,6 +63,7 @@ class Sandbox:
         self.gc = GaitController()
         self.player = an.Player(self.kin)
         self.animation = None
+        self._clamp_mask = 0
         self.animation_params = {}   # slider name -> tk.DoubleVar, rebuilt per animation
         self.body = BodyState()
         self.mode = "stand"
@@ -112,7 +113,11 @@ class Sandbox:
             print(f"[policy] failed to load '{self.policy_run}': {e}")
             self.model = None
 
+    def _reset_player(self):
+        self.player = an.Player(self.kin)
+
     def switch_mode(self, m):
+        self._reset_player()
         if m == "policy":
             self._load_policy()
         self.mode = m
@@ -160,6 +165,7 @@ class Sandbox:
 
     def _load_animation(self):
         """Load the selected file and rebuild its parameter sliders from the declared params."""
+        self._reset_player()
         name = self.animation_name.get()
         if not name:
             return
@@ -196,8 +202,7 @@ class Sandbox:
         else:
             pose = an.Pose.stance()
         angles_deg, mask = an.pose_to_angles(pose, self.kin)
-        if mask:
-            self.status.set(f"animate  clamped {mask:018b}")
+        self._clamp_mask = mask
         self._animation_angles = np.radians(angles_deg)
 
     # ------------------------------------------------------------------ per-tick control
@@ -279,7 +284,8 @@ class Sandbox:
         h = self.sim.base_height() * 1000
         air = "" if self.sim.feet_in_contact().any() else "  AIRBORNE"
         peak = f"  peak {self.peak*1000:.0f}mm" if self.jump_frames or self.peak > 0.11 else ""
-        self.status.set(f"{self.mode:5s}  height {h:5.1f}mm{air}{peak}")
+        clamp = f"  clamped {self._clamp_mask:018b}" if self.mode == "animate" and self._clamp_mask else ""
+        self.status.set(f"{self.mode:5s}  height {h:5.1f}mm{air}{peak}{clamp}")
         fwd, lat = self.vel_ema
         self.telemetry.set(
             f"fwd {fwd:+.3f}   lat {lat:+.3f}   speed {np.hypot(fwd, lat):.3f} m/s\n"
@@ -401,7 +407,7 @@ class Sandbox:
                        command=lambda _: self._load_animation()).pack(side="left")
         btns = ttk.Frame(af); btns.pack(fill="x", padx=6, pady=2)
         ttk.Button(btns, text="Play", command=self._play_animation).pack(side="left", expand=True, fill="x")
-        ttk.Button(btns, text="Stop", command=self.player.stop).pack(side="left", expand=True, fill="x")
+        ttk.Button(btns, text="Stop", command=lambda: self.player.stop()).pack(side="left", expand=True, fill="x")
         self._slider(af, "scrub", 0.0, 1.0, 0.0, fmt="{:.2f}")   # animation time when idle
         self.param_frame = ttk.Frame(af)
         self.param_frame.pack(fill="x")
