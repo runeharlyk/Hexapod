@@ -24,12 +24,15 @@ def test_expected_json_is_current():
     assert len(committed["evaluate"]) == len(fresh["evaluate"])
     for c, f in zip(committed["evaluate"], fresh["evaluate"]):
         assert c["animation"] == f["animation"] and c["params"] == f["params"]
+        assert len(c["samples"]) == len(f["samples"])
         for sc, sf in zip(c["samples"], f["samples"]):
             assert sc["t"] == sf["t"] and sc["mask"] == sf["mask"]
             assert np.allclose(sc["angles"], sf["angles"], atol=fresh["tolerance"])
     assert len(committed["player"]) == len(fresh["player"])
     for c, f in zip(committed["player"], fresh["player"]):
-        assert c["animation"] == f["animation"] and c["events"] == f["events"]
+        assert c["animation"] == f["animation"] and c["params"] == f["params"] and c["events"] == f["events"]
+        assert c["dt"] == f["dt"] and c["live"] == f["live"]
+        assert len(c["trace"]) == len(f["trace"])
         assert [s["state"] for s in c["trace"]] == [s["state"] for s in f["trace"]]
         for sc, sf in zip(c["trace"], f["trace"]):
             assert sc["mask"] == sf["mask"]

@@ -100,7 +100,7 @@ def generate() -> dict:
 
 
 def main() -> None:
-    EXPECTED.write_text(json.dumps(generate(), indent=1) + "\n")
+    EXPECTED.write_text(json.dumps(generate(), indent=1) + "\n", newline="\n")
     print(f"wrote {EXPECTED}")
 
 
