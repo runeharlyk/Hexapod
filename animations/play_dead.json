@@ -9,8 +9,8 @@
     {"time": 0},
     {"time": 0.5, "ease": "EASE_IN", "body": {"z": 35, "roll": 0.1}},
     {"time": 0.9, "ease": "EASE_OUT", "body": {"z": 58, "roll": 0},
-     "legs": [{"joints": {"coxa": 0, "femur": 85, "tibia": -130}}, {"joints": {"coxa": 0, "femur": 85, "tibia": -130}}, {"joints": {"coxa": 0, "femur": 85, "tibia": -130}},
-              {"joints": {"coxa": 0, "femur": 85, "tibia": -130}}, {"joints": {"coxa": 0, "femur": 85, "tibia": -130}}, {"joints": {"coxa": 0, "femur": 85, "tibia": -130}}]}
+     "legs": [{"joints": {"coxa": 0, "femur": 85, "tibia": -60}}, {"joints": {"coxa": 0, "femur": 85, "tibia": -60}}, {"joints": {"coxa": 0, "femur": 85, "tibia": -60}},
+              {"joints": {"coxa": 0, "femur": 85, "tibia": -60}}, {"joints": {"coxa": 0, "femur": 85, "tibia": -60}}, {"joints": {"coxa": 0, "femur": 85, "tibia": -60}}]}
   ],
   "params": [{"id": "SPEED", "min": 0.5, "defaultValue": 1, "max": 2}]
 }
