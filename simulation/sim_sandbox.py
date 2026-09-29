@@ -7,6 +7,7 @@ Drives the classical firmware kinematics + gait engine directly with sliders. Mo
             (tripod/bipod/wave/ripple). Telemetry shows achieved body speed and holds the peak.
   - Jump  : a kinematic jump -- a scripted crouch-then-extend body-height trajectory.
   - Policy: run a trained policy through the env, driven by the command sliders (loaded lazily).
+  - Animate: play, stop or scrub a bundled animation (animations/*.json) with its parameter sliders.
 
   python sim_sandbox.py                              # default policy = residual_gait_v10
   python sim_sandbox.py --policy <run>               # choose a different policy for Policy mode
@@ -26,6 +27,11 @@ from src.robot.firmware_gait import (
     Kinematics, GaitController, BodyState, GaitState, set_gait, DEFAULT_FEET,
     STAND_HEIGHT_MM, TRI_GATE, BI_GATE, WAVE, RIPPLE,
 )
+from pathlib import Path
+from src.robot import animation as an
+from src.robot.animation_files import load_json
+
+ANIMATION_DIR = Path(__file__).resolve().parents[1] / "animations"
 
 GAITS = {"tripod": TRI_GATE, "bipod": BI_GATE, "wave": WAVE, "ripple": RIPPLE}
 # default duty factor (stand_frac) per pattern, from firmware_gait.set_gait
@@ -55,6 +61,9 @@ class Sandbox:
         self.terrain_seed = 0
         self.kin = Kinematics()
         self.gc = GaitController()
+        self.player = an.Player(self.kin)
+        self.animation = None
+        self.animation_params = {}   # slider name -> tk.DoubleVar, rebuilt per animation
         self.body = BodyState()
         self.mode = "stand"
         self.phase = 0.0
@@ -149,6 +158,48 @@ class Sandbox:
         self.jump_frames = [crouch_zm] * ct + [launch_zm] * lt
         self.peak = 0.0
 
+    def _load_animation(self):
+        """Load the selected file and rebuild its parameter sliders from the declared params."""
+        name = self.animation_name.get()
+        if not name:
+            return
+        self.animation = load_json(ANIMATION_DIR / f"{name}.json")
+        err = an.validate(self.animation)
+        if err:
+            print(f"[animation] {name}: {err}")
+            self.animation = None
+            return
+        for child in self.param_frame.winfo_children():
+            child.destroy()
+        self.animation_params = {}
+        for spec in self.animation.params:
+            self._slider(self.param_frame, spec.id.name, spec.min, spec.max, spec.default_value, fmt="{:.2f}")
+            self.animation_params[spec.id] = self.vals[spec.id.name]
+        self.vals["scrub"].set(0.0)
+
+    def _animation_values(self):
+        return {pid: var.get() for pid, var in self.animation_params.items()}
+
+    def _play_animation(self):
+        if self.animation is not None:
+            self.player.play(self.animation, self._animation_values())  # entry starts from player.last_pose
+
+    def _apply_animation(self):
+        """Playing: the player drives the pose. Idle: the scrub slider evaluates the animation directly,
+        and the scrubbed pose becomes the player's live pose so a following Play blends from it."""
+        if self.player.state != an.State.IDLE:
+            pose = self.player.update(CONTROL_DT)
+        elif self.animation is not None:
+            params = an.resolve_params(self.animation, self._animation_values())
+            pose = an.evaluate(self.animation, params, self.v("scrub") * self.animation.duration, self.kin)
+            self.player.last_pose = pose
+        else:
+            pose = an.Pose.stance()
+        angles_deg, mask = an.pose_to_angles(pose, self.kin)
+        if mask:
+            self.status.set(f"animate  clamped {mask:018b}")
+        self._animation_angles = np.radians(angles_deg)
+
     # ------------------------------------------------------------------ per-tick control
     def _apply_stand(self, zm_override=None):
         self.body.feet = DEFAULT_FEET.copy()  # planted stance; body pose is what moves
@@ -194,11 +245,17 @@ class Sandbox:
         else:
             if self.jump_frames:                  # scripted kinematic jump in progress
                 self._apply_stand(zm_override=self.jump_frames.pop(0))
+                targets = self.kin.inverse_kinematics(self.body, degrees=False)
             elif self.mode == "gait":
                 self._apply_gait()
+                targets = self.kin.inverse_kinematics(self.body, degrees=False)
+            elif self.mode == "animate":
+                self._apply_animation()
+                targets = self._animation_angles
             else:                                 # stand (and post-jump)
                 self._apply_stand()
-            self.sim.set_joint_targets(self.kin.inverse_kinematics(self.body, degrees=False))
+                targets = self.kin.inverse_kinematics(self.body, degrees=False)
+            self.sim.set_joint_targets(targets)
             self.sim.step_physics()
         self.peak = max(self.peak, self.sim.base_height())
         self._measure_speed()
@@ -253,7 +310,7 @@ class Sandbox:
         mf = ttk.LabelFrame(self.root, text="Mode")
         mf.pack(fill="x", **pad)
         self.mode_var = tk.StringVar(value=self.mode)
-        for m in ("stand", "gait", "policy"):
+        for m in ("stand", "gait", "policy", "animate"):
             ttk.Radiobutton(mf, text=m.capitalize(), value=m, variable=self.mode_var,
                             command=lambda k=m: self.switch_mode(k)).pack(side="left", padx=6)
         ttk.Button(mf, text="Recenter", command=self.recenter).pack(side="right", padx=8)
@@ -333,6 +390,22 @@ class Sandbox:
         self._slider(jf, "crouch ticks", 1, 40, 20)
         self._slider(jf, "launch ticks", 1, 20, 6)
         ttk.Button(jf, text="JUMP", command=self.do_jump).pack(fill="x", **pad)
+
+        af = ttk.LabelFrame(panel, text="Animation (Animate mode)")
+        af.pack(fill="x", **pad)
+        files = sorted(p.stem for p in ANIMATION_DIR.glob("*.json"))
+        self.animation_name = tk.StringVar(value=files[0] if files else "")
+        row = ttk.Frame(af); row.pack(fill="x", padx=6)
+        ttk.Label(row, text="file", width=11).pack(side="left")
+        ttk.OptionMenu(row, self.animation_name, self.animation_name.get(), *files,
+                       command=lambda _: self._load_animation()).pack(side="left")
+        btns = ttk.Frame(af); btns.pack(fill="x", padx=6, pady=2)
+        ttk.Button(btns, text="Play", command=self._play_animation).pack(side="left", expand=True, fill="x")
+        ttk.Button(btns, text="Stop", command=self.player.stop).pack(side="left", expand=True, fill="x")
+        self._slider(af, "scrub", 0.0, 1.0, 0.0, fmt="{:.2f}")   # animation time when idle
+        self.param_frame = ttk.Frame(af)
+        self.param_frame.pack(fill="x")
+        self._load_animation()
 
         self.status = tk.StringVar(value="stand")
         ttk.Label(self.root, textvariable=self.status, relief="sunken", anchor="w").pack(
