@@ -4,6 +4,9 @@ This module is the port target for firmware/include/animation/ and app/src/lib/a
 The golden fixtures in animations/fixtures/expected.json are generated from it, and the other two
 ports are tested against those fixtures, so a behaviour change here is a behaviour change on the
 robot. It deliberately imports no protobuf code; animation_files.py does the conversion.
+
+Foot offsets are relative to the standing feet, passed as stance_feet (6x4, homogeneous). The
+default is DEFAULT_FEET; the firmware must pass its live default_feet_pos instead.
 """
 from __future__ import annotations
 
@@ -251,13 +254,15 @@ def resolve_params(anim: Animation, values: dict[ParamId, float] | None) -> np.n
     return out
 
 
-def _body_state(body6: np.ndarray) -> BodyState:
+def _body_state(body6: np.ndarray, stance_feet: np.ndarray = DEFAULT_FEET) -> BodyState:
     return BodyState(omega=float(body6[0]), phi=float(body6[1]), psi=float(body6[2]),
-                     xm=float(body6[3]), ym=float(body6[4]), zm=float(body6[5]))
+                     xm=float(body6[3]), ym=float(body6[4]), zm=float(body6[5]),
+                     feet=np.array(stance_feet, dtype=float))
 
 
-def leg_joints_deg(kin: Kinematics, body6: np.ndarray, foot_offset: np.ndarray, leg: int) -> np.ndarray:
-    b = _body_state(body6)
+def leg_joints_deg(kin: Kinematics, body6: np.ndarray, foot_offset: np.ndarray, leg: int,
+                   stance_feet: np.ndarray = DEFAULT_FEET) -> np.ndarray:
+    b = _body_state(body6, stance_feet)
     b.feet[leg, :3] += foot_offset
     return kin.inverse_kinematics(b)[leg * 3:leg * 3 + 3]
 
@@ -283,15 +288,16 @@ def _lifted(foot: np.ndarray, overlay: np.ndarray, lift: float) -> np.ndarray:
 
 
 def _resolve_leg(kin: Kinematics, a: LegTarget, b: LegTarget, overlay: np.ndarray, lift: float,
-                 body: np.ndarray, leg: int, u: float) -> LegTarget:
+                 body: np.ndarray, leg: int, u: float, stance_feet: np.ndarray) -> LegTarget:
     if not a.is_joints() and not b.is_joints():
         return LegTarget(foot=_lifted(a.foot + (b.foot - a.foot) * u, overlay, lift))
-    ja = a.joints if a.is_joints() else leg_joints_deg(kin, body, _lifted(a.foot, overlay, lift), leg)
-    jb = b.joints if b.is_joints() else leg_joints_deg(kin, body, _lifted(b.foot, overlay, lift), leg)
+    ja = a.joints if a.is_joints() else leg_joints_deg(kin, body, _lifted(a.foot, overlay, lift), leg, stance_feet)
+    jb = b.joints if b.is_joints() else leg_joints_deg(kin, body, _lifted(b.foot, overlay, lift), leg, stance_feet)
     return LegTarget(joints=ja + (jb - ja) * u)
 
 
-def evaluate(anim: Animation, params: np.ndarray, t: float, kin: Kinematics) -> Pose:
+def evaluate(anim: Animation, params: np.ndarray, t: float, kin: Kinematics,
+             stance_feet: np.ndarray = DEFAULT_FEET) -> Pose:
     """The pose at animation time t (clamped to [0, duration]), computed in this order:
 
     1. Interpolate the body between the bracketing keyframes with the end keyframe's easing.
@@ -322,18 +328,19 @@ def evaluate(anim: Animation, params: np.ndarray, t: float, kin: Kinematics) -> 
     for axis, pid in enumerate(BODY_PARAM_FOR_AXIS):
         body[axis] *= params[pid]
     lift = params[ParamId.FOOT_LIFT]
-    legs = [_resolve_leg(kin, leg_target(k0, i), leg_target(k1, i), foot_overlay[i], lift, body, i, u)
+    legs = [_resolve_leg(kin, leg_target(k0, i), leg_target(k1, i), foot_overlay[i], lift, body, i, u, stance_feet)
             for i in range(6)]
     return Pose(body, legs)
 
 
-def foot_reachable(kin: Kinematics, body6: np.ndarray, foot_offset: np.ndarray, leg: int) -> bool:
+def foot_reachable(kin: Kinematics, body6: np.ndarray, foot_offset: np.ndarray, leg: int,
+                   stance_feet: np.ndarray = DEFAULT_FEET) -> bool:
     """Whether the femur-tibia pair can reach the foot. The foot is transformed exactly as
     Kinematics.inverse_kinematics does (body transform, mount offset, mount rotation), then
     radial = hypot(lx - root_j1, ly) - j1_j2 and lr = hypot(radial, lz), and the foot is reachable
     when |j2_j3 - j3_tip| <= lr <= j2_j3 + j3_tip. The IK clamps its acos arguments, so outside
     that range it silently returns a straight or folded leg with in-limit angles."""
-    b = _body_state(body6)
+    b = _body_state(body6, stance_feet)
     foot = b.feet[leg].copy()
     foot[:3] += foot_offset
     w = kin.transformation_matrix(b) @ foot
@@ -347,11 +354,11 @@ def foot_reachable(kin: Kinematics, body6: np.ndarray, foot_offset: np.ndarray, 
     return abs(kin.j2_j3 - kin.j3_tip) <= lr <= kin.j2_j3 + kin.j3_tip
 
 
-def pose_to_angles(pose: Pose, kin: Kinematics) -> tuple[np.ndarray, int]:
+def pose_to_angles(pose: Pose, kin: Kinematics, stance_feet: np.ndarray = DEFAULT_FEET) -> tuple[np.ndarray, int]:
     """18 servo angles (deg, IK order) and an 18-bit mask, bit leg * 3 + joint, of the joints that
     hit a limit. A foot leg that fails foot_reachable also sets its femur and tibia bits, the joints
     the IK saturates. The firmware mirrors this with the same kinematics constants."""
-    b = _body_state(pose.body)
+    b = _body_state(pose.body, stance_feet)
     for i, leg in enumerate(pose.legs):
         if not leg.is_joints():
             b.feet[i, :3] += leg.foot
@@ -365,7 +372,7 @@ def pose_to_angles(pose: Pose, kin: Kinematics) -> tuple[np.ndarray, int]:
     for j in np.flatnonzero(clamped != angles):
         mask |= 1 << int(j)
     for i, leg in enumerate(pose.legs):
-        if not leg.is_joints() and not foot_reachable(kin, pose.body, leg.foot, i):
+        if not leg.is_joints() and not foot_reachable(kin, pose.body, leg.foot, i, stance_feet):
             mask |= 0b110 << (i * 3)
     return clamped, mask
 
@@ -378,22 +385,22 @@ class State(IntEnum):
     EXIT = 4
 
 
-def capture_pose(body: BodyState) -> Pose:
+def capture_pose(body: BodyState, stance_feet: np.ndarray = DEFAULT_FEET) -> Pose:
     body6 = np.array([body.omega, body.phi, body.psi, body.xm, body.ym, body.zm], dtype=float)
-    legs = [LegTarget(foot=(body.feet[i, :3] - DEFAULT_FEET[i, :3]).astype(float)) for i in range(6)]
+    legs = [LegTarget(foot=(body.feet[i, :3] - stance_feet[i, :3]).astype(float)) for i in range(6)]
     return Pose(body6, legs)
 
 
-def _blend_targets(kin: Kinematics, src: Pose, dst: Pose) -> tuple[Pose, Pose]:
+def _blend_targets(kin: Kinematics, src: Pose, dst: Pose, stance_feet: np.ndarray) -> tuple[Pose, Pose]:
     """Legs where either side is a joint target are converted to joints on both sides once, so the
     blend itself is a plain lerp. Foot legs keep their offsets and get the step arc."""
     a, b = src.copy(), dst.copy()
     for i in range(6):
         if a.legs[i].is_joints() or b.legs[i].is_joints():
             if not a.legs[i].is_joints():
-                a.legs[i] = LegTarget(joints=leg_joints_deg(kin, a.body, a.legs[i].foot, i))
+                a.legs[i] = LegTarget(joints=leg_joints_deg(kin, a.body, a.legs[i].foot, i, stance_feet))
             if not b.legs[i].is_joints():
-                b.legs[i] = LegTarget(joints=leg_joints_deg(kin, b.body, b.legs[i].foot, i))
+                b.legs[i] = LegTarget(joints=leg_joints_deg(kin, b.body, b.legs[i].foot, i, stance_feet))
     return a, b
 
 
@@ -419,8 +426,9 @@ class Player:
     clamped to at least 1, so every language agrees (Python's round() would round half to even).
     """
 
-    def __init__(self, kin: Kinematics | None = None):
+    def __init__(self, kin: Kinematics | None = None, stance_feet: np.ndarray = DEFAULT_FEET):
         self.kin = kin or Kinematics()
+        self.stance_feet = stance_feet
         self.state = State.IDLE
         self.animation: Animation | None = None
         self.params = np.ones(len(ParamId))
@@ -438,7 +446,7 @@ class Player:
         self.t = 0.0
         self._plays_done = 0
         start = live if live is not None else self.last_pose
-        self._start_blend(start, evaluate(anim, self.params, 0.0, self.kin), anim.entry_seconds(), State.ENTRY)
+        self._start_blend(start, self._evaluate(0.0), anim.entry_seconds(), State.ENTRY)
 
     def stop(self) -> None:
         if self.state == State.IDLE:
@@ -451,14 +459,17 @@ class Player:
         if self.state in (State.ENTRY, State.EXIT):
             pose = self._advance_blend(dt)
         elif self.state == State.HOLD:
-            pose = evaluate(self.animation, self.params, self.animation.duration, self.kin)
+            pose = self._evaluate(self.animation.duration)
         else:
             pose = self._advance_playing(dt)
         self.last_pose = pose
         return pose
 
+    def _evaluate(self, t: float) -> Pose:
+        return evaluate(self.animation, self.params, t, self.kin, self.stance_feet)
+
     def _start_blend(self, src: Pose, dst: Pose, seconds: float, state: State) -> None:
-        self._blend_from, self._blend_to = _blend_targets(self.kin, src, dst)
+        self._blend_from, self._blend_to = _blend_targets(self.kin, src, dst, self.stance_feet)
         self._blend_seconds = seconds
         self._blend_t = 0.0
         self.state = state
@@ -481,14 +492,14 @@ class Player:
         self.t += dt * self.params[ParamId.SPEED]
         if anim.loop:
             self.t = self.t % duration if duration > 0.0 else 0.0
-            return evaluate(anim, self.params, self.t, self.kin)
+            return self._evaluate(self.t)
         if self.t < duration:
-            return evaluate(anim, self.params, self.t, self.kin)
+            return self._evaluate(self.t)
         self._plays_done += 1
         if self._plays_done < max(1, math.floor(self.params[ParamId.REPEAT] + 0.5)):
             self.t = self.t - duration if duration > 0.0 else 0.0
-            return evaluate(anim, self.params, self.t, self.kin)
-        final = evaluate(anim, self.params, duration, self.kin)
+            return self._evaluate(self.t)
+        final = self._evaluate(duration)
         if anim.hold_end:
             self.state = State.HOLD
         else:

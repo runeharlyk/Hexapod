@@ -9,7 +9,7 @@ from google.protobuf import json_format
 from src.platform_shared import animation_pb2 as pb
 from src.robot import animation as an
 from src.robot.animation_files import from_proto, json_text, load_binary, load_json, save_binary, to_proto
-from src.robot.firmware_gait import BodyState, Kinematics
+from src.robot.firmware_gait import DEFAULT_FEET, BodyState, Kinematics
 
 KIN = Kinematics()
 
@@ -321,6 +321,14 @@ def test_stance_pose_reproduces_the_standing_angles():
     angles, mask = an.pose_to_angles(an.Pose.stance(), KIN)
     assert mask == 0
     assert np.allclose(angles, KIN.inverse_kinematics(BodyState()))
+
+
+def test_offsets_are_relative_to_the_given_stance_feet():
+    wide = DEFAULT_FEET.copy()
+    wide[:, :2] *= 1.1
+    angles, _ = an.pose_to_angles(an.Pose.stance(), KIN, stance_feet=wide)
+    assert np.allclose(angles, KIN.inverse_kinematics(BodyState(feet=wide.copy())))
+    assert not np.allclose(angles, KIN.inverse_kinematics(BodyState()))
 
 
 def lifted_anim(**kw):
