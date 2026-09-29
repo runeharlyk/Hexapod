@@ -233,3 +233,11 @@ The command is a body-frame velocity vector `[vx, vy]` (m/s) + yaw rate (rad/s).
 - `sim_sandbox.py` - manual kinematics/gait sandbox and speed/stability tester, no RL.
 - `controller_bridge.py` - reads the ESP-NOW handheld controller over USB for the sim.
 - `lidar_slam.py` - standalone 2D LiDAR SLAM for the LD500 scanner, unrelated to the gait stack.
+
+## Animations
+
+`animations/*.json` at the repository root are the bundled animations; the schema is `platform_shared/animation.proto`.
+`src/robot/animation.py` is the reference evaluator and player that the firmware and app ports mirror.
+`uv run python check_animation.py` runs every animation through the servo model and reports clamped joints, peak joint speed, tilt, and falls.
+`uv run python gen_animation_fixtures.py` regenerates `animations/fixtures/expected.json`; `uv run pytest` fails while it is stale.
+`uv run python sim_sandbox.py` has an Animate mode for playing and scrubbing an animation.

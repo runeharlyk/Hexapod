@@ -53,6 +53,8 @@ uv run python eval_policy.py --run <name>    # evaluate / visualize a trained po
 uv run python export_policy.py --run <name>  # export trained actor as a C++ header for the firmware
 uv run python optimize_gait.py               # retune analytic command->gait coefficients
 uv run pytest -q                             # firmware/sim gait parity tests (test_firmware_gait_parity.py)
+uv run python check_animation.py             # run every bundled animation through the servo model
+uv run python gen_animation_fixtures.py      # regenerate the animation parity fixtures
 ```
 See `simulation/README.md` for the full control-mode and training-flag reference.
 
