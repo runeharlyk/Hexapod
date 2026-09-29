@@ -7,6 +7,10 @@ robot. It deliberately imports no protobuf code; animation_files.py does the con
 
 Foot offsets are relative to the standing feet, passed as stance_feet (6x4, homogeneous). The
 default is DEFAULT_FEET; the firmware must pass its live default_feet_pos instead.
+
+Input precision: file values are protobuf float (32-bit). A port that parses the JSON must round
+every number to float32 (Math.fround in JavaScript) before use. The fixtures were generated from
+float32-rounded inputs on a float64 clock.
 """
 from __future__ import annotations
 

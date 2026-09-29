@@ -17,6 +17,7 @@ Fixture contract for porters:
 - states and masks must match exactly; angles within "tolerance" (degrees).
 """
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_DIR = ROOT / "animations" / "fixtures"
 EXPECTED = FIXTURE_DIR / "expected.json"
 TOLERANCE = 1e-4
+GRID_MARGIN_S = 1e-4
 
 EVALUATE_CASES = [
     ("fx_mixed_legs", {}),
@@ -47,17 +49,17 @@ DISPLACED_LIVE = {"body": [0.05, -0.03, 0.0, 8.0, -6.0, 12.0],
 PLAYER_CASES = [
     {"animation": "fx_mixed_legs", "params": {}, "dt": 0.02, "live": DISPLACED_LIVE, "events": [], "steps": 170},
     {"animation": "fx_mixed_legs", "params": {}, "dt": 0.02, "live": DISPLACED_LIVE,
-     "events": [{"step": 45, "action": "stop"}], "steps": 90},
+     "events": [{"step": 45, "action": "stop"}], "steps": 84},
     {"animation": "fx_mixed_legs", "params": {}, "dt": 0.02, "live": DISPLACED_LIVE,
      "events": [{"step": 40, "action": "play", "animation": "fx_overlay", "params": {"OVERLAY_AMPLITUDE": 1.5}}], "steps": 120},
     {"animation": "fx_single", "params": {}, "dt": 0.02, "live": DISPLACED_LIVE,
-     "events": [{"step": 40, "action": "stop"}], "steps": 80},
-    {"animation": "fx_params", "params": {"SPEED": 2.0, "REPEAT": 2}, "dt": 0.025, "live": DISPLACED_LIVE,
-     "events": [], "steps": 100},
-    {"animation": "fx_params", "params": {"REPEAT": 2.5, "SPEED": 2.0}, "dt": 0.025, "live": DISPLACED_LIVE,
-     "events": [], "steps": 120},
+     "events": [{"step": 40, "action": "stop"}], "steps": 71},
+    {"animation": "fx_params", "params": {"SPEED": 2.0, "REPEAT": 2}, "dt": 0.021, "live": DISPLACED_LIVE,
+     "events": [], "steps": 105},
+    {"animation": "fx_params", "params": {"REPEAT": 2.5, "SPEED": 2.0}, "dt": 0.021, "live": DISPLACED_LIVE,
+     "events": [], "steps": 128},
     {"animation": "fx_overlay", "params": {}, "dt": 0.02, "live": DISPLACED_LIVE,
-     "events": [{"step": 110, "action": "stop"}], "steps": 150},
+     "events": [{"step": 110, "action": "stop"}], "steps": 141},
 ]
 
 
@@ -65,6 +67,47 @@ def sample_times(anim: an.Animation) -> list[float]:
     times = [k.time for k in anim.keyframes]
     mids = [(a + b) / 2 for a, b in zip(times, times[1:])]
     return sorted(set(times + mids + [-0.1, anim.duration + 0.5, 0.137, 0.731]))
+
+
+def assert_off_grid(anim: an.Animation, dt: float, speed: float, plays: int) -> None:
+    """Fails when a transition the player's accumulated clock crosses lies within GRID_MARGIN_S of a
+    multiple of dt, where float rounding alone decides the step it flips on and a correct float32 or
+    float64 port could not match. Checked: the entry and exit blend ends, and (n * duration + e) / speed
+    for every keyframe time and overlay window edge e and n in 0..plays-1 (the last play ends at
+    e = duration). Values <= 0 are skipped:
+    the clock starts at 0 and window starts are inclusive, so nothing is crossed there."""
+    edges = [k.time for k in anim.keyframes] + [x for o in anim.overlays for x in (o.start, o.end)]
+    values = [anim.entry_seconds(), anim.exit_seconds()]
+    values += [(n * anim.duration + e) / speed for n in range(plays) for e in edges]
+    for v in values:
+        if v > 0.0 and abs(v - round(v / dt) * dt) < GRID_MARGIN_S:
+            raise SystemExit(f"{anim.name}: transition at {v:.6f} s is on the {dt} s step grid")
+
+
+def reachable_plays(anim: an.Animation, params: np.ndarray, dt: float, steps: int) -> int:
+    """REPEAT plays, or for a loop the number of passes steps * dt of playing clock can cover."""
+    if anim.loop:
+        return math.ceil(steps * dt * params[an.ParamId.SPEED] / anim.duration) if anim.duration > 0.0 else 1
+    return max(1, math.floor(params[an.ParamId.REPEAT] + 0.5))
+
+
+def assert_samples_clear_of_edges(anim: an.Animation) -> None:
+    """evaluate is a pure function of t, so a sample exactly on an overlay window edge is fine; one
+    within GRID_MARGIN_S of it would flip on float rounding."""
+    for t in sample_times(anim):
+        for o in anim.overlays:
+            for edge in (o.start, o.end):
+                if t != edge and abs(t - edge) < GRID_MARGIN_S:
+                    raise SystemExit(f"{anim.name}: sample {t} is within {GRID_MARGIN_S} s of window edge {edge}")
+
+
+def assert_case_off_grid(case: dict, anims: dict[str, an.Animation]) -> None:
+    played = [(case["animation"], case["params"])]
+    played += [(e["animation"], e["params"]) for e in case["events"] if e["action"] == "play"]
+    for name, values in played:
+        a = anims[name]
+        params = an.resolve_params(a, param_values(values))
+        assert_off_grid(a, case["dt"], params[an.ParamId.SPEED], reachable_plays(a, params, case["dt"], case["steps"]))
 
 
 def param_values(values: dict) -> dict[an.ParamId, float]:
@@ -85,6 +128,9 @@ def generate() -> dict:
         err = an.validate(a)
         if err:
             raise SystemExit(f"{name}: {err}")
+        assert_samples_clear_of_edges(a)
+    for case in PLAYER_CASES:
+        assert_case_off_grid(case, anims)
 
     evaluate = []
     for name, values in EVALUATE_CASES:

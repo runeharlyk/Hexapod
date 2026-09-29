@@ -3,7 +3,8 @@
   "description": "Parity fixture: one keyframe, hold at end",
   "schema": 1,
   "holdEnd": true,
-  "entryTime": 0.3,
+  "entryTime": 0.31,
+  "exitTime": 0.47,
   "keyframes": [{"time": 0, "body": {"z": 25, "roll": 0.2},
                  "legs": [{"foot": {}}, {"foot": {}}, {"foot": {}}, {"joints": {"coxa": 0, "femur": 85, "tibia": -130}}, {"foot": {}}, {"foot": {}}]}]
 }

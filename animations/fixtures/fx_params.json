@@ -4,7 +4,7 @@
   "schema": 1,
   "keyframes": [
     {"time": 0},
-    {"time": 1, "body": {"roll": 0.1, "pitch": 0.1, "yaw": 0.1, "x": 10, "y": 10, "z": 10},
+    {"time": 1.03, "body": {"roll": 0.1, "pitch": 0.1, "yaw": 0.1, "x": 10, "y": 10, "z": 10},
      "legs": [{"foot": {"x": 5, "y": 5, "z": 20}}, {"foot": {"z": 20}}, {"foot": {}}, {"foot": {}}, {"foot": {}}, {"foot": {"z": 15}}]}
   ],
   "overlays": [{"bodyAxis": 3, "amplitude": 4, "frequency": 1, "phase": 0, "start": 0, "end": 1}],
