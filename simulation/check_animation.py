@@ -3,7 +3,7 @@ clamped joints, commanded joint speed against the servo's no-load speed, body ti
 time something other than a foot touches the ground, and whether the robot tipped over.
 
     uv run python check_animation.py                  # every file in ../animations
-    uv run python check_animation.py ../animations/play_dead.json --dt 0.02
+    uv run python check_animation.py ../animations/play_dead.json
 
 Exits 1 when any animation is invalid or falls, so it can gate CI. A statically stable hexapod
 rarely tips; the tilt and knock columns are the numbers to read for everything short of that.
@@ -41,7 +41,7 @@ class Report:
         return self.error is None and not self.fell
 
 
-def check(anim: an.Animation, sim: HexapodSim, kin: Kinematics, dt: float = CONTROL_DT, settle: float = 1.0) -> Report:
+def check(anim: an.Animation, sim: HexapodSim, kin: Kinematics, settle: float = 1.0) -> Report:
     report = Report(anim.name)
     report.error = an.validate(anim)
     if report.error:
@@ -57,20 +57,20 @@ def check(anim: an.Animation, sim: HexapodSim, kin: Kinematics, dt: float = CONT
     while elapsed < MAX_SECONDS:
         if stop_at is not None and elapsed >= stop_at and player.state in (an.State.PLAYING, an.State.HOLD):
             player.stop()
-        angles_deg, mask = an.pose_to_angles(player.update(dt), kin)
+        angles_deg, mask = an.pose_to_angles(player.update(CONTROL_DT), kin)
         report.clamped_mask |= mask
         angles = np.radians(angles_deg)
         if previous is not None:
-            report.peak_joint_speed = max(report.peak_joint_speed, float(np.max(np.abs(angles - previous)) / dt))
+            report.peak_joint_speed = max(report.peak_joint_speed, float(np.max(np.abs(angles - previous)) / CONTROL_DT))
         previous = angles
         sim.set_joint_targets(angles)
         sim.step_physics()
         report.steps += 1
-        elapsed += dt
+        elapsed += CONTROL_DT
         report.tilt_max_deg = max(report.tilt_max_deg, sim.body_tilt_deg())
         knock_steps += sim.contact_state()[1] > 0.0
         if player.state == an.State.IDLE:
-            settle_left = settle if settle_left is None else settle_left - dt
+            settle_left = settle if settle_left is None else settle_left - CONTROL_DT
             if settle_left <= 0.0:
                 break
     report.knock_fraction = knock_steps / report.steps
@@ -90,14 +90,13 @@ def format_row(r: Report) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("files", nargs="*", help="animation JSON files (default: every file in the library)")
-    ap.add_argument("--dt", type=float, default=CONTROL_DT, help="control step in seconds")
     ap.add_argument("--settle", type=float, default=1.0, help="seconds to keep simulating after the exit")
     args = ap.parse_args(argv)
     files = [Path(f) for f in args.files] or sorted(LIBRARY.glob("*.json"))
     sim, kin = HexapodSim(), Kinematics()
     failed = 0
     for path in files:
-        r = check(load_json(path), sim, kin, dt=args.dt, settle=args.settle)
+        r = check(load_json(path), sim, kin, settle=args.settle)
         print(format_row(r))
         failed += 0 if r.ok() else 1
     print(f"{len(files) - failed}/{len(files)} passed")
