@@ -95,7 +95,7 @@ message Overlay {               // additive sine on one channel
 enum ParamId { SPEED = 0; BODY_X = 1; BODY_Y = 2; BODY_Z = 3;
                BODY_ROLL = 4; BODY_PITCH = 5; BODY_YAW = 6;
                FOOT_LIFT = 7; OVERLAY_AMPLITUDE = 8; REPEAT = 9; }
-message ParamSpec { ParamId id = 1; float min = 2; float default = 3; float max = 4; }
+message ParamSpec { ParamId id = 1; float min = 2; float default_value = 3; float max = 4; }
 
 message Animation {
   string name = 1;              // max 32, [a-z0-9_-], unique on the robot, equals the file stem
@@ -120,7 +120,8 @@ Structural validity, checked identically on every platform:
 - at least one keyframe, the first at time 0, times strictly increasing.
 - `legs` has 0 or 6 entries in every keyframe.
 - overlay windows lie within `[0, last keyframe time]` and `start < end`.
-- parameter ids are unique and `min <= default <= max`; `SPEED` must be positive.
+- parameter ids are unique and `min <= default_value <= max`; `SPEED` must have a positive `min`.
+  The field is `default_value` because `default` is a C keyword and nanopb would emit it verbatim.
 - `name` matches the character set above.
 
 Parameter semantics:
