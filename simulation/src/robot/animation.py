@@ -286,3 +286,126 @@ def pose_to_angles(pose: Pose, kin: Kinematics) -> tuple[np.ndarray, int]:
     for j in np.flatnonzero(clamped != angles):
         mask |= 1 << int(j)
     return clamped, mask
+
+
+class State(IntEnum):
+    IDLE = 0
+    ENTRY = 1
+    PLAYING = 2
+    HOLD = 3
+    EXIT = 4
+
+
+def capture_pose(body: BodyState) -> Pose:
+    body6 = np.array([body.omega, body.phi, body.psi, body.xm, body.ym, body.zm], dtype=float)
+    legs = [LegTarget(foot=(body.feet[i, :3] - DEFAULT_FEET[i, :3]).astype(float)) for i in range(6)]
+    return Pose(body6, legs)
+
+
+def _blend_targets(kin: Kinematics, src: Pose, dst: Pose) -> tuple[Pose, Pose]:
+    """Legs where either side is a joint target are converted to joints on both sides once, so the
+    blend itself is a plain lerp. Foot legs keep their offsets and get the step arc."""
+    a, b = src.copy(), dst.copy()
+    for i in range(6):
+        if a.legs[i].is_joints() or b.legs[i].is_joints():
+            if not a.legs[i].is_joints():
+                a.legs[i] = LegTarget(joints=leg_joints_deg(kin, a.body, a.legs[i].foot, i))
+            if not b.legs[i].is_joints():
+                b.legs[i] = LegTarget(joints=leg_joints_deg(kin, b.body, b.legs[i].foot, i))
+    return a, b
+
+
+def _blend(a: Pose, b: Pose, u: float) -> Pose:
+    e = ease_value(Ease.EASE_IN_OUT, u)
+    legs = []
+    for la, lb in zip(a.legs, b.legs):
+        if la.is_joints():
+            legs.append(LegTarget(joints=la.joints + (lb.joints - la.joints) * e))
+            continue
+        foot = la.foot + (lb.foot - la.foot) * e
+        travel = math.hypot(*(lb.foot[:2] - la.foot[:2]))
+        if travel > STEP_ARC_MIN_TRAVEL_MM:
+            foot[2] += STEP_ARC_MM * min(1.0, travel / STEP_ARC_FULL_TRAVEL_MM) * math.sin(math.pi * u)
+        legs.append(LegTarget(foot=foot))
+    return Pose(a.body + (b.body - a.body) * e, legs)
+
+
+class Player:
+    """Entry -> Playing -> Hold | Exit -> Done, around evaluate(). Mirrors the firmware AnimationPlayer."""
+
+    def __init__(self, kin: Kinematics | None = None):
+        self.kin = kin or Kinematics()
+        self.state = State.IDLE
+        self.animation: Animation | None = None
+        self.params = np.ones(len(ParamId))
+        self.t = 0.0
+        self.last_pose = Pose.stance()
+        self._plays_done = 0
+        self._blend_t = 0.0
+        self._blend_seconds = 1.0
+        self._blend_from = Pose.stance()
+        self._blend_to = Pose.stance()
+
+    def play(self, anim: Animation, values: dict[ParamId, float] | None = None, live: Pose | None = None) -> None:
+        self.animation = anim
+        self.params = resolve_params(anim, values)
+        self.t = 0.0
+        self._plays_done = 0
+        start = live if live is not None else self.last_pose
+        self._start_blend(start, evaluate(anim, self.params, 0.0, self.kin), anim.entry_seconds(), State.ENTRY)
+
+    def stop(self) -> None:
+        if self.state == State.IDLE:
+            return
+        self._start_blend(self.last_pose, Pose.stance(), self.animation.exit_seconds(), State.EXIT)
+
+    def update(self, dt: float) -> Pose:
+        if self.state == State.IDLE:
+            return self.last_pose
+        if self.state in (State.ENTRY, State.EXIT):
+            pose = self._advance_blend(dt)
+        elif self.state == State.HOLD:
+            pose = evaluate(self.animation, self.params, self.animation.duration, self.kin)
+        else:
+            pose = self._advance_playing(dt)
+        self.last_pose = pose
+        return pose
+
+    def _start_blend(self, src: Pose, dst: Pose, seconds: float, state: State) -> None:
+        self._blend_from, self._blend_to = _blend_targets(self.kin, src, dst)
+        self._blend_seconds = seconds
+        self._blend_t = 0.0
+        self.state = state
+
+    def _advance_blend(self, dt: float) -> Pose:
+        self._blend_t += dt
+        u = min(1.0, self._blend_t / self._blend_seconds)
+        pose = _blend(self._blend_from, self._blend_to, u)
+        if u >= 1.0:
+            if self.state == State.ENTRY:
+                self.state = State.PLAYING
+                self.t = 0.0
+            else:
+                self.state = State.IDLE
+        return pose
+
+    def _advance_playing(self, dt: float) -> Pose:
+        anim = self.animation
+        duration = anim.duration
+        self.t += dt * self.params[ParamId.SPEED]
+        if anim.loop:
+            self.t = self.t % duration if duration > 0.0 else 0.0
+            return evaluate(anim, self.params, self.t, self.kin)
+        if self.t < duration:
+            return evaluate(anim, self.params, self.t, self.kin)
+        self._plays_done += 1
+        if self._plays_done < int(round(self.params[ParamId.REPEAT])):
+            self.t = self.t - duration if duration > 0.0 else 0.0
+            return evaluate(anim, self.params, self.t, self.kin)
+        final = evaluate(anim, self.params, duration, self.kin)
+        if anim.hold_end:
+            self.state = State.HOLD
+        else:
+            self.last_pose = final
+            self.stop()
+        return final

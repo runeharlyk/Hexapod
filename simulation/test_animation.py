@@ -259,3 +259,149 @@ def test_stance_pose_reproduces_the_standing_angles():
     angles, mask = an.pose_to_angles(an.Pose.stance(), KIN)
     assert mask == 0
     assert np.allclose(angles, KIN.inverse_kinematics(BodyState()))
+
+
+def lifted_anim(**kw):
+    """Leg 0 relocates 30 mm forward and 20 mm up over 1 s, body crouches 20 mm."""
+    a = an.Animation(name="lift", keyframes=[
+        an.Keyframe(0.0, legs=[an.LegTarget(foot=np.array([0, 30.0, 20.0]))] + stance_legs()[:5]),
+        an.Keyframe(1.0, body=np.array([0, 0, 0, 0, 0, 20.0]),
+                    legs=[an.LegTarget(foot=np.array([0, 30.0, 20.0]))] + stance_legs()[:5]),
+    ], **kw)
+    return a
+
+
+DT = 0.02
+
+
+def run(player, steps):
+    """Advance by whole control steps. Counts are chosen with one step of slack past every
+    transition so float accumulation in the blend clock cannot flip an assertion."""
+    poses = []
+    for _ in range(steps):
+        poses.append(player.update(DT))
+    return poses
+
+
+def test_player_is_idle_at_stance_until_play():
+    p = an.Player(KIN)
+    assert p.state == an.State.IDLE
+    pose = p.update(DT)
+    assert np.array_equal(pose.body, np.zeros(6)) and not pose.legs[0].is_joints()
+
+
+def test_entry_blends_from_the_live_pose_and_arcs_a_relocating_foot():
+    p = an.Player(KIN)
+    p.play(lifted_anim(entry_time=0.4))
+    assert p.state == an.State.ENTRY
+    mid = run(p, 10)[-1]                        # u = 0.5, ease_in_out(0.5) = 0.5, sin(pi/2) = 1
+    travel = 30.0
+    expected_z = 10.0 + an.STEP_ARC_MM * min(1.0, travel / an.STEP_ARC_FULL_TRAVEL_MM)
+    assert mid.legs[0].foot[1] == pytest.approx(15.0, abs=1e-6)
+    assert mid.legs[0].foot[2] == pytest.approx(expected_z, abs=1e-6)
+    assert mid.legs[1].foot[2] == pytest.approx(0.0)  # planted feet get no arc
+    end = run(p, 11)[-1]
+    assert p.state == an.State.PLAYING
+    assert np.allclose(end.legs[0].foot, [0, 30.0, 20.0])
+
+
+def test_playing_then_exit_then_idle_with_a_step_home():
+    p = an.Player(KIN)
+    p.play(lifted_anim(entry_time=0.2, exit_time=0.4))
+    run(p, 11)
+    run(p, 52)
+    assert p.state == an.State.EXIT
+    mid = run(p, 5)[-1]
+    y, z = mid.legs[0].foot[1], mid.legs[0].foot[2]
+    assert 0.0 < y < 30.0
+    assert z > y * 20.0 / 30.0  # above the straight line home, so the foot is arcing
+    run(p, 20)
+    assert p.state == an.State.IDLE
+    assert np.allclose(p.last_pose.body, 0) and np.allclose(p.last_pose.legs[0].foot, 0)
+
+
+def test_hold_end_freezes_on_the_last_keyframe():
+    p = an.Player(KIN)
+    p.play(lifted_anim(entry_time=0.2, hold_end=True))
+    run(p, 75)
+    assert p.state == an.State.HOLD
+    pose = run(p, 50)[-1]
+    assert pose.body[an.BodyAxis.Z] == pytest.approx(20.0)
+    p.stop()
+    assert p.state == an.State.EXIT
+
+
+def test_speed_scales_only_the_playing_clock():
+    slow, fast = an.Player(KIN), an.Player(KIN)
+    a = lifted_anim(entry_time=0.2, params=[an.ParamSpec(an.ParamId.SPEED, 0.5, 1.0, 4.0)])
+    slow.play(a)
+    fast.play(a, {an.ParamId.SPEED: 2.0})
+    run(slow, 11), run(fast, 11)
+    assert slow.state == fast.state == an.State.PLAYING  # entry took the same wall time
+    run(slow, 10), run(fast, 10)
+    assert 10 * DT - 1e-9 <= slow.t <= 11 * DT + 1e-9
+    assert fast.t == pytest.approx(2 * slow.t)
+
+
+def test_loop_wraps_and_repeat_counts_plays():
+    p = an.Player(KIN)
+    p.play(lifted_anim(entry_time=0.2, loop=True))
+    run(p, 11)
+    run(p, 125)
+    assert p.state == an.State.PLAYING and 0.0 <= p.t < 1.0
+    q = an.Player(KIN)
+    q.play(lifted_anim(entry_time=0.2, params=[an.ParamSpec(an.ParamId.REPEAT, 1, 2, 5)]))
+    run(q, 11)
+    run(q, 74)
+    assert q.state == an.State.PLAYING  # second play under way
+    run(q, 30)
+    assert q.state == an.State.EXIT
+
+
+def test_zero_dt_and_a_single_keyframe_reach_hold_or_exit():
+    p = an.Player(KIN)
+    one = an.Animation(name="one", entry_time=0.2, keyframes=[an.Keyframe(0.0, body=np.array([0, 0, 0, 0, 0, 10.0]))])
+    p.play(one)
+    p.update(0.0)
+    assert p.state == an.State.ENTRY
+    run(p, 13)
+    assert p.state == an.State.EXIT
+    q = an.Player(KIN)
+    one.hold_end = True
+    q.play(one)
+    run(q, 13)
+    assert q.state == an.State.HOLD
+
+
+def test_play_during_exit_enters_from_the_current_blend_without_a_jump():
+    p = an.Player(KIN)
+    p.play(lifted_anim(entry_time=0.2, exit_time=0.4))
+    run(p, 11)
+    run(p, 55)
+    before = run(p, 5)[-1]
+    assert p.state == an.State.EXIT
+    p.play(lifted_anim(entry_time=0.4))
+    after = p.update(0.0)
+    assert p.state == an.State.ENTRY
+    assert np.allclose(after.body, before.body) and np.allclose(after.legs[0].foot, before.legs[0].foot)
+
+
+def test_entry_toward_a_joint_leg_blends_in_joint_space():
+    a = an.Animation(name="j", entry_time=0.4, keyframes=[
+        an.Keyframe(0.0, legs=[an.LegTarget(joints=np.array([0, 80.0, -110.0]))] + stance_legs()[:5]),
+        an.Keyframe(1.0, legs=[an.LegTarget(joints=np.array([0, 80.0, -110.0]))] + stance_legs()[:5]),
+    ])
+    p = an.Player(KIN)
+    p.play(a)
+    mid = run(p, 10)[-1]
+    start = an.leg_joints_deg(KIN, np.zeros(6), np.zeros(3), 0)
+    assert mid.legs[0].is_joints()
+    assert np.allclose(mid.legs[0].joints, (start + [0, 80.0, -110.0]) / 2)
+
+
+def test_capture_pose_reads_offsets_from_a_body_state():
+    b = BodyState(omega=0.1, zm=15.0)
+    b.feet[2, :3] += [1.0, 2.0, 3.0]
+    pose = an.capture_pose(b)
+    assert pose.body[an.BodyAxis.ROLL] == 0.1 and pose.body[an.BodyAxis.Z] == 15.0
+    assert np.allclose(pose.legs[2].foot, [1, 2, 3]) and np.allclose(pose.legs[0].foot, 0)
