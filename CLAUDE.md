@@ -55,6 +55,7 @@ uv run python optimize_gait.py               # retune analytic command->gait coe
 uv run pytest -q                             # firmware/sim gait parity tests (test_firmware_gait_parity.py)
 uv run python check_animation.py             # run every bundled animation through the servo model
 uv run python gen_animation_fixtures.py      # regenerate the animation parity fixtures
+uv run python scripts/compile_protos.py      # regenerate src/platform_shared/animation_pb2.py (also runs on first import)
 ```
 See `simulation/README.md` for the full control-mode and training-flag reference.
 

@@ -1,13 +1,29 @@
 """Conversion between the animation dataclasses and the generated protobuf classes."""
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
 from google.protobuf import json_format
 
-from src.platform_shared import animation_pb2 as pb
 from src.robot import animation as an
+
+COMPILE_PROTOS = Path(__file__).resolve().parents[2] / "scripts" / "compile_protos.py"
+
+
+def _load_pb():
+    """The generated module is gitignored, so a fresh clone generates it on first import."""
+    try:
+        from src.platform_shared import animation_pb2
+    except ImportError:
+        subprocess.run([sys.executable, str(COMPILE_PROTOS)], check=True)
+        from src.platform_shared import animation_pb2
+    return animation_pb2
+
+
+pb = _load_pb()
 
 
 def _leg_from_proto(lt: pb.LegTarget) -> an.LegTarget:

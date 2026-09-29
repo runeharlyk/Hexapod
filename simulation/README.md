@@ -241,3 +241,4 @@ The command is a body-frame velocity vector `[vx, vy]` (m/s) + yaw rate (rad/s).
 `uv run python check_animation.py` runs every animation through the servo model and reports clamped joints, peak joint speed, tilt, and falls.
 `uv run python gen_animation_fixtures.py` regenerates `animations/fixtures/expected.json`; `uv run pytest` fails while it is stale.
 `uv run python sim_sandbox.py` has an Animate mode for playing and scrubbing an animation.
+`uv run python scripts/compile_protos.py` generates the gitignored `src/platform_shared/animation_pb2.py`; it runs automatically on first import, and can be run by hand after editing the proto.

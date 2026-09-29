@@ -6,9 +6,8 @@ import numpy as np
 import pytest
 from google.protobuf import json_format
 
-from src.platform_shared import animation_pb2 as pb
 from src.robot import animation as an
-from src.robot.animation_files import from_proto, json_text, load_binary, load_json, save_binary, to_proto
+from src.robot.animation_files import from_proto, json_text, load_binary, load_json, pb, save_binary, to_proto
 from src.robot.firmware_gait import DEFAULT_FEET, BodyState, Kinematics
 
 KIN = Kinematics()
