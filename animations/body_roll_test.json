@@ -1,0 +1,23 @@
+{
+  "name": "body_roll_test",
+  "description": "Sweep roll, pitch and yaw one at a time to their usable limits",
+  "schema": 1,
+  "keyframes": [
+    {"time": 0},
+    {"time": 0.8, "ease": "EASE_IN_OUT", "body": {"roll": 0.3}},
+    {"time": 2.4, "ease": "EASE_IN_OUT", "body": {"roll": -0.3}},
+    {"time": 3.2, "ease": "EASE_IN_OUT"},
+    {"time": 4.0, "ease": "EASE_IN_OUT", "body": {"pitch": 0.3}},
+    {"time": 5.6, "ease": "EASE_IN_OUT", "body": {"pitch": -0.3}},
+    {"time": 6.4, "ease": "EASE_IN_OUT"},
+    {"time": 7.2, "ease": "EASE_IN_OUT", "body": {"yaw": 0.28}},
+    {"time": 8.8, "ease": "EASE_IN_OUT", "body": {"yaw": -0.28}},
+    {"time": 9.6, "ease": "EASE_IN_OUT"}
+  ],
+  "params": [
+    {"id": "BODY_ROLL", "min": 0, "defaultValue": 1, "max": 1.2},
+    {"id": "BODY_PITCH", "min": 0, "defaultValue": 1, "max": 1.2},
+    {"id": "BODY_YAW", "min": 0, "defaultValue": 1, "max": 1.1},
+    {"id": "SPEED", "min": 0.5, "defaultValue": 1, "max": 2}
+  ]
+}

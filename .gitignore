@@ -18,3 +18,5 @@ firmware/include/WWWData.h
 # Vendored third-party components, fetched not tracked. esp-dl is a nested clone with its own
 # .git, so a plain `git add -A` would otherwise pull ~1 GB into this repo.
 firmware/components/
+# packed from animations/*.json by firmware/scripts/pack_animations.py
+firmware/data/animations/

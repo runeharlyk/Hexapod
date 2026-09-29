@@ -1,0 +1,23 @@
+{
+  "name": "wave",
+  "description": "Lean away from the right front leg, raise it, flick the foot twice",
+  "schema": 1,
+  "keyframes": [
+    {"time": 0},
+    {"time": 0.5, "ease": "EASE_IN_OUT", "body": {"x": -25, "y": -15, "z": -5, "pitch": 0.08},
+     "legs": [{"joints": {"coxa": 10, "femur": 80, "tibia": -100}}, {"foot": {}}, {"foot": {}}, {"foot": {}}, {"foot": {}}, {"foot": {}}]},
+    {"time": 0.8, "ease": "EASE_IN_OUT", "body": {"x": -25, "y": -15, "z": -5, "pitch": 0.08},
+     "legs": [{"joints": {"coxa": 10, "femur": 80, "tibia": -60}}, {"foot": {}}, {"foot": {}}, {"foot": {}}, {"foot": {}}, {"foot": {}}]},
+    {"time": 1.1, "ease": "EASE_IN_OUT", "body": {"x": -25, "y": -15, "z": -5, "pitch": 0.08},
+     "legs": [{"joints": {"coxa": 10, "femur": 80, "tibia": -110}}, {"foot": {}}, {"foot": {}}, {"foot": {}}, {"foot": {}}, {"foot": {}}]},
+    {"time": 1.4, "ease": "EASE_IN_OUT", "body": {"x": -25, "y": -15, "z": -5, "pitch": 0.08},
+     "legs": [{"joints": {"coxa": 10, "femur": 80, "tibia": -60}}, {"foot": {}}, {"foot": {}}, {"foot": {}}, {"foot": {}}, {"foot": {}}]},
+    {"time": 1.7, "ease": "EASE_IN_OUT", "body": {"x": -25, "y": -15, "z": -5, "pitch": 0.08},
+     "legs": [{"joints": {"coxa": 10, "femur": 80, "tibia": -100}}, {"foot": {}}, {"foot": {}}, {"foot": {}}, {"foot": {}}, {"foot": {}}]},
+    {"time": 2.3, "ease": "EASE_IN_OUT"}
+  ],
+  "params": [
+    {"id": "SPEED", "min": 0.5, "defaultValue": 1, "max": 2},
+    {"id": "REPEAT", "min": 1, "defaultValue": 1, "max": 3}
+  ]
+}
