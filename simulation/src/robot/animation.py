@@ -240,33 +240,54 @@ def _segment(anim: Animation, t: float) -> tuple[Keyframe, Keyframe, float]:
     return k0, k1, ease_value(k1.ease, (t - k0.time) / (k1.time - k0.time))
 
 
-def _lerp_leg(kin: Kinematics, a: LegTarget, b: LegTarget, body_a: np.ndarray, body_b: np.ndarray,
-              leg: int, u: float) -> LegTarget:
+def _lifted(foot: np.ndarray, overlay: np.ndarray, lift: float) -> np.ndarray:
+    out = foot + overlay
+    out[2] *= lift
+    return out
+
+
+def _resolve_leg(kin: Kinematics, a: LegTarget, b: LegTarget, overlay: np.ndarray, lift: float,
+                 body: np.ndarray, leg: int, u: float) -> LegTarget:
     if not a.is_joints() and not b.is_joints():
-        return LegTarget(foot=a.foot + (b.foot - a.foot) * u)
-    ja = a.joints if a.is_joints() else leg_joints_deg(kin, body_a, a.foot, leg)
-    jb = b.joints if b.is_joints() else leg_joints_deg(kin, body_b, b.foot, leg)
+        return LegTarget(foot=_lifted(a.foot + (b.foot - a.foot) * u, overlay, lift))
+    ja = a.joints if a.is_joints() else leg_joints_deg(kin, body, _lifted(a.foot, overlay, lift), leg)
+    jb = b.joints if b.is_joints() else leg_joints_deg(kin, body, _lifted(b.foot, overlay, lift), leg)
     return LegTarget(joints=ja + (jb - ja) * u)
 
 
 def evaluate(anim: Animation, params: np.ndarray, t: float, kin: Kinematics) -> Pose:
+    """The pose at animation time t (clamped to [0, duration]), computed in this order:
+
+    1. Interpolate the body between the bracketing keyframes with the end keyframe's easing.
+    2. Add every overlay whose window contains t: a body overlay adds to the body; a foot overlay
+       adds to a per-leg foot_overlay[leg][axis] accumulator, not yet to any leg.
+    3. Multiply each body channel by its BODY_* param. This is the output body.
+    4. Resolve each leg from its two endpoint targets, where lifted(f) = f + foot_overlay[leg]
+       with its z then multiplied by FOOT_LIFT:
+       - foot to foot: lifted(lerp of the two offsets).
+       - joints to joints: lerp of the angles; overlays and multipliers do not apply.
+       - mixed: the foot endpoint becomes IK(output body, lifted(foot)) and the leg is lerped in
+         joint space with the raw joint endpoint.
+    Because the mixed IK uses the output body and the lifted foot, a leg switching between a foot
+    and a joint target is continuous across the keyframe under any multiplier or overlay.
+    """
     k0, k1, u = _segment(anim, t)
     t = min(max(t, 0.0), anim.duration)
     body = k0.body + (k1.body - k0.body) * u
-    legs = [_lerp_leg(kin, leg_target(k0, i), leg_target(k1, i), k0.body, k1.body, i, u) for i in range(6)]
+    foot_overlay = np.zeros((6, 3))
     for o in anim.overlays:
         if not o.start <= t <= o.end:
             continue
         v = o.amplitude * params[ParamId.OVERLAY_AMPLITUDE] * math.sin(2.0 * math.pi * o.frequency * t + o.phase)
         if o.body_axis is not None:
             body[o.body_axis] += v
-        elif not legs[o.foot_channel // 3].is_joints():
-            legs[o.foot_channel // 3].foot[o.foot_channel % 3] += v
+        else:
+            foot_overlay[o.foot_channel // 3, o.foot_channel % 3] += v
     for axis, pid in enumerate(BODY_PARAM_FOR_AXIS):
         body[axis] *= params[pid]
-    for leg in legs:
-        if not leg.is_joints():
-            leg.foot[2] *= params[ParamId.FOOT_LIFT]
+    lift = params[ParamId.FOOT_LIFT]
+    legs = [_resolve_leg(kin, leg_target(k0, i), leg_target(k1, i), foot_overlay[i], lift, body, i, u)
+            for i in range(6)]
     return Pose(body, legs)
 
 

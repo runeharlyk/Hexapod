@@ -148,10 +148,10 @@ It returns a pose: six body offsets and six leg targets, each a foot offset or j
 1. Find the keyframe pair bracketing `t`; clamp `t` to the last keyframe's time.
 2. Normalise within the segment and apply the end keyframe's easing.
 3. Interpolate the body channels.
-4. Per leg: if both endpoints are foot offsets, interpolate offsets; if both are joint angles, interpolate angles; if mixed, run IK on the foot endpoint against the interpolated body pose to get its angles and interpolate in joint space.
+4. Per leg: if both endpoints are foot offsets, interpolate offsets; if both are joint angles, interpolate angles; if mixed, take the foot endpoint with its foot overlay and `FOOT_LIFT` applied, run IK on it against the output body of step 6, and interpolate in joint space with the raw joint endpoint, so the leg is continuous across the keyframe where it switches.
    A missing `legs` array counts as six zero foot offsets.
 5. Add every overlay whose window contains `t`: `amplitude * sin(2*pi*frequency*t + phase)`.
-6. Apply the multipliers.
+6. Apply the multipliers: each `BODY_*` multiplies its body channel, giving the output body, and `FOOT_LIFT` multiplies each foot offset's `z` after its foot overlay; a joint-to-joint leg ignores overlays and multipliers.
 
 Easing curves are the stash's: linear, `t*t`, `t*(2-t)`, and the piecewise ease-in-out.
 

@@ -236,6 +236,19 @@ def test_mixed_foot_and_joint_keyframes_interpolate_in_joint_space():
     assert np.allclose(pose.legs[0].joints, (start + np.array([0, 80.0, -110.0])) / 2)
 
 
+def test_mixed_leg_is_continuous_at_a_foot_to_joint_keyframe_under_multipliers_and_overlays():
+    a = an.Animation(name="t", keyframes=[
+        an.Keyframe(0.0),
+        an.Keyframe(1.0, legs=[an.LegTarget(foot=np.array([0, 0, 30.0]))] + stance_legs()[:5]),
+        an.Keyframe(2.0, legs=[an.LegTarget(joints=np.array([0, 80.0, -110.0]))] + stance_legs()[:5]),
+    ], overlays=[an.Overlay(body_axis=an.BodyAxis.ROLL, amplitude=0.1, frequency=0.5, start=0.5, end=1.5)],
+        params=[an.ParamSpec(an.ParamId.FOOT_LIFT, 0, 1, 2), an.ParamSpec(an.ParamId.BODY_ROLL, 0, 1, 2)])
+    p = params_of(a, FOOT_LIFT=1.5, BODY_ROLL=0.5)
+    before, _ = an.pose_to_angles(an.evaluate(a, p, 1.0 - 1e-6, KIN), KIN)
+    after, _ = an.pose_to_angles(an.evaluate(a, p, 1.0 + 1e-6, KIN), KIN)
+    assert np.allclose(before, after, atol=0.05)
+
+
 def test_leg_joints_deg_matches_the_full_body_ik():
     body = np.array([0.05, -0.02, 0.1, 5.0, -3.0, 12.0])
     b = BodyState(omega=0.05, phi=-0.02, psi=0.1, xm=5.0, ym=-3.0, zm=12.0)

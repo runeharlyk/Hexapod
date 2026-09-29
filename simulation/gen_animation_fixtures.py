@@ -19,6 +19,7 @@ TOLERANCE = 1e-4
 
 EVALUATE_CASES = [
     ("fx_mixed_legs", {}),
+    ("fx_mixed_legs", {"FOOT_LIFT": 1.5, "BODY_ROLL": 0.5}),
     ("fx_overlay", {}),
     ("fx_overlay", {"OVERLAY_AMPLITUDE": 0.5}),
     ("fx_params", {}),

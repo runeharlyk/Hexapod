@@ -13,5 +13,9 @@
     {"time": 1.8, "ease": "EASE_IN_OUT", "body": {"yaw": 0.15},
      "legs": [{"foot": {"y": -15, "z": 30}}, {"foot": {}}, {"foot": {}}, {"foot": {}}, {"foot": {}}, {"foot": {}}]},
     {"time": 2.2, "ease": "LINEAR"}
+  ],
+  "params": [
+    {"id": "BODY_ROLL", "min": 0, "defaultValue": 1, "max": 2},
+    {"id": "FOOT_LIFT", "min": 0, "defaultValue": 1, "max": 2}
   ]
 }
