@@ -20,3 +20,5 @@ firmware/include/WWWData.h
 firmware/components/
 # packed from animations/*.json by firmware/scripts/pack_animations.py
 firmware/data/animations/
+# planning notes kept locally only
+docs/superpowers/
