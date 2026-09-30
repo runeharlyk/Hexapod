@@ -1,6 +1,7 @@
 """Unit tests for the animation reference implementation (src/robot/animation.py)."""
 import json
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -500,3 +501,56 @@ def test_capture_pose_reads_offsets_from_a_body_state():
     pose = an.capture_pose(b)
     assert pose.body[an.BodyAxis.ROLL] == 0.1 and pose.body[an.BodyAxis.Z] == 15.0
     assert np.allclose(pose.legs[2].foot, [1, 2, 3]) and np.allclose(pose.legs[0].foot, 0)
+
+
+# The runner adds a ride-height base to the body z before IK; every foot-to-joint conversion must see it.
+BASE_MM = 30.0
+WAVE = Path(__file__).resolve().parents[1] / "animations" / "wave.json"
+
+
+def based_angles(pose, base=BASE_MM):
+    out = pose.copy()
+    out.body[an.BodyAxis.Z] += base
+    return an.pose_to_angles(out, KIN)[0]
+
+
+def slider_following_wave():
+    a = load_json(WAVE)
+    a.ride_height = None
+    return a
+
+
+def test_a_mixed_leg_is_continuous_at_every_keyframe_on_a_nonzero_base():
+    a = slider_following_wave()
+    p = an.resolve_params(a, None)
+    for k in a.keyframes:
+        before = based_angles(an.evaluate(a, p, k.time - 1e-6, KIN, base_z=BASE_MM))
+        after = based_angles(an.evaluate(a, p, k.time + 1e-6, KIN, base_z=BASE_MM))
+        assert np.max(np.abs(before - after)) < 0.05, f"jump at t={k.time}"
+
+
+def test_entry_from_a_joint_leg_ends_where_a_slider_following_clip_starts():
+    held = an.Animation(name="held", entry_time=0.4, keyframes=[
+        an.Keyframe(0.0, body=np.array([0, 0, 0, 0, 0, 5.0])), an.Keyframe(1.0, body=np.array([0, 0, 0, 0, 0, 5.0]))])
+    live = an.Pose.stance()
+    live.legs[0] = an.LegTarget(joints=np.array([10.0, 60.0, -100.0]))  # a puppeteer joint leg
+    p = an.Player(KIN)
+    p.play(held, live=live, base_z=BASE_MM)
+    while p.state == an.State.ENTRY:
+        end_of_entry = based_angles(p.update(DT, BASE_MM))
+    first_playing = based_angles(p.update(DT, BASE_MM))
+    assert p.state == an.State.PLAYING
+    assert np.max(np.abs(end_of_entry - first_playing)) < 0.05
+
+
+def test_a_stop_in_a_joint_phase_exits_exactly_to_stance_on_the_base():
+    p = an.Player(KIN)
+    p.play(slider_following_wave(), base_z=BASE_MM)
+    while p.state != an.State.PLAYING or p.t < 1.0:
+        p.update(DT, BASE_MM)
+    assert p.last_pose.legs[0].is_joints()
+    p.stop(BASE_MM)
+    while p.state != an.State.IDLE:
+        final = p.update(DT, BASE_MM)
+    assert final.legs[0].is_joints()
+    assert np.max(np.abs(based_angles(final) - based_angles(an.Pose.stance()))) < 1e-6

@@ -189,7 +189,12 @@ class Sandbox:
 
     def _play_animation(self):
         if self.animation is not None:
-            self.player.play(self.animation, self._animation_values())  # entry starts from player.last_pose
+            # entry starts from player.last_pose
+            self.player.play(self.animation, self._animation_values(), base_z=self._animation_base())
+
+    def _animation_base(self):
+        ride_height = self.animation.ride_height if self.animation is not None else None
+        return self._height_to_zm(self.v("height")) if ride_height is None else ride_height
 
     def _apply_animation(self):
         """Playing: the player drives the pose. Idle: the scrub slider evaluates the animation directly,
@@ -198,18 +203,22 @@ class Sandbox:
         The evaluated body z is an offset. The base ride height is added to a copy just before IK, so
         the player's live pose stays an offset and a following Play does not treat the STAND height as
         one: the animation's ride_height when it sets one, else the height slider, as the firmware does.
+        The same base goes into the player's and the evaluator's joint conversions. Unlike the firmware,
+        the base switches without its lerp, and the idle scrub also applies the animation's ride_height,
+        where the idle firmware follows the slider.
         """
+        base = self._animation_base()
         if self.player.state != an.State.IDLE:
-            pose = self.player.update(CONTROL_DT)
+            pose = self.player.update(CONTROL_DT, base)
         elif self.animation is not None:
             params = an.resolve_params(self.animation, self._animation_values())
-            pose = an.evaluate(self.animation, params, self.v("scrub") * self.animation.duration, self.kin)
+            pose = an.evaluate(self.animation, params, self.v("scrub") * self.animation.duration, self.kin,
+                               base_z=base)
             self.player.last_pose = pose
         else:
             pose = an.Pose.stance()
         pose = pose.copy()
-        ride_height = self.animation.ride_height if self.animation is not None else None
-        pose.body[an.BodyAxis.Z] += self._height_to_zm(self.v("height")) if ride_height is None else ride_height
+        pose.body[an.BodyAxis.Z] += base
         angles_deg, mask = an.pose_to_angles(pose, self.kin)
         self._clamp_mask = mask
         self._animation_angles = np.radians(angles_deg)
@@ -416,7 +425,7 @@ class Sandbox:
                        command=lambda _: self._load_animation()).pack(side="left")
         btns = ttk.Frame(af); btns.pack(fill="x", padx=6, pady=2)
         ttk.Button(btns, text="Play", command=self._play_animation).pack(side="left", expand=True, fill="x")
-        ttk.Button(btns, text="Stop", command=lambda: self.player.stop()).pack(side="left", expand=True, fill="x")
+        ttk.Button(btns, text="Stop", command=lambda: self.player.stop(self._animation_base())).pack(side="left", expand=True, fill="x")
         self._slider(af, "scrub", 0.0, 1.0, 0.0, fmt="{:.2f}")   # animation time when idle
         self.param_frame = ttk.Frame(af)
         self.param_frame.pack(fill="x")

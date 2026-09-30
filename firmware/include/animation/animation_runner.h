@@ -10,9 +10,9 @@
 // Ride height: the evaluated body z is an offset, and the runner adds a base before IK. While a clip
 // that sets ride_height plays, the base is that value; otherwise, including puppeteer poses and after
 // Exit, it is the STAND ride-height slider, so a clip played on a tall-standing robot stays tall and
-// Exit returns to the slider's height. The base eases toward its target with the STAND smoothing.
-// The evaluator and the player convert a foot leg to joints at base 0, so a clip with joint legs
-// keeps its switching keyframes continuous only with ride_height 0.
+// Exit returns to the slider's height. The base eases toward its target with the STAND smoothing,
+// and it is passed into every foot-to-joint conversion (the player, the evaluator and the puppet
+// path), so a joint leg meets its foot endpoint at any base.
 
 #include <atomic>
 #include <cstring>
@@ -170,16 +170,17 @@ class AnimationRunner {
         const anim::State before = player_->state();
         const anim::Clip *clipBefore = player_->clip();
         consumeRequests();
+        const bool fixedBase = player_->state() != anim::State::IDLE && player_->clip()->hasRideHeight;
+        baseZm_ = lerpf(baseZm_, fixedBase ? player_->clip()->rideHeight : sliderZm, STAND_SMOOTHING);
         if (player_->state() != anim::State::IDLE) {
-            current_ = player_->update(dt);
+            current_ = player_->update(dt, baseZm_);
             // Exit ends at stance, but a leg that blended in joint space still holds it as joint
-            // angles; restate it as zero offsets so the pose reads as at stance and the feet follow the base.
+            // angles (solved at this base); restate it as zero offsets so the pose reads as at stance
+            // and the feet follow later base changes.
             if (player_->state() == anim::State::IDLE) current_ = anim::Pose {};
         } else if (havePuppet_) {
             approachPuppet();
         }
-        const bool fixedBase = player_->state() != anim::State::IDLE && player_->clip()->hasRideHeight;
-        baseZm_ = lerpf(baseZm_, fixedBase ? player_->clip()->rideHeight : sliderZm, STAND_SMOOTHING);
         anim::Pose out = current_;
         out.body[anim::Z] += baseZm_;
         clampMask_ = anim::poseToAngles(out, *kin_, stance_, angles);
@@ -205,6 +206,7 @@ class AnimationRunner {
     static constexpr const char *TAG = "AnimationRunner";
     static constexpr float STAND_SMOOTHING = 0.06f;
     static constexpr float PUPPET_SWITCH_DEG = 0.5f;
+    static constexpr float SLIDER_RANGE_MM = 50.0f; // MotionService maps the height slider to zm = h * 50
     static constexpr int64_t TICK_COST_WINDOW_US = 5000000;
     Kinematics *kin_ = nullptr;
     const float (*stance_)[4] = nullptr;
@@ -270,12 +272,12 @@ class AnimationRunner {
                 anim::ParamValue values[anim::PARAM_MAX];
                 for (int i = 0; i < pendingParams_.paramCount; ++i)
                     values[i] = {pendingParams_.params[i].id, pendingParams_.params[i].value};
-                player_->play(clips_[active_], values, pendingParams_.paramCount, &current_);
+                player_->play(clips_[active_], values, pendingParams_.paramCount, &current_, baseZm_);
                 havePuppet_ = false;
             }
             xSemaphoreGive(loadMutex_);
         }
-        if (pendingStop_.exchange(false, std::memory_order_acq_rel)) player_->stop();
+        if (pendingStop_.exchange(false, std::memory_order_acq_rel)) player_->stop(baseZm_);
         portENTER_CRITICAL(&puppetMux_);
         // A pose streamed during a play is stale by the time the play ends, so only an idle player
         // takes one.
@@ -297,24 +299,21 @@ class AnimationRunner {
     // in joint space, as the spec blends a joint-angle leg: a foot leg becoming a joint leg is
     // converted to joints once and lerps toward the puppet joints; a joint leg becoming a foot leg lerps
     // toward the IK of the target foot and switches to the foot offset once every joint is within
-    // PUPPET_SWITCH_DEG of it. The joints are solved against the body with the base, the body a foot
-    // leg is output with, so the switch is continuous.
+    // PUPPET_SWITCH_DEG of it. The joints are solved at the base a foot leg is output with, so the
+    // switch is continuous.
     void approachPuppet() {
         for (int a = 0; a < 6; ++a) current_.body[a] = lerpf(current_.body[a], puppetTarget_.body[a], STAND_SMOOTHING);
-        float body[6];
-        for (int a = 0; a < 6; ++a) body[a] = current_.body[a];
-        body[anim::Z] += baseZm_;
         for (int i = 0; i < 6; ++i) {
             anim::LegTarget &leg = current_.legs[i];
             const anim::LegTarget &target = puppetTarget_.legs[i];
             if (!leg.joints && target.joints) {
                 float j[3];
-                anim::legJointsDeg(*kin_, body, leg.v, i, stance_, j);
+                anim::legJointsDeg(*kin_, current_.body, leg.v, i, stance_, j, baseZm_);
                 leg = {true, {j[0], j[1], j[2]}};
             }
             if (leg.joints && !target.joints) {
                 float j[3];
-                anim::legJointsDeg(*kin_, body, target.v, i, stance_, j);
+                anim::legJointsDeg(*kin_, current_.body, target.v, i, stance_, j, baseZm_);
                 bool arrived = true;
                 for (int k = 0; k < 3; ++k) {
                     leg.v[k] = lerpf(leg.v[k], j[k], STAND_SMOOTHING);
@@ -327,26 +326,35 @@ class AnimationRunner {
         }
     }
 
-    // The validator's clamp sweep: every keyframe plus 32 evenly spaced times per segment.
+    // The validator's clamp sweep: every keyframe plus 32 evenly spaced times per segment, on every
+    // base the runner may add: the clip's ride height, or both ends of the STAND slider for a clip
+    // that follows it, as simulation/test_animation_library.py checks.
     uint32_t sweepClampMask(const anim::Clip &clip) {
+        const float sliderEnds[2] = {-SLIDER_RANGE_MM, SLIDER_RANGE_MM};
+        const float *bases = clip.hasRideHeight ? &clip.rideHeight : sliderEnds;
+        const int baseCount = clip.hasRideHeight ? 1 : 2;
         float params[anim::PARAM_COUNT];
         anim::resolveParams(clip, nullptr, 0, params);
         uint32_t mask = 0;
-        float angles[18];
-        anim::Pose pose;
-        for (int i = 0; i < clip.keyframeCount; ++i) {
-            const float t0 = clip.keyframes[i].time;
-            const float t1 = i + 1 < clip.keyframeCount ? clip.keyframes[i + 1].time : t0;
-            const int samples = i + 1 < clip.keyframeCount ? 32 : 1;
-            for (int s = 0; s < samples; ++s) {
-                const float t = t0 + (t1 - t0) * (float)s / 32.0f;
-                anim::evaluate(clip, params, t, *kin_, stance_, pose);
-                mask |= anim::poseToAngles(pose, *kin_, stance_, angles);
+        for (int b = 0; b < baseCount; ++b) {
+            for (int i = 0; i < clip.keyframeCount; ++i) {
+                const float t0 = clip.keyframes[i].time;
+                const float t1 = i + 1 < clip.keyframeCount ? clip.keyframes[i + 1].time : t0;
+                const int samples = i + 1 < clip.keyframeCount ? 32 : 1;
+                for (int s = 0; s < samples; ++s)
+                    mask |= clampMaskAt(clip, params, t0 + (t1 - t0) * (float)s / 32.0f, bases[b]);
             }
+            mask |= clampMaskAt(clip, params, clip.duration(), bases[b]);
         }
-        anim::evaluate(clip, params, clip.duration(), *kin_, stance_, pose);
-        mask |= anim::poseToAngles(pose, *kin_, stance_, angles);
         return mask;
+    }
+
+    uint32_t clampMaskAt(const anim::Clip &clip, const float *params, float t, float baseZ) {
+        anim::Pose pose;
+        anim::evaluate(clip, params, t, *kin_, stance_, pose, baseZ);
+        pose.body[anim::Z] += baseZ;
+        float angles[18];
+        return anim::poseToAngles(pose, *kin_, stance_, angles);
     }
 
     void publishStatus(bool changed) {

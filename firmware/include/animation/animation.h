@@ -223,10 +223,13 @@ inline void bodyState(const float body6[6], const float stance[6][4], BodyStateM
     b.updateFeet(stance);
 }
 
-inline void legJointsDeg(Kinematics &kin, const float body6[6], const float foot[3], int leg,
-                         const float stance[6][4], float out[3]) {
+// The joints of one foot leg, solved on the body the runner outputs: the offsets plus the ride-height
+// base on z, so a joint leg meets its foot endpoint at any base.
+inline void legJointsDeg(Kinematics &kin, const float body6[6], const float foot[3], int leg, const float stance[6][4],
+                         float out[3], float baseZ = 0.0f) {
     BodyStateMsg b;
     bodyState(body6, stance, b);
+    b.zm += baseZ;
     for (int k = 0; k < 3; ++k) b.feet[leg][k] += foot[k];
     float angles[18];
     kin.inverseKinematics(b, angles);
@@ -256,9 +259,10 @@ inline void segment(const Clip &c, float t, const Keyframe *&k0, const Keyframe 
 // overlay; apply the BODY_* multipliers (this is the output body); then resolve legs. A foot leg is
 // lerped, gets its overlay and FOOT_LIFT on z. A joint leg is lerped raw. A mixed leg takes the foot
 // endpoint with its overlay and lift, runs IK against the OUTPUT body, and lerps in joint space with
-// the raw joint endpoint, so the servo command is continuous at the switching keyframe.
-inline void evaluate(const Clip &c, const float params[PARAM_COUNT], float t, Kinematics &kin,
-                     const float stance[6][4], Pose &out) {
+// the raw joint endpoint, so the servo command is continuous at the switching keyframe. baseZ is the
+// ride height the runner adds to the body z; it enters only the mixed IK, and out.body stays an offset.
+inline void evaluate(const Clip &c, const float params[PARAM_COUNT], float t, Kinematics &kin, const float stance[6][4],
+                     Pose &out, float baseZ = 0.0f) {
     const Keyframe *k0;
     const Keyframe *k1;
     float u;
@@ -299,13 +303,13 @@ inline void evaluate(const Clip &c, const float params[PARAM_COUNT], float t, Ki
                 for (int k = 0; k < 3; ++k) ja[k] = a.v[k];
             } else {
                 lifted(a.v, foot);
-                legJointsDeg(kin, body, foot, i, stance, ja);
+                legJointsDeg(kin, body, foot, i, stance, ja, baseZ);
             }
             if (b.joints) {
                 for (int k = 0; k < 3; ++k) jb[k] = b.v[k];
             } else {
                 lifted(b.v, foot);
-                legJointsDeg(kin, body, foot, i, stance, jb);
+                legJointsDeg(kin, body, foot, i, stance, jb, baseZ);
             }
             leg.joints = true;
             for (int k = 0; k < 3; ++k) leg.v[k] = ja[k] + (jb[k] - ja[k]) * u;
@@ -379,7 +383,10 @@ enum class State : int { IDLE = 0, ENTRY = 1, PLAYING = 2, HOLD = 3, EXIT = 4 };
 // Entry -> Playing -> Hold | Exit -> Idle around evaluate(). Mirrors the reference Player: REPEAT is
 // max(1, floor(x + 0.5)); SPEED scales only the playing clock; Entry and Exit run on wall time; a
 // play during any state starts Entry from the current pose; Exit after a finished play starts from
-// the final keyframe; play() records the live pose so an immediate stop blends from it.
+// the final keyframe; play() records the live pose so an immediate stop blends from it. baseZ is the
+// ride height the runner adds to the body z at the call; it only moves the foot-to-joint conversions.
+// Entry blends toward the base held once it ends (the clip's ride height when set, else baseZ) and
+// Exit toward baseZ.
 class Player {
   public:
     explicit Player(Kinematics &kin) : kin_(kin) {}
@@ -387,28 +394,31 @@ class Player {
     // The standing feet every offset is relative to; the caller keeps them alive and current.
     void setStance(const float (*stance)[4]) { stance_ = stance; }
 
-    void play(const Clip *clip, const ParamValue *values, int count, const Pose *live) {
+    void play(const Clip *clip, const ParamValue *values, int count, const Pose *live, float baseZ = 0.0f) {
         clip_ = clip;
         resolveParams(*clip, values, count, params_);
         t_ = 0.0f;
         playsDone_ = 0;
         const Pose start = live ? *live : lastPose_;
         lastPose_ = start;
+        const float entryBase = clip->hasRideHeight ? clip->rideHeight : baseZ;
         Pose first;
-        evaluate(*clip, params_, 0.0f, kin_, stance_, first);
-        startBlend(start, first, clip->entrySeconds(), State::ENTRY);
+        evaluate(*clip, params_, 0.0f, kin_, stance_, first, entryBase);
+        startBlend(start, first, clip->entrySeconds(), State::ENTRY, baseZ, entryBase);
     }
 
-    void stop() {
+    void stop(float baseZ = 0.0f) {
         if (state_ == State::IDLE) return;
-        startBlend(lastPose_, Pose{}, clip_->exitSeconds(), State::EXIT);
+        startBlend(lastPose_, Pose {}, clip_->exitSeconds(), State::EXIT, baseZ, baseZ);
     }
 
-    const Pose &update(float dt) {
+    const Pose &update(float dt, float baseZ = 0.0f) {
         if (state_ == State::IDLE) return lastPose_;
         if (state_ == State::ENTRY || state_ == State::EXIT) advanceBlend(dt);
-        else if (state_ == State::HOLD) evaluate(*clip_, params_, clip_->duration(), kin_, stance_, lastPose_);
-        else advancePlaying(dt);
+        else if (state_ == State::HOLD)
+            evaluate(*clip_, params_, clip_->duration(), kin_, stance_, lastPose_, baseZ);
+        else
+            advancePlaying(dt, baseZ);
         return lastPose_;
     }
 
@@ -433,20 +443,21 @@ class Player {
     Pose blendTo_;
 
     // Legs where either side is a joint target are converted to joints on both sides once, so the
-    // blend itself is a plain lerp; foot legs keep their offsets and get the step arc.
-    void startBlend(const Pose &src, const Pose &dst, float seconds, State state) {
+    // blend itself is a plain lerp; foot legs keep their offsets and get the step arc. The source is
+    // converted at the base it is output on now, the destination at the base held when the blend ends.
+    void startBlend(const Pose &src, const Pose &dst, float seconds, State state, float srcBaseZ, float dstBaseZ) {
         blendFrom_ = src;
         blendTo_ = dst;
         for (int i = 0; i < 6; ++i) {
             if (!blendFrom_.legs[i].joints && !blendTo_.legs[i].joints) continue;
             if (!blendFrom_.legs[i].joints) {
                 float j[3];
-                legJointsDeg(kin_, blendFrom_.body, blendFrom_.legs[i].v, i, stance_, j);
+                legJointsDeg(kin_, blendFrom_.body, blendFrom_.legs[i].v, i, stance_, j, srcBaseZ);
                 blendFrom_.legs[i] = {true, {j[0], j[1], j[2]}};
             }
             if (!blendTo_.legs[i].joints) {
                 float j[3];
-                legJointsDeg(kin_, blendTo_.body, blendTo_.legs[i].v, i, stance_, j);
+                legJointsDeg(kin_, blendTo_.body, blendTo_.legs[i].v, i, stance_, j, dstBaseZ);
                 blendTo_.legs[i] = {true, {j[0], j[1], j[2]}};
             }
         }
@@ -481,28 +492,29 @@ class Player {
         }
     }
 
-    void advancePlaying(float dt) {
+    void advancePlaying(float dt, float baseZ) {
         const float duration = clip_->duration();
         t_ += dt * params_[SPEED];
         if (clip_->loop) {
             t_ = duration > 0.0f ? fmodf(t_, duration) : 0.0f;
-            evaluate(*clip_, params_, t_, kin_, stance_, lastPose_);
+            evaluate(*clip_, params_, t_, kin_, stance_, lastPose_, baseZ);
             return;
         }
         if (t_ < duration) {
-            evaluate(*clip_, params_, t_, kin_, stance_, lastPose_);
+            evaluate(*clip_, params_, t_, kin_, stance_, lastPose_, baseZ);
             return;
         }
         ++playsDone_;
         const int repeat = (int)fmaxf(1.0f, floorf(params_[REPEAT] + 0.5f));
         if (playsDone_ < repeat) {
             t_ = duration > 0.0f ? t_ - duration : 0.0f;
-            evaluate(*clip_, params_, t_, kin_, stance_, lastPose_);
+            evaluate(*clip_, params_, t_, kin_, stance_, lastPose_, baseZ);
             return;
         }
-        evaluate(*clip_, params_, duration, kin_, stance_, lastPose_);
+        evaluate(*clip_, params_, duration, kin_, stance_, lastPose_, baseZ);
         if (clip_->holdEnd) state_ = State::HOLD;
-        else stop();
+        else
+            stop(baseZ);
     }
 };
 

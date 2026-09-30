@@ -110,11 +110,13 @@ When the file sets `ride_height`, the base is that value while the player is not
 The base eases toward its target with the STAND smoothing factor, so the change between the two is never a step.
 Puppeteer poses use the slider base.
 Entering ANIMATE starts the base at the slider and captures only the height beyond it as an offset, so the STAND height is not treated as part of the pose.
-The base is applied by each platform's runner, not by the evaluator, so the parity fixtures are unaffected; the sim sandbox adds it the same way in Animate mode.
+The base is added to the body by each platform's runner, not by the evaluator, so the evaluated body stays an offset and the parity fixtures are unaffected; the sim sandbox adds it the same way in Animate mode, without the lerp.
+The base does enter every foot-to-joint conversion: `legJointsDeg` (`leg_joints_deg`), `evaluate` for a mixed leg, and the player's Entry and Exit blends and its Playing and Hold evaluation take the base, so a leg switching between a foot and joint angles is continuous at any base.
+Entry converts its start at the live base and its target at the base held once Entry ends (the file's `ride_height` when set, else the live base); Exit converts both ends at the live base.
 
-The evaluator and the player convert a foot leg to joint angles at base 0 (the mixed-leg rule and the entry and exit blends), so an animation with a joint leg keeps its switching keyframes and its exit continuous only with `ride_height: 0`.
-The stance itself has about 50 mm of femur travel at the crouched end of the slider, so no bundled animation fits the whole slider range, and all seven set `ride_height: 0`.
+The stance itself has only about 5 mm of femur travel left at the crouched (`+50` mm) end of the slider, so no bundled animation fits the whole slider range, and all seven set `ride_height: 0`.
 `simulation/test_animation_library.py` checks every keyframe and midpoint on each base the runner may add: the fixed `ride_height`, or both slider ends (`-50` and `+50` mm) for an animation that follows the slider.
+The robot's validate request sweeps the same bases and reports the union of the clamped joints.
 
 ### Puppeteering
 
@@ -154,7 +156,7 @@ A write is refused with 400 when the chunk is larger than 512 bytes, runs past `
 Offset 0 truncates.
 Any status other than 200 on a chunk means the client restarts the file from offset 0, or reads the size back with `file_read_chunk` and continues from there.
 A failed `fwrite` can leave a partial chunk in the file, so the size read back, not the last acknowledged offset, is where a continuation starts.
-Validation decodes the file, checks the structural rules, and evaluates every keyframe and 32 intermediate times per segment, returning the first structural error or the union of clamped joints.
+Validation decodes the file, checks the structural rules, and evaluates every keyframe and 32 intermediate times per segment on the file's `ride_height`, or on both slider ends (`-50` and `+50` mm) when it has none, returning the first structural error or the union of clamped joints.
 An invalid file is answered with status 422 and the report filled in (`ok` false and the `error`).
 A clamped joint is a warning, not a refusal.
 
@@ -220,7 +222,7 @@ Then, on the native USB port:
 4. Open `shell` for steps 4 to 6.
    `play wave`, press Ctrl-C mid-play to return to the prompt, then `play crouch`: the second animation enters from wherever the first is, with no jump.
 5. `play wiggle`: following ends after about 2.4 s with the looping message while the robot keeps wiggling.
-   Wait for the `tick max` INFO line on the console (every 5 s while playing) and record it; `stop` then eases the robot home and hands STAND back.
+   Wait for the `tick max` INFO line (every 5 s while playing) and record it; `stop` then eases the robot home and hands STAND back.
 6. `play play_dead`: the robot lies down and holds, and following ends with the holding message; `stop` brings it back over 1.2 s.
 7. `mode ANIMATE`, then `play crouch`: after the play the robot stays in ANIMATE (sticky) at stance.
 8. Edit `animations/wave.json` into an invalid file (a keyframe with three legs) and `upload wave`: the upload succeeds, validation reports the error, and `play wave` does nothing while the robot stays in its mode.

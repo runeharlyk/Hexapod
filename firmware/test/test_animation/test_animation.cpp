@@ -454,6 +454,105 @@ void test_stop_before_the_first_update_blends_from_the_live_pose() {
     TEST_ASSERT_EQUAL_FLOAT(15.0f, pose.legs[0].v[1]);
 }
 
+// The runner adds a ride-height base to the body z before IK; every foot-to-joint conversion must see it.
+constexpr float BASE_MM = 30.0f;
+constexpr float CONTINUITY_TOL_DEG = 0.05f;
+
+float maxAngleDelta(const float a[18], const float b[18]) {
+    float worst = 0.0f;
+    for (int j = 0; j < 18; ++j) worst = fmaxf(worst, fabsf(a[j] - b[j]));
+    return worst;
+}
+
+void basedAngles(const anim::Pose &pose, Kinematics &kin, float angles[18]) {
+    anim::Pose out = pose;
+    out.body[anim::Z] += BASE_MM;
+    anim::poseToAngles(out, kin, STANCE, angles);
+}
+
+// animations/wave.json without its ride_height, so it follows the slider: the native tests do not pack
+// the library, and wave is the bundled clip that switches a leg between feet and joints.
+anim::Clip sliderFollowingWave() {
+    anim::Clip c;
+    strcpy(c.name, "wave");
+    const float tibia[5] = {-100, -60, -110, -60, -100};
+    const float times[5] = {0.5f, 0.8f, 1.1f, 1.4f, 1.7f};
+    c.keyframeCount = 7;
+    for (int i = 0; i < 5; ++i) {
+        anim::Keyframe &k = c.keyframes[i + 1];
+        k.time = times[i];
+        k.ease = anim::EASE_IN_OUT;
+        k.body[anim::X] = -25;
+        k.body[anim::Y] = -15;
+        k.body[anim::Z] = -5;
+        k.body[anim::PITCH] = 0.08f;
+        k.legCount = 6;
+        k.legs[0] = {true, {10, 80, tibia[i]}};
+    }
+    c.keyframes[6].time = 2.3f;
+    c.keyframes[6].ease = anim::EASE_IN_OUT;
+    return c;
+}
+
+void test_a_mixed_leg_is_continuous_at_every_keyframe_on_a_nonzero_base() {
+    Kinematics kin;
+    const anim::Clip wave = sliderFollowingWave();
+    TEST_ASSERT_NULL(anim::validate(wave));
+    float params[anim::PARAM_COUNT];
+    anim::resolveParams(wave, nullptr, 0, params);
+    for (int i = 0; i < wave.keyframeCount; ++i) {
+        anim::Pose before, after;
+        float a[18], b[18];
+        anim::evaluate(wave, params, wave.keyframes[i].time - 1e-6f, kin, STANCE, before, BASE_MM);
+        anim::evaluate(wave, params, wave.keyframes[i].time + 1e-6f, kin, STANCE, after, BASE_MM);
+        basedAngles(before, kin, a);
+        basedAngles(after, kin, b);
+        char where[48];
+        snprintf(where, sizeof(where), "keyframe %d", i);
+        TEST_ASSERT_TRUE_MESSAGE(maxAngleDelta(a, b) < CONTINUITY_TOL_DEG, where);
+    }
+}
+
+void test_entry_from_a_joint_leg_ends_where_a_slider_following_clip_starts() {
+    Kinematics kin;
+    anim::Clip held;
+    strcpy(held.name, "held");
+    held.entryTime = 0.4f;
+    held.keyframeCount = 2;
+    held.keyframes[0].body[anim::Z] = 5.0f;
+    held.keyframes[1].time = 1.0f;
+    held.keyframes[1].body[anim::Z] = 5.0f;
+    anim::Pose live;
+    live.legs[0] = {true, {10, 60, -100}}; // a puppeteer joint leg
+    anim::Player player(kin);
+    player.setStance(STANCE);
+    player.play(&held, nullptr, 0, &live, BASE_MM);
+    float endOfEntry[18], firstPlaying[18];
+    while (player.state() == anim::State::ENTRY) basedAngles(player.update(0.02f, BASE_MM), kin, endOfEntry);
+    basedAngles(player.update(0.02f, BASE_MM), kin, firstPlaying);
+    TEST_ASSERT_EQUAL(anim::State::PLAYING, player.state());
+    TEST_ASSERT_TRUE(maxAngleDelta(endOfEntry, firstPlaying) < CONTINUITY_TOL_DEG);
+}
+
+void test_a_stop_in_a_joint_phase_exits_exactly_to_stance_on_the_base() {
+    Kinematics kin;
+    const anim::Clip wave = sliderFollowingWave();
+    anim::Player player(kin);
+    player.setStance(STANCE);
+    player.play(&wave, nullptr, 0, nullptr, BASE_MM);
+    while (player.state() != anim::State::PLAYING || player.t() < 1.0f) player.update(0.02f, BASE_MM);
+    TEST_ASSERT_TRUE(player.lastPose().legs[0].joints);
+    player.stop(BASE_MM);
+    anim::Pose final;
+    while (player.state() != anim::State::IDLE) final = player.update(0.02f, BASE_MM);
+    TEST_ASSERT_TRUE(final.legs[0].joints);
+    // The runner restates this as the stance pose; the restatement moves no servo.
+    float exited[18], stance[18];
+    basedAngles(final, kin, exited);
+    basedAngles(anim::Pose {}, kin, stance);
+    TEST_ASSERT_TRUE(maxAngleDelta(exited, stance) < ANGLE_TOL_DEG);
+}
+
 void test_status_cadence_is_five_hertz_plus_every_change() {
     TEST_ASSERT_TRUE(anim::statusDue(true, true, 0, 0, 200));
     TEST_ASSERT_FALSE(anim::statusDue(false, true, 1000, 0, 200));
@@ -475,6 +574,9 @@ int main(int, char **) {
     RUN_TEST(test_at_stance_needs_every_leg_on_its_foot_within_a_millimetre);
     RUN_TEST(test_player_matches_every_fixture_trace);
     RUN_TEST(test_stop_before_the_first_update_blends_from_the_live_pose);
+    RUN_TEST(test_a_mixed_leg_is_continuous_at_every_keyframe_on_a_nonzero_base);
+    RUN_TEST(test_entry_from_a_joint_leg_ends_where_a_slider_following_clip_starts);
+    RUN_TEST(test_a_stop_in_a_joint_phase_exits_exactly_to_stance_on_the_base);
     RUN_TEST(test_status_cadence_is_five_hertz_plus_every_change);
     return UNITY_END();
 }

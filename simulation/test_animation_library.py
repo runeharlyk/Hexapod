@@ -66,7 +66,7 @@ def test_bundled_animation_stays_inside_joint_travel_on_every_base_the_runner_ma
     params = an.resolve_params(a, None)
     for base in SLIDER_EXTREMES_MM if a.ride_height is None else (a.ride_height,):
         for t in sample_times(a):
-            pose = an.evaluate(a, params, t, KIN)
+            pose = an.evaluate(a, params, t, KIN, base_z=base)
             pose.body[an.BodyAxis.Z] += base
             _, mask = an.pose_to_angles(pose, KIN)
             assert mask == 0, f"{path.stem} clamps joints {mask:018b} at t={t} on a {base:+.0f} mm base"
