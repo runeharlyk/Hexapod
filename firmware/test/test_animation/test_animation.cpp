@@ -12,6 +12,8 @@
 #include <vector>
 #include <pb_decode.h>
 #include <animation.pb.h>
+#include <animation/animation.h>
+#include <animation/animation_codec.h>
 
 namespace {
 
@@ -50,8 +52,88 @@ void test_fixture_binaries_decode_with_nanopb() {
     TEST_ASSERT_EQUAL(2, a.params_count);
 }
 
+void test_from_proto_copies_every_fixture_and_validates() {
+    const char *names[] = {"fx_mixed_legs", "fx_overlay", "fx_params", "fx_single"};
+    for (const char *name : names) {
+        animation_Animation a;
+        TEST_ASSERT_TRUE(decodeFixture(name, a));
+        anim::Clip clip;
+        anim::fromProto(a, clip);
+        TEST_ASSERT_NULL_MESSAGE(anim::validate(clip), name);
+        TEST_ASSERT_EQUAL_STRING(name, clip.name);
+    }
+    animation_Animation a;
+    decodeFixture("fx_mixed_legs", a);
+    anim::Clip clip;
+    anim::fromProto(a, clip);
+    TEST_ASSERT_EQUAL(5, clip.keyframeCount);
+    TEST_ASSERT_TRUE(clip.keyframes[1].legs[0].joints);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 75.0f, clip.keyframes[1].legs[0].v[1]);
+    TEST_ASSERT_FALSE(clip.keyframes[1].legs[3].joints);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 25.0f, clip.keyframes[1].legs[3].v[2]);
+    TEST_ASSERT_EQUAL(anim::EASE_IN, clip.keyframes[1].ease);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.37f, clip.entryTime);
+    TEST_ASSERT_EQUAL(0, clip.keyframes[4].legCount);
+    TEST_ASSERT_EQUAL(anim::BODY_ROLL, clip.params[0].id);
+    TEST_ASSERT_EQUAL(anim::FOOT_LIFT, clip.params[1].id);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 2.0f, clip.params[1].max);
+    decodeFixture("fx_overlay", a);
+    anim::fromProto(a, clip);
+    TEST_ASSERT_TRUE(clip.loop);
+    TEST_ASSERT_TRUE(clip.overlays[0].onBody);
+    TEST_ASSERT_EQUAL(0, clip.overlays[0].channel);
+    TEST_ASSERT_FALSE(clip.overlays[2].onBody);
+    TEST_ASSERT_EQUAL(5, clip.overlays[2].channel);
+}
+
+anim::Clip twoKeyframes() {
+    anim::Clip c;
+    strcpy(c.name, "t");
+    c.keyframeCount = 2;
+    c.keyframes[0].time = 0.0f;
+    c.keyframes[1].time = 1.0f;
+    return c;
+}
+
+void expectError(anim::Clip &c, const char *fragment) {
+    const char *err = anim::validate(c);
+    TEST_ASSERT_NOT_NULL_MESSAGE(err, fragment);
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(err, fragment), err);
+}
+
+void test_validate_reports_each_structural_rule() {
+    anim::Clip c = twoKeyframes();
+    TEST_ASSERT_NULL(anim::validate(c));
+    c = twoKeyframes(); c.schema = 2; expectError(c, "schema");
+    c = twoKeyframes(); strcpy(c.name, "Bad Name"); expectError(c, "name");
+    c = twoKeyframes(); memset(c.description, 'd', 97); c.description[97] = 0; expectError(c, "description");
+    c = twoKeyframes(); c.keyframeCount = 0; expectError(c, "keyframe");
+    c = twoKeyframes(); c.keyframes[0].time = 0.1f; expectError(c, "time 0");
+    c = twoKeyframes(); c.keyframes[1].time = 0.0f; expectError(c, "increase");
+    c = twoKeyframes(); c.keyframes[1].time = NAN; expectError(c, "finite");
+    c = twoKeyframes(); c.keyframes[1].legCount = 3; expectError(c, "0 or 6");
+    c = twoKeyframes(); c.keyframes[1].ease = 4; expectError(c, "ease");
+    c = twoKeyframes(); c.loop = true; c.holdEnd = true; expectError(c, "loop");
+    c = twoKeyframes(); c.entryTime = INFINITY; expectError(c, "finite");
+    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {true, 6, 1, 1, 0, 0, 1}; expectError(c, "body_axis");
+    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {false, 18, 1, 1, 0, 0, 1}; expectError(c, "foot_channel");
+    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {true, 0, 1, 1, 0, 0.5f, 0.5f}; expectError(c, "start");
+    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {true, 0, 1, 1, 0, 0, 1.5f}; expectError(c, "end");
+    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {true, 0, NAN, 1, 0, 0, 1}; expectError(c, "finite");
+    c = twoKeyframes(); c.paramCount = 2; c.params[0] = {anim::SPEED, 0.5f, 1, 2}; c.params[1] = {anim::SPEED, 0.5f, 1, 2}; expectError(c, "unique");
+    c = twoKeyframes(); c.paramCount = 1; c.params[0] = {anim::BODY_Z, 0.5f, 3, 2}; expectError(c, "min <= default_value <= max");
+    c = twoKeyframes(); c.paramCount = 1; c.params[0] = {anim::SPEED, 0.0f, 1, 2}; expectError(c, "SPEED");
+    c = twoKeyframes(); c.paramCount = 1; c.params[0] = {anim::REPEAT, 0.0f, 1, 2}; expectError(c, "REPEAT");
+    c = twoKeyframes(); c.paramCount = 1; c.params[0] = {10, 0.5f, 1, 2}; expectError(c, "param id");
+    c = twoKeyframes(); c.keyframeCount = 33; expectError(c, "32");
+    c = twoKeyframes(); c.overlayCount = 9; expectError(c, "8");
+    c = twoKeyframes(); c.paramCount = 11; expectError(c, "10");
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_fixture_binaries_decode_with_nanopb);
+    RUN_TEST(test_from_proto_copies_every_fixture_and_validates);
+    RUN_TEST(test_validate_reports_each_structural_rule);
     return UNITY_END();
 }
