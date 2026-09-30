@@ -19,6 +19,8 @@ export default defineConfig({
     EnvCaster()
   ],
   server: {
+    // The root animations/ directory is imported by src/lib/animation/library.ts.
+    fs: { allow: ['..'] },
     proxy: {
       '/api': {
         target: 'http://192.168.0.221',
