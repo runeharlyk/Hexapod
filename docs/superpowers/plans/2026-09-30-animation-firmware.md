@@ -2659,6 +2659,16 @@ Host test: none possible for the adapters; add an arbiter-independent test in `t
 
 Replace the compiled-out `ESP_LOGD` with `ESP_LOGI` emitted at most every 5 s and only while the player is not idle; the line names the maximum tick cost in microseconds.
 
+- [ ] **Step 5b: Bench tool interactive shell and graceful leave from any posed state**
+
+Added from the fix-wave re-review.
+`robot_animate.py` gains a `shell` command that opens the port once and reads commands (`list`, `upload`, `validate`, `play`, `stop`, `mode`, `watch`, `quit`) from stdin, so a looping or holding animation can be stopped and a play can be chained while the port is held; `follow` returns cleanly on Ctrl-C (no traceback) and stops following on the first `ANIM_HOLD` status or after two seconds of a looping `ANIM_PLAYING` with no state change, printing why.
+Acceptance steps 4, 5 and 6 in `docs/animation.md` use the shell.
+`AnimationRunner::busy()` replaces the `playerBusy` input: true when the player is not idle, a play is pending, or the current pose is not at stance (any joint-mode leg, or a body or foot offset above 1 mm or 0.01 rad).
+A graceful leave while the player is idle eases the pose home through the puppet path with a stance target instead of `requestStop()`; the hand-back invariant uses `!busy()`.
+`decideMode` also returns IGNORE for a hand-back while busy, which closes the deferred chained-play window because the control task re-requests once the worker clears `_handbackSent`.
+Arbiter tests: a sticky ANIMATE with a posed joint leg then explicit STAND gives GRACEFUL_LEAVE; a hand-back while busy is ignored.
+
 - [ ] **Step 6: Verify, document, commit**
 
 `pio test -e native` all pass; `pio run -e esp32-wroom-camera` SUCCESS (with the isolated package dirs if the shared framework is still replaced; report RAM and flash); `uv run pytest -q` and `uv run python check_animation.py` from `simulation/` pass; `pnpm proto && pnpm check` from `app/` still pass (the new optional field must not break the generated TypeScript).
