@@ -6,14 +6,14 @@
   "keyframes": [
     {"time": 0},
     {"time": 0.9, "ease": "EASE_IN_OUT", "body": {"pitch": 0.15, "z": 12, "y": -10},
-     "legs": [{"foot": {"y": 45}}, {"foot": {}}, {"foot": {}}, {"foot": {"y": 45}}, {"foot": {}}, {"foot": {}}]},
+     "legs": [{"foot": {"y": 85}}, {"foot": {}}, {"foot": {}}, {"foot": {"y": 85}}, {"foot": {}}, {"foot": {}}]},
     {"time": 1.6, "ease": "LINEAR", "body": {"pitch": 0.15, "z": 12, "y": -10},
-     "legs": [{"foot": {"y": 45}}, {"foot": {}}, {"foot": {}}, {"foot": {"y": 45}}, {"foot": {}}, {"foot": {}}]},
+     "legs": [{"foot": {"y": 85}}, {"foot": {}}, {"foot": {}}, {"foot": {"y": 85}}, {"foot": {}}, {"foot": {}}]},
     {"time": 2.4, "ease": "EASE_IN_OUT"},
     {"time": 3.3, "ease": "EASE_IN_OUT", "body": {"pitch": -0.15, "z": 12, "y": 10},
-     "legs": [{"foot": {}}, {"foot": {}}, {"foot": {"y": -45}}, {"foot": {}}, {"foot": {}}, {"foot": {"y": -45}}]},
+     "legs": [{"foot": {}}, {"foot": {}}, {"foot": {"y": -85}}, {"foot": {}}, {"foot": {}}, {"foot": {"y": -85}}]},
     {"time": 4.0, "ease": "LINEAR", "body": {"pitch": -0.15, "z": 12, "y": 10},
-     "legs": [{"foot": {}}, {"foot": {}}, {"foot": {"y": -45}}, {"foot": {}}, {"foot": {}}, {"foot": {"y": -45}}]},
+     "legs": [{"foot": {}}, {"foot": {}}, {"foot": {"y": -85}}, {"foot": {}}, {"foot": {}}, {"foot": {"y": -85}}]},
     {"time": 4.8, "ease": "EASE_IN_OUT"}
   ],
   "params": [{"id": "SPEED", "min": 0.5, "defaultValue": 1, "max": 2}, {"id": "BODY_PITCH", "min": 0, "defaultValue": 1, "max": 1.5}]
