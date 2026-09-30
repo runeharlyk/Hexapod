@@ -112,8 +112,8 @@ class Kinematics {
         }
     }
 
-    // True when foot i of b lies inside the leg's reach annulus, which is exactly the condition under
-    // which neither acos argument in inverseKinematics saturates. Mirrors foot_reachable() in
+    // True when foot i of b lies inside the leg's reach annulus, which is equivalent up to rounding to
+    // the condition under which neither acos argument in inverseKinematics saturates. Mirrors foot_reachable() in
     // simulation/src/robot/animation.py.
     bool footReachable(const BodyStateMsg &b, int i) const {
         float T[4][4], w[4];

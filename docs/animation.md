@@ -2,7 +2,8 @@
 
 Named full-body animations (wave, crouch, play dead, ...) that pose the body and feet over time.
 The firmware evaluates an animation every control tick into a body pose and foot targets, then runs the same inverse kinematics as the gait.
-Animations are offsets from the standing posture, so they compose with ride height and the feet-distance slider.
+Animations are offsets from the neutral body pose: zero ride height and the current feet distance.
+The STAND ride-height slider does not carry into an animation, and Exit returns to that neutral stance.
 The design rationale is in `docs/superpowers/specs/2026-09-29-animation-system-design.md`; this document describes what is built.
 
 ## The animation file
@@ -81,7 +82,7 @@ Every mode decision is made on the `ModeMsg` worker, in the order the messages a
 - DEACTIVATED, IDLE and POSE apply at once even mid-play, because cutting or centring the servos immediately is the safety property.
 - Any other explicit mode ends a borrow, so an explicit ANIMATE mid-play makes the robot stay in ANIMATE afterwards.
 
-Exit returns to zero offsets, which is the neutral stance, not the body pose the STAND sliders held before the animation.
+Exit returns to zero offsets, which is the neutral stance (zero ride height, current feet distance), not the body pose the STAND sliders held before the animation.
 A play while playing chains from the current pose.
 
 ### Puppeteering
@@ -120,14 +121,17 @@ The generic `empty` response is tag 5.
 Chunks carry at most 512 bytes, which keeps a frame well under the 2048-byte serial ceiling.
 A write is refused with 400 when the chunk is larger than 512 bytes, runs past `total_size`, or does not continue the file at its current size; the path must be absolute and free of `..`.
 Offset 0 truncates.
-A lost chunk therefore leaves a short file that the next write at the right offset continues.
+Any status other than 200 on a chunk means the client restarts the file from offset 0, or reads the size back with `file_read_chunk` and continues from there.
+A failed `fwrite` can leave a partial chunk in the file, so the size read back, not the last acknowledged offset, is where a continuation starts.
 Validation decodes the file, checks the structural rules, and evaluates every keyframe and 32 intermediate times per segment, returning the first structural error or the union of clamped joints.
+An invalid file is answered with status 422 and the report filled in (`ok` false and the `error`).
 A clamped joint is a warning, not a refusal.
 
 ### Storage
 
 Files live at `/littlefs/animations/<name>.pb`.
-The decode buffer is allocated once in PSRAM; one animation is loaded at a time.
+Three clip buffers (the active clip, the pending clip a play loads beside it, and one for validation) and the encoded and decoded file buffers are allocated once in PSRAM.
+Loads run under one lock, so one file is decoded at a time.
 
 ## Parity and fixtures
 
@@ -137,6 +141,7 @@ Each platform checks itself against it.
 
 - Simulation: `uv run pytest` regenerates the expectations in memory and fails while the committed file is stale.
 - Firmware: `pio test -e native` runs the animation tests in `firmware/test/`, which compare the C++ evaluator and player with the fixtures state by state.
+  The C++ test reads `expected.txt`, a plain-text dump of the same data written by the same script; `expected.json` is the Python side's file.
 - App: a TypeScript port and its `pnpm test:unit` parity test are planned with the editor.
 
 `uv run python check_animation.py` runs every bundled animation through the servo model and reports clamped joints, peak joint speed, tilt and falls.

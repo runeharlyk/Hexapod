@@ -1,9 +1,10 @@
 #pragma once
 
 // Chunked file transfer for transports without HTTP: the app on its https origin only has BLE and
-// Web Serial. Each chunk is a self-contained stdio operation, so a lost chunk leaves a file that is
-// simply shorter than its total; the next write at the right offset continues it. Paths are checked
-// by the caller against the mount root with validPath().
+// Web Serial. Each chunk is a self-contained stdio operation. Any status other than 200 on a chunk
+// means the client restarts the file from offset 0, or reads the size back with a read and continues
+// from there: a failed fwrite can leave a partial chunk in the file. Paths are checked by the caller
+// against the mount root with validPath().
 
 #include <sys/stat.h>
 #include <cstdint>
