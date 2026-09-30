@@ -38,6 +38,9 @@ class Hexapod {
     void animationPlay(const AnimationCommandMsg &c) { _motionService.handleAnimationCommand(c); }
     void animationStop() { _motionService.handleAnimationStop(); }
     void animationPose(const PoseMsg &p) { _motionService.handleAnimationPose(p); }
+    void validateAnimation(const char *name, socket_message_AnimationReport &r) {
+        _motionService.validateAnimation(name, r);
+    }
 
     bool magnetometerPresent() const { return _peripherals.magActive(); }
 

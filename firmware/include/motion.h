@@ -123,6 +123,8 @@ class MotionService {
         if (motionState == MOTION_STATE::ANIMATE) _animation.setPuppet(p);
     }
 
+    void validateAnimation(const char *name, socket_message_AnimationReport &r) { _animation.validate(name, r); }
+
     void handleCommand(CommandMsg const &c) {
         lastCommandMillis = millis();
         commandTimedOut = false;

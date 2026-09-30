@@ -45,6 +45,8 @@
 #include <message_types.h>
 #include <platform_shared/message.pb.h>
 #include <animation/animation.h>
+#include <animation/animation_store.h>
+#include <file_transfer.h>
 
 static const char *TAG = "main";
 
@@ -389,6 +391,54 @@ static void registerHandlers(CommAdapterBase &c) {
                 if (r == StateUpdateResult::ERROR) res.status_code = 400;
                 res.which_response = socket_message_CorrelationResponse_peripheral_settings_tag;
                 snapshot(peripheralSettingsService, res.response.peripheral_settings);
+                break;
+            }
+            case socket_message_CorrelationRequest_file_write_chunk_tag: {
+                const api_FileWriteChunk &w = req.request.file_write_chunk;
+                std::string full;
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                res.status_code = fs_api::resolve(w.path, full)
+                                      ? file_transfer::write(full.c_str(), w.offset, w.total_size, w.content.bytes,
+                                                             w.content.size)
+                                      : 400;
+                break;
+            }
+            case socket_message_CorrelationRequest_file_read_chunk_tag: {
+                const api_FileReadChunk &r = req.request.file_read_chunk;
+                std::string full;
+                auto &chunk = res.response.file_chunk;
+                res.which_response = socket_message_CorrelationResponse_file_chunk_tag;
+                size_t n = 0;
+                res.status_code = fs_api::resolve(r.path, full)
+                                      ? file_transfer::read(full.c_str(), r.offset, r.length, chunk.content.bytes, n,
+                                                            chunk.total_size)
+                                      : 400;
+                chunk.content.size = n;
+                break;
+            }
+            case socket_message_CorrelationRequest_file_delete_tag: {
+                std::string full;
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                res.status_code =
+                    fs_api::resolve(req.request.file_delete.path, full) && unlink(full.c_str()) == 0 ? 200 : 400;
+                break;
+            }
+            case socket_message_CorrelationRequest_animation_validate_tag: {
+                res.which_response = socket_message_CorrelationResponse_animation_report_tag;
+                robot.validateAnimation(req.request.animation_validate.name, res.response.animation_report);
+                if (!res.response.animation_report.ok) res.status_code = 422;
+                break;
+            }
+            case socket_message_CorrelationRequest_animation_list_request_tag: {
+                res.which_response = socket_message_CorrelationResponse_animation_list_tag;
+                auto &list = res.response.animation_list;
+                list.entries_count = 0;
+                AnimationStore::list([&list](const char *name, uint32_t size) {
+                    if (list.entries_count >= 32) return;
+                    auto &e = list.entries[list.entries_count++];
+                    strncpy(e.name, name, sizeof(e.name) - 1);
+                    e.size = size;
+                });
                 break;
             }
             default: res.status_code = 400; break;
