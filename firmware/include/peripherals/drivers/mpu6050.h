@@ -26,10 +26,12 @@ class MPU6050Driver {
         return true;
     }
 
+    // Returns whether a fresh DMP packet was read, so callers do not republish a stale orientation.
     bool update() {
         if (!_initialized) return false;
 
-        if (dmpGetCurrentFIFOPacket(_fifoBuffer)) {
+        const bool fresh = dmpGetCurrentFIFOPacket(_fifoBuffer);
+        if (fresh) {
             float q[4];
             dmpGetQuaternion(q, _fifoBuffer);
             dmpGetGravity(_gravity, q);
@@ -52,7 +54,7 @@ class MPU6050Driver {
             }
         }
 
-        return true;
+        return fresh;
     }
 
     bool calibrate() {
@@ -391,14 +393,12 @@ class MPU6050Driver {
         int16_t fifoC = getFIFOCount();
 
         if (fifoC > 200) {
+            // Overflowed: the contents are misaligned. Reset and let a later control tick read the next
+            // packet rather than blocking the 5 ms loop until one arrives.
             resetFIFO();
-            uint32_t start = xTaskGetTickCount();
-            fifoC = 0;
-            while (!fifoC && (xTaskGetTickCount() - start) < pdMS_TO_TICKS(100)) {
-                vTaskDelay(pdMS_TO_TICKS(2));
-                fifoC = getFIFOCount();
-            }
-        } else if (fifoC > DMP_PACKET_SIZE) {
+            return false;
+        }
+        if (fifoC > DMP_PACKET_SIZE) {
             uint8_t trash[32];
             while ((fifoC = getFIFOCount()) > DMP_PACKET_SIZE) {
                 uint16_t toRemove = fifoC - DMP_PACKET_SIZE;

@@ -54,9 +54,19 @@ class MotionService {
     void handleInputGait(GaitMsg const &g) {
         ESP_LOGI("MotionService", "Gait %d", g.gait);
         _requestedGait = g.gait;
-        // AUTO has no schedule of its own; updateMotion picks one per cycle.
-        gait_state.gait_type = g.gait == GaitType::AUTO ? selectAutoGait(commandSpeed01(), gait_state.gait_type)
-                                                        : g.gait;
+        // Swapping a schedule mid-stride is the hazard updateAutoGait() documents: offset[] reassigns
+        // every leg's phase at once, so a leg at the top of its swing becomes a stance leg and its
+        // foot is commanded straight down. Defer to the next non-stepping tick instead, which
+        // applyRequestedGait() handles from the walking loop.
+        if (gaitIsCommanded(gait_state)) return;
+        applyRequestedGait();
+    }
+
+    // Loads _requestedGait into the live schedule. Only safe while the gait is not stepping.
+    void applyRequestedGait() {
+        gait_state.gait_type = _requestedGait == GaitType::AUTO
+                                   ? selectAutoGait(commandSpeed01(), gait_state.gait_type)
+                                   : _requestedGait;
         gait.setGait(gait_state);
         // The schedule switches outright; only the command eases. Keep the target's identity fields
         // in step so a later ramp never reads a stale gait.
@@ -126,6 +136,7 @@ class MotionService {
                         tuned_gait::PHASE_RATE_MIN +
                         (a[5] + 1.f) * 0.5f * (tuned_gait::PHASE_RATE_MAX - tuned_gait::PHASE_RATE_MIN);
                     target_body_state.zm = -tuned_gait::RIDE_MM;
+                    logTunedCommand(cmd, target_gait_state);
                 } else {
                     target_gait_state.step_height = (c.s1 + 1.f) * 20.f;
                     target_gait_state.step_depth = 0.002f;
@@ -135,6 +146,19 @@ class MotionService {
             }
             default: break;
         }
+    }
+
+    // The stick passes through three clip1() stages inside velocity_to_gait plus a CLIP on lift, and
+    // stride saturates at half stick, so a bench operator cannot otherwise tell a mapping that
+    // saturated from a command that was ignored. Once a second is enough to read while driving.
+    void logTunedCommand(const float cmd[3], const gait_state_t &g) {
+        const unsigned long now = millis();
+        if (now - _lastTunedLog < 1000) return;
+        _lastTunedLog = now;
+        ESP_LOGI("MotionService",
+                 "TUNED cmd v=[%.3f %.3f %.3f] -> step x/y %.1f/%.1f angle %.3f lift %.1f rate %.2f zm %.1f",
+                 cmd[0], cmd[1], cmd[2], g.step_x, g.step_y, g.step_angle, g.step_height, g.phase_rate,
+                 target_body_state.zm);
     }
 
     // Normalized stride magnitude, the speed signal AUTO switches on.
@@ -153,8 +177,15 @@ class MotionService {
     // so the ramp's window at each start and stop is enough to choose the gait for the walk about to
     // happen. The cost is that changing gait at speed needs a brief stop.
     void updateAutoGait() {
-        if (_requestedGait != GaitType::AUTO) return;
         if (gaitIsCommanded(gait_state)) return;
+
+        // A manual selection that arrived mid-stride was deferred; this is the window to honour it.
+        if (_requestedGait != GaitType::AUTO) {
+            if (_requestedGait == gait_state.gait_type) return;
+            applyRequestedGait();
+            ESP_LOGI("MotionService", "Deferred gait -> %d", (int)gait_state.gait_type);
+            return;
+        }
 
         const GaitType next = selectAutoGait(commandSpeed01(), gait_state.gait_type);
         if (next == gait_state.gait_type) return;
@@ -180,6 +211,9 @@ class MotionService {
                 body_state.phi = lerpf(body_state.phi, target_body_state.phi + _peripherals->angleY(), smoothing_factor);
                 body_state.omega =
                     lerpf(body_state.omega, target_body_state.omega + _peripherals->angleX(), smoothing_factor);
+                // STAND is not stepping, so this is where a gait selection deferred by
+                // handleInputGait gets honoured -- otherwise leaving WALK would strand it.
+                updateAutoGait();
                 approachGaitCommand(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
                 gait.step(gait_state, body_state, dt);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
@@ -247,16 +281,6 @@ class MotionService {
     // stick does not jerk the stride, fast enough that the robot still feels directly driven.
     static constexpr float GAIT_COMMAND_TAU_S = 0.15f;
     static constexpr unsigned long COMMAND_TIMEOUT_MS = 2000;
-    // GaitType::TUNED fixes foot lift at tuned_gait::STEP_HEIGHT_MM; the s1 slider trims around it
-    // rather than setting it from zero, so the operator keeps authority without being able to
-    // discard the one parameter the terrain search cared most about.
-    static constexpr float TUNED_LIFT_TRIM_MM = 15.0f;
-    // Stick -> velocity command ranges for GaitType::TUNED. These mirror CMD_VX/CMD_VY/CMD_YAW in
-    // hexapod_mj_env.py: the envelope the gait was actually searched over. Commanding outside it
-    // asks for a gait nobody measured.
-    static constexpr float TUNED_CMD_VX_MAX = 0.45f;   // m/s forward
-    static constexpr float TUNED_CMD_VY_MAX = 0.12f;   // m/s lateral
-    static constexpr float TUNED_CMD_YAW_MAX = 1.0f;   // rad/s
     static constexpr float FEET_DISTANCE_SCALE_MIN = 0.75f;
     static constexpr float FEET_DISTANCE_SCALE_MAX = 1.25f;
     static constexpr float FEET_DISTANCE_SCALE_RANGE = FEET_DISTANCE_SCALE_MAX - FEET_DISTANCE_SCALE_MIN;
@@ -270,6 +294,7 @@ class MotionService {
     MOTION_STATE motionState = MOTION_STATE::DEACTIVATED;
     unsigned long lastCommandMillis = 0;
     unsigned long lastMotionMicros = 0;
+    unsigned long _lastTunedLog = 0;
     bool commandTimedOut = false;
 
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};

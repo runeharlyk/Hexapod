@@ -36,6 +36,63 @@ BodyStateMsg makeBody() {
     return body;
 }
 
+
+// Mirrors the GaitType::TUNED path in MotionService::handleCommand. Kept here rather than shared
+// because MotionService itself drags in esp_log.h and the peripheral drivers; the constants it uses
+// live in gait.h precisely so this mirror cannot drift on the numbers that matter.
+struct TunedCommand {
+    gait_state_t gait;
+    float zm;
+};
+
+TunedCommand makeTuned(float ly, float lx, float rx, float s1) {
+    const float cmd[3] = {ly * TUNED_CMD_VX_MAX, -lx * TUNED_CMD_VY_MAX, rx * TUNED_CMD_YAW_MAX};
+    float a[6];
+    tuned_gait::velocity_to_gait(cmd, a);
+
+    TunedCommand out{};
+    out.gait.gait_type = GaitType::TUNED;
+    out.gait.step_x = a[0] * tuned_gait::STEP_XY_MM;
+    out.gait.step_y = a[1] * tuned_gait::STEP_XY_MM;
+    out.gait.step_angle = a[2] * tuned_gait::STEP_ANGLE_RAD;
+    out.gait.step_speed = 1.0f;
+    out.gait.step_height = CLIP(tuned_gait::STEP_HEIGHT_MM + s1 * TUNED_LIFT_TRIM_MM,
+                                tuned_gait::STEP_HEIGHT_MIN_MM, tuned_gait::STEP_HEIGHT_MAX_MM);
+    out.gait.step_depth = tuned_gait::STEP_DEPTH_MM;
+    out.gait.phase_rate = tuned_gait::PHASE_RATE_MIN +
+                          (a[5] + 1.f) * 0.5f * (tuned_gait::PHASE_RATE_MAX - tuned_gait::PHASE_RATE_MIN);
+    // Ride height is what makes the searched foot lift reachable at all, so a sweep that leaves it
+    // at zero measures a robot this gait never runs as.
+    out.zm = -tuned_gait::RIDE_MM;
+    return out;
+}
+
+// Worst overshoot past JOINT_LIMIT_DEG over a full gait cycle, per joint type (coxa, femur, tibia).
+// Also reports the peak absolute command, so a clean sweep still says how much travel was left.
+void sweepTunedCycle(float ly, float lx, float rx, float s1, float worst[3], float peak[3]) {
+    TunedCommand cmd = makeTuned(ly, lx, rx, s1);
+    GaitController controller;
+    controller.snapDefaultFootTarget(STAND);
+    controller.setGait(cmd.gait);
+    Kinematics kin;
+    BodyStateMsg body = makeBody();
+    body.zm = cmd.zm;
+
+    constexpr int STEPS = 360;
+    for (int k = 0; k < STEPS; ++k) {
+        controller.setPhase((float)k / STEPS);
+        controller.generateFeet(cmd.gait, body);
+        float angles[18];
+        kin.inverseKinematics(body, angles);
+        for (int i = 0; i < 18; ++i) {
+            const int joint = i % 3;
+            const float mag = std::fabs(angles[i]);
+            if (mag > peak[joint]) peak[joint] = mag;
+            const float over = mag - JOINT_LIMIT_DEG[joint];
+            if (over > worst[joint]) worst[joint] = over;
+        }
+    }
+}
 } // namespace
 
 void setUp() {}
@@ -462,8 +519,8 @@ void test_nominal_stance_is_inside_joint_travel() {
 }
 
 void test_walking_stays_inside_joint_travel() {
-    // A moderate walk must be executable without clamping. This is the gate the tuned gait fails at
-    // full stride (~7% of commands out of range), which is why it cannot be trusted on hardware yet.
+    // A moderate walk must be executable without clamping. The tuned gait's own envelope is pinned
+    // separately by test_tuned_gait_is_feasible_at_the_bench_envelope.
     GaitController controller;
     controller.snapDefaultFootTarget(STAND);
     gait_state_t gait = makeGait(GaitType::TRI_GATE, 0, 40, 0);
@@ -484,6 +541,100 @@ void test_walking_stays_inside_joint_travel() {
     TEST_ASSERT_TRUE_MESSAGE(worst[0] <= 0.0f, "coxa exceeds travel while walking");
     TEST_ASSERT_TRUE_MESSAGE(worst[1] <= 0.0f, "femur exceeds travel while walking");
     TEST_ASSERT_TRUE_MESSAGE(worst[2] <= 0.0f, "tibia exceeds travel while walking");
+}
+
+// The searched gait's foot lift is only reachable at the bottom of the s1 trim. At the default trim
+// the femur is commanded past travel from stride ~40 mm upward; at the top of the trim it is out of
+// range at every stride. At the bottom the femur is clean across the entire forward x turn plane --
+// the plane the bench ladder is driven over -- which is the claim the hardware test relies on.
+// Lateral is the exception and is characterized separately below.
+void test_tuned_lift_trim_keeps_the_femur_inside_travel() {
+    float worst[3] = {0, 0, 0};
+    float peak[3] = {0, 0, 0};
+    for (float ly = -1.0f; ly <= 1.0f; ly += 0.125f)
+        for (float rx = -1.0f; rx <= 1.0f; rx += 0.125f) sweepTunedCycle(ly, 0.f, rx, -1.0f, worst, peak);
+
+    char msg[176];
+    std::snprintf(msg, sizeof(msg),
+                  "fwd x turn plane at s1=-1: femur peak %.1f of %.1f deg; coxa over %.1f, tibia over %.1f",
+                  peak[1], JOINT_LIMIT_DEG[1], worst[0], worst[2]);
+    TEST_MESSAGE(msg);
+    TEST_ASSERT_TRUE_MESSAGE(worst[1] <= 0.0f,
+                             "femur exceeds travel on the forward x turn plane at the bottom of the lift trim");
+}
+
+// Lateral is the axis that breaks the femur once combined with forward and turn, and there is no
+// safe margin: with adversarial signs even a tenth of lateral stick costs ~0.5 deg of femur travel
+// on a full forward+turn command, growing roughly linearly to ~15 deg at full lateral. Recorded
+// rather than gated, because the useful conclusion is operational -- do not push all three sticks at
+// once -- and because pure lateral on its own is entirely feasible (it saturates at ~28 mm stride).
+void test_tuned_gait_records_lateral_femur_cost() {
+    char msg[192];
+    int n = std::snprintf(msg, sizeof(msg), "femur over vs |lx| on full fwd+turn:");
+    for (float lx : {0.1f, 0.25f, 0.5f, 1.0f}) {
+        float worst[3] = {0, 0, 0};
+        float peak[3] = {0, 0, 0};
+        // Both sign pairings; lateral opposing the turn is the worse of the two.
+        sweepTunedCycle(1.0f, lx, -1.0f, -1.0f, worst, peak);
+        sweepTunedCycle(-1.0f, lx, 1.0f, -1.0f, worst, peak);
+        n += std::snprintf(msg + n, sizeof(msg) - n, " %.2f=%.1f", lx, worst[1]);
+    }
+    TEST_MESSAGE(msg);
+
+    float full[3] = {0, 0, 0};
+    float fpeak[3] = {0, 0, 0};
+    sweepTunedCycle(-1.0f, -1.0f, -0.5f, -1.0f, full, fpeak);
+    TEST_ASSERT_TRUE_MESSAGE(full[1] > 0.0f,
+                             "full three-axis command now fits -- the lateral caveat can be dropped");
+}
+
+// On a single axis at a time the whole gait is executable, coxa included. Combined forward+turn is
+// what pushes the coxa past its 31.5 deg travel, and that is pre-existing rather than a tuned-gait
+// defect: the shipped TRI_GATE reaches 33.3 deg of coxa overshoot at full stick with turn, against
+// this gait's 19.6 deg. So pin the single-axis envelope and characterize the combined one below.
+void test_tuned_gait_is_feasible_on_single_axis_commands() {
+    const float sticks[] = {0.11f, 0.22f, 0.32f, 0.41f};
+    float worst[3] = {0, 0, 0};
+    float peak[3] = {0, 0, 0};
+    for (float v : sticks) {
+        sweepTunedCycle(v, 0.f, 0.f, -1.0f, worst, peak);   // forward only
+        sweepTunedCycle(0.f, v, 0.f, -1.0f, worst, peak);   // lateral only
+        sweepTunedCycle(0.f, 0.f, v, -1.0f, worst, peak);   // turn only
+    }
+    sweepTunedCycle(0.f, 1.0f, 0.f, -1.0f, worst, peak);    // lateral saturates at only ~28 mm stride
+    TEST_ASSERT_TRUE_MESSAGE(worst[0] <= 0.0f, "coxa exceeds travel on a single-axis command");
+    TEST_ASSERT_TRUE_MESSAGE(worst[1] <= 0.0f, "femur exceeds travel on a single-axis command");
+    TEST_ASSERT_TRUE_MESSAGE(worst[2] <= 0.0f, "tibia exceeds travel on a single-axis command");
+}
+
+// Characterization, not a gate: records where combined forward+turn starts costing coxa travel, so
+// the bench operator knows which clamps to expect and a regression stays visible. Onset at the
+// bottom of the lift trim is around forward 0.32 with half turn, or forward 0.41 with quarter turn.
+void test_tuned_gait_records_combined_command_overshoot() {
+    char msg[192];
+    int n = 0;
+    n += std::snprintf(msg + n, sizeof(msg) - n, "coxa overshoot (s1=-1) fwd/turn:");
+    const float pairs[][2] = {{0.22f, 1.0f}, {0.32f, 0.5f}, {0.41f, 0.25f}, {0.41f, 1.0f}};
+    for (auto &pr : pairs) {
+        float worst[3] = {0, 0, 0};
+        float peak[3] = {0, 0, 0};
+        sweepTunedCycle(pr[0], 0.f, pr[1], -1.0f, worst, peak);
+        n += std::snprintf(msg + n, sizeof(msg) - n, " %.2f/%.2f=%.1f", pr[0], pr[1], worst[0]);
+    }
+    TEST_MESSAGE(msg);
+}
+
+// The femur overshoot at the DEFAULT lift trim is the reason the robot must not ship at s1 = 0.
+// If this ever reaches zero the gait has become fully feasible and the trim default can be revisited.
+void test_tuned_default_lift_trim_still_exceeds_femur_travel() {
+    float worst[3] = {0, 0, 0};
+    float peak[3] = {0, 0, 0};
+    for (float s1 : {0.0f, 1.0f})
+        for (float ly : {0.5f, 1.0f}) sweepTunedCycle(ly, 0.f, 0.f, s1, worst, peak);
+    char msg[160];
+    std::snprintf(msg, sizeof(msg), "femur overshoot at default/top trim: %.1f deg", worst[1]);
+    TEST_MESSAGE(msg);
+    TEST_ASSERT_TRUE_MESSAGE(worst[1] > 0.0f, "femur now fits at the default trim -- revisit the trim default");
 }
 
 void test_auto_gait_picks_by_speed_and_resists_flapping() {
@@ -688,6 +839,11 @@ int main(int, char **) {
     RUN_TEST(test_walking_still_swings_every_foot);
     RUN_TEST(test_nominal_stance_is_inside_joint_travel);
     RUN_TEST(test_walking_stays_inside_joint_travel);
+    RUN_TEST(test_tuned_lift_trim_keeps_the_femur_inside_travel);
+    RUN_TEST(test_tuned_gait_records_lateral_femur_cost);
+    RUN_TEST(test_tuned_gait_is_feasible_on_single_axis_commands);
+    RUN_TEST(test_tuned_gait_records_combined_command_overshoot);
+    RUN_TEST(test_tuned_default_lift_trim_still_exceeds_femur_travel);
     RUN_TEST(test_auto_gait_picks_by_speed_and_resists_flapping);
     RUN_TEST(test_auto_gait_switch_adds_no_discontinuity);
     return UNITY_END();

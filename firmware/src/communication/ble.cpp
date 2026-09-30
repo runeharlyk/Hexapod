@@ -57,14 +57,14 @@ void BLE::setup() {
 
 void BLE::ServerCallbacks::onConnect(NimBLEServer *server, NimBLEConnInfo &connInfo) {
     _service->_deviceConnected = true;
-    _service->_rxBuffer.clear();
+    _service->requestRxReset();
     server->updateConnParams(connInfo.getConnHandle(), 12, 24, 0, 400);
     ESP_LOGI(TAG, "Client connected: %u", connInfo.getConnHandle());
 }
 
 void BLE::ServerCallbacks::onDisconnect(NimBLEServer *server, NimBLEConnInfo &connInfo, int reason) {
     _service->_deviceConnected = false;
-    _service->_rxBuffer.clear();
+    _service->requestRxReset();
     _service->removeClient(0);
     NimBLEDevice::startAdvertising();
     ESP_LOGI(TAG, "Client disconnected (reason %d), advertising", reason);
@@ -83,12 +83,21 @@ void BLE::RXCallbacks::onWrite(NimBLECharacteristic *characteristic, NimBLEConnI
     }
 }
 
+// Runs on the NimBLE host task, while _rxBuffer belongs to BLE_Process. Frames still queued from the
+// old connection are discarded, and the empty marker tells BLE_Process to drop its partial frame.
+void BLE::requestRxReset() {
+    xQueueReset(_messageQueue);
+    BLEMessage marker{};
+    xQueueSendToFront(_messageQueue, &marker, 0);
+}
+
 void BLE::messageProcessingTask(void *parameter) {
     BLE *self = static_cast<BLE *>(parameter);
     BLEMessage msg;
     while (self->_taskRunning) {
         if (xQueueReceive(self->_messageQueue, &msg, pdMS_TO_TICKS(100)) == pdTRUE) {
-            self->reassemble(msg.data, msg.length);
+            if (msg.length == 0) self->_rxBuffer.clear();
+            else self->reassemble(msg.data, msg.length);
         }
     }
     vTaskDelete(nullptr);

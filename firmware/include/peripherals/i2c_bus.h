@@ -78,10 +78,9 @@ class I2CBus {
         if (!lock.held()) return;
 
         if (_initialized) {
-            if (_dev) {
-                i2c_master_bus_rm_device(_dev);
-                _dev = NULL;
-                _dev_addr = 0xFF;
+            for (Device& d : _devices) {
+                if (d.handle) i2c_master_bus_rm_device(d.handle);
+                d = Device{};
             }
             i2c_del_master_bus(_bus);
             _bus = NULL;
@@ -97,9 +96,10 @@ class I2CBus {
         if (!lock.held()) return ESP_ERR_TIMEOUT;
         if (!_initialized) return ESP_ERR_INVALID_STATE;
 
-        esp_err_t err = ensureDevice(addr);
+        i2c_master_dev_handle_t dev = NULL;
+        esp_err_t err = ensureDevice(addr, dev);
         if (err != ESP_OK) return err;
-        return i2c_master_transmit(_dev, data, len, TRANSFER_TIMEOUT);
+        return i2c_master_transmit(dev, data, len, TRANSFER_TIMEOUT);
     }
 
     esp_err_t writeReg(uint8_t addr, uint8_t reg, const uint8_t* data, size_t len) {
@@ -110,7 +110,8 @@ class I2CBus {
         if (!lock.held()) return ESP_ERR_TIMEOUT;
         if (!_initialized) return ESP_ERR_INVALID_STATE;
 
-        esp_err_t err = ensureDevice(addr);
+        i2c_master_dev_handle_t dev = NULL;
+        esp_err_t err = ensureDevice(addr, dev);
         if (err != ESP_OK) return err;
 
         uint8_t buf[65];
@@ -118,7 +119,7 @@ class I2CBus {
         if (len > 0 && data != nullptr) {
             memcpy(buf + 1, data, len);
         }
-        return i2c_master_transmit(_dev, buf, len + 1, TRANSFER_TIMEOUT);
+        return i2c_master_transmit(dev, buf, len + 1, TRANSFER_TIMEOUT);
     }
 
     esp_err_t readReg(uint8_t addr, uint8_t reg, uint8_t* data, size_t len) {
@@ -126,9 +127,10 @@ class I2CBus {
         if (!lock.held()) return ESP_ERR_TIMEOUT;
         if (!_initialized) return ESP_ERR_INVALID_STATE;
 
-        esp_err_t err = ensureDevice(addr);
+        i2c_master_dev_handle_t dev = NULL;
+        esp_err_t err = ensureDevice(addr, dev);
         if (err != ESP_OK) return err;
-        return i2c_master_transmit_receive(_dev, &reg, 1, data, len, TRANSFER_TIMEOUT);
+        return i2c_master_transmit_receive(dev, &reg, 1, data, len, TRANSFER_TIMEOUT);
     }
 
     bool probe(uint8_t addr) {
@@ -173,21 +175,44 @@ class I2CBus {
     bool _initialized = false;
 
     i2c_master_bus_handle_t _bus = NULL;
-    i2c_master_dev_handle_t _dev = NULL;
-    uint8_t _dev_addr = 0xFF;
 
-    esp_err_t ensureDevice(uint8_t addr) {
-        if (_dev && _dev_addr == addr) return ESP_OK;
-        if (_dev) {
-            i2c_master_bus_rm_device(_dev);
-            _dev = NULL;
+    // One handle per address, added on first use and kept until the bus closes: re-adding a device on
+    // every address switch cost several heap allocations per 5 ms control tick.
+    struct Device {
+        uint8_t addr = 0xFF;
+        i2c_master_dev_handle_t handle = NULL;
+    };
+    static constexpr size_t MAX_DEVICES = 8;
+    Device _devices[MAX_DEVICES];
+    size_t _nextEviction = 0;
+
+    esp_err_t ensureDevice(uint8_t addr, i2c_master_dev_handle_t& out) {
+        Device* slot = nullptr;
+        for (Device& d : _devices) {
+            if (d.handle && d.addr == addr) {
+                out = d.handle;
+                return ESP_OK;
+            }
+            if (!d.handle && !slot) slot = &d;
+        }
+        if (!slot) {
+            // More distinct addresses than slots (e.g. a user-driven sweep); recycle one in turn.
+            slot = &_devices[_nextEviction];
+            _nextEviction = (_nextEviction + 1) % MAX_DEVICES;
+            i2c_master_bus_rm_device(slot->handle);
+            *slot = Device{};
         }
         i2c_device_config_t dev_cfg = {};
         dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
         dev_cfg.device_address = addr;
         dev_cfg.scl_speed_hz = _freq;
-        esp_err_t err = i2c_master_bus_add_device(_bus, &dev_cfg, &_dev);
-        if (err == ESP_OK) _dev_addr = addr;
-        return err;
+        esp_err_t err = i2c_master_bus_add_device(_bus, &dev_cfg, &slot->handle);
+        if (err != ESP_OK) {
+            slot->handle = NULL;
+            return err;
+        }
+        slot->addr = addr;
+        out = slot->handle;
+        return ESP_OK;
     }
 };
