@@ -166,6 +166,7 @@ class AnimationRunner {
   private:
     static constexpr const char *TAG = "AnimationRunner";
     static constexpr float PUPPET_SMOOTHING = 0.06f; // the STAND smoothing factor
+    static constexpr float PUPPET_SWITCH_DEG = 0.5f;
     Kinematics *kin_ = nullptr;
     const float (*stance_)[4] = nullptr;
     AnimationStore store_;
@@ -232,14 +233,33 @@ class AnimationRunner {
         portEXIT_CRITICAL(&puppetMux_);
     }
 
-    // Lerp toward the puppet target with the STAND smoothing; a leg whose representation changes
-    // snaps to the new representation first, which is what the editor's toggle means.
+    // Lerp toward the puppet target with the STAND smoothing. A leg whose representation changes eases
+    // in joint space, as the spec blends a joint-angle leg: a foot leg becoming a joint leg is
+    // converted to joints once and lerps toward the puppet joints; a joint leg becoming a foot leg lerps
+    // toward the IK of the target foot and switches to the foot offset once every joint is within
+    // PUPPET_SWITCH_DEG of it.
     void approachPuppet() {
         for (int a = 0; a < 6; ++a) current_.body[a] = lerpf(current_.body[a], puppetTarget_.body[a], PUPPET_SMOOTHING);
         for (int i = 0; i < 6; ++i) {
-            if (current_.legs[i].joints != puppetTarget_.legs[i].joints) current_.legs[i] = puppetTarget_.legs[i];
-            for (int k = 0; k < 3; ++k)
-                current_.legs[i].v[k] = lerpf(current_.legs[i].v[k], puppetTarget_.legs[i].v[k], PUPPET_SMOOTHING);
+            anim::LegTarget &leg = current_.legs[i];
+            const anim::LegTarget &target = puppetTarget_.legs[i];
+            if (!leg.joints && target.joints) {
+                float j[3];
+                anim::legJointsDeg(*kin_, current_.body, leg.v, i, stance_, j);
+                leg = {true, {j[0], j[1], j[2]}};
+            }
+            if (leg.joints && !target.joints) {
+                float j[3];
+                anim::legJointsDeg(*kin_, current_.body, target.v, i, stance_, j);
+                bool arrived = true;
+                for (int k = 0; k < 3; ++k) {
+                    leg.v[k] = lerpf(leg.v[k], j[k], PUPPET_SMOOTHING);
+                    arrived = arrived && fabsf(leg.v[k] - j[k]) <= PUPPET_SWITCH_DEG;
+                }
+                if (arrived) leg = target;
+                continue;
+            }
+            for (int k = 0; k < 3; ++k) leg.v[k] = lerpf(leg.v[k], target.v[k], PUPPET_SMOOTHING);
         }
     }
 
