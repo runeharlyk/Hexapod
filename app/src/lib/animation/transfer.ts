@@ -38,8 +38,8 @@ const writeWithRetry = async (
 
 export const validateAnimation = async (name: string): Promise<AnimationReport> => {
   const res = await dataBroker.request({ animationValidate: { name } })
-  if (res.statusCode !== 200 || !res.animationReport)
-    throw new Error(`validate ${name} failed with status ${res.statusCode}`)
+  // The firmware answers a refused file with status 422 and the report, so the report decides.
+  if (!res.animationReport) throw new Error(`validate ${name} failed with status ${res.statusCode}`)
   return res.animationReport
 }
 

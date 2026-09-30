@@ -146,16 +146,23 @@ describe('uploadAnimation', () => {
     expect(validates()).toHaveLength(0)
   })
 
-  it('reports the validator error even though every chunk was accepted', async () => {
+  it('reports the validator error that the firmware sends with status 422', async () => {
     responder = m =>
       m.correlationRequest?.animationValidate ?
-        { animationReport: { ok: false, error: 'bad keyframe', clampedMask: 0 } }
+        { statusCode: 422, animationReport: { ok: false, error: 'bad keyframe', clampedMask: 0 } }
       : { empty: {} }
 
     const result = await uploadAnimation(animationLargerThan(1030))
 
     expect(result).toEqual({ ok: false, error: 'bad keyframe' })
     expect(writes()).toHaveLength(3)
+  })
+
+  it('throws with the status when validate answers without a report', async () => {
+    responder = m =>
+      m.correlationRequest?.animationValidate ? { statusCode: 500, empty: {} } : { empty: {} }
+
+    await expect(uploadAnimation(animationLargerThan(10))).rejects.toThrow(/validate pad.*500/)
   })
 })
 

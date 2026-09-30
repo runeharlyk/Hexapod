@@ -231,7 +231,7 @@ It does reflow a file into the two-space proto3 JSON layout.
 Files go to `/animations/<name>.pb` in 512-byte chunks.
 A chunk answered with any status other than 200, or a request that fails, restarts the whole file from offset 0, once; a second failure is reported.
 After the last chunk the app sends `animation_validate`; a report with `ok` surfaces as a success, and its clamped joints are named in a warning.
-The firmware answers an invalid file with status 422, and `validateAnimation` throws on any status other than 200, so the app reports the refusal as a failed validate with that status rather than the report's `error` text (see [Known gaps](#known-gaps)).
+The firmware answers an invalid file with status 422 and the report; `validateAnimation` returns any report it receives, so a refusal surfaces as the report's `error` text, and it throws with the status only when no report arrives.
 Download reads 512-byte chunks up to `total_size`, then rounds and validates the result.
 List and delete use `animation_list_request` and `file_delete`.
 
@@ -352,7 +352,6 @@ Record the outcomes in the same handoff file.
 - Save draft reports success even when the browser refuses to store it, because `persistentStore` swallows the storage error; the draft then lives in memory until the page reloads.
 - Robot rows have no description and no parameter sliders, and play with the defaults: the list response carries only name and size.
 - A built-in's Play assumes the file is on the robot's LittleFS from `uploadfs`; the app does not check or upload it.
-- A file the robot refuses on validation is reported by its 422 status, not by the report's `error` text.
 - The preview skips the firmware's Entry and Exit ride-height blend, so a file that fixes `ride_height` away from the slider's height previews differently during Entry and Exit.
 - The Timeline's Loop replays the whole play, Exit and Entry included, each cycle, and does nothing for a `hold_end` animation, which holds until Stop.
 - A refused edit (a keyframe time out of order, for example) shows the error but leaves the typed value in the input.
