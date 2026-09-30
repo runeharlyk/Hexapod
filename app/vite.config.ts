@@ -20,7 +20,7 @@ export default defineConfig({
   ],
   server: {
     // The root animations/ directory is imported by src/lib/animation/library.ts.
-    fs: { allow: ['..'] },
+    fs: { allow: ['../animations'] },
     proxy: {
       '/api': {
         target: 'http://192.168.0.221',
