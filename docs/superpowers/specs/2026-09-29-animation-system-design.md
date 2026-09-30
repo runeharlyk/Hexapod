@@ -216,7 +216,8 @@ Two ways in:
 
 Exit returns to zero offsets, which is the neutral stance, not the body pose the STAND sliders held before the animation.
 The command timeout that zeroes motion in WALK does not apply; a puppeteer pose is held if the stream stops, as STAND holds its body pose.
-Losing control stops the animation: when the last client has gone on every transport, or the serial host disappears, a running or held animation receives a stop, and a borrowed mode hands back as usual.
+Losing control stops the animation: when no client remains on any transport, a running or held animation receives a stop, and a borrowed mode hands back as usual.
+A serial host that disappears counts as a client gone; it does not stop an animation by itself while the app is still connected over BLE or WebSocket.
 A puppeteer pose is still held on a silent stream while a client remains connected.
 
 ### Messages
