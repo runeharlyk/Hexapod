@@ -35,6 +35,10 @@ class Hexapod {
 
     std::vector<uint8_t> scanI2C() { return _peripherals.scanI2C(); }
 
+    void animationPlay(const AnimationCommandMsg &c) { _motionService.handleAnimationCommand(c); }
+    void animationStop() { _motionService.handleAnimationStop(); }
+    void animationPose(const PoseMsg &p) { _motionService.handleAnimationPose(p); }
+
     bool magnetometerPresent() const { return _peripherals.magActive(); }
 
     void emitTelemetry() {

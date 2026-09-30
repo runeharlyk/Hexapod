@@ -37,12 +37,6 @@ class MotionService {
             ESP_LOGD("MotionService", "ANGLES callback called");
             handleAnglesEvent(s);
         });
-        _animationSubHandle = EventBus<AnimationCommandMsg>::subscribe([&](AnimationCommandMsg const &c) {
-            handleAnimationCommand(c);
-        });
-        _poseSubHandle = EventBus<PoseMsg>::subscribe([&](PoseMsg const &p) {
-            if (motionState == MOTION_STATE::ANIMATE) _animation.setPuppet(p);
-        });
         ESP_LOGI("MotionService", "Event bus subscriptions completed");
         body_state.updateFeet(default_feet_pos);
         EventBus<ModeMsg>::publish({motionState});
@@ -80,36 +74,53 @@ class MotionService {
     }
 
     void handleInputMode(ModeMsg const &m) {
-        ESP_LOGI("MotionService", "Mode %d", m.mode);
-        // The borrow's own mode publish arrives here too; any other mode change ends the borrow, so an
-        // explicit ANIMATE from the app is sticky and an explicit STAND mid-play is final.
-        if (m.mode == MOTION_STATE::ANIMATE && _expectingBorrow) _expectingBorrow = false;
-        else _borrowedMode = false;
+        ESP_LOGI("MotionService", "Mode %d%s", m.mode, m.borrow ? " (borrow)" : "");
+        // A borrow is decided here, in mode order, so a DEACTIVATED processed while the clip loaded
+        // wins over it. Any explicit mode ends a borrow: an explicit ANIMATE is sticky and an explicit
+        // STAND mid-play is final.
+        if (m.borrow) {
+            if (!isActuatedMode(motionState)) {
+                _animation.cancelPendingPlay();
+                // Every mode observer has just seen the refused ANIMATE; restate the mode that stands.
+                EventBus<ModeMsg>::publish({motionState});
+                return;
+            }
+            if (motionState != MOTION_STATE::ANIMATE) {
+                _previousMode = motionState;
+                _borrowedMode = true;
+            }
+        } else {
+            _borrowedMode = false;
+            if (m.mode != MOTION_STATE::ANIMATE) _animation.cancelPendingPlay();
+        }
         motionState = m.mode;
 #if FT_ENABLED(USE_POLICY)
         if (m.mode == MOTION_STATE::WALK_NN) _policy.reset(gait, default_feet_pos);
 #endif
-        if (!isWalkingMode(m.mode)) stopLocomotionCommand(!isActuatedMode(m.mode));
+        // ANIMATE drives no gait, so a half-stride left in gait_state would resume after it.
+        if (!isWalkingMode(m.mode)) stopLocomotionCommand(!isActuatedMode(m.mode) || m.mode == MOTION_STATE::ANIMATE);
         motionState == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
     }
 
-    // A play from any active mode borrows ANIMATE and hands the mode back when the player finishes;
-    // a play while already in ANIMATE (borrowed or sticky) chains. The clip is loaded before the mode
-    // changes, so a refused play leaves the robot in its mode and pose. A stop only makes sense in
-    // ANIMATE.
+    // Adapter task. A play from any active mode borrows ANIMATE and hands the mode back when the
+    // player finishes; a play while already in ANIMATE (borrowed or sticky) chains. The clip is loaded
+    // before the mode changes, so a refused play leaves the robot in its mode and pose; whether the
+    // borrow is granted is decided by handleInputMode.
     void handleAnimationCommand(AnimationCommandMsg const &c) {
-        const MOTION_STATE mode = motionState;
-        if (!c.play) {
-            if (mode == MOTION_STATE::ANIMATE) _animation.requestStop();
-            return;
-        }
-        if (!isActuatedMode(mode)) return;
+        if (!isActuatedMode(motionState)) return;
         if (!_animation.requestPlay(c)) return;
-        if (mode == MOTION_STATE::ANIMATE) return;
-        _previousMode = mode;
-        _borrowedMode = true;
-        _expectingBorrow = true;
-        EventBus<ModeMsg>::publish({MOTION_STATE::ANIMATE});
+        if (motionState == MOTION_STATE::ANIMATE) return;
+        EventBus<ModeMsg>::publish({MOTION_STATE::ANIMATE, true});
+    }
+
+    // Adapter task. A stop only makes sense in ANIMATE.
+    void handleAnimationStop() {
+        if (motionState == MOTION_STATE::ANIMATE) _animation.requestStop();
+    }
+
+    // Adapter task. Puppeteer poses apply only in ANIMATE.
+    void handleAnimationPose(PoseMsg const &p) {
+        if (motionState == MOTION_STATE::ANIMATE) _animation.setPuppet(p);
     }
 
     void handleCommand(CommandMsg const &c) {
@@ -232,8 +243,10 @@ class MotionService {
         // is only ever touched by the control task.
         if ((state == MOTION_STATE::ANIMATE) != _animating) {
             _animating = state == MOTION_STATE::ANIMATE;
-            if (_animating) _animation.enter(body_state);
-            else _animation.reset();
+            if (_animating)
+                _animation.enter(body_state);
+            else
+                _animation.reset();
         }
         switch (state) {
             case MOTION_STATE::DEACTIVATED: return false;
@@ -271,10 +284,7 @@ class MotionService {
             case MOTION_STATE::ANIMATE: {
                 // tick writes the angles itself; body_state carries the absolute pose for telemetry.
                 const bool finished = _animation.tick(dt, body_state, msgAngles.angles);
-                if (finished && _borrowedMode) {
-                    _borrowedMode = false;
-                    EventBus<ModeMsg>::publish({_previousMode});
-                }
+                if (finished && _borrowedMode && EventBus<ModeMsg>::publish({_previousMode})) _borrowedMode = false;
                 break;
             }
             case MOTION_STATE::WALK: {
@@ -308,8 +318,6 @@ class MotionService {
     EventBus<ModeMsg>::Handle _modeSubHandle;
     EventBus<GaitMsg>::Handle _gaitSubHandle;
     EventBus<ServoAnglesMsg>::Handle _angleSubHandle;
-    EventBus<AnimationCommandMsg>::Handle _animationSubHandle;
-    EventBus<PoseMsg>::Handle _poseSubHandle;
     Kinematics kinematics;
     GaitController gait;
 #if FT_ENABLED(USE_POLICY)
@@ -318,8 +326,7 @@ class MotionService {
     AnimationRunner _animation;
     MOTION_STATE _previousMode = MOTION_STATE::STAND;
     bool _borrowedMode = false;
-    bool _expectingBorrow = false;
-    bool _animating = false;  // control task only: whether the last tick ran ANIMATE
+    bool _animating = false; // control task only: whether the last tick ran ANIMATE
 
     CommandMsg command = {0, 0, 0, 0, 0, 0, 0, 0};
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};

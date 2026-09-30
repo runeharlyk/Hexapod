@@ -2,7 +2,7 @@
 
 // Owns the animation state the control task drives: two clip buffers (the player reads one while a
 // request loads the other), a third for validation, the player, the puppeteer target and the status
-// publisher. Requests arrive on the event bus workers and the adapter tasks; they either load into the
+// publisher. Requests arrive on the adapter tasks and the mode worker; they either load into the
 // inactive buffer under the load lock and raise a flag the control task consumes under the same lock,
 // or copy a pose under a critical section. The control task is the only reader of the active clip and
 // the only caller of enter, reset and tick, so a clip is never replaced while it is being evaluated.
@@ -14,6 +14,7 @@
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <freertos/task.h>
 #include <animation/animation.h>
 #include <animation/animation_store.h>
 #include <event_bus.h>
@@ -38,6 +39,7 @@ class AnimationRunner {
         player_ = new anim::Player(kin);
         player_->setStance(stance);
         loadMutex_ = xSemaphoreCreateMutex();
+        validateMutex_ = xSemaphoreCreateMutex();
         clips_[0] = allocClip();
         clips_[1] = allocClip();
         scratch_ = allocClip();
@@ -49,7 +51,7 @@ class AnimationRunner {
         return buffersReady_;
     }
 
-    // Adapter or worker task. Loads into the buffer the player is not reading; the control task
+    // Adapter task. Loads into the buffer the player is not reading; the control task
     // swaps and starts it on its next tick. A failed load leaves the player untouched, is logged and
     // returns false, so the caller never switches mode for it; the same file fails the same way on a
     // validate request, which is how the app learns why.
@@ -65,10 +67,21 @@ class AnimationRunner {
             ESP_LOGW(TAG, "play %s refused: %s", cmd.name, error);
         }
         xSemaphoreGive(loadMutex_);
+        logLoadStackOnce();
         return ok;
     }
 
-    void requestStop() { pendingStop_.store(true, std::memory_order_release); }
+    // A stop also cancels a loaded play the control task has not started yet.
+    void requestStop() {
+        pendingPlay_.store(false, std::memory_order_release);
+        pendingStop_.store(true, std::memory_order_release);
+    }
+
+    // Mode worker: a refused borrow or an explicit mode other than ANIMATE drops what is queued.
+    void cancelPendingPlay() {
+        pendingPlay_.store(false, std::memory_order_release);
+        pendingStop_.store(false, std::memory_order_release);
+    }
 
     void setPuppet(const PoseMsg &p) {
         portENTER_CRITICAL(&puppetMux_);
@@ -78,29 +91,33 @@ class AnimationRunner {
     }
 
     // Validate a file for a request handler. It has its own buffer, so it never overwrites a clip
-    // that is loaded and waiting for the control task.
+    // that is loaded and waiting for the control task, and its own lock, so the clamp sweep does not
+    // hold up a play.
     void validate(const char *name, socket_message_AnimationReport &report) {
         if (!buffersReady_) {
             report.ok = false;
             strncpy(report.error, "no PSRAM for the animation buffers", sizeof(report.error) - 1);
             return;
         }
+        xSemaphoreTake(validateMutex_, portMAX_DELAY);
         xSemaphoreTake(loadMutex_, portMAX_DELAY);
         const char *error = nullptr;
         report.ok = store_.load(name, *scratch_, error);
+        xSemaphoreGive(loadMutex_);
         if (!report.ok) {
             strncpy(report.error, error, sizeof(report.error) - 1);
         } else {
             report.clamped_mask = sweepClampMask(*scratch_);
         }
-        xSemaphoreGive(loadMutex_);
+        xSemaphoreGive(validateMutex_);
     }
 
-    // Control task, on the first ANIMATE tick: the pose the robot holds now is where an idle player
-    // rests and where the first play's entry blend starts.
+    // Control task, on the first ANIMATE tick: the pose the robot holds now is where the first play's
+    // entry blend starts. With no play waiting, the pose eases to stance as a puppet target would.
     void enter(const BodyStateMsg &live) {
-        havePuppet_ = false;
         anim::capturePose(live, stance_, current_);
+        havePuppet_ = !pendingPlay_.load(std::memory_order_acquire);
+        if (havePuppet_) puppetTarget_ = anim::Pose {};
     }
 
     // Control task, on the first tick after ANIMATE: drop any play or pose and return the player to
@@ -115,7 +132,7 @@ class AnimationRunner {
         player_->~Player();
         new (player_) anim::Player(*kin_);
         player_->setStance(stance_);
-        current_ = anim::Pose{};
+        current_ = anim::Pose {};
         publishStatus(true);
     }
 
@@ -144,27 +161,36 @@ class AnimationRunner {
 
   private:
     static constexpr const char *TAG = "AnimationRunner";
-    static constexpr float PUPPET_SMOOTHING = 0.06f;  // the STAND smoothing factor
+    static constexpr float PUPPET_SMOOTHING = 0.06f; // the STAND smoothing factor
     Kinematics *kin_ = nullptr;
     const float (*stance_)[4] = nullptr;
     AnimationStore store_;
     anim::Clip *clips_[2] = {nullptr, nullptr};
     anim::Clip *scratch_ = nullptr;
     bool buffersReady_ = false;
-    int active_ = 0;  // changes only under loadMutex_
+    int active_ = 0; // changes only under loadMutex_
     anim::Player *player_ = nullptr;
     SemaphoreHandle_t loadMutex_ = nullptr;
-    std::atomic<bool> pendingPlay_{false};
-    std::atomic<bool> pendingStop_{false};
-    AnimationCommandMsg pendingParams_{};
+    SemaphoreHandle_t validateMutex_ = nullptr;
+    std::atomic<bool> pendingPlay_ {false};
+    std::atomic<bool> pendingStop_ {false};
+    AnimationCommandMsg pendingParams_ {};
     portMUX_TYPE puppetMux_ = portMUX_INITIALIZER_UNLOCKED;
-    PoseMsg puppet_{};
+    PoseMsg puppet_ {};
     bool puppetPending_ = false;
     bool havePuppet_ = false;
     anim::Pose puppetTarget_;
     anim::Pose current_;
     uint32_t clampMask_ = 0;
     unsigned long lastStatusMs_ = 0;
+
+    // The load runs on whichever transport task delivered the play; the first one reports its headroom.
+    static void logLoadStackOnce() {
+        static std::atomic<bool> logged {false};
+        if (logged.exchange(true)) return;
+        ESP_LOGI(TAG, "load ran on %s, stack high water mark %u B", pcTaskGetName(nullptr),
+                 (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+    }
 
     static anim::Clip *allocClip() {
         void *p = heap_caps_malloc(sizeof(anim::Clip), MALLOC_CAP_SPIRAM);
@@ -186,14 +212,18 @@ class AnimationRunner {
         }
         if (pendingStop_.exchange(false, std::memory_order_acq_rel)) player_->stop();
         portENTER_CRITICAL(&puppetMux_);
+        // A pose streamed during a play is stale by the time the play ends, so only an idle player
+        // takes one.
         if (puppetPending_) {
             puppetPending_ = false;
-            for (int a = 0; a < 6; ++a) puppetTarget_.body[a] = puppet_.body[a];
-            for (int i = 0; i < 6; ++i) {
-                puppetTarget_.legs[i].joints = puppet_.joints[i];
-                for (int k = 0; k < 3; ++k) puppetTarget_.legs[i].v[k] = puppet_.legs[i][k];
+            if (player_->state() == anim::State::IDLE) {
+                for (int a = 0; a < 6; ++a) puppetTarget_.body[a] = puppet_.body[a];
+                for (int i = 0; i < 6; ++i) {
+                    puppetTarget_.legs[i].joints = puppet_.joints[i];
+                    for (int k = 0; k < 3; ++k) puppetTarget_.legs[i].v[k] = puppet_.legs[i][k];
+                }
+                havePuppet_ = true;
             }
-            havePuppet_ = true;
         }
         portEXIT_CRITICAL(&puppetMux_);
     }

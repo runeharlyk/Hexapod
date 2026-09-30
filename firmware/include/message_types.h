@@ -13,6 +13,7 @@ enum class MOTION_STATE { DEACTIVATED, IDLE, POSE, STAND, WALK, WALK_NN, ANIMATE
 
 struct ModeMsg {
     MOTION_STATE mode;
+    bool borrow = false; // an animation play asking for ANIMATE; decided against the mode at delivery
 };
 
 // TUNED is the CMA-ES-searched gait from simulation/src/resources/gait_library.json, emitted into
@@ -74,7 +75,6 @@ struct PoseMsg {
 };
 
 struct AnimationCommandMsg {
-    bool play;  // false = stop
     char name[33];
     int paramCount;
     struct {

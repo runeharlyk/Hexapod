@@ -214,24 +214,19 @@ static void registerHandlers(CommAdapterBase &c) {
         [](const socket_message_ServoStateData &s, int) { EventBus<ServoStateMsg>::publish({s.active}); });
     c.on<socket_message_AnimationPlay>([](const socket_message_AnimationPlay &p, int) {
         if (!anim::validName(p.name)) return;
-        AnimationCommandMsg cmd{};
-        cmd.play = true;
+        AnimationCommandMsg cmd {};
         strncpy(cmd.name, p.name, sizeof(cmd.name) - 1);
         cmd.paramCount = p.params_count < 10 ? p.params_count : 10;
         for (int i = 0; i < cmd.paramCount; ++i) {
             if (!std::isfinite(p.params[i].value)) return;
             cmd.params[i] = {(int)p.params[i].id, p.params[i].value};
         }
-        EventBus<AnimationCommandMsg>::publish(cmd);
+        robot.animationPlay(cmd);
     });
-    c.on<socket_message_AnimationStop>([](const socket_message_AnimationStop &, int) {
-        AnimationCommandMsg cmd{};
-        cmd.play = false;
-        EventBus<AnimationCommandMsg>::publish(cmd);
-    });
+    c.on<socket_message_AnimationStop>([](const socket_message_AnimationStop &, int) { robot.animationStop(); });
     c.on<socket_message_PoseData>([](const socket_message_PoseData &p, int) {
         if (p.legs_count != 0 && p.legs_count != 6) return;
-        PoseMsg pose{};
+        PoseMsg pose {};
         const float body[6] = {p.body.roll, p.body.pitch, p.body.yaw, p.body.x, p.body.y, p.body.z};
         for (int a = 0; a < 6; ++a) {
             if (!std::isfinite(body[a])) return;
@@ -246,7 +241,7 @@ static void registerHandlers(CommAdapterBase &c) {
                 pose.legs[i][k] = v[k];
             }
         }
-        EventBus<PoseMsg>::publish(pose);
+        robot.animationPose(pose);
     });
 
     c.on<socket_message_SystemCommandData>([](const socket_message_SystemCommandData &cmd, int) {
