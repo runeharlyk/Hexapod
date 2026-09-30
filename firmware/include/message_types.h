@@ -65,3 +65,20 @@ struct BodyStateMsg {
 
     void updateFeet(const float newFeet[6][4]) { COPY_2D_ARRAY_6x4(feet, newFeet); }
 };
+
+// Puppeteer target from the editor: body offsets and six leg targets, foot offsets or joint angles.
+struct PoseMsg {
+    float body[6];
+    bool joints[6];
+    float legs[6][3];
+};
+
+struct AnimationCommandMsg {
+    bool play;  // false = stop
+    char name[33];
+    int paramCount;
+    struct {
+        int id;
+        float value;
+    } params[10];
+};

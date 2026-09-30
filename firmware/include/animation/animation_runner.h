@@ -1,0 +1,246 @@
+#pragma once
+
+// Owns the animation state the control task drives: two clip buffers (the player reads one while a
+// request loads the other), a third for validation, the player, the puppeteer target and the status
+// publisher. Requests arrive on the event bus workers and the adapter tasks; they either load into the
+// inactive buffer under the load lock and raise a flag the control task consumes under the same lock,
+// or copy a pose under a critical section. The control task is the only reader of the active clip and
+// the only caller of enter, reset and tick, so a clip is never replaced while it is being evaluated.
+
+#include <atomic>
+#include <cstring>
+#include <new>
+#include <esp_heap_caps.h>
+#include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <animation/animation.h>
+#include <animation/animation_store.h>
+#include <event_bus.h>
+#include <message_types.h>
+#include <platform_shared/message.pb.h>
+#include <utils/timing.h>
+
+// publishStatus casts the player state straight onto the wire enum.
+static_assert((int)anim::State::IDLE == socket_message_AnimationState_ANIM_IDLE, "state value mismatch");
+static_assert((int)anim::State::ENTRY == socket_message_AnimationState_ANIM_ENTRY, "state value mismatch");
+static_assert((int)anim::State::PLAYING == socket_message_AnimationState_ANIM_PLAYING, "state value mismatch");
+static_assert((int)anim::State::HOLD == socket_message_AnimationState_ANIM_HOLD, "state value mismatch");
+static_assert((int)anim::State::EXIT == socket_message_AnimationState_ANIM_EXIT, "state value mismatch");
+
+class AnimationRunner {
+  public:
+    static constexpr uint32_t STATUS_PERIOD_MS = 200;
+
+    bool begin(Kinematics &kin, const float (*stance)[4]) {
+        kin_ = &kin;
+        stance_ = stance;
+        player_ = new anim::Player(kin);
+        player_->setStance(stance);
+        loadMutex_ = xSemaphoreCreateMutex();
+        clips_[0] = allocClip();
+        clips_[1] = allocClip();
+        scratch_ = allocClip();
+        if (!clips_[0] || !clips_[1] || !scratch_) {
+            ESP_LOGE(TAG, "no PSRAM for the clip buffers");
+            return false;
+        }
+        buffersReady_ = store_.begin();
+        return buffersReady_;
+    }
+
+    // Adapter or worker task. Loads into the buffer the player is not reading; the control task
+    // swaps and starts it on its next tick. A failed load leaves the player untouched, is logged and
+    // returns false, so the caller never switches mode for it; the same file fails the same way on a
+    // validate request, which is how the app learns why.
+    bool requestPlay(const AnimationCommandMsg &cmd) {
+        if (!buffersReady_) return false;
+        xSemaphoreTake(loadMutex_, portMAX_DELAY);
+        const char *error = nullptr;
+        const bool ok = store_.load(cmd.name, *clips_[1 - active_], error);
+        if (ok) {
+            pendingParams_ = cmd;
+            pendingPlay_.store(true, std::memory_order_release);
+        } else {
+            ESP_LOGW(TAG, "play %s refused: %s", cmd.name, error);
+        }
+        xSemaphoreGive(loadMutex_);
+        return ok;
+    }
+
+    void requestStop() { pendingStop_.store(true, std::memory_order_release); }
+
+    void setPuppet(const PoseMsg &p) {
+        portENTER_CRITICAL(&puppetMux_);
+        puppet_ = p;
+        puppetPending_ = true;
+        portEXIT_CRITICAL(&puppetMux_);
+    }
+
+    // Validate a file for a request handler. It has its own buffer, so it never overwrites a clip
+    // that is loaded and waiting for the control task.
+    void validate(const char *name, socket_message_AnimationReport &report) {
+        if (!buffersReady_) {
+            report.ok = false;
+            strncpy(report.error, "no PSRAM for the animation buffers", sizeof(report.error) - 1);
+            return;
+        }
+        xSemaphoreTake(loadMutex_, portMAX_DELAY);
+        const char *error = nullptr;
+        report.ok = store_.load(name, *scratch_, error);
+        if (!report.ok) {
+            strncpy(report.error, error, sizeof(report.error) - 1);
+        } else {
+            report.clamped_mask = sweepClampMask(*scratch_);
+        }
+        xSemaphoreGive(loadMutex_);
+    }
+
+    // Control task, on the first ANIMATE tick: the pose the robot holds now is where an idle player
+    // rests and where the first play's entry blend starts.
+    void enter(const BodyStateMsg &live) {
+        havePuppet_ = false;
+        anim::capturePose(live, stance_, current_);
+    }
+
+    // Control task, on the first tick after ANIMATE: drop any play or pose and return the player to
+    // idle at stance.
+    void reset() {
+        pendingPlay_.store(false, std::memory_order_release);
+        pendingStop_.store(false, std::memory_order_release);
+        portENTER_CRITICAL(&puppetMux_);
+        puppetPending_ = false;
+        portEXIT_CRITICAL(&puppetMux_);
+        havePuppet_ = false;
+        player_->~Player();
+        new (player_) anim::Player(*kin_);
+        player_->setStance(stance_);
+        current_ = anim::Pose{};
+        publishStatus(true);
+    }
+
+    // Control task, every tick in ANIMATE. Fills body (offsets applied to the stance) and the 18
+    // angles. Returns true on the tick the player returns to idle after a play, so the caller can
+    // hand a borrowed mode back.
+    bool tick(float dt, BodyStateMsg &body, float angles[18]) {
+        // Taken before the requests so a play or stop consumed this tick counts as a change.
+        const anim::State before = player_->state();
+        const anim::Clip *clipBefore = player_->clip();
+        consumeRequests();
+        if (player_->state() != anim::State::IDLE) {
+            current_ = player_->update(dt);
+        } else if (havePuppet_) {
+            approachPuppet();
+        }
+        clampMask_ = anim::poseToAngles(current_, *kin_, stance_, angles);
+        anim::bodyState(current_.body, stance_, body);
+        for (int i = 0; i < 6; ++i)
+            if (!current_.legs[i].joints)
+                for (int k = 0; k < 3; ++k) body.feet[i][k] += current_.legs[i].v[k];
+        const bool finished = before != anim::State::IDLE && player_->state() == anim::State::IDLE;
+        publishStatus(before != player_->state() || clipBefore != player_->clip());
+        return finished;
+    }
+
+  private:
+    static constexpr const char *TAG = "AnimationRunner";
+    static constexpr float PUPPET_SMOOTHING = 0.06f;  // the STAND smoothing factor
+    Kinematics *kin_ = nullptr;
+    const float (*stance_)[4] = nullptr;
+    AnimationStore store_;
+    anim::Clip *clips_[2] = {nullptr, nullptr};
+    anim::Clip *scratch_ = nullptr;
+    bool buffersReady_ = false;
+    int active_ = 0;  // changes only under loadMutex_
+    anim::Player *player_ = nullptr;
+    SemaphoreHandle_t loadMutex_ = nullptr;
+    std::atomic<bool> pendingPlay_{false};
+    std::atomic<bool> pendingStop_{false};
+    AnimationCommandMsg pendingParams_{};
+    portMUX_TYPE puppetMux_ = portMUX_INITIALIZER_UNLOCKED;
+    PoseMsg puppet_{};
+    bool puppetPending_ = false;
+    bool havePuppet_ = false;
+    anim::Pose puppetTarget_;
+    anim::Pose current_;
+    uint32_t clampMask_ = 0;
+    unsigned long lastStatusMs_ = 0;
+
+    static anim::Clip *allocClip() {
+        void *p = heap_caps_malloc(sizeof(anim::Clip), MALLOC_CAP_SPIRAM);
+        return p ? new (p) anim::Clip() : nullptr;
+    }
+
+    void consumeRequests() {
+        // Never block the control loop: if a request holds the lock, the swap waits a tick.
+        if (pendingPlay_.load(std::memory_order_acquire) && xSemaphoreTake(loadMutex_, 0) == pdTRUE) {
+            if (pendingPlay_.exchange(false, std::memory_order_acq_rel)) {
+                active_ = 1 - active_;
+                anim::ParamValue values[anim::PARAM_MAX];
+                for (int i = 0; i < pendingParams_.paramCount; ++i)
+                    values[i] = {pendingParams_.params[i].id, pendingParams_.params[i].value};
+                player_->play(clips_[active_], values, pendingParams_.paramCount, &current_);
+                havePuppet_ = false;
+            }
+            xSemaphoreGive(loadMutex_);
+        }
+        if (pendingStop_.exchange(false, std::memory_order_acq_rel)) player_->stop();
+        portENTER_CRITICAL(&puppetMux_);
+        if (puppetPending_) {
+            puppetPending_ = false;
+            for (int a = 0; a < 6; ++a) puppetTarget_.body[a] = puppet_.body[a];
+            for (int i = 0; i < 6; ++i) {
+                puppetTarget_.legs[i].joints = puppet_.joints[i];
+                for (int k = 0; k < 3; ++k) puppetTarget_.legs[i].v[k] = puppet_.legs[i][k];
+            }
+            havePuppet_ = true;
+        }
+        portEXIT_CRITICAL(&puppetMux_);
+    }
+
+    // Lerp toward the puppet target with the STAND smoothing; a leg whose representation changes
+    // snaps to the new representation first, which is what the editor's toggle means.
+    void approachPuppet() {
+        for (int a = 0; a < 6; ++a) current_.body[a] = lerpf(current_.body[a], puppetTarget_.body[a], PUPPET_SMOOTHING);
+        for (int i = 0; i < 6; ++i) {
+            if (current_.legs[i].joints != puppetTarget_.legs[i].joints) current_.legs[i] = puppetTarget_.legs[i];
+            for (int k = 0; k < 3; ++k)
+                current_.legs[i].v[k] = lerpf(current_.legs[i].v[k], puppetTarget_.legs[i].v[k], PUPPET_SMOOTHING);
+        }
+    }
+
+    // The validator's clamp sweep: every keyframe plus 32 evenly spaced times per segment.
+    uint32_t sweepClampMask(const anim::Clip &clip) {
+        float params[anim::PARAM_COUNT];
+        anim::resolveParams(clip, nullptr, 0, params);
+        uint32_t mask = 0;
+        float angles[18];
+        anim::Pose pose;
+        for (int i = 0; i < clip.keyframeCount; ++i) {
+            const float t0 = clip.keyframes[i].time;
+            const float t1 = i + 1 < clip.keyframeCount ? clip.keyframes[i + 1].time : t0;
+            const int samples = i + 1 < clip.keyframeCount ? 32 : 1;
+            for (int s = 0; s < samples; ++s) {
+                const float t = t0 + (t1 - t0) * (float)s / 32.0f;
+                anim::evaluate(clip, params, t, *kin_, stance_, pose);
+                mask |= anim::poseToAngles(pose, *kin_, stance_, angles);
+            }
+        }
+        anim::evaluate(clip, params, clip.duration(), *kin_, stance_, pose);
+        mask |= anim::poseToAngles(pose, *kin_, stance_, angles);
+        return mask;
+    }
+
+    void publishStatus(bool changed) {
+        const unsigned long now = millis();
+        if (!anim::statusDue(changed, player_->state() == anim::State::IDLE, now, lastStatusMs_, STATUS_PERIOD_MS))
+            return;
+        lastStatusMs_ = now;
+        socket_message_AnimationStatus s = socket_message_AnimationStatus_init_zero;
+        if (player_->clip()) strncpy(s.name, player_->clip()->name, sizeof(s.name) - 1);
+        s.state = (socket_message_AnimationState)(int)player_->state();
+        s.t = player_->t();
+        s.clamped_mask = clampMask_;
+        EventBus<socket_message_AnimationStatus>::publish(s);
+    }
+};

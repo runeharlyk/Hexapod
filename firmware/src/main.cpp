@@ -44,6 +44,7 @@
 #include <event_bus.h>
 #include <message_types.h>
 #include <platform_shared/message.pb.h>
+#include <animation/animation.h>
 
 static const char *TAG = "main";
 
@@ -211,6 +212,42 @@ static void registerHandlers(CommAdapterBase &c) {
     });
     c.on<socket_message_ServoStateData>(
         [](const socket_message_ServoStateData &s, int) { EventBus<ServoStateMsg>::publish({s.active}); });
+    c.on<socket_message_AnimationPlay>([](const socket_message_AnimationPlay &p, int) {
+        if (!anim::validName(p.name)) return;
+        AnimationCommandMsg cmd{};
+        cmd.play = true;
+        strncpy(cmd.name, p.name, sizeof(cmd.name) - 1);
+        cmd.paramCount = p.params_count < 10 ? p.params_count : 10;
+        for (int i = 0; i < cmd.paramCount; ++i) {
+            if (!std::isfinite(p.params[i].value)) return;
+            cmd.params[i] = {(int)p.params[i].id, p.params[i].value};
+        }
+        EventBus<AnimationCommandMsg>::publish(cmd);
+    });
+    c.on<socket_message_AnimationStop>([](const socket_message_AnimationStop &, int) {
+        AnimationCommandMsg cmd{};
+        cmd.play = false;
+        EventBus<AnimationCommandMsg>::publish(cmd);
+    });
+    c.on<socket_message_PoseData>([](const socket_message_PoseData &p, int) {
+        if (p.legs_count != 0 && p.legs_count != 6) return;
+        PoseMsg pose{};
+        const float body[6] = {p.body.roll, p.body.pitch, p.body.yaw, p.body.x, p.body.y, p.body.z};
+        for (int a = 0; a < 6; ++a) {
+            if (!std::isfinite(body[a])) return;
+            pose.body[a] = body[a];
+        }
+        for (int i = 0; i < (int)p.legs_count; ++i) {
+            const animation_LegTarget &lt = p.legs[i];
+            pose.joints[i] = lt.which_target == animation_LegTarget_joints_tag;
+            const float *v = pose.joints[i] ? &lt.target.joints.coxa : &lt.target.foot.x;
+            for (int k = 0; k < 3; ++k) {
+                if (!std::isfinite(v[k])) return;
+                pose.legs[i][k] = v[k];
+            }
+        }
+        EventBus<PoseMsg>::publish(pose);
+    });
 
     c.on<socket_message_SystemCommandData>([](const socket_message_SystemCommandData &cmd, int) {
         switch (cmd.command) {
@@ -504,6 +541,7 @@ static void setupComm() {
     observeStatus<socket_message_OtaStatusData>();
     observeStatus<api_WifiStatus>();
     observeStatus<api_APStatus>();
+    observeStatus<socket_message_AnimationStatus>();
 
     // Transports start only once every bridge exists, so an early subscription finds its bridge.
 #if FT_ENABLED(USE_SERIAL_LINK)

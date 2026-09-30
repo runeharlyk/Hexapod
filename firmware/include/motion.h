@@ -2,7 +2,6 @@
 #define MotionService_h
 
 #include <esp_log.h>
-#include <esp_timer.h>
 #include <kinematics.h>
 #include <peripherals/servo_controller.h>
 #include <peripherals/peripherals.h>
@@ -12,9 +11,7 @@
 #include <event_bus.h>
 #include <message_types.h>
 #include <policy_runner.h>
-
-static inline unsigned long millis() { return (unsigned long)(esp_timer_get_time() / 1000); }
-static inline unsigned long micros() { return (unsigned long)esp_timer_get_time(); }
+#include <animation/animation_runner.h>
 
 class MotionService {
   public:
@@ -22,6 +19,7 @@ class MotionService {
         : _servoController(servoController), _peripherals(peripherals) {}
 
     void begin() {
+        _animation.begin(kinematics, default_feet_pos);
         ESP_LOGI("MotionService", "Subscribing to event buses...");
         _cmdSubHandle = EventBus<CommandMsg>::subscribe([&](CommandMsg const &c) {
             ESP_LOGD("MotionService", "COMMAND callback called");
@@ -38,6 +36,12 @@ class MotionService {
         _angleSubHandle = EventBus<ServoAnglesMsg>::subscribe([&](ServoAnglesMsg const &s) {
             ESP_LOGD("MotionService", "ANGLES callback called");
             handleAnglesEvent(s);
+        });
+        _animationSubHandle = EventBus<AnimationCommandMsg>::subscribe([&](AnimationCommandMsg const &c) {
+            handleAnimationCommand(c);
+        });
+        _poseSubHandle = EventBus<PoseMsg>::subscribe([&](PoseMsg const &p) {
+            if (motionState == MOTION_STATE::ANIMATE) _animation.setPuppet(p);
         });
         ESP_LOGI("MotionService", "Event bus subscriptions completed");
         body_state.updateFeet(default_feet_pos);
@@ -77,12 +81,35 @@ class MotionService {
 
     void handleInputMode(ModeMsg const &m) {
         ESP_LOGI("MotionService", "Mode %d", m.mode);
+        // The borrow's own mode publish arrives here too; any other mode change ends the borrow, so an
+        // explicit ANIMATE from the app is sticky and an explicit STAND mid-play is final.
+        if (m.mode == MOTION_STATE::ANIMATE && _expectingBorrow) _expectingBorrow = false;
+        else _borrowedMode = false;
         motionState = m.mode;
 #if FT_ENABLED(USE_POLICY)
         if (m.mode == MOTION_STATE::WALK_NN) _policy.reset(gait, default_feet_pos);
 #endif
         if (!isWalkingMode(m.mode)) stopLocomotionCommand(!isActuatedMode(m.mode));
         motionState == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
+    }
+
+    // A play from any active mode borrows ANIMATE and hands the mode back when the player finishes;
+    // a play while already in ANIMATE (borrowed or sticky) chains. The clip is loaded before the mode
+    // changes, so a refused play leaves the robot in its mode and pose. A stop only makes sense in
+    // ANIMATE.
+    void handleAnimationCommand(AnimationCommandMsg const &c) {
+        const MOTION_STATE mode = motionState;
+        if (!c.play) {
+            if (mode == MOTION_STATE::ANIMATE) _animation.requestStop();
+            return;
+        }
+        if (!isActuatedMode(mode)) return;
+        if (!_animation.requestPlay(c)) return;
+        if (mode == MOTION_STATE::ANIMATE) return;
+        _previousMode = mode;
+        _borrowedMode = true;
+        _expectingBorrow = true;
+        EventBus<ModeMsg>::publish({MOTION_STATE::ANIMATE});
     }
 
     void handleCommand(CommandMsg const &c) {
@@ -200,7 +227,15 @@ class MotionService {
     bool updateMotion() {
         resetCommandIfTimedOut();
         const float dt = getMotionDeltaSeconds();
-        switch (motionState) {
+        const MOTION_STATE state = motionState;
+        // Entering and leaving ANIMATE are handled here rather than in handleInputMode so the runner
+        // is only ever touched by the control task.
+        if ((state == MOTION_STATE::ANIMATE) != _animating) {
+            _animating = state == MOTION_STATE::ANIMATE;
+            if (_animating) _animation.enter(body_state);
+            else _animation.reset();
+        }
+        switch (state) {
             case MOTION_STATE::DEACTIVATED: return false;
             case MOTION_STATE::IDLE: return false;
             case MOTION_STATE::POSE: _servoController->setCenterPwm(); return false;
@@ -211,6 +246,8 @@ class MotionService {
                 body_state.phi = lerpf(body_state.phi, target_body_state.phi + _peripherals->angleY(), smoothing_factor);
                 body_state.omega =
                     lerpf(body_state.omega, target_body_state.omega + _peripherals->angleX(), smoothing_factor);
+                // Only ANIMATE sets yaw; ease back what a mode change mid-animation left behind.
+                body_state.psi = lerpf(body_state.psi, 0.f, smoothing_factor);
                 // STAND is not stepping, so this is where a gait selection deferred by
                 // handleInputGait gets honoured -- otherwise leaving WALK would strand it.
                 updateAutoGait();
@@ -225,11 +262,21 @@ class MotionService {
                 // firmware's self-levelling active, so that term stays on here too.
                 body_state.phi = lerpf(body_state.phi, _peripherals->angleY(), smoothing_factor);
                 body_state.omega = lerpf(body_state.omega, _peripherals->angleX(), smoothing_factor);
+                body_state.psi = lerpf(body_state.psi, 0.f, smoothing_factor);
                 if (!_policy.update(_peripherals, gait, body_state, msgAngles.angles)) return false;
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
             }
 #endif
+            case MOTION_STATE::ANIMATE: {
+                // tick writes the angles itself; body_state carries the absolute pose for telemetry.
+                const bool finished = _animation.tick(dt, body_state, msgAngles.angles);
+                if (finished && _borrowedMode) {
+                    _borrowedMode = false;
+                    EventBus<ModeMsg>::publish({_previousMode});
+                }
+                break;
+            }
             case MOTION_STATE::WALK: {
                 body_state.xm = lerpf(body_state.xm, target_body_state.xm, smoothing_factor);
                 body_state.ym = lerpf(body_state.ym, target_body_state.ym, smoothing_factor);
@@ -237,6 +284,8 @@ class MotionService {
                 body_state.phi = lerpf(body_state.phi, target_body_state.phi + _peripherals->angleY(), smoothing_factor);
                 body_state.omega =
                     lerpf(body_state.omega, target_body_state.omega + _peripherals->angleX(), smoothing_factor);
+                // Only ANIMATE sets yaw; ease back what a mode change mid-animation left behind.
+                body_state.psi = lerpf(body_state.psi, 0.f, smoothing_factor);
                 // Before the ramp: it clears the 2 mm deadband in one tick, closing the window.
                 updateAutoGait();
                 approachGaitCommand(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
@@ -259,11 +308,18 @@ class MotionService {
     EventBus<ModeMsg>::Handle _modeSubHandle;
     EventBus<GaitMsg>::Handle _gaitSubHandle;
     EventBus<ServoAnglesMsg>::Handle _angleSubHandle;
+    EventBus<AnimationCommandMsg>::Handle _animationSubHandle;
+    EventBus<PoseMsg>::Handle _poseSubHandle;
     Kinematics kinematics;
     GaitController gait;
 #if FT_ENABLED(USE_POLICY)
     PolicyRunner _policy;
 #endif
+    AnimationRunner _animation;
+    MOTION_STATE _previousMode = MOTION_STATE::STAND;
+    bool _borrowedMode = false;
+    bool _expectingBorrow = false;
+    bool _animating = false;  // control task only: whether the last tick ran ANIMATE
 
     CommandMsg command = {0, 0, 0, 0, 0, 0, 0, 0};
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
@@ -301,7 +357,9 @@ class MotionService {
 
     static bool isWalkingMode(MOTION_STATE mode) { return mode == MOTION_STATE::WALK || mode == MOTION_STATE::WALK_NN; }
 
-    static bool isActuatedMode(MOTION_STATE mode) { return mode == MOTION_STATE::STAND || isWalkingMode(mode); }
+    static bool isActuatedMode(MOTION_STATE mode) {
+        return mode == MOTION_STATE::STAND || isWalkingMode(mode) || mode == MOTION_STATE::ANIMATE;
+    }
 
     // Zeroes the locomotion command. `snap` collapses the live gait state onto it as well, for modes
     // that drive nothing: there is no output to jerk, and a half-stride left frozen in gait_state

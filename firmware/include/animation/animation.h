@@ -351,6 +351,13 @@ inline void capturePose(const BodyStateMsg &b, const float stance[6][4], Pose &o
     }
 }
 
+// Status is pushed on every state change, and otherwise at most once per period while not idle.
+inline bool statusDue(bool changed, bool idle, unsigned long nowMs, unsigned long lastMs, unsigned long periodMs) {
+    if (changed) return true;
+    if (idle) return false;
+    return nowMs - lastMs >= periodMs;
+}
+
 enum class State : int { IDLE = 0, ENTRY = 1, PLAYING = 2, HOLD = 3, EXIT = 4 };
 
 // Entry -> Playing -> Hold | Exit -> Idle around evaluate(). Mirrors the reference Player: REPEAT is

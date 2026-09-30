@@ -422,6 +422,14 @@ void test_stop_before_the_first_update_blends_from_the_live_pose() {
     TEST_ASSERT_EQUAL_FLOAT(15.0f, pose.legs[0].v[1]);
 }
 
+void test_status_cadence_is_five_hertz_plus_every_change() {
+    TEST_ASSERT_TRUE(anim::statusDue(true, true, 0, 0, 200));
+    TEST_ASSERT_FALSE(anim::statusDue(false, true, 1000, 0, 200));
+    TEST_ASSERT_FALSE(anim::statusDue(false, false, 150, 0, 200));
+    TEST_ASSERT_TRUE(anim::statusDue(false, false, 200, 0, 200));
+    TEST_ASSERT_TRUE(anim::statusDue(true, false, 150, 0, 200));
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_fixture_binaries_decode_with_nanopb);
@@ -434,5 +442,6 @@ int main(int, char **) {
     RUN_TEST(test_capture_pose_reads_offsets_from_a_body_state);
     RUN_TEST(test_player_matches_every_fixture_trace);
     RUN_TEST(test_stop_before_the_first_update_blends_from_the_live_pose);
+    RUN_TEST(test_status_cadence_is_five_hertz_plus_every_change);
     return UNITY_END();
 }
