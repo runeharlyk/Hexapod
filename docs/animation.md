@@ -177,14 +177,14 @@ Each platform checks itself against it.
 - Simulation: `uv run pytest` regenerates the expectations in memory and fails while the committed file is stale.
 - Firmware: `pio test -e native` runs the animation tests in `firmware/test/`, which compare the C++ evaluator and player with the fixtures state by state.
   The C++ test reads `expected.txt`, a plain-text dump of the same data written by the same script; `expected.json` is the Python side's file.
-- App: a TypeScript port and its `pnpm test:unit` parity test are planned with the editor.
+- App: `pnpm test:unit` runs `tests/unit/animation-parity.spec.ts`, which compares the TypeScript port in `app/src/lib/animation/` with the same `expected.json`.
 
 `uv run python check_animation.py` runs every bundled animation through the servo model and reports clamped joints, peak joint speed, tilt and falls.
 Regenerate the fixtures after any behaviour change in `animation.py`.
 
 ## Bench tool
 
-`simulation/robot_animate.py` drives the robot over the native USB Serial/JTAG port, before the app has an animation page.
+`simulation/robot_animate.py` drives the robot over the native USB Serial/JTAG port, the serial path for a headless check.
 The framing is `SerialAdapter`'s: a little-endian uint16 length followed by one `socket_message.Message`; a length of 0 or above 2048 makes the robot drop its buffer.
 The robot only sends once it sees a host on the port.
 A COM port is exclusive on Windows, so `watch` cannot run beside another command.
