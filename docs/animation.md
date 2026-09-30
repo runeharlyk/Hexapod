@@ -109,6 +109,7 @@ The evaluator's body `z` is an offset; the runner (`AnimationRunner`) adds a bas
 When the file has no `ride_height`, the base is the current ride-height slider (the STAND target `zm`), so an animation played on a tall-standing robot stays tall and Exit returns to that height.
 When the file sets `ride_height`, the base is that value while the player is not idle, regardless of the slider, because some animations only work at one height; Exit still returns to the slider's height.
 The base eases toward its target with the STAND smoothing factor, so the change between the two is never a step.
+During Entry the base instead moves along the Entry blend (eased like the pose) from the base at the play to the base Entry converted its destination at, so it arrives exactly when Entry ends and the Entry-to-Playing seam is continuous however short the Entry; Exit keeps the base of the stop, at which it converted both of its ends.
 Puppeteer poses use the slider base.
 Entering ANIMATE starts the base at the slider and captures only the height beyond it as an offset, so the STAND height is not treated as part of the pose.
 The base is added to the body by each platform's runner, not by the evaluator, so the evaluated body stays an offset and the parity fixtures are unaffected; the sim sandbox adds it the same way in Animate mode, without the lerp.

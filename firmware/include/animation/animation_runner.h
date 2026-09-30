@@ -12,7 +12,10 @@
 // Exit, it is the STAND ride-height slider, so a clip played on a tall-standing robot stays tall and
 // Exit returns to the slider's height. The base eases toward its target with the STAND smoothing,
 // and it is passed into every foot-to-joint conversion (the player, the evaluator and the puppet
-// path), so a joint leg meets its foot endpoint at any base.
+// path), so a joint leg meets its foot endpoint at any base. During Entry the base instead follows
+// the player's blend (Player::blendFraction, eased like the pose) from the base at play() to
+// Player::entryBase, the base Entry converted its destination at, so it arrives exactly when Entry
+// ends and the Entry-to-Playing seam is continuous however short the Entry.
 
 #include <atomic>
 #include <cstring>
@@ -142,6 +145,7 @@ class AnimationRunner {
         baseZm_ = sliderZm;
         anim::capturePose(live, stance_, current_);
         current_.body[anim::Z] = live.zm - baseZm_;
+        busy_.store(!anim::atStance(current_), std::memory_order_release);
         havePuppet_ = !pendingPlay_.load(std::memory_order_acquire);
         if (havePuppet_) puppetTarget_ = anim::Pose {};
     }
@@ -171,10 +175,17 @@ class AnimationRunner {
         const anim::State before = player_->state();
         const anim::Clip *clipBefore = player_->clip();
         consumeRequests();
-        const bool fixedBase = player_->state() != anim::State::IDLE && player_->clip()->hasRideHeight;
-        baseZm_ = lerpf(baseZm_, fixedBase ? player_->clip()->rideHeight : sliderZm, STAND_SMOOTHING);
-        if (player_->state() != anim::State::IDLE) {
+        const anim::State state = player_->state();
+        if (state != anim::State::ENTRY) {
+            // Exit holds the clip's height too: it converted both of its ends at the base of the stop.
+            const bool fixedBase = state != anim::State::IDLE && player_->clip()->hasRideHeight;
+            baseZm_ = lerpf(baseZm_, fixedBase ? player_->clip()->rideHeight : sliderZm, STAND_SMOOTHING);
+        }
+        if (state != anim::State::IDLE) {
             current_ = player_->update(dt, baseZm_);
+            if (state == anim::State::ENTRY)
+                baseZm_ = entryStartBase_ + (player_->entryBase() - entryStartBase_) *
+                                                anim::easeValue(anim::EASE_IN_OUT, player_->blendFraction());
             // Exit ends at stance, but a leg that blended in joint space still holds it as joint
             // angles (solved at this base); restate it as zero offsets so the pose reads as at stance
             // and the feet follow later base changes.
@@ -229,6 +240,7 @@ class AnimationRunner {
     anim::Pose puppetTarget_;
     anim::Pose current_; // offsets; the base is added on output
     float baseZm_ = 0.0f;
+    float entryStartBase_ = 0.0f; // the base when the current Entry began
     uint32_t clampMask_ = 0;
     unsigned long lastStatusMs_ = 0;
     std::atomic<bool> playStackLogged_ {false};
@@ -268,11 +280,14 @@ class AnimationRunner {
     void consumeRequests() {
         // Never block the control loop: if a request holds the lock, the swap waits a tick.
         if (pendingPlay_.load(std::memory_order_acquire) && xSemaphoreTake(loadMutex_, 0) == pdTRUE) {
+            // Raised before the play is taken, so a hand-back decided meanwhile cannot see an idle runner.
+            busy_.store(true, std::memory_order_release);
             if (pendingPlay_.exchange(false, std::memory_order_acq_rel)) {
                 active_ = 1 - active_;
                 anim::ParamValue values[anim::PARAM_MAX];
                 for (int i = 0; i < pendingParams_.paramCount; ++i)
                     values[i] = {pendingParams_.params[i].id, pendingParams_.params[i].value};
+                entryStartBase_ = baseZm_;
                 player_->play(clips_[active_], values, pendingParams_.paramCount, &current_, baseZm_);
                 havePuppet_ = false;
             }

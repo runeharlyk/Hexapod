@@ -554,3 +554,26 @@ def test_a_stop_in_a_joint_phase_exits_exactly_to_stance_on_the_base():
         final = p.update(DT, BASE_MM)
     assert final.legs[0].is_joints()
     assert np.max(np.abs(based_angles(final) - based_angles(an.Pose.stance()))) < 1e-6
+
+
+RUNNER_DT = 0.005  # the firmware control tick
+STAND_SMOOTHING = 0.06
+
+
+def test_a_fixed_ride_height_entry_meets_playing_on_the_seam():
+    """The runner moves its base along the Entry blend to the base Entry converted at, then eases it
+    toward the clip's height; a short Entry far from that height must still land on the seam."""
+    a = load_json(WAVE)
+    a.ride_height, a.entry_time = 40.0, 0.1
+    start = base = -40.0
+    p = an.Player(KIN)
+    p.play(a, live=an.Pose.stance(), base_z=base)
+    while p.state == an.State.ENTRY:
+        pose = p.update(RUNNER_DT, base)
+        base = start + (p.entry_base - start) * an.ease_value(an.Ease.EASE_IN_OUT, p.blend_fraction())
+        end_of_entry = based_angles(pose, base)
+    assert base == pytest.approx(40.0)
+    base += (a.ride_height - base) * STAND_SMOOTHING
+    first_playing = based_angles(p.update(RUNNER_DT, base), base)
+    assert p.state == an.State.PLAYING
+    assert np.max(np.abs(end_of_entry - first_playing)) < 0.05

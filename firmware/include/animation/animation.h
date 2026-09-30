@@ -401,10 +401,10 @@ class Player {
         playsDone_ = 0;
         const Pose start = live ? *live : lastPose_;
         lastPose_ = start;
-        const float entryBase = clip->hasRideHeight ? clip->rideHeight : baseZ;
+        entryBase_ = clip->hasRideHeight ? clip->rideHeight : baseZ;
         Pose first;
-        evaluate(*clip, params_, 0.0f, kin_, stance_, first, entryBase);
-        startBlend(start, first, clip->entrySeconds(), State::ENTRY, baseZ, entryBase);
+        evaluate(*clip, params_, 0.0f, kin_, stance_, first, entryBase_);
+        startBlend(start, first, clip->entrySeconds(), State::ENTRY, baseZ, entryBase_);
     }
 
     void stop(float baseZ = 0.0f) {
@@ -424,6 +424,10 @@ class Player {
 
     State state() const { return state_; }
     float t() const { return t_; }
+    // The last Entry or Exit blend's progress, 0 to 1 (1 once it has ended).
+    float blendFraction() const { return fminf(1.0f, blendT_ / blendSeconds_); }
+    // The base the last Entry converted its destination at; the runner must hold it when Entry ends.
+    float entryBase() const { return entryBase_; }
     const Pose &lastPose() const { return lastPose_; }
     const Clip *clip() const { return clip_; }
     const float *params() const { return params_; }
@@ -439,6 +443,7 @@ class Player {
     int playsDone_ = 0;
     float blendT_ = 0.0f;
     float blendSeconds_ = 1.0f;
+    float entryBase_ = 0.0f;
     Pose blendFrom_;
     Pose blendTo_;
 

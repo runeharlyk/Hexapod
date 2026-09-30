@@ -460,6 +460,7 @@ class Player:
         self._blend_seconds = 1.0
         self._blend_from = Pose.stance()
         self._blend_to = Pose.stance()
+        self.entry_base = 0.0  # the base the last Entry converted its destination at
 
     def play(self, anim: Animation, values: dict[ParamId, float] | None = None, live: Pose | None = None,
              base_z: float = 0.0) -> None:
@@ -469,9 +470,9 @@ class Player:
         self._plays_done = 0
         start = live if live is not None else self.last_pose
         self.last_pose = start.copy()
-        entry_base = anim.ride_height if anim.ride_height is not None else base_z
-        self._start_blend(start, self._evaluate(0.0, entry_base), anim.entry_seconds(), State.ENTRY, base_z,
-                          entry_base)
+        self.entry_base = anim.ride_height if anim.ride_height is not None else base_z
+        self._start_blend(start, self._evaluate(0.0, self.entry_base), anim.entry_seconds(), State.ENTRY, base_z,
+                          self.entry_base)
 
     def stop(self, base_z: float = 0.0) -> None:
         if self.state == State.IDLE:
@@ -489,6 +490,11 @@ class Player:
             pose = self._advance_playing(dt, base_z)
         self.last_pose = pose
         return pose
+
+    def blend_fraction(self) -> float:
+        """The last Entry or Exit blend's progress, 0 to 1. A runner moves its base along it during Entry,
+        from the base at play() to entry_base, so the base arrives exactly when Entry ends."""
+        return min(1.0, self._blend_t / self._blend_seconds)
 
     def _evaluate(self, t: float, base_z: float) -> Pose:
         return evaluate(self.animation, self.params, t, self.kin, self.stance_feet, base_z)

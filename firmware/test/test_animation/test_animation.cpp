@@ -553,6 +553,40 @@ void test_a_stop_in_a_joint_phase_exits_exactly_to_stance_on_the_base() {
     TEST_ASSERT_TRUE(maxAngleDelta(exited, stance) < ANGLE_TOL_DEG);
 }
 
+void anglesOnBase(const anim::Pose &pose, float base, Kinematics &kin, float angles[18]) {
+    anim::Pose out = pose;
+    out.body[anim::Z] += base;
+    anim::poseToAngles(out, kin, STANCE, angles);
+}
+
+// AnimationRunner::tick's base rule: along the Entry blend from the base at play() to the base Entry
+// converted at, then eased toward the clip's height with the STAND smoothing.
+void test_a_fixed_ride_height_entry_meets_playing_on_the_seam() {
+    Kinematics kin;
+    anim::Clip wave = sliderFollowingWave();
+    wave.hasRideHeight = true;
+    wave.rideHeight = 40.0f;
+    wave.entryTime = 0.1f;
+    constexpr float RUNNER_DT = 0.005f;
+    const float start = -40.0f;
+    float base = start;
+    anim::Player player(kin);
+    player.setStance(STANCE);
+    const anim::Pose live;
+    player.play(&wave, nullptr, 0, &live, base);
+    float endOfEntry[18], firstPlaying[18];
+    while (player.state() == anim::State::ENTRY) {
+        const anim::Pose pose = player.update(RUNNER_DT, base);
+        base = start + (player.entryBase() - start) * anim::easeValue(anim::EASE_IN_OUT, player.blendFraction());
+        anglesOnBase(pose, base, kin, endOfEntry);
+    }
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 40.0f, base);
+    base += (wave.rideHeight - base) * 0.06f;
+    anglesOnBase(player.update(RUNNER_DT, base), base, kin, firstPlaying);
+    TEST_ASSERT_EQUAL(anim::State::PLAYING, player.state());
+    TEST_ASSERT_TRUE(maxAngleDelta(endOfEntry, firstPlaying) < CONTINUITY_TOL_DEG);
+}
+
 void test_status_cadence_is_five_hertz_plus_every_change() {
     TEST_ASSERT_TRUE(anim::statusDue(true, true, 0, 0, 200));
     TEST_ASSERT_FALSE(anim::statusDue(false, true, 1000, 0, 200));
@@ -577,6 +611,7 @@ int main(int, char **) {
     RUN_TEST(test_a_mixed_leg_is_continuous_at_every_keyframe_on_a_nonzero_base);
     RUN_TEST(test_entry_from_a_joint_leg_ends_where_a_slider_following_clip_starts);
     RUN_TEST(test_a_stop_in_a_joint_phase_exits_exactly_to_stance_on_the_base);
+    RUN_TEST(test_a_fixed_ride_height_entry_meets_playing_on_the_seam);
     RUN_TEST(test_status_cadence_is_five_hertz_plus_every_change);
     return UNITY_END();
 }
