@@ -111,6 +111,23 @@ class Kinematics {
             ang[i * 3 + 2] = RAD_TO_DEG_F(-(a1 + a2));
         }
     }
+
+    // True when foot i of b lies inside the leg's reach annulus, which is exactly the condition under
+    // which neither acos argument in inverseKinematics saturates. Mirrors foot_reachable() in
+    // simulation/src/robot/animation.py.
+    bool footReachable(const BodyStateMsg &b, int i) const {
+        float T[4][4], w[4];
+        get_transformation_matrix(b, T);
+        MAT_MULT(T, b.feet[i], w, 4, 4, 1);
+        const float wx = w[0] - mountPos[i][0];
+        const float wy = w[1] - mountPos[i][1];
+        const float lx = wx * ca[i] + wy * sa[i];
+        const float ly = wx * sa[i] - wy * ca[i];
+        const float dx = lx - rootJ1;
+        const float radial = hypotf(dx, ly) - j1J2;
+        const float lr = hypotf(radial, w[2] - mountPos[i][2]);
+        return fabsf(j2J3 - j3Tip) <= lr && lr <= j2J3 + j3Tip;
+    }
 };
 
 #endif

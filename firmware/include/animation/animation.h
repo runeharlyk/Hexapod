@@ -183,4 +183,172 @@ inline const char *validate(const Clip &c) {
     return nullptr;
 }
 
+struct Pose {
+    float body[6] = {0, 0, 0, 0, 0, 0};
+    LegTarget legs[6];
+};
+
+inline float easeValue(int kind, float t) {
+    switch (kind) {
+        case EASE_IN: return t * t;
+        case EASE_OUT: return t * (2.0f - t);
+        case EASE_IN_OUT: return t < 0.5f ? 2.0f * t * t : -1.0f + (4.0f - 2.0f * t) * t;
+        default: return t;
+    }
+}
+
+// Every id gets a value: a declared id takes the caller's value clamped to its range, else its
+// default; an undeclared id is 1 (the neutral multiplier and a single play).
+inline void resolveParams(const Clip &c, const ParamValue *values, int count, float out[PARAM_COUNT]) {
+    for (int i = 0; i < PARAM_COUNT; ++i) out[i] = 1.0f;
+    for (int i = 0; i < c.paramCount; ++i) {
+        const ParamSpec &spec = c.params[i];
+        float v = spec.defaultValue;
+        for (int j = 0; j < count; ++j)
+            if (values[j].id == spec.id) v = values[j].value;
+        out[spec.id] = CLIP(v, spec.min, spec.max);
+    }
+}
+
+inline void bodyState(const float body6[6], const float stance[6][4], BodyStateMsg &b) {
+    b.omega = body6[ROLL];
+    b.phi = body6[PITCH];
+    b.psi = body6[YAW];
+    b.xm = body6[X];
+    b.ym = body6[Y];
+    b.zm = body6[Z];
+    b.updateFeet(stance);
+}
+
+inline void legJointsDeg(Kinematics &kin, const float body6[6], const float foot[3], int leg,
+                         const float stance[6][4], float out[3]) {
+    BodyStateMsg b;
+    bodyState(body6, stance, b);
+    for (int k = 0; k < 3; ++k) b.feet[leg][k] += foot[k];
+    float angles[18];
+    kin.inverseKinematics(b, angles);
+    for (int k = 0; k < 3; ++k) out[k] = angles[leg * 3 + k];
+}
+
+// The keyframe pair bracketing t and the eased fraction between them, with t clamped.
+inline void segment(const Clip &c, float t, const Keyframe *&k0, const Keyframe *&k1, float &u) {
+    if (t <= 0.0f || c.keyframeCount == 1) {
+        k0 = k1 = &c.keyframes[0];
+        u = 0.0f;
+        return;
+    }
+    if (t >= c.keyframes[c.keyframeCount - 1].time) {
+        k0 = k1 = &c.keyframes[c.keyframeCount - 1];
+        u = 0.0f;
+        return;
+    }
+    int i = 1;
+    while (c.keyframes[i].time < t) ++i;
+    k0 = &c.keyframes[i - 1];
+    k1 = &c.keyframes[i];
+    u = easeValue(k1->ease, (t - k0->time) / (k1->time - k0->time));
+}
+
+// Order, matching the reference: interpolate the body; add body overlays and collect each foot
+// overlay; apply the BODY_* multipliers (this is the output body); then resolve legs. A foot leg is
+// lerped, gets its overlay and FOOT_LIFT on z. A joint leg is lerped raw. A mixed leg takes the foot
+// endpoint with its overlay and lift, runs IK against the OUTPUT body, and lerps in joint space with
+// the raw joint endpoint, so the servo command is continuous at the switching keyframe.
+inline void evaluate(const Clip &c, const float params[PARAM_COUNT], float t, Kinematics &kin,
+                     const float stance[6][4], Pose &out) {
+    const Keyframe *k0;
+    const Keyframe *k1;
+    float u;
+    segment(c, t, k0, k1, u);
+    t = CLIP(t, 0.0f, c.duration());
+    float body[6];
+    for (int a = 0; a < 6; ++a) body[a] = k0->body[a] + (k1->body[a] - k0->body[a]) * u;
+    float footOverlay[6][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+    for (int i = 0; i < c.overlayCount; ++i) {
+        const Overlay &o = c.overlays[i];
+        if (!(o.start <= t && t <= o.end)) continue;
+        const float v = o.amplitude * params[OVERLAY_AMPLITUDE] * sinf(2.0f * (float)M_PI * o.frequency * t + o.phase);
+        if (o.kind == CHANNEL_BODY) body[o.channel] += v;
+        else footOverlay[o.channel / 3][o.channel % 3] += v;
+    }
+    for (int a = 0; a < 6; ++a) body[a] *= params[BODY_PARAM_FOR_AXIS[a]];
+    for (int a = 0; a < 6; ++a) out.body[a] = body[a];
+
+    for (int i = 0; i < 6; ++i) {
+        const LegTarget a = legTarget(*k0, i);
+        const LegTarget b = legTarget(*k1, i);
+        LegTarget &leg = out.legs[i];
+        auto lifted = [&](const float foot[3], float dst[3]) {
+            for (int k = 0; k < 3; ++k) dst[k] = foot[k] + footOverlay[i][k];
+            dst[2] *= params[FOOT_LIFT];
+        };
+        if (!a.joints && !b.joints) {
+            float lerp[3];
+            for (int k = 0; k < 3; ++k) lerp[k] = a.v[k] + (b.v[k] - a.v[k]) * u;
+            leg.joints = false;
+            lifted(lerp, leg.v);
+        } else if (a.joints && b.joints) {
+            leg.joints = true;
+            for (int k = 0; k < 3; ++k) leg.v[k] = a.v[k] + (b.v[k] - a.v[k]) * u;
+        } else {
+            float ja[3], jb[3], foot[3];
+            if (a.joints) {
+                for (int k = 0; k < 3; ++k) ja[k] = a.v[k];
+            } else {
+                lifted(a.v, foot);
+                legJointsDeg(kin, body, foot, i, stance, ja);
+            }
+            if (b.joints) {
+                for (int k = 0; k < 3; ++k) jb[k] = b.v[k];
+            } else {
+                lifted(b.v, foot);
+                legJointsDeg(kin, body, foot, i, stance, jb);
+            }
+            leg.joints = true;
+            for (int k = 0; k < 3; ++k) leg.v[k] = ja[k] + (jb[k] - ja[k]) * u;
+        }
+    }
+}
+
+// 18 servo angles (deg, IK order) and an 18-bit mask: bit leg*3+joint for a joint pinned at its
+// limit, and the femur and tibia bits of a foot leg the IK cannot reach.
+inline uint32_t poseToAngles(const Pose &p, Kinematics &kin, const float stance[6][4], float angles[18]) {
+    BodyStateMsg b;
+    bodyState(p.body, stance, b);
+    for (int i = 0; i < 6; ++i)
+        if (!p.legs[i].joints)
+            for (int k = 0; k < 3; ++k) b.feet[i][k] += p.legs[i].v[k];
+    kin.inverseKinematics(b, angles);
+    uint32_t mask = 0;
+    for (int i = 0; i < 6; ++i) {
+        if (p.legs[i].joints) {
+            for (int k = 0; k < 3; ++k) angles[i * 3 + k] = p.legs[i].v[k];
+        } else if (!kin.footReachable(b, i)) {
+            mask |= 0x6u << (i * 3);
+        }
+    }
+    for (int j = 0; j < 18; ++j) {
+        const float limit = JOINT_LIMIT_DEG[j % 3];
+        const float clamped = CLIP(angles[j], -limit, limit);
+        if (clamped != angles[j]) {
+            mask |= 1u << j;
+            angles[j] = clamped;
+        }
+    }
+    return mask;
+}
+
+inline void capturePose(const BodyStateMsg &b, const float stance[6][4], Pose &out) {
+    out.body[ROLL] = b.omega;
+    out.body[PITCH] = b.phi;
+    out.body[YAW] = b.psi;
+    out.body[X] = b.xm;
+    out.body[Y] = b.ym;
+    out.body[Z] = b.zm;
+    for (int i = 0; i < 6; ++i) {
+        out.legs[i].joints = false;
+        for (int k = 0; k < 3; ++k) out.legs[i].v[k] = b.feet[i][k] - stance[i][k];
+    }
+}
+
 }  // namespace anim
