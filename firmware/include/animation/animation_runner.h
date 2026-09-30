@@ -230,12 +230,18 @@ class AnimationRunner {
                  (unsigned)uxTaskGetStackHighWaterMark(nullptr));
     }
 
-    // The worst tick in each window, so the cost of evaluation, IK and status can be read on hardware.
+    // The worst tick in each 5 s of playing, so the cost of evaluation, IK and status can be read on
+    // hardware. An idle player restarts the window, so a play shorter than the window logs nothing.
     void recordTickCost(int64_t startUs) {
         const int64_t nowUs = esp_timer_get_time();
+        if (player_->state() == anim::State::IDLE) {
+            tickCostWindowStartUs_ = nowUs;
+            tickCostMaxUs_ = 0;
+            return;
+        }
         if (nowUs - startUs > tickCostMaxUs_) tickCostMaxUs_ = nowUs - startUs;
         if (nowUs - tickCostWindowStartUs_ < TICK_COST_WINDOW_US) return;
-        ESP_LOGD(TAG, "tick max %lld us over the last 5 s", (long long)tickCostMaxUs_);
+        ESP_LOGI(TAG, "tick max %lld us over the last 5 s of playing", (long long)tickCostMaxUs_);
         tickCostWindowStartUs_ = nowUs;
         tickCostMaxUs_ = 0;
     }

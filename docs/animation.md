@@ -59,6 +59,8 @@ A port must honour these rules.
 `MOTION_STATE::ANIMATE` is mode 6 (`ModesEnum.ANIMATE`).
 The `MotionService` ANIMATE branch advances the player with the measured `dt`, runs IK with the joint-leg overrides and clamps, and publishes the angles like any other mode.
 IMU self-levelling is off in ANIMATE.
+While the player is not idle, `AnimationRunner` logs at INFO, at most every 5 s, the worst tick cost (evaluation, IK and status) in microseconds: `tick max <n> us over the last 5 s of playing`.
+An idle player restarts the window, so a play shorter than 5 s logs nothing; `wiggle` loops and is the one to read it with.
 The command timeout that zeroes WALK does not apply, and it does not zero the ride-height slider while in ANIMATE: its window restarts every tick, so after a hand-back the app has a full window to resume its heartbeat.
 
 There are two ways in.
