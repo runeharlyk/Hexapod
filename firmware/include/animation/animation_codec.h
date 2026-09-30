@@ -10,8 +10,8 @@ namespace anim {
 
 inline void fromProto(const animation_Animation &m, Clip &c) {
     c = Clip{};
-    strncpy(c.name, m.name, NAME_MAX);
-    strncpy(c.description, m.description, DESCRIPTION_MAX);
+    strncpy(c.name, m.name, NAME_LEN_MAX);
+    strncpy(c.description, m.description, DESCRIPTION_LEN_MAX);
     c.schema = m.schema;
     c.loop = m.loop;
     c.holdEnd = m.hold_end;
@@ -49,8 +49,12 @@ inline void fromProto(const animation_Animation &m, Clip &c) {
     for (int i = 0; i < c.overlayCount && i < OVERLAY_MAX; ++i) {
         const animation_Overlay &src = m.overlays[i];
         Overlay &o = c.overlays[i];
-        o.onBody = src.which_channel != animation_Overlay_foot_channel_tag;
-        o.channel = o.onBody ? (int)src.channel.body_axis : (int)src.channel.foot_channel;
+        o.kind = src.which_channel == animation_Overlay_body_axis_tag   ? CHANNEL_BODY
+                 : src.which_channel == animation_Overlay_foot_channel_tag ? CHANNEL_FOOT
+                                                                           : CHANNEL_NONE;
+        o.channel = o.kind == CHANNEL_BODY   ? (int)src.channel.body_axis
+                    : o.kind == CHANNEL_FOOT ? (int)src.channel.foot_channel
+                                             : 0;
         o.amplitude = src.amplitude;
         o.frequency = src.frequency;
         o.phase = src.phase;

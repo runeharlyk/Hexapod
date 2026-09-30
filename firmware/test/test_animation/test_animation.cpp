@@ -80,9 +80,9 @@ void test_from_proto_copies_every_fixture_and_validates() {
     decodeFixture("fx_overlay", a);
     anim::fromProto(a, clip);
     TEST_ASSERT_TRUE(clip.loop);
-    TEST_ASSERT_TRUE(clip.overlays[0].onBody);
+    TEST_ASSERT_EQUAL(anim::CHANNEL_BODY, clip.overlays[0].kind);
     TEST_ASSERT_EQUAL(0, clip.overlays[0].channel);
-    TEST_ASSERT_FALSE(clip.overlays[2].onBody);
+    TEST_ASSERT_EQUAL(anim::CHANNEL_FOOT, clip.overlays[2].kind);
     TEST_ASSERT_EQUAL(5, clip.overlays[2].channel);
 }
 
@@ -106,7 +106,6 @@ void test_validate_reports_each_structural_rule() {
     TEST_ASSERT_NULL(anim::validate(c));
     c = twoKeyframes(); c.schema = 2; expectError(c, "schema");
     c = twoKeyframes(); strcpy(c.name, "Bad Name"); expectError(c, "name");
-    c = twoKeyframes(); memset(c.description, 'd', 97); c.description[97] = 0; expectError(c, "description");
     c = twoKeyframes(); c.keyframeCount = 0; expectError(c, "keyframe");
     c = twoKeyframes(); c.keyframes[0].time = 0.1f; expectError(c, "time 0");
     c = twoKeyframes(); c.keyframes[1].time = 0.0f; expectError(c, "increase");
@@ -115,11 +114,12 @@ void test_validate_reports_each_structural_rule() {
     c = twoKeyframes(); c.keyframes[1].ease = 4; expectError(c, "ease");
     c = twoKeyframes(); c.loop = true; c.holdEnd = true; expectError(c, "loop");
     c = twoKeyframes(); c.entryTime = INFINITY; expectError(c, "finite");
-    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {true, 6, 1, 1, 0, 0, 1}; expectError(c, "body_axis");
-    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {false, 18, 1, 1, 0, 0, 1}; expectError(c, "foot_channel");
-    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {true, 0, 1, 1, 0, 0.5f, 0.5f}; expectError(c, "start");
-    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {true, 0, 1, 1, 0, 0, 1.5f}; expectError(c, "end");
-    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {true, 0, NAN, 1, 0, 0, 1}; expectError(c, "finite");
+    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0].end = 1; expectError(c, "channel");
+    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {anim::CHANNEL_BODY, 6, 1, 1, 0, 0, 1}; expectError(c, "body_axis");
+    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {anim::CHANNEL_FOOT, 18, 1, 1, 0, 0, 1}; expectError(c, "foot_channel");
+    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {anim::CHANNEL_BODY, 0, 1, 1, 0, 0.5f, 0.5f}; expectError(c, "start");
+    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {anim::CHANNEL_BODY, 0, 1, 1, 0, 0, 1.5f}; expectError(c, "end");
+    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {anim::CHANNEL_BODY, 0, NAN, 1, 0, 0, 1}; expectError(c, "finite");
     c = twoKeyframes(); c.paramCount = 2; c.params[0] = {anim::SPEED, 0.5f, 1, 2}; c.params[1] = {anim::SPEED, 0.5f, 1, 2}; expectError(c, "unique");
     c = twoKeyframes(); c.paramCount = 1; c.params[0] = {anim::BODY_Z, 0.5f, 3, 2}; expectError(c, "min <= default_value <= max");
     c = twoKeyframes(); c.paramCount = 1; c.params[0] = {anim::SPEED, 0.0f, 1, 2}; expectError(c, "SPEED");

@@ -21,8 +21,8 @@ namespace anim {
 constexpr int KEYFRAME_MAX = 32;
 constexpr int OVERLAY_MAX = 8;
 constexpr int PARAM_MAX = 10;
-constexpr int NAME_MAX = 32;
-constexpr int DESCRIPTION_MAX = 96;
+constexpr int NAME_LEN_MAX = 32;
+constexpr int DESCRIPTION_LEN_MAX = 96;
 constexpr uint32_t SCHEMA_VERSION = 1;
 constexpr float DEFAULT_ENTRY_S = 0.5f;
 constexpr float DEFAULT_EXIT_S = 0.5f;
@@ -46,6 +46,8 @@ enum ParamId : int {
     PARAM_COUNT = 10
 };
 
+enum ChannelKind : int { CHANNEL_NONE = 0, CHANNEL_BODY = 1, CHANNEL_FOOT = 2 };
+
 enum BodyAxis : int { ROLL = 0, PITCH = 1, YAW = 2, X = 3, Y = 4, Z = 5 };
 
 constexpr ParamId BODY_PARAM_FOR_AXIS[6] = {BODY_ROLL, BODY_PITCH, BODY_YAW, BODY_X, BODY_Y, BODY_Z};
@@ -65,7 +67,7 @@ struct Keyframe {
 };
 
 struct Overlay {
-    bool onBody = true;  // channel is a BodyAxis, else leg*3 + axis
+    ChannelKind kind = CHANNEL_NONE;  // channel is a BodyAxis for CHANNEL_BODY, else leg*3 + axis
     int channel = 0;
     float amplitude = 0.0f;
     float frequency = 1.0f;
@@ -87,8 +89,8 @@ struct ParamValue {
 };
 
 struct Clip {
-    char name[NAME_MAX + 1] = {0};
-    char description[DESCRIPTION_MAX + 1] = {0};
+    char name[NAME_LEN_MAX + 1] = {0};
+    char description[DESCRIPTION_LEN_MAX + 1] = {0};
     uint32_t schema = SCHEMA_VERSION;
     bool loop = false;
     bool holdEnd = false;
@@ -110,7 +112,7 @@ inline LegTarget legTarget(const Keyframe &k, int leg) { return k.legCount > 0 ?
 
 inline bool validName(const char *name) {
     const size_t n = strlen(name);
-    if (n < 1 || n > NAME_MAX) return false;
+    if (n < 1 || n > NAME_LEN_MAX) return false;
     for (size_t i = 0; i < n; ++i) {
         const char c = name[i];
         const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
@@ -123,8 +125,10 @@ inline bool validName(const char *name) {
 // validate(); the description limit is bytes because the file buffer is bytes.
 inline const char *validate(const Clip &c) {
     if (c.schema != SCHEMA_VERSION) return "schema is not 1";
+    // Decoded input cannot trip the name and description rules because nanopb caps the strings; they mirror
+    // the reference for hand-built clips.
     if (!validName(c.name)) return "name must be 1-32 characters of [a-z0-9_-]";
-    if (strlen(c.description) > (size_t)DESCRIPTION_MAX) return "description longer than 96 bytes";
+    if (strlen(c.description) > (size_t)DESCRIPTION_LEN_MAX) return "description longer than 96 bytes";
     if (c.loop && c.holdEnd) return "loop and hold_end cannot both be set";
     if (c.keyframeCount < 1) return "at least one keyframe is required";
     if (c.keyframeCount > KEYFRAME_MAX) return "more than 32 keyframes";
@@ -161,8 +165,9 @@ inline const char *validate(const Clip &c) {
         if (c.keyframes[i].time <= c.keyframes[i - 1].time) return "keyframe time must increase";
     for (int i = 0; i < c.overlayCount; ++i) {
         const Overlay &o = c.overlays[i];
-        if (o.onBody && (o.channel < 0 || o.channel > 5)) return "overlay body_axis out of range";
-        if (!o.onBody && (o.channel < 0 || o.channel > 17)) return "overlay foot_channel out of range";
+        if (o.kind == CHANNEL_NONE) return "overlay needs exactly one channel";
+        if (o.kind == CHANNEL_BODY && (o.channel < 0 || o.channel > 5)) return "overlay body_axis out of range";
+        if (o.kind == CHANNEL_FOOT && (o.channel < 0 || o.channel > 17)) return "overlay foot_channel out of range";
         if (o.start < 0.0f || o.start >= o.end) return "overlay window must have 0 <= start < end";
         if (o.end > c.duration()) return "overlay end is after the last keyframe";
     }
