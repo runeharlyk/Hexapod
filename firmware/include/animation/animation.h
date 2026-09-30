@@ -351,4 +351,136 @@ inline void capturePose(const BodyStateMsg &b, const float stance[6][4], Pose &o
     }
 }
 
+enum class State : int { IDLE = 0, ENTRY = 1, PLAYING = 2, HOLD = 3, EXIT = 4 };
+
+// Entry -> Playing -> Hold | Exit -> Idle around evaluate(). Mirrors the reference Player: REPEAT is
+// max(1, floor(x + 0.5)); SPEED scales only the playing clock; Entry and Exit run on wall time; a
+// play during any state starts Entry from the current pose; Exit after a finished play starts from
+// the final keyframe; play() records the live pose so an immediate stop blends from it.
+class Player {
+  public:
+    explicit Player(Kinematics &kin) : kin_(kin) {}
+
+    // The standing feet every offset is relative to; the caller keeps them alive and current.
+    void setStance(const float (*stance)[4]) { stance_ = stance; }
+
+    void play(const Clip *clip, const ParamValue *values, int count, const Pose *live) {
+        clip_ = clip;
+        resolveParams(*clip, values, count, params_);
+        t_ = 0.0f;
+        playsDone_ = 0;
+        const Pose start = live ? *live : lastPose_;
+        lastPose_ = start;
+        Pose first;
+        evaluate(*clip, params_, 0.0f, kin_, stance_, first);
+        startBlend(start, first, clip->entrySeconds(), State::ENTRY);
+    }
+
+    void stop() {
+        if (state_ == State::IDLE) return;
+        startBlend(lastPose_, Pose{}, clip_->exitSeconds(), State::EXIT);
+    }
+
+    const Pose &update(float dt) {
+        if (state_ == State::IDLE) return lastPose_;
+        if (state_ == State::ENTRY || state_ == State::EXIT) advanceBlend(dt);
+        else if (state_ == State::HOLD) evaluate(*clip_, params_, clip_->duration(), kin_, stance_, lastPose_);
+        else advancePlaying(dt);
+        return lastPose_;
+    }
+
+    State state() const { return state_; }
+    float t() const { return t_; }
+    const Pose &lastPose() const { return lastPose_; }
+    const Clip *clip() const { return clip_; }
+    const float *params() const { return params_; }
+
+  private:
+    Kinematics &kin_;
+    const float (*stance_)[4] = nullptr;
+    State state_ = State::IDLE;
+    const Clip *clip_ = nullptr;
+    float params_[PARAM_COUNT] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    float t_ = 0.0f;
+    Pose lastPose_;
+    int playsDone_ = 0;
+    float blendT_ = 0.0f;
+    float blendSeconds_ = 1.0f;
+    Pose blendFrom_;
+    Pose blendTo_;
+
+    // Legs where either side is a joint target are converted to joints on both sides once, so the
+    // blend itself is a plain lerp; foot legs keep their offsets and get the step arc.
+    void startBlend(const Pose &src, const Pose &dst, float seconds, State state) {
+        blendFrom_ = src;
+        blendTo_ = dst;
+        for (int i = 0; i < 6; ++i) {
+            if (!blendFrom_.legs[i].joints && !blendTo_.legs[i].joints) continue;
+            if (!blendFrom_.legs[i].joints) {
+                float j[3];
+                legJointsDeg(kin_, blendFrom_.body, blendFrom_.legs[i].v, i, stance_, j);
+                blendFrom_.legs[i] = {true, {j[0], j[1], j[2]}};
+            }
+            if (!blendTo_.legs[i].joints) {
+                float j[3];
+                legJointsDeg(kin_, blendTo_.body, blendTo_.legs[i].v, i, stance_, j);
+                blendTo_.legs[i] = {true, {j[0], j[1], j[2]}};
+            }
+        }
+        blendSeconds_ = seconds;
+        blendT_ = 0.0f;
+        state_ = state;
+    }
+
+    void advanceBlend(float dt) {
+        blendT_ += dt;
+        const float u = fminf(1.0f, blendT_ / blendSeconds_);
+        const float e = easeValue(EASE_IN_OUT, u);
+        for (int a = 0; a < 6; ++a) lastPose_.body[a] = blendFrom_.body[a] + (blendTo_.body[a] - blendFrom_.body[a]) * e;
+        for (int i = 0; i < 6; ++i) {
+            const LegTarget &la = blendFrom_.legs[i];
+            const LegTarget &lb = blendTo_.legs[i];
+            LegTarget &out = lastPose_.legs[i];
+            out.joints = la.joints;
+            for (int k = 0; k < 3; ++k) out.v[k] = la.v[k] + (lb.v[k] - la.v[k]) * e;
+            if (la.joints) continue;
+            const float travel = hypotf(lb.v[0] - la.v[0], lb.v[1] - la.v[1]);
+            if (travel > STEP_ARC_MIN_TRAVEL_MM)
+                out.v[2] += STEP_ARC_MM * fminf(1.0f, travel / STEP_ARC_FULL_TRAVEL_MM) * sinf((float)M_PI * u);
+        }
+        if (u >= 1.0f) {
+            if (state_ == State::ENTRY) {
+                state_ = State::PLAYING;
+                t_ = 0.0f;
+            } else {
+                state_ = State::IDLE;
+            }
+        }
+    }
+
+    void advancePlaying(float dt) {
+        const float duration = clip_->duration();
+        t_ += dt * params_[SPEED];
+        if (clip_->loop) {
+            t_ = duration > 0.0f ? fmodf(t_, duration) : 0.0f;
+            evaluate(*clip_, params_, t_, kin_, stance_, lastPose_);
+            return;
+        }
+        if (t_ < duration) {
+            evaluate(*clip_, params_, t_, kin_, stance_, lastPose_);
+            return;
+        }
+        ++playsDone_;
+        const int repeat = (int)fmaxf(1.0f, floorf(params_[REPEAT] + 0.5f));
+        if (playsDone_ < repeat) {
+            t_ = duration > 0.0f ? t_ - duration : 0.0f;
+            evaluate(*clip_, params_, t_, kin_, stance_, lastPose_);
+            return;
+        }
+        evaluate(*clip_, params_, duration, kin_, stance_, lastPose_);
+        if (clip_->holdEnd) state_ = State::HOLD;
+        else stop();
+    }
+};
+
 }  // namespace anim

@@ -356,6 +356,72 @@ void test_capture_pose_reads_offsets_from_a_body_state() {
     TEST_ASSERT_EQUAL_FLOAT(0.0f, pose.legs[0].v[0]);
 }
 
+const char *stateName(anim::State s) {
+    switch (s) {
+        case anim::State::IDLE: return "IDLE";
+        case anim::State::ENTRY: return "ENTRY";
+        case anim::State::PLAYING: return "PLAYING";
+        case anim::State::HOLD: return "HOLD";
+        default: return "EXIT";
+    }
+}
+
+void test_player_matches_every_fixture_trace() {
+    Kinematics kin;
+    int steps = 0;
+    for (size_t ci = 0; ci < fixtures().player.size(); ++ci) {
+        const PlayerCase &c = fixtures().player[ci];
+        anim::Player player(kin);
+        player.setStance(STANCE);
+        BodyStateMsg live{};
+        live.updateFeet(STANCE);
+        live.omega = c.body[0];
+        live.phi = c.body[1];
+        live.psi = c.body[2];
+        live.xm = c.body[3];
+        live.ym = c.body[4];
+        live.zm = c.body[5];
+        for (int i = 0; i < 6; ++i)
+            for (int k = 0; k < 3; ++k) live.feet[i][k] += c.feet[i][k];
+        anim::Pose livePose;
+        anim::capturePose(live, STANCE, livePose);
+        player.play(&clipByName(c.animation), c.params.values, c.params.count, &livePose);
+        for (size_t step = 0; step < c.trace.size(); ++step) {
+            for (const PlayerEvent &e : c.events) {
+                if (e.step != (int)step) continue;
+                if (e.play) player.play(&clipByName(e.animation), e.params.values, e.params.count, nullptr);
+                else player.stop();
+            }
+            const anim::Pose &pose = player.update(c.dt);
+            float angles[18];
+            const uint32_t mask = anim::poseToAngles(pose, kin, STANCE, angles);
+            char where[96];
+            snprintf(where, sizeof(where), "case %u (%s) step %u", (unsigned)ci, c.animation.c_str(), (unsigned)step);
+            TEST_ASSERT_EQUAL_STRING_MESSAGE(c.trace[step].state.c_str(), stateName(player.state()), where);
+            TEST_ASSERT_EQUAL_UINT32_MESSAGE(c.trace[step].mask, mask, where);
+            for (int j = 0; j < 18; ++j)
+                TEST_ASSERT_FLOAT_WITHIN_MESSAGE(ANGLE_TOL_DEG, c.trace[step].angles[j], angles[j], where);
+            ++steps;
+        }
+    }
+    TEST_ASSERT_EQUAL(819, steps);
+}
+
+void test_stop_before_the_first_update_blends_from_the_live_pose() {
+    Kinematics kin;
+    anim::Player player(kin);
+    player.setStance(STANCE);
+    anim::Pose live;
+    live.body[anim::Z] = 12.0f;
+    live.legs[0].v[1] = 15.0f;
+    player.play(&clipByName("fx_single"), nullptr, 0, &live);
+    player.stop();
+    const anim::Pose &pose = player.update(0.0f);
+    TEST_ASSERT_EQUAL(anim::State::EXIT, player.state());
+    TEST_ASSERT_EQUAL_FLOAT(12.0f, pose.body[anim::Z]);
+    TEST_ASSERT_EQUAL_FLOAT(15.0f, pose.legs[0].v[1]);
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_fixture_binaries_decode_with_nanopb);
@@ -366,5 +432,7 @@ int main(int, char **) {
     RUN_TEST(test_resolve_params_defaults_clamps_and_ignores_undeclared);
     RUN_TEST(test_pose_to_angles_clamps_overrides_and_flags_unreachable_feet);
     RUN_TEST(test_capture_pose_reads_offsets_from_a_body_state);
+    RUN_TEST(test_player_matches_every_fixture_trace);
+    RUN_TEST(test_stop_before_the_first_update_blends_from_the_live_pose);
     return UNITY_END();
 }
