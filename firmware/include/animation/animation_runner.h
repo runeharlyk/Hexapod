@@ -85,6 +85,14 @@ class AnimationRunner {
         pendingStop_.store(true, std::memory_order_release);
     }
 
+    // Mode worker, on a graceful leave: a play exits, and a pose held by an idle player eases home
+    // through the puppet path, so no leg meets the next mode away from its stance. A player the stop
+    // moves into Exit drops the stance target, as it drops any pose streamed during a play.
+    void requestLeave() {
+        requestStop();
+        setPuppet(PoseMsg {});
+    }
+
     // The last client has gone: a running or held clip exits, and a borrowed mode then hands back.
     void controlLost() {
         ESP_LOGI(TAG, "control lost, stopping the animation");
@@ -183,11 +191,14 @@ class AnimationRunner {
         recordTickCost(startUs);
     }
 
-    // Control task. A borrowed mode is handed back on this, not on a finish edge, so a play that was
-    // cancelled before it started cannot strand the borrow. A swap deferred by lock contention keeps
-    // pendingPlay_ set, so the first tick of a borrow does not misfire.
-    bool idleAndNothingPending() const {
-        return player_->state() == anim::State::IDLE && !pendingPlay_.load(std::memory_order_acquire);
+    // Whether leaving ANIMATE now would move a leg: the player is not idle, a play is loaded and
+    // waiting, or the pose is away from stance. A borrowed mode is handed back only once this clears,
+    // not on a finish edge, so a play cancelled before it started cannot strand the borrow; a swap
+    // deferred by lock contention keeps pendingPlay_ set, so the first tick of a borrow does not
+    // misfire.
+    bool busy() const {
+        return player_->state() != anim::State::IDLE || pendingPlay_.load(std::memory_order_acquire) ||
+               !anim::atStance(current_);
     }
 
   private:

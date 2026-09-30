@@ -9,11 +9,14 @@ socket_message.Message.
     uv run python robot_animate.py --port COM5 stop               # prints status and mode until it settles
     uv run python robot_animate.py --port COM5 mode ANIMATE       # sticky ANIMATE, e.g. before puppeteering
     uv run python robot_animate.py --port COM5 watch              # print AnimationStatus until Ctrl-C
+    uv run python robot_animate.py --port COM5 shell              # the commands above on one open port
 
-A COM port is exclusive on Windows, so play and stop follow the run themselves instead of relying on watch.
+A COM port is exclusive on Windows, so play and stop follow the run themselves instead of relying on watch,
+and shell keeps the port open so a looping or holding animation can be stopped and plays can be chained.
 """
 import argparse
 import queue
+import shlex
 import struct
 import sys
 import threading
@@ -46,6 +49,7 @@ class Link:
         self.rx = bytearray()
         self.responses: dict[int, message_pb2.CorrelationResponse] = {}
         self.next_id = 1
+        self.subscribed: set[int] = set()
         self.on_status = None
         self.on_mode = None
         threading.Thread(target=self._reader, daemon=True).start()
@@ -69,6 +73,10 @@ class Link:
         raise SystemExit("no response from the robot (is the native USB port the one you opened?)")
 
     def subscribe(self, tag: int) -> None:
+        """Once per tag: the robot records every subscription, so a repeat would double each frame."""
+        if tag in self.subscribed:
+            return
+        self.subscribed.add(tag)
         msg = message_pb2.Message()
         msg.sub_notif.tag = tag
         self.send(msg)
@@ -143,7 +151,8 @@ def follow(link: Link, send) -> None:
     """Sends a request and prints status and mode traffic until the run settles: a mode change after an idle
     status (the hand-back), or QUIET_S without traffic (a sticky ANIMATE never hands back, and a refused
     play or a stop with nothing playing sends nothing). A running player reports at 5 Hz, so it is never
-    quiet that long."""
+    quiet that long. A hold, or QUIET_S of PLAYING whose clock has wrapped, never settles on its own, so
+    following ends there with the reason; Ctrl-C ends it too."""
     events = queue.Queue()
     link.on_status = lambda s: events.put(("status", s))
     link.on_mode = lambda m: events.put(("mode", m))
@@ -151,18 +160,36 @@ def follow(link: Link, send) -> None:
     link.subscribe(MODE_TAG)
     send()
     idle = False
-    while True:
-        try:
-            kind, value = events.get(timeout=QUIET_S)
-        except queue.Empty:
-            return
-        if kind == "status":
+    state, since, last_t, wrapped = None, time.time(), 0.0, False
+    try:
+        while True:
+            try:
+                kind, value = events.get(timeout=QUIET_S)
+            except queue.Empty:
+                return
+            if kind == "mode":
+                show_mode(value)
+                if idle:
+                    return
+                continue
             show_status(value)
             idle = value.state == message_pb2.ANIM_IDLE
-        else:
-            show_mode(value)
-            if idle:
+            if value.state != state:
+                state, since, wrapped = value.state, time.time(), False
+            elif value.state == message_pb2.ANIM_PLAYING and value.t < last_t:
+                wrapped = True
+            last_t = value.t
+            if state == message_pb2.ANIM_HOLD:
+                print("holding the last keyframe until stopped; not following further")
                 return
+            if wrapped and time.time() - since >= QUIET_S:
+                print("looping (or repeating) until stopped; not following further")
+                return
+    except KeyboardInterrupt:
+        print("stopped following")
+    finally:
+        link.on_status = None
+        link.on_mode = None
 
 
 def play(link: Link, name: str, params: list[str]) -> None:
@@ -197,12 +224,11 @@ def watch(link: Link) -> None:
             time.sleep(0.2)
     except KeyboardInterrupt:
         pass
+    finally:
+        link.on_status = None
 
 
-def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--port", required=True)
-    sub = ap.add_subparsers(dest="command", required=True)
+def add_commands(sub) -> None:
     sub.add_parser("list")
     sub.add_parser("upload").add_argument("name")
     sub.add_parser("validate").add_argument("name")
@@ -212,9 +238,51 @@ def main(argv=None) -> int:
     sub.add_parser("stop")
     sub.add_parser("mode").add_argument("name")
     sub.add_parser("watch")
-    args = ap.parse_args(argv)
+
+
+def parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--port", required=True)
+    sub = ap.add_subparsers(dest="command", required=True)
+    add_commands(sub)
+    sub.add_parser("shell")
+    return ap
+
+
+def shell(link: Link) -> None:
+    """Reads the commands, without --port, from stdin until quit or the end of input."""
+    ap = argparse.ArgumentParser(prog="", add_help=False, exit_on_error=False)
+    add_commands(ap.add_subparsers(dest="command", required=True))
+    print("commands: list, upload NAME, validate NAME, play NAME [ID=VALUE ...], stop, mode NAME, watch, quit")
+    while True:
+        try:
+            line = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if line == "quit":
+            return
+        if not line:
+            continue
+        try:
+            run(link, ap.parse_args(shlex.split(line)))
+        except (argparse.ArgumentError, SystemExit, KeyError, ValueError) as e:
+            # SystemExit is argparse rejecting the line or a request the robot left unanswered; the port stays open.
+            print(f"error: {e}")
+
+
+def main(argv=None) -> int:
+    args = parser().parse_args(argv)
     link = Link(args.port)
     time.sleep(0.3)
+    if args.command == "shell":
+        shell(link)
+    else:
+        run(link, args)
+    return 0
+
+
+def run(link: Link, args) -> None:
     if args.command == "list":
         list_animations(link)
     elif args.command == "upload":
@@ -229,7 +297,6 @@ def main(argv=None) -> int:
         mode(link, args.name)
     else:
         watch(link)
-    return 0
 
 
 if __name__ == "__main__":

@@ -366,6 +366,28 @@ void test_capture_pose_reads_offsets_from_a_body_state() {
     TEST_ASSERT_EQUAL_FLOAT(0.0f, pose.legs[0].v[0]);
 }
 
+void test_at_stance_needs_every_leg_on_its_foot_within_a_millimetre() {
+    anim::Pose p;
+    TEST_ASSERT_TRUE(anim::atStance(p));
+    p.body[anim::Z] = 0.9f;
+    p.body[anim::ROLL] = 0.009f;
+    p.legs[4].v[2] = -0.9f;
+    TEST_ASSERT_TRUE(anim::atStance(p));
+    // A joint leg counts as posed even at the stance angles; the runner restates a finished Exit as feet.
+    anim::Pose joint;
+    joint.legs[0].joints = true;
+    TEST_ASSERT_FALSE(anim::atStance(joint));
+    anim::Pose tilted;
+    tilted.body[anim::PITCH] = 0.011f;
+    TEST_ASSERT_FALSE(anim::atStance(tilted));
+    anim::Pose raised;
+    raised.body[anim::Z] = -1.1f;
+    TEST_ASSERT_FALSE(anim::atStance(raised));
+    anim::Pose lifted;
+    lifted.legs[3].v[2] = 1.1f;
+    TEST_ASSERT_FALSE(anim::atStance(lifted));
+}
+
 const char *stateName(anim::State s) {
     switch (s) {
         case anim::State::IDLE: return "IDLE";
@@ -450,6 +472,7 @@ int main(int, char **) {
     RUN_TEST(test_resolve_params_defaults_clamps_and_ignores_undeclared);
     RUN_TEST(test_pose_to_angles_clamps_overrides_and_flags_unreachable_feet);
     RUN_TEST(test_capture_pose_reads_offsets_from_a_body_state);
+    RUN_TEST(test_at_stance_needs_every_leg_on_its_foot_within_a_millimetre);
     RUN_TEST(test_player_matches_every_fixture_trace);
     RUN_TEST(test_stop_before_the_first_update_blends_from_the_live_pose);
     RUN_TEST(test_status_cadence_is_five_hertz_plus_every_change);

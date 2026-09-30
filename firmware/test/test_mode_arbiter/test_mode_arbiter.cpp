@@ -19,17 +19,17 @@ struct Robot {
     M previous = M::STAND;
 };
 
-D deliver(Robot &r, M requested, K kind, bool playerBusy) {
-    const D d = decideMode({r.mode, r.borrowed, r.previous, requested, kind, playerBusy});
+D deliver(Robot &r, M requested, K kind, bool busy) {
+    const D d = decideMode({r.mode, r.borrowed, r.previous, requested, kind, busy});
     r.borrowed = d.borrowed;
     r.previous = d.previous;
     if (d.action == D::APPLY) r.mode = d.mode;
     return d;
 }
 
-D explicitMode(Robot &r, M mode, bool playerBusy) { return deliver(r, mode, K::REQUEST, playerBusy); }
-D borrow(Robot &r, bool playerBusy) { return deliver(r, M::ANIMATE, K::BORROW, playerBusy); }
-D handback(Robot &r) { return deliver(r, r.previous, K::HANDBACK, false); }
+D explicitMode(Robot &r, M mode, bool busy) { return deliver(r, mode, K::REQUEST, busy); }
+D borrow(Robot &r, bool busy) { return deliver(r, M::ANIMATE, K::BORROW, busy); }
+D handback(Robot &r, bool busy = false) { return deliver(r, r.previous, K::HANDBACK, busy); }
 D applied(Robot &r, M mode) { return deliver(r, mode, K::APPLIED, false); }
 
 void assertMode(M expected, M actual) { TEST_ASSERT_EQUAL_INT((int)expected, (int)actual); }
@@ -88,7 +88,7 @@ void test_deactivated_during_the_load_refuses_the_borrow_and_restates() {
     TEST_ASSERT_EQUAL_INT(D::RESTATE, d.action);
     assertMode(M::DEACTIVATED, d.mode);
     TEST_ASSERT_TRUE(d.cancelPending);
-    TEST_ASSERT_FALSE(d.requestStop);
+    TEST_ASSERT_FALSE(d.requestLeave);
     assertMode(M::DEACTIVATED, r.mode);
     TEST_ASSERT_FALSE(r.borrowed);
 }
@@ -102,7 +102,7 @@ void test_a_hand_back_while_sticky_is_ignored() {
     TEST_ASSERT_EQUAL_INT(D::IGNORE, d.action);
     assertMode(M::ANIMATE, r.mode);
     TEST_ASSERT_FALSE(d.cancelPending);
-    TEST_ASSERT_FALSE(d.requestStop);
+    TEST_ASSERT_FALSE(d.requestLeave);
 }
 
 void test_a_hand_back_after_an_explicit_stand_left_animate_is_ignored() {
@@ -124,7 +124,7 @@ void test_an_explicit_stand_mid_play_leaves_through_exit() {
     borrow(r, true);
     D d = explicitMode(r, M::STAND, true);
     TEST_ASSERT_EQUAL_INT(D::GRACEFUL_LEAVE, d.action);
-    TEST_ASSERT_TRUE(d.requestStop);
+    TEST_ASSERT_TRUE(d.requestLeave);
     TEST_ASSERT_FALSE(d.cancelPending);
     assertMode(M::ANIMATE, r.mode);
     TEST_ASSERT_TRUE(r.borrowed);
@@ -151,7 +151,7 @@ void test_cutting_modes_mid_play_apply_at_once() {
         const D d = explicitMode(r, cut, true);
         TEST_ASSERT_EQUAL_INT(D::APPLY, d.action);
         TEST_ASSERT_TRUE(d.cancelPending);
-        TEST_ASSERT_FALSE(d.requestStop);
+        TEST_ASSERT_FALSE(d.requestLeave);
         assertMode(cut, r.mode);
         TEST_ASSERT_FALSE(r.borrowed);
         TEST_ASSERT_EQUAL_INT(D::IGNORE, handback(r).action);
@@ -165,13 +165,48 @@ void test_an_explicit_animate_while_borrowed_becomes_sticky() {
     D d = explicitMode(r, M::ANIMATE, true);
     TEST_ASSERT_EQUAL_INT(D::APPLY, d.action);
     TEST_ASSERT_FALSE(d.cancelPending);
-    TEST_ASSERT_FALSE(d.requestStop);
+    TEST_ASSERT_FALSE(d.requestLeave);
     assertMode(M::ANIMATE, r.mode);
     TEST_ASSERT_FALSE(r.borrowed);
 
     d = handback(r);
     TEST_ASSERT_EQUAL_INT(D::IGNORE, d.action);
     assertMode(M::ANIMATE, r.mode);
+}
+
+void test_a_sticky_animate_holding_a_posed_joint_leg_leaves_gracefully() {
+    // The player is idle, but a puppeteer pose holds a leg in joint angles, so the runner is busy.
+    Robot r {M::ANIMATE};
+    D d = explicitMode(r, M::STAND, true);
+    TEST_ASSERT_EQUAL_INT(D::GRACEFUL_LEAVE, d.action);
+    TEST_ASSERT_TRUE(d.requestLeave);
+    TEST_ASSERT_FALSE(d.cancelPending);
+    assertMode(M::ANIMATE, r.mode);
+    TEST_ASSERT_TRUE(r.borrowed);
+    assertMode(M::STAND, r.previous);
+
+    d = handback(r);
+    TEST_ASSERT_EQUAL_INT(D::APPLY, d.action);
+    assertMode(M::STAND, r.mode);
+}
+
+void test_a_hand_back_while_busy_is_ignored_until_asked_again() {
+    // The play finished and the hand-back was queued, then a chained play made the runner busy.
+    Robot r {M::STAND};
+    borrow(r, true);
+    D d = handback(r, true);
+    TEST_ASSERT_EQUAL_INT(D::IGNORE, d.action);
+    TEST_ASSERT_FALSE(d.cancelPending);
+    TEST_ASSERT_FALSE(d.requestLeave);
+    assertMode(M::ANIMATE, r.mode);
+    TEST_ASSERT_TRUE(r.borrowed);
+    assertMode(M::STAND, r.previous);
+
+    // The chained play ends; the control task asks again.
+    d = handback(r);
+    TEST_ASSERT_EQUAL_INT(D::APPLY, d.action);
+    assertMode(M::STAND, r.mode);
+    TEST_ASSERT_FALSE(r.borrowed);
 }
 
 void test_an_applied_report_is_never_taken_as_a_request() {
@@ -182,7 +217,7 @@ void test_an_applied_report_is_never_taken_as_a_request() {
     D d = applied(r, M::ANIMATE);
     TEST_ASSERT_EQUAL_INT(D::IGNORE, d.action);
     TEST_ASSERT_FALSE(d.cancelPending);
-    TEST_ASSERT_FALSE(d.requestStop);
+    TEST_ASSERT_FALSE(d.requestLeave);
     TEST_ASSERT_TRUE(r.borrowed);
     assertMode(M::STAND, r.previous);
 
@@ -207,6 +242,8 @@ int main(int, char **) {
     RUN_TEST(test_an_explicit_stand_mid_play_leaves_through_exit);
     RUN_TEST(test_cutting_modes_mid_play_apply_at_once);
     RUN_TEST(test_an_explicit_animate_while_borrowed_becomes_sticky);
+    RUN_TEST(test_a_sticky_animate_holding_a_posed_joint_leg_leaves_gracefully);
+    RUN_TEST(test_a_hand_back_while_busy_is_ignored_until_asked_again);
     RUN_TEST(test_an_applied_report_is_never_taken_as_a_request);
     return UNITY_END();
 }

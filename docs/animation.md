@@ -67,7 +67,7 @@ There are two ways in.
 
 - A play from an active mode (STAND, a walking mode, or ANIMATE) borrows ANIMATE.
   The clip is loaded before the mode changes, so a play naming a missing or invalid file leaves the robot in its mode and pose.
-  When the player is idle with nothing pending, the previous mode is handed back.
+  When the runner is no longer busy (see below), the previous mode is handed back.
   A play from IDLE or DEACTIVATED is ignored.
 - Setting the mode to ANIMATE explicitly is sticky: the robot holds stance, accepts puppeteer poses and plays, and stays until the mode changes.
 
@@ -75,9 +75,11 @@ Every mode decision is made on the `ModeMsg` worker, in the order the messages a
 
 - A borrow reaching the worker after a DEACTIVATED, IDLE or POSE is refused, the loaded play is dropped, and the standing mode is published again as `APPLIED`.
 - The hand-back is only requested by the control task, as a `ModeMsg` of kind `HANDBACK`, at most once until the worker has handled a mode message.
-  The worker applies it only while the robot is still in a borrowed ANIMATE, so an emergency stop or a sticky ANIMATE handled first wins.
-- An explicit STAND, WALK or WALK_NN while ANIMATE is playing or has a play pending does not leave at once.
-  The player is stopped, the requested mode becomes the hand-back target, and the mode changes when Exit has eased every leg home.
+  The worker applies it only while the robot is still in a borrowed ANIMATE and the runner is not busy, so an emergency stop or a sticky ANIMATE handled first wins, and a play chained after the request keeps the borrow; the control task asks again once the worker has cleared its flag and the runner is idle at stance.
+- `AnimationRunner::busy()` is true while the player is not idle, a play is pending, or the pose is away from stance (any joint-angle leg, or a body or foot offset above 1 mm or 0.01 rad).
+  A finished Exit is restated as zero foot offsets, so a leg that blended home in joint space does not keep the runner busy.
+- An explicit STAND, WALK or WALK_NN while the runner is busy does not leave at once.
+  A running player is stopped, and a pose held by an idle player (a puppeteer pose) eases home through the puppet path toward stance; the requested mode becomes the hand-back target, and the mode changes once every leg is home.
   Leaving at once would snap joint-angle legs to stance at full servo speed.
   The requested mode is published when it arrives, so a mode observer sees it about one exit time before the robot switches.
 - DEACTIVATED, IDLE and POSE apply at once even mid-play, because cutting or centring the servos immediately is the safety property.
@@ -184,6 +186,9 @@ The robot only sends once it sees a host on the port.
 A COM port is exclusive on Windows, so `watch` cannot run beside another command.
 `play` and `stop` therefore subscribe to the status (tag 283) and mode (tag 130) topics themselves and print every status and mode change by name.
 They return after a mode change that follows an idle status, which is the hand-back, or after 2 s without traffic, which covers a sticky ANIMATE, a refused play and a stop with nothing playing.
+They also stop following, and say why, on the first `ANIM_HOLD` status and after 2 s of `ANIM_PLAYING` whose clock has wrapped (a loop, or a repeat), because neither settles on its own; Ctrl-C stops following too.
+`shell` opens the port once and reads the same commands (`list`, `upload`, `validate`, `play`, `stop`, `mode`, `watch`, `quit`) from stdin, so a looping or holding animation can be stopped, and a play chained, while the port stays open.
+In the shell, Ctrl-C ends the current `play`, `stop` or `watch` and returns to the prompt.
 The tool opens the port with DTR and RTS held low, so opening it should not reset the robot.
 
 ```sh
@@ -194,6 +199,7 @@ uv run python robot_animate.py --port COM5 play wave SPEED=1.5
 uv run python robot_animate.py --port COM5 stop
 uv run python robot_animate.py --port COM5 mode ANIMATE
 uv run python robot_animate.py --port COM5 watch
+uv run python robot_animate.py --port COM5 shell
 ```
 
 ## Acceptance on hardware
@@ -211,13 +217,20 @@ Then, on the native USB port:
 3. Put the robot in STAND from the controller or `mode STAND`, then `play wave`.
    `play` prints the mode ANIMATE, the status running ENTRY, PLAYING, EXIT, IDLE, and the mode STAND.
    The robot leans left and back, raises the right front leg, flicks it twice, and steps home.
-4. `play crouch` while `wave` is playing: the second animation enters from wherever the first is, with no jump.
-5. `play wiggle`, then `stop` mid-way: the robot eases home.
-6. `play play_dead`: the robot lies down and holds; `stop` brings it back over 1.2 s.
+4. Open `shell` for steps 4 to 6.
+   `play wave`, press Ctrl-C mid-play to return to the prompt, then `play crouch`: the second animation enters from wherever the first is, with no jump.
+5. `play wiggle`: following ends after about 2.4 s with the looping message while the robot keeps wiggling.
+   Wait for the `tick max` INFO line on the console (every 5 s while playing) and record it; `stop` then eases the robot home and hands STAND back.
+6. `play play_dead`: the robot lies down and holds, and following ends with the holding message; `stop` brings it back over 1.2 s.
 7. `mode ANIMATE`, then `play crouch`: after the play the robot stays in ANIMATE (sticky) at stance.
 8. Edit `animations/wave.json` into an invalid file (a keyframe with three legs) and `upload wave`: the upload succeeds, validation reports the error, and `play wave` does nothing while the robot stays in its mode.
    Restore the file and upload again.
 9. `play spooked SPEED=2`: the checker predicted a peak of 10 rad/s at speed 1, so at speed 2 the servos lag; confirm nothing worse than a softened hop.
+10. Control loss: with no app connected over WiFi or BLE, put the robot in STAND, `play wiggle` from the shell, and unplug the USB cable mid-wiggle with the robot on battery.
+    The robot eases home and returns to STAND.
+    Closing the tool alone is not a disconnect: the serial adapter sees the host through USB start-of-frame packets, which continue while the port is closed.
+11. Ride height: with the app open on the robot-hosted page, put the robot in STAND and move the height slider to the end that raises the body.
+    `play play_dead` and `stop` from the shell: the robot settles to the file's `ride_height` 0 while it plays, and Exit returns it to the raised height rather than to zero.
 
 Record the outcome of each step, including failures, in `docs/superpowers/handoffs/2026-09-30-animation-firmware-acceptance.md`.
 
@@ -226,3 +239,4 @@ Record the outcome of each step, including failures, in `docs/superpowers/handof
 - The app's `MotionModes` does not yet know `ANIMATE`, so the app cannot select it.
 - The app evaluator, editor and `/animations` route are not built.
 - Controller buttons are not mapped to animations.
+- The serial adapter cannot tell a closed port from an open one, so only the end of the USB session counts as the serial host gone for the control-loss rule.

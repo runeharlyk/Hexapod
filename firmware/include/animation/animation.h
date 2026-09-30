@@ -354,6 +354,19 @@ inline void capturePose(const BodyStateMsg &b, const float stance[6][4], Pose &o
     }
 }
 
+// Within a servo step of the stance: every leg a foot offset, the body within 0.01 rad and 1 mm, and
+// every foot within 1 mm.
+inline bool atStance(const Pose &p) {
+    for (int a = 0; a < 6; ++a)
+        if (fabsf(p.body[a]) > (a < X ? 0.01f : 1.0f)) return false;
+    for (const LegTarget &leg : p.legs) {
+        if (leg.joints) return false;
+        for (float v : leg.v)
+            if (fabsf(v) > 1.0f) return false;
+    }
+    return true;
+}
+
 // Status is pushed on every state change, and otherwise at most once per period while not idle.
 inline bool statusDue(bool changed, bool idle, unsigned long nowMs, unsigned long lastMs, unsigned long periodMs) {
     if (changed) return true;

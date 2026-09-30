@@ -85,12 +85,12 @@ class MotionService {
                  : m.kind == ModeMsgKind::HANDBACK ? " (hand-back)"
                                                    : "");
         _handbackSent = false;
-        const ModeArbiterDecision d = decideMode(
-            {motionState, _borrowedMode, _previousMode, m.mode, m.kind, !_animation.idleAndNothingPending()});
+        const ModeArbiterDecision d =
+            decideMode({motionState, _borrowedMode, _previousMode, m.mode, m.kind, _animation.busy()});
         _borrowedMode = d.borrowed;
         _previousMode = d.previous;
         if (d.cancelPending) _animation.cancelPendingPlay();
-        if (d.requestStop) _animation.requestStop();
+        if (d.requestLeave) _animation.requestLeave();
         const bool internal = m.kind != ModeMsgKind::REQUEST;
         switch (d.action) {
             case ModeArbiterDecision::APPLY: break;
@@ -299,7 +299,7 @@ class MotionService {
                 _animation.tick(dt, target_body_state.zm, body_state, msgAngles.angles);
                 // Only asks: the worker decides, so a mode it handled first (a stop, a sticky ANIMATE)
                 // wins. The flag is raised before the publish so the worker's clear cannot be lost.
-                if (_borrowedMode && !_handbackSent && _animation.idleAndNothingPending()) {
+                if (_borrowedMode && !_handbackSent && !_animation.busy()) {
                     _handbackSent = true;
                     if (!EventBus<ModeMsg>::publish({_previousMode, ModeMsgKind::HANDBACK})) _handbackSent = false;
                 }
