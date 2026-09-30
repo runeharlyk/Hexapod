@@ -147,6 +147,10 @@ Regenerate the fixtures after any behaviour change in `animation.py`.
 `simulation/robot_animate.py` drives the robot over the native USB Serial/JTAG port, before the app has an animation page.
 The framing is `SerialAdapter`'s: a little-endian uint16 length followed by one `socket_message.Message`; a length of 0 or above 2048 makes the robot drop its buffer.
 The robot only sends once it sees a host on the port.
+A COM port is exclusive on Windows, so `watch` cannot run beside another command.
+`play` and `stop` therefore subscribe to the status (tag 283) and mode (tag 130) topics themselves and print every status and mode change by name.
+They return after a mode change that follows an idle status, which is the hand-back, or after 2 s without traffic, which covers a sticky ANIMATE, a refused play and a stop with nothing playing.
+The tool opens the port with DTR and RTS held low, so opening it should not reset the robot.
 
 ```sh
 uv run python robot_animate.py --port COM5 list
@@ -162,12 +166,16 @@ uv run python robot_animate.py --port COM5 watch
 
 Not yet performed.
 Flash with `pio run -t upload`, then `pio run -t uploadfs`; the seven bundled `.pb` files land in `/littlefs/animations`.
+Watch the robot the first time the tool opens the port.
+A reboot shows as the servos going limp, and the next `play` from STAND prints no mode change because the robot came back up DEACTIVATED.
+If that happens, record it, put the robot back in STAND with `mode STAND` before every step, since each command opens the port again, and report it so the port handling can be fixed.
+
 Then, on the native USB port:
 
 1. `list` shows the seven bundled animations with sizes.
 2. `validate wave` reports ok with an empty clamp mask; `validate play_dead` reports ok.
 3. Put the robot in STAND from the controller or `mode STAND`, then `play wave`.
-   In `watch` the status runs ENTRY, PLAYING, EXIT, IDLE and the mode returns to STAND.
+   `play` prints the mode ANIMATE, the status running ENTRY, PLAYING, EXIT, IDLE, and the mode STAND.
    The robot leans left and back, raises the right front leg, flicks it twice, and steps home.
 4. `play crouch` while `wave` is playing: the second animation enters from wherever the first is, with no jump.
 5. `play wiggle`, then `stop` mid-way: the robot eases home.

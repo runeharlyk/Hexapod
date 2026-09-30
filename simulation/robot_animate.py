@@ -5,12 +5,15 @@ socket_message.Message.
     uv run python robot_animate.py --port COM5 list
     uv run python robot_animate.py --port COM5 upload wave        # ../animations/wave.json -> /animations/wave.pb
     uv run python robot_animate.py --port COM5 validate wave
-    uv run python robot_animate.py --port COM5 play wave SPEED=1.5
-    uv run python robot_animate.py --port COM5 stop
+    uv run python robot_animate.py --port COM5 play wave SPEED=1.5  # prints status and mode until it settles
+    uv run python robot_animate.py --port COM5 stop               # prints status and mode until it settles
     uv run python robot_animate.py --port COM5 mode ANIMATE       # sticky ANIMATE, e.g. before puppeteering
     uv run python robot_animate.py --port COM5 watch              # print AnimationStatus until Ctrl-C
+
+A COM port is exclusive on Windows, so play and stop follow the run themselves instead of relying on watch.
 """
 import argparse
+import queue
 import struct
 import sys
 import threading
@@ -19,23 +22,32 @@ from pathlib import Path
 
 import serial
 
-from src.platform_shared import api_pb2, message_pb2
+from src.platform_shared import message_pb2
 from src.robot.animation_files import load_json, to_proto
 
 ROOT = Path(__file__).resolve().parents[1]
 CHUNK = 512
 MAX_FRAME = 2048
 REQUEST_TIMEOUT_S = 5.0
+QUIET_S = 2.0
 ANIMATION_STATUS_TAG = message_pb2.Message.DESCRIPTOR.fields_by_name["animation_status"].number
+MODE_TAG = message_pb2.Message.DESCRIPTOR.fields_by_name["mode"].number
 
 
 class Link:
     def __init__(self, port: str):
-        self.ser = serial.Serial(port, 115200, timeout=0.05)
+        # DTR and RTS are set low before the port opens, so the lines never pass through the
+        # RTS-high, DTR-low state that resets the ESP32-S3 over USB Serial/JTAG.
+        self.ser = serial.Serial(baudrate=115200, timeout=0.05, dsrdtr=False, rtscts=False)
+        self.ser.port = port
+        self.ser.dtr = False
+        self.ser.rts = False
+        self.ser.open()
         self.rx = bytearray()
         self.responses: dict[int, message_pb2.CorrelationResponse] = {}
         self.next_id = 1
         self.on_status = None
+        self.on_mode = None
         threading.Thread(target=self._reader, daemon=True).start()
 
     def send(self, msg: message_pb2.Message) -> None:
@@ -83,6 +95,8 @@ class Link:
                     self.responses[msg.correlation_response.correlation_id] = msg.correlation_response
                 elif kind == "animation_status" and self.on_status:
                     self.on_status(msg.animation_status)
+                elif kind == "mode" and self.on_mode:
+                    self.on_mode(msg.mode)
 
 
 def upload(link: Link, name: str) -> None:
@@ -116,6 +130,41 @@ def list_animations(link: Link) -> None:
         print(f"{e.name:16s} {e.size} bytes")
 
 
+def show_status(s) -> None:
+    state = message_pb2.AnimationState.Name(s.state)
+    print(f"{s.name:16s} {state:12s} t={s.t:6.2f}  clamped {s.clamped_mask:018b}")
+
+
+def show_mode(m) -> None:
+    print(f"mode {message_pb2.ModesEnum.Name(m.mode)}")
+
+
+def follow(link: Link, send) -> None:
+    """Sends a request and prints status and mode traffic until the run settles: a mode change after an idle
+    status (the hand-back), or QUIET_S without traffic (a sticky ANIMATE never hands back, and a refused
+    play or a stop with nothing playing sends nothing). A running player reports at 5 Hz, so it is never
+    quiet that long."""
+    events = queue.Queue()
+    link.on_status = lambda s: events.put(("status", s))
+    link.on_mode = lambda m: events.put(("mode", m))
+    link.subscribe(ANIMATION_STATUS_TAG)
+    link.subscribe(MODE_TAG)
+    send()
+    idle = False
+    while True:
+        try:
+            kind, value = events.get(timeout=QUIET_S)
+        except queue.Empty:
+            return
+        if kind == "status":
+            show_status(value)
+            idle = value.state == message_pb2.ANIM_IDLE
+        else:
+            show_mode(value)
+            if idle:
+                return
+
+
 def play(link: Link, name: str, params: list[str]) -> None:
     msg = message_pb2.Message()
     msg.animation_play.name = name
@@ -124,13 +173,13 @@ def play(link: Link, name: str, params: list[str]) -> None:
         p = msg.animation_play.params.add()
         p.id = message_pb2.AnimationParam.DESCRIPTOR.fields_by_name["id"].enum_type.values_by_name[key].number
         p.value = float(value)
-    link.send(msg)
+    follow(link, lambda: link.send(msg))
 
 
 def stop(link: Link) -> None:
     msg = message_pb2.Message()
     msg.animation_stop.SetInParent()
-    link.send(msg)
+    follow(link, lambda: link.send(msg))
 
 
 def mode(link: Link, name: str) -> None:
@@ -140,11 +189,7 @@ def mode(link: Link, name: str) -> None:
 
 
 def watch(link: Link) -> None:
-    def show(s):
-        state = message_pb2.AnimationState.Name(s.state)
-        print(f"{s.name:16s} {state:12s} t={s.t:6.2f}  clamped {s.clamped_mask:018b}")
-
-    link.on_status = show
+    link.on_status = show_status
     link.subscribe(ANIMATION_STATUS_TAG)
     print("watching AnimationStatus, Ctrl-C to stop")
     try:
