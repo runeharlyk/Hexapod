@@ -108,6 +108,7 @@ message Animation {
   repeated Keyframe keyframes = 8;   // max 32
   repeated Overlay overlays = 9;     // max 8
   repeated ParamSpec params = 10;    // max 10, only the ids listed are exposed
+  optional float ride_height = 11;   // mm, body z base while playing; absent = the current ride-height slider
 }
 ```
 
@@ -121,6 +122,7 @@ Structural validity, checked identically on every platform:
 - `legs` has 0 or 6 entries in every keyframe.
 - overlay windows lie within `[0, last keyframe time]` and `start < end`.
 - parameter ids are unique and `min <= default_value <= max`; `SPEED` must have a positive `min`.
+- `ride_height`, when present, is finite.
   The field is `default_value` because `default` is a C keyword and nanopb would emit it verbatim.
 - `name` matches the character set above.
 - `description` is at most 96 bytes of UTF-8, because the nanopb buffer is sized in bytes.
@@ -187,6 +189,13 @@ A state machine around the evaluator: `Entry -> Playing -> Hold | Exit -> Done`.
 
 Because the evaluator and the player are pure and time-based, the app at display rate, the sim at its control step and the firmware at 200 Hz produce the same pose for the same inputs.
 
+### Ride height
+
+The evaluator's body `z` is an offset; the runner adds a base ride height before IK.
+When the file has no `ride_height`, the base is the current ride-height slider, so an animation played on a tall-standing robot stays tall and Exit returns to that height.
+When the file sets `ride_height`, the base is that value for the whole play, regardless of the slider, because some animations only work at one height; Exit still returns to the slider's height.
+The base is applied by each platform's runner, not by the evaluator, so the parity fixtures are unaffected.
+
 ### Puppeteer pose
 
 A puppeteer pose is a `BodyPose` plus six `LegTarget`s with no timing.
@@ -207,6 +216,8 @@ Two ways in:
 
 Exit returns to zero offsets, which is the neutral stance, not the body pose the STAND sliders held before the animation.
 The command timeout that zeroes motion in WALK does not apply; a puppeteer pose is held if the stream stops, as STAND holds its body pose.
+Losing control stops the animation: when the last client has gone on every transport, or the serial host disappears, a running or held animation receives a stop, and a borrowed mode hands back as usual.
+A puppeteer pose is still held on a silent stream while a client remains connected.
 
 ### Messages
 
