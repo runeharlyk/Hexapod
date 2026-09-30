@@ -474,6 +474,14 @@ static bool anyoneListening(int32_t tag) {
         ;
 }
 
+static bool anyClientConnected() {
+    return wsSocket.hasClient() || bleAdapter.hasClient()
+#if FT_ENABLED(USE_SERIAL_LINK)
+           || serialAdapter.hasClient()
+#endif
+        ;
+}
+
 static void refreshBridge(int32_t tag) {
     std::lock_guard<std::mutex> lock(bridgeMutex);
     auto it = bridges().find(tag);
@@ -589,6 +597,16 @@ static void setupComm() {
     observeStatus<api_WifiStatus>();
     observeStatus<api_APStatus>();
     observeStatus<socket_message_AnimationStatus>();
+
+    // Losing the last client on every transport stops an animation, so nothing plays unattended.
+    const auto onClientGone = [] {
+        if (!anyClientConnected()) robot.animationControlLost();
+    };
+    wsSocket.onClientGone(onClientGone);
+    bleAdapter.onClientGone(onClientGone);
+#if FT_ENABLED(USE_SERIAL_LINK)
+    serialAdapter.onClientGone(onClientGone);
+#endif
 
     // Transports start only once every bridge exists, so an early subscription finds its bridge.
 #if FT_ENABLED(USE_SERIAL_LINK)

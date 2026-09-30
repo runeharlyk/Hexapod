@@ -38,6 +38,12 @@ class CommAdapterBase {
     // Fired when a tag gains its first subscriber or loses its last.
     void onSubscriptionChange(std::function<void(int32_t)> cb) { tagChangeCb_ = std::move(cb); }
 
+    // Whether a client is connected on this transport, whatever it subscribes to.
+    virtual bool hasClient() const = 0;
+
+    // Fired after a client has gone and its subscriptions are dropped, outside every adapter lock.
+    void onClientGone(std::function<void()> cb) { clientGoneCb_ = std::move(cb); }
+
     template <typename T>
     void on(std::function<void(const T&, int)> handler) {
         decoder_.on<T>(handler);
@@ -122,6 +128,7 @@ class CommAdapterBase {
             }
         }
         for (int32_t tag : emptied) notifyTagChange(tag);
+        if (clientGoneCb_) clientGoneCb_();
     }
 
     void handleIncoming(const uint8_t* data, size_t len, int cid) {
@@ -188,6 +195,7 @@ class CommAdapterBase {
     SemaphoreHandle_t encodeMutex_;
     std::map<int32_t, std::list<int>> client_subscriptions_;
     std::function<void(int32_t)> tagChangeCb_;
+    std::function<void()> clientGoneCb_;
 
     void notifyTagChange(int32_t tag) {
         if (tagChangeCb_) tagChangeCb_(tag);

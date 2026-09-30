@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <mutex>
+#include <set>
 #include <communication/webserver.h>
 #include <communication/comm_base.hpp>
 
@@ -9,10 +11,15 @@ class Websocket : public CommAdapterBase {
     Websocket(WebServer& server, const char* route = "/api/ws");
 
     void begin() override;
+    bool hasClient() const override;
 
   private:
     WebServer& server_;
     const char* route_;
+    // close_fn fires for every HTTP session, and a WebSocket CLOSE frame fires it once more, so the
+    // open sockets are tracked by id rather than counted.
+    mutable std::mutex socketsMutex_;
+    std::set<int> openSockets_;
 
     void onWsOpen(httpd_req_t* req);
     void onWsClose(int sockfd);

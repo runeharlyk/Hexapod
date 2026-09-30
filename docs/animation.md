@@ -90,6 +90,11 @@ A `ModeMsg` carries a `ModeMsgKind` (`firmware/include/message_types.h`):
 The `ModeData` bridge to the clients and the ESP-NOW adapter's mode mirror pass only `REQUEST` and `APPLIED`.
 A client therefore sees every requested mode when it arrives and every mode the animation borrow or hand-back actually produced, and never a borrow that was refused or a hand-back that was ignored.
 
+Losing control stops the animation.
+When a client goes (a WebSocket closes, the BLE central disconnects, or the USB host disappears) and no transport has a client left, `MotionService` asks a running or held animation to stop; a borrowed mode then hands back as usual, and a sticky ANIMATE stays in ANIMATE at stance.
+A puppeteer pose is still held on a silent stream while a client remains connected.
+Each adapter answers `hasClient()`, and `CommAdapterBase::onClientGone` fires after a client's subscriptions are dropped; `main.cpp` checks every adapter there.
+
 Exit returns to zero offsets on the slider's ride height, not the body pose the other STAND sliders held before the animation.
 A play while playing chains from the current pose.
 

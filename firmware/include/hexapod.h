@@ -38,6 +38,7 @@ class Hexapod {
     void animationPlay(const AnimationCommandMsg &c) { _motionService.handleAnimationCommand(c); }
     void animationStop() { _motionService.handleAnimationStop(); }
     void animationPose(const PoseMsg &p) { _motionService.handleAnimationPose(p); }
+    void animationControlLost() { _motionService.animationControlLost(); }
     void validateAnimation(const char *name, socket_message_AnimationReport &r) {
         _motionService.validateAnimation(name, r);
     }

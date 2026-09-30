@@ -23,6 +23,7 @@
 class SerialAdapter : public CommAdapterBase {
   public:
     void begin() override;
+    bool hasClient() const override { return hostPresent_; }
 
   private:
     static constexpr size_t RX_BUFFER = 1024;

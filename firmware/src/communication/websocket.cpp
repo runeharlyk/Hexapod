@@ -15,12 +15,25 @@ void Websocket::begin() {
 void Websocket::onWsOpen(httpd_req_t* req) {
     int sockfd = httpd_req_to_sockfd(req);
     ESP_LOGI(TAG, "Client connected: %d", sockfd);
+    {
+        std::lock_guard<std::mutex> lock(socketsMutex_);
+        openSockets_.insert(sockfd);
+    }
     sendPong(sockfd);
 }
 
 void Websocket::onWsClose(int sockfd) {
+    {
+        std::lock_guard<std::mutex> lock(socketsMutex_);
+        if (openSockets_.erase(sockfd) == 0) return;
+    }
     ESP_LOGI(TAG, "Client disconnected: %d", sockfd);
     removeClient(sockfd);
+}
+
+bool Websocket::hasClient() const {
+    std::lock_guard<std::mutex> lock(socketsMutex_);
+    return !openSockets_.empty();
 }
 
 esp_err_t Websocket::onFrame(httpd_req_t* req, httpd_ws_frame_t* frame) {

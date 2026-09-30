@@ -124,6 +124,11 @@ class MotionService {
         if (motionState == MOTION_STATE::ANIMATE) _animation.requestStop();
     }
 
+    // Adapter task, when the last client on every transport has gone.
+    void animationControlLost() {
+        if (motionState == MOTION_STATE::ANIMATE) _animation.controlLost();
+    }
+
     // Adapter task. Puppeteer poses apply only in ANIMATE.
     void handleAnimationPose(PoseMsg const &p) {
         if (motionState == MOTION_STATE::ANIMATE) _animation.setPuppet(p);

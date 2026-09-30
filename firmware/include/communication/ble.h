@@ -33,6 +33,7 @@ class BLE : public CommAdapterBase {
     ~BLE();
 
     void begin() override;
+    bool hasClient() const override { return _deviceConnected; }
 
   private:
     NimBLEServer *_server{nullptr};

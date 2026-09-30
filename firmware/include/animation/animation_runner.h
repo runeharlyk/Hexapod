@@ -85,6 +85,12 @@ class AnimationRunner {
         pendingStop_.store(true, std::memory_order_release);
     }
 
+    // The last client has gone: a running or held clip exits, and a borrowed mode then hands back.
+    void controlLost() {
+        ESP_LOGI(TAG, "control lost, stopping the animation");
+        requestStop();
+    }
+
     // Mode worker: a refused borrow or an explicit mode other than ANIMATE drops what is queued.
     void cancelPendingPlay() {
         pendingPlay_.store(false, std::memory_order_release);
