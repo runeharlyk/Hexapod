@@ -137,9 +137,8 @@ class AnimationRunner {
     }
 
     // Control task, every tick in ANIMATE. Fills body (offsets applied to the stance) and the 18
-    // angles. Returns true on the tick the player returns to idle after a play, so the caller can
-    // hand a borrowed mode back.
-    bool tick(float dt, BodyStateMsg &body, float angles[18]) {
+    // angles.
+    void tick(float dt, BodyStateMsg &body, float angles[18]) {
         // Taken before the requests so a play or stop consumed this tick counts as a change.
         const anim::State before = player_->state();
         const anim::Clip *clipBefore = player_->clip();
@@ -154,9 +153,14 @@ class AnimationRunner {
         for (int i = 0; i < 6; ++i)
             if (!current_.legs[i].joints)
                 for (int k = 0; k < 3; ++k) body.feet[i][k] += current_.legs[i].v[k];
-        const bool finished = before != anim::State::IDLE && player_->state() == anim::State::IDLE;
         publishStatus(before != player_->state() || clipBefore != player_->clip());
-        return finished;
+    }
+
+    // Control task. A borrowed mode is handed back on this, not on a finish edge, so a play that was
+    // cancelled before it started cannot strand the borrow. A swap deferred by lock contention keeps
+    // pendingPlay_ set, so the first tick of a borrow does not misfire.
+    bool idleAndNothingPending() const {
+        return player_->state() == anim::State::IDLE && !pendingPlay_.load(std::memory_order_acquire);
     }
 
   private:

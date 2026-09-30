@@ -283,8 +283,9 @@ class MotionService {
 #endif
             case MOTION_STATE::ANIMATE: {
                 // tick writes the angles itself; body_state carries the absolute pose for telemetry.
-                const bool finished = _animation.tick(dt, body_state, msgAngles.angles);
-                if (finished && _borrowedMode && EventBus<ModeMsg>::publish({_previousMode})) _borrowedMode = false;
+                _animation.tick(dt, body_state, msgAngles.angles);
+                if (_borrowedMode && _animation.idleAndNothingPending() && EventBus<ModeMsg>::publish({_previousMode}))
+                    _borrowedMode = false;
                 break;
             }
             case MOTION_STATE::WALK: {
