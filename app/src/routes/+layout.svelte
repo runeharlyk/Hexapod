@@ -13,9 +13,15 @@
   import { serial } from '$lib/transport/serial-adapter'
   import { ble } from '$lib/transport/ble-adapter'
   import { websocket } from '$lib/transport/websocket-adapter'
-  import { ControllerInputData, ModeData, GaitData } from '$lib/platform_shared/message'
+  import {
+    AnimationStatus,
+    ControllerInputData,
+    ModeData,
+    GaitData
+  } from '$lib/platform_shared/message'
   import { GaitType } from '$lib/gait'
   import { throttler } from '$lib/utilities'
+  import { setAnimationStatus } from '$lib/stores/animation'
   import { connectWebsocket, isLinked } from '$lib/stores/link'
 
   // outControllerData is [lx, ly, rx, ry, height, speed, s1, feetDistance].
@@ -71,6 +77,8 @@
       if (nextMode !== undefined) mode.set(nextMode)
     })
 
+    dataBroker.on(AnimationStatus, setAnimationStatus)
+
     dataBroker.on(GaitData, data => {
       const nextGait = Object.values(GaitType)[data.gait]
       if (nextGait !== undefined) gait.set(nextGait)
@@ -82,6 +90,7 @@
 
     isLinked.subscribe(value => {
       linked = value
+      if (!value) setAnimationStatus(null)
     })
 
     commandHeartbeatId = setInterval(() => {
