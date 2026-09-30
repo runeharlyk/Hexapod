@@ -43,3 +43,18 @@ def test_player_traces_visit_every_state():
     expected = json.loads(gen.EXPECTED.read_text())
     states = {s["state"] for case in expected["player"] for s in case["trace"]}
     assert states == {"ENTRY", "PLAYING", "HOLD", "EXIT", "IDLE"}
+
+
+def test_expected_txt_and_fixture_binaries_are_current(tmp_path):
+    from src.robot.animation_files import load_json, to_proto
+    assert gen.EXPECTED_TXT.read_bytes() == gen.text_dump(gen.generate()).encode()
+    for path in sorted(gen.FIXTURE_DIR.glob("fx_*.json")):
+        assert path.with_suffix(".pb").read_bytes() == to_proto(load_json(path)).SerializeToString(), path.name
+
+
+def test_expected_txt_covers_every_sample_and_step():
+    expected = json.loads(gen.EXPECTED.read_text())
+    lines = gen.EXPECTED_TXT.read_text().splitlines()
+    assert sum(1 for l in lines if l.startswith("E ")) == sum(len(c["samples"]) for c in expected["evaluate"])
+    assert sum(1 for l in lines if l.startswith("S ")) == sum(len(c["trace"]) for c in expected["player"])
+    assert sum(1 for l in lines if l.startswith("P ")) == len(expected["player"])
