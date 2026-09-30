@@ -2598,6 +2598,73 @@ git commit -m "✨ Adds a serial bench tool for animations and documents the sys
 
 ---
 
+---
+
+### Task 9: Ride height, stop on control loss, observable mode kinds, tick-cost log
+
+Added after the whole-branch review from two owner decisions (2026-09-30) and two residuals of the final fix wave.
+The spec commit `75e1912` carries the ride-height and control-loss rules.
+
+**Files:**
+- Modify: `platform_shared/animation.proto` (`optional float ride_height = 11`)
+- Modify: `simulation/src/robot/animation.py`, `animation_files.py`, `simulation/test_animation.py` (field, validation, conversion)
+- Modify: `simulation/sim_sandbox.py` (base height in Animate mode), `simulation/test_animation_library.py` (slider-extreme test)
+- Modify: `animations/crouch.json`, `play_dead.json`, `stretch.json`, `spooked.json`, `body_roll_test.json` (`"rideHeight": 0`); regenerate nothing (the fixtures do not use the field)
+- Modify: `firmware/include/animation/animation.h` (`Clip::hasRideHeight`, `rideHeight`, validation), `animation_codec.h`
+- Modify: `firmware/include/animation/animation_runner.h` (base height, `controlLost()`, INFO tick-cost log)
+- Modify: `firmware/include/message_types.h` (`ModeMsgKind`), `firmware/include/animation/mode_arbiter.h` (input takes the kind), `firmware/include/motion.h`, `firmware/include/hexapod.h`
+- Modify: `firmware/include/communication/comm_base.hpp` (`hasClient()`, `onClientGone`), `websocket.h/.cpp`, `ble.h/.cpp`, `serial_adapter.h/.cpp`, `firmware/src/main.cpp` (bridge and control-loss wiring), `firmware/src/communication/espnow_adapter.cpp` (unchanged call sites compile)
+- Test: `firmware/test/test_animation/test_animation.cpp`, `firmware/test/test_mode_arbiter/test_mode_arbiter.cpp`
+- Modify: `docs/animation.md`
+
+**Interfaces:**
+- Produces: `Animation.ride_height` (optional, mm); `anim::Clip::hasRideHeight`, `rideHeight`; `AnimationRunner::tick(float dt, float sliderZm, BodyStateMsg&, float angles[18])`, `AnimationRunner::controlLost()`; `enum class ModeMsgKind { REQUEST, BORROW, HANDBACK, APPLIED }` replacing the two bools in `ModeMsg` (`{MOTION_STATE::X}` initialisers keep compiling with `kind = REQUEST`); `CommAdapterBase::hasClient() const` (virtual) and `onClientGone(std::function<void()>)`; `Hexapod::animationControlLost()`.
+
+- [ ] **Step 1: Schema and reference**
+
+`animation.proto`: after `params`, `optional float ride_height = 11;  // mm, body z base while playing; absent = the current ride-height slider`.
+Python: `Animation.ride_height: float | None = None`; `from_proto` reads it only when `msg.HasField("ride_height")`; `to_proto` sets it only when not None; `validate` adds "ride_height must be finite" when present; tests: round trip with and without the field, the finiteness rule.
+Sandbox: in `_apply_animation`, before `pose_to_angles`, add the base to `pose.body[an.BodyAxis.Z]`: the animation's `ride_height` when set, else `self._height_to_zm(self.v("height"))`; the same base is subtracted from `player.last_pose` on play so the captured live pose is an offset; state the rule in a comment.
+Library: add `"rideHeight": 0` to crouch, play_dead, stretch, spooked and body_roll_test.
+`test_animation_library.py`: for every animation without `ride_height`, evaluate every keyframe and midpoint with the body z offset shifted by the slider extremes (`-50` and `+50` mm, the STAND slider range `c.h * 50`) and assert the clamp mask is 0; narrow or set `rideHeight` on any file that fails, and report it.
+
+- [ ] **Step 2: Firmware clip and runner base height**
+
+`Clip` gains `bool hasRideHeight = false; float rideHeight = 0.0f;`; codec copies from `m.has_ride_height`; `validate` rejects a non-finite value.
+`AnimationRunner::tick` takes the slider `sliderZm` (the STAND target `target_body_state.zm`).
+Keep `baseZm_`, lerped every tick with the STAND smoothing factor toward the desired base: the clip's `rideHeight` while the player is not idle and the clip has one, else `sliderZm`.
+Apply it after evaluation: `body.zm = current_.body[Z] + baseZm_` (that is, `bodyState` builds from the offsets and the base is added to `zm` before IK and before the joint overrides).
+`enter()` captures the live pose with `live.zm - baseZm_` so the STAND height is not treated as an offset; initialise `baseZm_` to the slider on entry.
+Puppeteer poses use the slider base.
+Document in the runner header and in `docs/animation.md` (replace the neutral-stance wording written in the fix wave with the spec's ride-height paragraph).
+
+- [ ] **Step 3: Mode message kinds and the observable bridge**
+
+`ModeMsg { MOTION_STATE mode; ModeMsgKind kind = ModeMsgKind::REQUEST; }`; update the arbiter input to take the kind (borrow = BORROW, handback = HANDBACK) and every publish site (`motion.h` borrow, hand-back and restate; `begin()`; `main.cpp`; `espnow_adapter.cpp` untouched but must compile).
+`handleInputMode` returns at once for `APPLIED`.
+After executing an APPLY or RESTATE that came from a BORROW or HANDBACK, publish `{motionState, ModeMsgKind::APPLIED}`.
+The bridge in `main.cpp` emits only `REQUEST` and `APPLIED` messages.
+Arbiter tests: add a case that an APPLIED message is not passed to `decideMode` (test the `MotionService` guard by asserting `decideMode` is never given kind APPLIED: make `decideMode` return IGNORE for it and test that), and keep every existing case green with the kind mapping.
+
+- [ ] **Step 4: Stop on control loss**
+
+`CommAdapterBase`: `virtual bool hasClient() const = 0;` and `void onClientGone(std::function<void()> cb)`, called at the end of `removeClient`.
+Websocket: true while any socket is open (track the count in `onWsClose` and the open path); BLE: `_deviceConnected`; serial: `hostPresent_`.
+`main.cpp`: after the bridges, register on every adapter `onClientGone([] { if (!anyClientConnected()) robot.animationControlLost(); })` with `anyClientConnected()` beside `anyoneListening()`.
+`Hexapod::animationControlLost()` forwards to `MotionService::animationControlLost()`, which calls `_animation.controlLost()` when `motionState == MOTION_STATE::ANIMATE`; the runner's `controlLost()` is `requestStop()` plus a log line.
+The borrowed hand-back follows from the existing invariant; a sticky ANIMATE stays in ANIMATE at stance.
+Host test: none possible for the adapters; add an arbiter-independent test in `test_animation.cpp` that a `Player` in HOLD goes to EXIT on `stop()` (already covered) is enough, and write the control-loss step into the acceptance checklist: disconnect the bench tool mid-`wiggle`, the robot eases home.
+
+- [ ] **Step 5: Tick-cost log at INFO while animating**
+
+Replace the compiled-out `ESP_LOGD` with `ESP_LOGI` emitted at most every 5 s and only while the player is not idle; the line names the maximum tick cost in microseconds.
+
+- [ ] **Step 6: Verify, document, commit**
+
+`pio test -e native` all pass; `pio run -e esp32-wroom-camera` SUCCESS (with the isolated package dirs if the shared framework is still replaced; report RAM and flash); `uv run pytest -q` and `uv run python check_animation.py` from `simulation/` pass; `pnpm proto && pnpm check` from `app/` still pass (the new optional field must not break the generated TypeScript).
+`docs/animation.md`: the ride-height rule, the control-loss rule, the `ModeMsgKind` semantics and which kinds the app sees, the tick-cost log, and the new acceptance steps (control loss mid-wiggle; play_dead at a tall slider height returning to that height on exit).
+Commits, one line each: `✨ Lets an animation fix its ride height or follow the slider`, `✨ Stops an animation when the last client is gone`, `🐛 Reports only applied mode changes to clients`, `🩹 Logs the animation tick cost at INFO while playing`.
+
 ## Self-review notes
 
 - Spec coverage: section 2 (Tasks 3 to 5), section 3 mode and messages (Task 6), section 3 requests and storage (Task 7 and the store in Task 6), section 6 parity and firmware tests (Tasks 2, 4, 5, 6, 7), hardware acceptance (Task 8).
