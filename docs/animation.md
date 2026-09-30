@@ -206,6 +206,95 @@ uv run python robot_animate.py --port COM5 watch
 uv run python robot_animate.py --port COM5 shell
 ```
 
+## App
+
+The web app's animation code is a port of the reference plus the `/animations` route.
+
+### The port
+
+- `app/src/lib/animation/model.ts`: the document is the ts-proto `Animation` generated from `animation.proto`; the file adds the constants, `validate` (the reference's rules in the reference's order, first failure returned), `froundAnimation`, `loadAnimationJson` (parse, `Animation.fromJSON`, round, validate) and `serializeAnimation`.
+- `evaluator.ts` and `player.ts` port the reference evaluator and player.
+- `transfer.ts` uploads, downloads, validates, lists and deletes files on the robot.
+- `library.ts` holds the built-in list, the drafts and the robot list.
+  The built-ins are the root `animations/*.json`, imported at build time and validated when the module loads; a file whose `name` differs from its stem throws.
+- `app/src/lib/control.ts` (outside `animation/`) sends play, stop, mode and puppeteer poses.
+- `app/src/lib/stores/animation-editor.ts` holds the editor document, selection, scrub and preview; `app/src/lib/stores/animation.ts` holds the latest `AnimationStatus`, which the root layout subscribes to (tag 283) and clears on unlink.
+
+`app/tests/unit/animation-parity.spec.ts` checks the evaluator and player against `animations/fixtures/expected.json`, the same fixtures the firmware and the reference use.
+
+Every document is rounded with `froundAnimation` before it is validated, evaluated, uploaded or saved; the editor itself holds the doubles typed into it.
+`serializeAnimation` writes each number as the shortest decimal that rounds back to the same float32, so re-saving a bundled file adds no float noise.
+It does reflow a file into the two-space proto3 JSON layout.
+
+### Transfer
+
+Files go to `/animations/<name>.pb` in 512-byte chunks.
+A chunk answered with any status other than 200, or a request that fails, restarts the whole file from offset 0, once; a second failure is reported.
+After the last chunk the app sends `animation_validate`; a report with `ok` surfaces as a success, and its clamped joints are named in a warning.
+The firmware answers an invalid file with status 422, and `validateAnimation` throws on any status other than 200, so the app reports the refusal as a failed validate with that status rather than the report's `error` text (see [Known gaps](#known-gaps)).
+Download reads 512-byte chunks up to `total_size`, then rounds and validates the result.
+List and delete use `animation_list_request` and `file_delete`.
+
+### The `/animations` route
+
+The menu entry sits after Controller.
+The page has two tabs, Library and Editor, which open documents into one editor; replacing a document with unsaved edits asks for confirmation first.
+
+**Library.**
+A status line shows the latest `AnimationStatus`: name, state, `t`, and 18 dots, one per joint, red when clamped, with a tooltip naming them.
+Three cards list Built-in, On robot and Drafts.
+Built-in and draft rows show the description and a slider per declared parameter, with Play, Stop and Edit.
+Robot rows show the name and size, with Play, Stop, Download to editor, and Delete behind a confirmation.
+Draft rows have a Delete without confirmation, and a draft's Play uploads the draft before playing it.
+Play and Stop are disabled while unlinked, and On robot then says "not connected".
+
+**Editor.**
+The toolbar has New, Open file, Open from (Built-in, Drafts, and Robot while linked), Save JSON, Save draft, Upload to robot, Play on robot, Stop and Show on robot.
+Save JSON downloads `<name>.json` written by `serializeAnimation`; Upload, Play on robot and Save draft are disabled while the document is invalid.
+The 3D view is `Visualization` with a handle on each foot, drawn red when that leg clamps at the scrub head.
+The Pose panel edits the selected keyframe: six body sliders, and per leg a foot/joints toggle with three numeric fields.
+Flipping a leg converts its stored value (IK from foot to joints, FK from joints to foot) on the keyframe's body at the current stance and ride-height base.
+The Timeline has keyframe markers (click selects, drag retimes; the first stays at 0), a scrub head, Play and Stop of a local preview, Loop, a preview speed, the selected keyframe's time and ease with Add after, Duplicate and Delete, and the overlay list.
+The preview speed scales the preview clock, Entry and Exit included; it is not the `SPEED` parameter.
+The Animation panel edits name, description, loop or hold at end (setting one clears the other), entry and exit times, a fixed ride height, and the parameters with their range and a preview value, and shows the validation message.
+
+These deviate from spec section 4:
+
+- There is no autosave; Save draft is an explicit button, disabled while the document is invalid.
+- The Timeline button is Stop, not Pause: it runs the player's Exit, as a stop on the robot does.
+- Robot rows show no description and no sliders and play with the defaults, because the list response carries only name and size.
+- Joint legs use numeric fields, not angle sliders.
+- Every leg has a handle, not only foot legs; see below.
+- Chunks are 512 bytes, not 1024, because the firmware refuses larger ones.
+
+### Handles
+
+The handles sit on the selected keyframe's own feet, not on the pose at the scrub head: foot legs as stored, joint legs through FK on the keyframe body, with no interpolation, overlays or parameters.
+A drag snaps the scrub to the keyframe time and writes the handle's position, rebased onto the stance, as the leg's foot offset, which is the stored value plus the drag delta.
+A dragged joint leg becomes a foot leg.
+A drag during the preview playback is ignored.
+Handle placement assumes a zero body rotation and translation, so on a keyframe that moves the body the handles do not line up with the rendered feet.
+
+### Show on robot and Play on robot
+
+"Show on robot" can only be switched on while linked.
+Switching it on requests ANIMATE once and sends the current pose; from then on every pose change (an edit, the scrub, or the preview playback) sends a `PoseData`, throttled to at most one message per 50 ms (20 Hz) with the latest pose winning.
+Nothing is sent while the pose is unchanged; the firmware holds the last pose.
+Switching it off, losing the link, or leaving the editor cancels the stream.
+The robot stays in the explicit, sticky ANIMATE (spec section 3) holding the last pose; the way back is a mode change from the controller page.
+A STAND or walking mode eases the pose home before the mode switches; DEACTIVATED, IDLE and POSE apply at once (see [Mode, borrow and hand-back](#mode-borrow-and-hand-back)).
+
+"Play on robot" uploads the current document, overwriting any robot file of the same name, then plays it with the Animation panel's preview values.
+Stop sends `animation_stop`.
+
+### Drafts and preview height
+
+Drafts live in `persistentStore('animation_drafts')`, the browser's localStorage, keyed by animation name.
+They are a per-browser convenience and are not synced anywhere; a draft that no longer validates is left out of the lists.
+
+The preview runs on one fixed ride-height base, the file's `ride_height` or else the height slider's `h * 50`, and uses the feet-distance slider for the stance.
+The firmware instead blends the base during Entry (see [Ride height](#ride-height)), so a file that fixes `ride_height` away from the slider's height previews differently during Entry and Exit only.
+
 ## Acceptance on hardware
 
 Not yet performed.
@@ -239,9 +328,31 @@ Then, on the native USB port:
 
 Record the outcome of each step, including failures, in `docs/superpowers/handoffs/2026-09-30-animation-firmware-acceptance.md`.
 
+### App steps
+
+Not yet performed.
+Record the outcomes in the same handoff file.
+
+1. Open `/animations` linked over WebSocket (the robot-hosted http origin) and over BLE (an https origin); the On robot list shows the seven bundled files.
+2. Upload each built-in from the editor (Open from, Built-in, then Upload to robot) and play it from its On robot row.
+   The status line runs ENTRY, PLAYING, EXIT, IDLE, and the mode returns to the mode before the play.
+3. Toggle "Show on robot" in the editor and drag a foot; the robot follows within a fraction of a second.
+   Toggle it off and confirm the robot holds the last pose in ANIMATE.
+4. "Play on robot" from the editor with a modified draft; the status runs the four states.
+5. Chain two animations by playing the second while the first is in PLAYING; the second enters from the first's current pose without a jump.
+6. Stop one mid-way with the library's Stop button; the robot eases home through Exit.
+7. Close the browser tab while an animation plays over the only transport; the robot stops through Exit (the control-loss rule).
+
 ## Known gaps
 
-- The app's `MotionModes` does not yet know `ANIMATE`, so the app cannot select it.
-- The app evaluator, editor and `/animations` route are not built.
 - Controller buttons are not mapped to animations.
 - The serial adapter cannot tell a closed port from an open one, so only the end of the USB session counts as the serial host gone for the control-loss rule.
+- The editor has no autosave; unsaved edits survive leaving the route (the editor is a module singleton) but not a reload or a closed tab, and neither asks first.
+- Save draft overwrites a draft of the same name without asking.
+- Save draft reports success even when the browser refuses to store it, because `persistentStore` swallows the storage error; the draft then lives in memory until the page reloads.
+- Robot rows have no description and no parameter sliders, and play with the defaults: the list response carries only name and size.
+- A built-in's Play assumes the file is on the robot's LittleFS from `uploadfs`; the app does not check or upload it.
+- A file the robot refuses on validation is reported by its 422 status, not by the report's `error` text.
+- The preview skips the firmware's Entry and Exit ride-height blend, so a file that fixes `ride_height` away from the slider's height previews differently during Entry and Exit.
+- The Timeline's Loop replays the whole play, Exit and Entry included, each cycle, and does nothing for a `hold_end` animation, which holds until Stop.
+- A refused edit (a keyframe time out of order, for example) shows the error but leaves the typed value in the input.
