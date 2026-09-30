@@ -7,5 +7,7 @@ const status = writable<AnimationStatus | null>(null)
 export const animationStatus: Readable<AnimationStatus | null> = { subscribe: status.subscribe }
 export const setAnimationStatus = (s: AnimationStatus | null) => status.set(s)
 
-export const animationPreview: Writable<{ angles: number[]; body: body_state_t } | null> =
-  writable(null)
+// angles in radians, IK leg order; mask is the evaluator's 18-bit clamp mask, bit leg * 3 + joint.
+export type AnimationPreview = { angles: number[]; body: body_state_t; mask?: number }
+
+export const animationPreview: Writable<AnimationPreview | null> = writable(null)

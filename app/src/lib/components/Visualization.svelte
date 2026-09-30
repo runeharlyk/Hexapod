@@ -13,6 +13,11 @@
   import { Vector3 } from 'three'
   import { requestGait, requestMode } from '$lib/control'
   import { isLinked } from '$lib/stores/link'
+  import { animationPreview, type AnimationPreview } from '$lib/stores/animation'
+  import type { body_state_t } from '$lib/kinematic'
+  import type { Vec3 } from '$lib/animation/model'
+  import { DEFAULT_FEET } from '$lib/animation/evaluator'
+  import { handleColor, legMask, sceneToOffset, stanceToScene } from '$lib/animation/handles'
 
   interface Props {
     sky?: boolean
@@ -21,9 +26,18 @@
     ground?: boolean
     // Drives the preview locally instead of following the robot's mode store.
     previewMode?: MotionModes
+    // Draggable foot spheres; offsets are body-frame mm from DEFAULT_FEET.
+    handles?: { onDrag: (leg: number, offsetMm: Vec3) => void; onDragEnd: () => void }
   }
 
-  let { sky = true, orbit = false, panel = true, ground = true, previewMode }: Props = $props()
+  let {
+    sky = true,
+    orbit = false,
+    panel = true,
+    ground = true,
+    previewMode,
+    handles
+  }: Props = $props()
 
   let sceneManager = $state(new SceneBuilder())
   let canvas: HTMLCanvasElement | null = $state(null)
@@ -46,6 +60,7 @@
   let lastRobotPosition = new Vector3()
   let unsubscribers: (() => void)[] = []
   let destroyed = false
+  let preview: AnimationPreview | null = null
 
   onMount(async () => {
     await populateModelCache()
@@ -68,6 +83,7 @@
         if (!linked) settings['Internal kinematic'] = true
       }),
       gait.subscribe(gait => motion.setGait(gait)),
+      animationPreview.subscribe(value => (preview = value)),
       ...(previewMode ? [] : [mode.subscribe(mode => motion.setMode(mode))])
     ]
   })
@@ -169,6 +185,29 @@
     if (ground) sceneManager.addGroundPlane()
 
     if (sky) sceneManager.addSky()
+
+    if (handles) createHandles()
+  }
+
+  const createHandles = () => {
+    sceneManager.addFootHandles(DEFAULT_FEET.map(stanceToScene))
+    const transform = sceneManager.transform!
+    transform.addEventListener('objectChange', () => {
+      const leg = sceneManager.handles.findIndex(handle => handle === transform.object)
+      if (leg < 0) return
+      handles?.onDrag(leg, sceneToOffset(transform.object!.position.toArray(), DEFAULT_FEET[leg]))
+    })
+    transform.addEventListener('mouseUp', () => handles?.onDragEnd())
+  }
+
+  const updateHandles = () => {
+    const feet = preview?.body.feet ?? DEFAULT_FEET
+    const transform = sceneManager.transform
+    const dragged = transform?.dragging ? transform.object : undefined
+    sceneManager.handles.forEach((handle, leg) => {
+      if (handle !== dragged) sceneManager.setHandlePosition(leg, stanceToScene(feet[leg]))
+      handle.material.color.setHex(handleColor(legMask(preview?.mask ?? 0, leg)))
+    })
   }
 
   const smooth = (start: number, end: number, amount: number) => {
@@ -183,8 +222,8 @@
     lastRobotPosition.copy(robot.position)
   }
 
-  const calculateGroundHeight = () => {
-    const feet = motion.body_state.feet
+  const calculateGroundHeight = (body: body_state_t) => {
+    const feet = body.feet
     if (!feet || feet.length === 0) return 0
 
     let minZ = feet[0][2]
@@ -196,16 +235,15 @@
 
     const feetDepth = Math.max(0, motion.defaultPosition[0][2] - minZ)
 
-    const bodyHeight = motion.body_state.zm / 12
+    const bodyHeight = body.zm / 12
     return -bodyHeight + 0.5 + feetDepth
   }
 
-  const orient_robot = (robot: URDFRobot) => {
+  const orient_robot = (robot: URDFRobot, body: body_state_t) => {
     if (!settings['Auto orient robot']) return
 
     const ORIENT_SMOOTH = 0.1
     const POSITION_SCALE = 1 / 12
-    const body = motion.body_state
 
     const cmdXm = body.xm ?? 0
     const cmdYm = body.ym ?? 0
@@ -239,7 +277,7 @@
       ORIENT_SMOOTH
     )
 
-    robot.position.y = smooth(robot.position.y, calculateGroundHeight(), ORIENT_SMOOTH)
+    robot.position.y = smooth(robot.position.y, calculateGroundHeight(body), ORIENT_SMOOTH)
 
     robot.rotation.z = smooth(robot.rotation.z, totalYaw + Math.PI / 2, ORIENT_SMOOTH)
 
@@ -259,12 +297,15 @@
   const render = () => {
     const robot = sceneManager.model
     if (!robot) return
-    if (settings['Internal kinematic']) {
+    if (preview) {
+      setTargetAngles(motion.order(preview.angles))
+    } else if (settings['Internal kinematic']) {
       const updated = motion.step()
       if (updated) setTargetAngles(motion.targetAngles)
     }
     update_camera(robot)
-    orient_robot(robot)
+    orient_robot(robot, preview?.body ?? motion.body_state)
+    if (handles) updateHandles()
 
     for (let i = 0; i < $jointNames.length; i++) {
       angles[i] = smooth(robot.joints[$jointNames[i]].angle as number, targetAngles[i], 0.1)
