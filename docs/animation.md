@@ -67,8 +67,19 @@ There are two ways in.
   The clip is loaded before the mode changes, so a play naming a missing or invalid file leaves the robot in its mode and pose.
   When the player is idle with nothing pending, the previous mode is handed back.
   A play from IDLE or DEACTIVATED is ignored.
-  Any explicit mode message ends a borrow, so an explicit STAND mid-play is final.
 - Setting the mode to ANIMATE explicitly is sticky: the robot holds stance, accepts puppeteer poses and plays, and stays until the mode changes.
+
+Every mode decision is made on the `ModeMsg` worker, in the order the messages arrive, by `decideMode` in `firmware/include/animation/mode_arbiter.h`; `firmware/test/test_mode_arbiter` replays the interleavings.
+
+- A borrow reaching the worker after a DEACTIVATED, IDLE or POSE is refused, the loaded play is dropped, and the standing mode is published again.
+- The hand-back is only requested by the control task, as a `ModeMsg` with `handback` set, at most once until the worker has handled a mode message.
+  The worker applies it only while the robot is still in a borrowed ANIMATE, so an emergency stop or a sticky ANIMATE handled first wins.
+- An explicit STAND, WALK or WALK_NN while ANIMATE is playing or has a play pending does not leave at once.
+  The player is stopped, the requested mode becomes the hand-back target, and the mode changes when Exit has eased every leg home.
+  Leaving at once would snap joint-angle legs to stance at full servo speed.
+  The requested mode is published when it arrives, so a mode observer sees it about one exit time before the robot switches.
+- DEACTIVATED, IDLE and POSE apply at once even mid-play, because cutting or centring the servos immediately is the safety property.
+- Any other explicit mode ends a borrow, so an explicit ANIMATE mid-play makes the robot stay in ANIMATE afterwards.
 
 Exit returns to zero offsets, which is the neutral stance, not the body pose the STAND sliders held before the animation.
 A play while playing chains from the current pose.

@@ -1,6 +1,7 @@
 #ifndef MotionService_h
 #define MotionService_h
 
+#include <atomic>
 #include <esp_log.h>
 #include <kinematics.h>
 #include <peripherals/servo_controller.h>
@@ -12,6 +13,7 @@
 #include <message_types.h>
 #include <policy_runner.h>
 #include <animation/animation_runner.h>
+#include <animation/mode_arbiter.h>
 
 class MotionService {
   public:
@@ -73,32 +75,28 @@ class MotionService {
         for (int i = 0; i < 6; i++) target_gait_state.offset[i] = gait_state.offset[i];
     }
 
+    // Mode worker. The rules live in decideMode (animation/mode_arbiter.h); this executes them.
     void handleInputMode(ModeMsg const &m) {
-        ESP_LOGI("MotionService", "Mode %d%s", m.mode, m.borrow ? " (borrow)" : "");
-        // A borrow is decided here, in mode order, so a DEACTIVATED processed while the clip loaded
-        // wins over it. Any explicit mode ends a borrow: an explicit ANIMATE is sticky and an explicit
-        // STAND mid-play is final.
-        if (m.borrow) {
-            if (!isActuatedMode(motionState)) {
-                _animation.cancelPendingPlay();
-                // Every mode observer has just seen the refused ANIMATE; restate the mode that stands.
-                EventBus<ModeMsg>::publish({motionState});
-                return;
-            }
-            if (motionState != MOTION_STATE::ANIMATE) {
-                _previousMode = motionState;
-                _borrowedMode = true;
-            }
-        } else {
-            _borrowedMode = false;
-            if (m.mode != MOTION_STATE::ANIMATE) _animation.cancelPendingPlay();
+        ESP_LOGI("MotionService", "Mode %d%s", (int)m.mode, m.borrow ? " (borrow)" : m.handback ? " (hand-back)" : "");
+        _handbackSent = false;
+        const ModeArbiterDecision d = decideMode({motionState, _borrowedMode, _previousMode, m.mode, m.borrow,
+                                                  m.handback, !_animation.idleAndNothingPending()});
+        _borrowedMode = d.borrowed;
+        _previousMode = d.previous;
+        if (d.cancelPending) _animation.cancelPendingPlay();
+        if (d.requestStop) _animation.requestStop();
+        switch (d.action) {
+            case ModeArbiterDecision::APPLY: break;
+            case ModeArbiterDecision::RESTATE: EventBus<ModeMsg>::publish({motionState}); return;
+            case ModeArbiterDecision::IGNORE:
+            case ModeArbiterDecision::GRACEFUL_LEAVE: return;
         }
-        motionState = m.mode;
+        motionState = d.mode;
 #if FT_ENABLED(USE_POLICY)
-        if (m.mode == MOTION_STATE::WALK_NN) _policy.reset(gait, default_feet_pos);
+        if (d.mode == MOTION_STATE::WALK_NN) _policy.reset(gait, default_feet_pos);
 #endif
         // ANIMATE drives no gait, so a half-stride left in gait_state would resume after it.
-        if (!isWalkingMode(m.mode)) stopLocomotionCommand(!isActuatedMode(m.mode) || m.mode == MOTION_STATE::ANIMATE);
+        if (!isWalkingMode(d.mode)) stopLocomotionCommand(!actuated(d.mode) || d.mode == MOTION_STATE::ANIMATE);
         motionState == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
     }
 
@@ -107,7 +105,7 @@ class MotionService {
     // before the mode changes, so a refused play leaves the robot in its mode and pose; whether the
     // borrow is granted is decided by handleInputMode.
     void handleAnimationCommand(AnimationCommandMsg const &c) {
-        if (!isActuatedMode(motionState)) return;
+        if (!actuated(motionState)) return;
         if (!_animation.requestPlay(c)) return;
         if (motionState == MOTION_STATE::ANIMATE) return;
         EventBus<ModeMsg>::publish({MOTION_STATE::ANIMATE, true});
@@ -286,8 +284,12 @@ class MotionService {
             case MOTION_STATE::ANIMATE: {
                 // tick writes the angles itself; body_state carries the absolute pose for telemetry.
                 _animation.tick(dt, body_state, msgAngles.angles);
-                if (_borrowedMode && _animation.idleAndNothingPending() && EventBus<ModeMsg>::publish({_previousMode}))
-                    _borrowedMode = false;
+                // Only asks: the worker decides, so a mode it handled first (a stop, a sticky ANIMATE)
+                // wins. The flag is raised before the publish so the worker's clear cannot be lost.
+                if (_borrowedMode && !_handbackSent && _animation.idleAndNothingPending()) {
+                    _handbackSent = true;
+                    if (!EventBus<ModeMsg>::publish({_previousMode, false, true})) _handbackSent = false;
+                }
                 break;
             }
             case MOTION_STATE::WALK: {
@@ -329,7 +331,8 @@ class MotionService {
     AnimationRunner _animation;
     MOTION_STATE _previousMode = MOTION_STATE::STAND;
     bool _borrowedMode = false;
-    bool _animating = false; // control task only: whether the last tick ran ANIMATE
+    std::atomic<bool> _handbackSent {false}; // a hand-back is queued; cleared by the worker on any mode
+    bool _animating = false;                 // control task only: whether the last tick ran ANIMATE
 
     CommandMsg command = {0, 0, 0, 0, 0, 0, 0, 0};
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
@@ -366,10 +369,6 @@ class MotionService {
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
 
     static bool isWalkingMode(MOTION_STATE mode) { return mode == MOTION_STATE::WALK || mode == MOTION_STATE::WALK_NN; }
-
-    static bool isActuatedMode(MOTION_STATE mode) {
-        return mode == MOTION_STATE::STAND || isWalkingMode(mode) || mode == MOTION_STATE::ANIMATE;
-    }
 
     // Zeroes the locomotion command. `snap` collapses the live gait state onto it as well, for modes
     // that drive nothing: there is no output to jerk, and a half-stride left frozen in gait_state
