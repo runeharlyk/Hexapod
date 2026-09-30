@@ -201,11 +201,3 @@ export const poseToAngles = (
   })
   return { angles, mask }
 }
-
-export const capturePose = (body: body_state_t, stance: Stance): Pose => ({
-  body: [body.omega, body.phi, body.psi, body.xm, body.ym, body.zm],
-  legs: stance.map((f, i) => ({
-    joints: false,
-    v: [body.feet[i][0] - f[0], body.feet[i][1] - f[1], body.feet[i][2] - f[2]] as Vec3
-  }))
-})

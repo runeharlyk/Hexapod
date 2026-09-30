@@ -36,6 +36,11 @@ describe('foot handle mapping', () => {
     }
   })
 
+  it('places a hand-computed point by the orient_robot mapping [y, z + 66, x] / 12', () => {
+    expectClose(stanceToScene([12, 24, -66]), [2, 0, 1])
+    expectClose(sceneToOffset([2, 0, 1], [0, 0, -66]), [12, 24, 0])
+  })
+
   it('maps body x, y and z onto distinct scene axes with z on the scene up axis', () => {
     const origin = stanceToScene(stance)
     const axisOf = (offset: Vec3) =>

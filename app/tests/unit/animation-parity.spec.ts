@@ -2,15 +2,15 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ParamId } from '$lib/platform_shared/animation'
-import Kinematics from '$lib/kinematic'
+import Kinematics, { type body_state_t } from '$lib/kinematic'
 import { config } from '$lib/components/config'
-import { loadAnimationJson } from '$lib/animation/model'
+import { loadAnimationJson, type Pose, type Vec3 } from '$lib/animation/model'
 import {
   DEFAULT_FEET,
-  capturePose,
   evaluate,
   poseToAngles,
-  resolveParams
+  resolveParams,
+  type Stance
 } from '$lib/animation/evaluator'
 import { Player, State } from '$lib/animation/player'
 
@@ -24,6 +24,15 @@ const clip = (name: string) => {
 const params = (values: Record<string, number>) =>
   new Map(Object.entries(values).map(([k, v]) => [ParamId[k as keyof typeof ParamId], v]))
 const kin = new Kinematics(config)
+
+// A live body state as offsets from the stance, the pose the player enters from.
+const capturePose = (body: body_state_t, stance: Stance): Pose => ({
+  body: [body.omega, body.phi, body.psi, body.xm, body.ym, body.zm],
+  legs: stance.map((f, i) => ({
+    joints: false,
+    v: [body.feet[i][0] - f[0], body.feet[i][1] - f[1], body.feet[i][2] - f[2]] as Vec3
+  }))
+})
 
 describe('parity with the reference fixtures', () => {
   it('matches every evaluate sample', () => {
