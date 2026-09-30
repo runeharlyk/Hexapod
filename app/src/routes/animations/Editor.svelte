@@ -5,10 +5,19 @@
   import { notifications } from '$lib/components/toasts/notifications'
   import { Animation } from '$lib/platform_shared/animation'
   import { MotionModes } from '$lib/motion'
+  import { outControllerData } from '$lib/stores'
   import { isLinked } from '$lib/stores/link'
-  import { animationPreview } from '$lib/stores/animation'
-  import { clampedJoints, editor } from '$lib/stores/animation-editor'
-  import { PoseSender, playAnimation, requestMode, stopAnimation } from '$lib/control'
+  import { animationPreview, animationStatus } from '$lib/stores/animation'
+  import { clampedJoints, editor, sliderBase } from '$lib/stores/animation-editor'
+  import {
+    PoseSender,
+    inactiveModeWarning,
+    playAnimation,
+    requestMode,
+    stopAnimation
+  } from '$lib/control'
+  import { dataBroker } from '$lib/transport/databroker'
+  import { AnimationState, ModeData } from '$lib/platform_shared/message'
   import {
     clonePose,
     froundAnimation,
@@ -58,9 +67,22 @@
         }
       }),
       // The player returns its pose by reference, so the sender gets a copy.
-      pose.subscribe(p => sender?.send(clonePose(p)))
+      pose.subscribe(p => sender?.send(clonePose(p))),
+      // The robot drops a pose sent before it applied ANIMATE, and after a play it rests at stance;
+      // both leave it off the preview until the pose changes, so the pose goes out again.
+      dataBroker.on(ModeData, data => {
+        if (Object.values(MotionModes)[data.mode] === MotionModes.ANIMATE) sender?.resend()
+      }),
+      animationStatus.subscribe(status => {
+        const state = status?.state ?? AnimationState.ANIM_IDLE
+        if (state === AnimationState.ANIM_IDLE && lastState !== AnimationState.ANIM_IDLE)
+          sender?.resend()
+        lastState = state
+      })
     ]
   })
+
+  let lastState = AnimationState.ANIM_IDLE
 
   onDestroy(() => {
     unsubscribers.forEach(unsubscribe => unsubscribe())
@@ -145,8 +167,20 @@
   }
 
   const playOnRobot = async () => {
-    if (await upload()) playAnimation(rounded().name, get(editor).values)
+    if (!(await upload())) return
+    const warning = inactiveModeWarning()
+    if (warning) notifications.warning(warning, 6000)
+    playAnimation(rounded().name, get(editor).values)
   }
+
+  // Shown while mirroring a file whose fixed ride height differs from the slider's.
+  let mirrorHint = $derived.by(() => {
+    const fixed = $editor.document.rideHeight
+    const slider = sliderBase($outControllerData[4])
+    return $editor.showOnRobot && fixed !== undefined && fixed !== slider ?
+        `Mirrors at the slider height (${slider} mm); this file plays at ${fixed} mm`
+      : null
+  })
 </script>
 
 <div class="flex flex-wrap items-center gap-2">
@@ -184,7 +218,12 @@
       </optgroup>
     {/if}
   </select>
-  <button class="btn btn-sm" onclick={saveJson}>Save JSON</button>
+  <button
+    class="btn btn-sm"
+    disabled={$validation !== null}
+    title={$validation ?? 'Download the animation as JSON'}
+    onclick={saveJson}>Save JSON</button
+  >
   <button
     class="btn btn-sm"
     disabled={$validation !== null}
@@ -210,6 +249,7 @@
     />
     Show on robot
   </label>
+  {#if mirrorHint}<span class="text-xs opacity-70">{mirrorHint}</span>{/if}
   {#if $editor.dirty}<span class="text-xs opacity-60">unsaved</span>{/if}
 </div>
 

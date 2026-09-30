@@ -45,13 +45,19 @@
     const controller = get(outControllerData)
     // The preview holds one base throughout, so it skips the firmware's base blend between the
     // height slider and a fixed ride height during Entry and Exit.
-    baseZ = rideBase(doc, controller[4])
+    baseZ = rideBase(doc, controller[4], s.showOnRobot)
     player = new Player(kinematics, stanceFor(controller[7]))
     player.play(doc, s.values, stancePose(), baseZ)
   }
 
   const step = (now: number) => {
     if (!player) return
+    // Opening or creating a document clears playing; the old clip must not drive the new one.
+    if (!get(editor).playing) {
+      player = null
+      stopping = false
+      return
+    }
     const dt = (Math.min(now - last, MAX_FRAME_S * 1000) / 1000) * speed
     last = now
     const pose = player.update(dt, baseZ)

@@ -9,7 +9,7 @@
   import { isLinked } from '$lib/stores/link'
   import { animationStatus } from '$lib/stores/animation'
   import { clampedJoints, shown } from '$lib/stores/animation-editor'
-  import { playAnimation, stopAnimation } from '$lib/control'
+  import { inactiveModeWarning, playAnimation, stopAnimation } from '$lib/control'
   import { deleteAnimation, downloadAnimation, uploadAnimation } from '$lib/animation/transfer'
   import {
     builtIn,
@@ -44,12 +44,18 @@
     })
   )
 
+  const play = (name: string, params: Map<ParamId, number>) => {
+    const warning = inactiveModeWarning()
+    if (warning) notifications.warning(warning, 6000)
+    playAnimation(name, params)
+  }
+
   const playDraft = async (a: Animation, key: string) => {
     try {
       const result = await uploadAnimation(a)
       if (!result.ok) return notifications.error(`${a.name} was refused: ${result.error}`, 5000)
       refreshRobotList()
-      playAnimation(a.name, valuesOf(key))
+      play(a.name, valuesOf(key))
     } catch (e) {
       notifications.error(`Uploading ${a.name} failed: ${e}`, 5000)
     }
@@ -148,7 +154,7 @@
           </div>
           {@render params(a, key)}
           <div class="flex flex-wrap gap-2">
-            {@render playStop(() => playAnimation(a.name, valuesOf(key)))}
+            {@render playStop(() => play(a.name, valuesOf(key)))}
             <button class="btn btn-xs" onclick={() => onEdit(a)}>Edit</button>
           </div>
         </div>
@@ -172,7 +178,7 @@
               <div class="text-xs opacity-70">{entry.size} bytes, played with its defaults</div>
             </div>
             <div class="flex flex-wrap gap-2">
-              {@render playStop(() => playAnimation(entry.name, new Map()))}
+              {@render playStop(() => play(entry.name, new Map()))}
               <button class="btn btn-xs" onclick={() => openFromRobot(entry.name)}
                 >Download to editor</button
               >

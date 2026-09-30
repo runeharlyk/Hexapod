@@ -55,9 +55,13 @@ export const stanceFor = (feetDistance: number): Stance => {
   return DEFAULT_FEET.map(([x, y, z, w]) => [x * scale, y * scale, z, w])
 }
 
-// The firmware's ANIMATE base is the height slider (MotionService::handleCommand, zm = h * 50)
-// unless the file fixes a ride height.
-export const rideBase = (a: Animation, height: number) => a.rideHeight ?? height * 50
+export const sliderBase = (height: number) => height * 50
+
+// The firmware plays at the file's ride height, else at the height slider
+// (MotionService::handleCommand, zm = h * 50). A puppeteer pose carries no base, so the robot holds
+// it at the slider height; while mirroring, the preview uses that base too so both show one pose.
+export const rideBase = (a: Animation, height: number, mirroring: boolean) =>
+  mirroring ? sliderBase(height) : a.rideHeight ?? sliderBase(height)
 
 export interface EditorState {
   document: Animation
@@ -72,7 +76,6 @@ export interface EditorState {
 
 export interface Frame {
   pose: Pose
-  angles: number[]
   mask: number
   preview: AnimationPreview
 }
@@ -157,7 +160,7 @@ const frameOf = (pose: Pose, stance: Stance, baseZ: number): Frame => {
   pose.legs.forEach((leg, i) => {
     state.feet[i] = leg.joints ? [...fk[i]] : state.feet[i].map((v, axis) => v + (leg.v[axis] ?? 0))
   })
-  return { pose, angles, mask, preview: { angles: rad, body: state, mask } }
+  return { pose, mask, preview: { angles: rad, body: state, mask } }
 }
 
 // A keyframe's own feet, free of interpolation, overlays and params: foot legs as stored, joint
@@ -222,16 +225,20 @@ export const createEditor = (initial: Animation = blankAnimation()) => {
     doc.keyframes.splice(i + 1, 0, copyKeyframe(doc.keyframes[i], time))
   }
 
-  const reset = (document: Animation) =>
+  // A new document also ends the preview playback of the old one; the Timeline reacts to playing.
+  const reset = (document: Animation) => {
+    playback.set(null)
     state.update(s => ({
       ...s,
       document,
       selected: 0,
       scrub: 0,
+      playing: false,
       values: new Map(),
       dirty: false,
       error: null
     }))
+  }
 
   // Edits hold doubles; the preview and the mask are computed on the float32 values the robot
   // stores.
@@ -242,7 +249,7 @@ export const createEditor = (initial: Animation = blankAnimation()) => {
     [state, rounded, playback, outControllerData],
     ([s, doc, playing, ctrl]) => {
       const stance = stanceFor(ctrl[7])
-      const baseZ = rideBase(doc, ctrl[4])
+      const baseZ = rideBase(doc, ctrl[4], s.showOnRobot)
       if (playing) return frameOf(playing, stance, baseZ)
       if (!evaluable(doc)) return frameOf(stancePose(), stance, baseZ)
       const params = resolveParams(doc, s.values)
@@ -257,7 +264,6 @@ export const createEditor = (initial: Animation = blankAnimation()) => {
     validation,
     frame,
     pose: derived(frame, f => f.pose),
-    angles: derived(frame, f => f.angles),
     mask: derived(frame, f => f.mask),
 
     newDocument: () => reset(blankAnimation()),
@@ -320,7 +326,7 @@ export const createEditor = (initial: Animation = blankAnimation()) => {
         if (now.joints !== target.joints) {
           const body = bodyOf(k)
           const stance = stanceFor(controller[7])
-          const baseZ = rideBase(doc, controller[4])
+          const baseZ = rideBase(doc, controller[4], current.showOnRobot)
           next = {
             joints: target.joints,
             v:

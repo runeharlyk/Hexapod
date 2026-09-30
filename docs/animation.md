@@ -250,7 +250,7 @@ Play and Stop are disabled while unlinked, and On robot then says "not connected
 
 **Editor.**
 The toolbar has New, Open file, Open from (Built-in, Drafts, and Robot while linked), Save JSON, Save draft, Upload to robot, Play on robot, Stop and Show on robot.
-Save JSON downloads `<name>.json` written by `serializeAnimation`; Upload, Play on robot and Save draft are disabled while the document is invalid.
+Save JSON downloads `<name>.json` written by `serializeAnimation`; Save JSON, Upload, Play on robot and Save draft are disabled while the document is invalid.
 The 3D view is `Visualization` with a handle on each foot, drawn red when that leg clamps at the scrub head.
 The Pose panel edits the selected keyframe: six body sliders, and per leg a foot/joints toggle with three numeric fields.
 Flipping a leg converts its stored value (IK from foot to joints, FK from joints to foot) on the keyframe's body at the current stance and ride-height base.
@@ -280,12 +280,14 @@ Handle placement assumes a zero body rotation and translation, so on a keyframe 
 "Show on robot" can only be switched on while linked.
 Switching it on requests ANIMATE once and sends the current pose; from then on every pose change (an edit, the scrub, or the preview playback) sends a `PoseData`, throttled to at most one message per 50 ms (20 Hz) with the latest pose winning.
 Nothing is sent while the pose is unchanged; the firmware holds the last pose.
+The last pose is sent again when a `ModeData` reports ANIMATE, because the robot drops a pose that arrives before it has applied the mode, and when `AnimationStatus` returns to IDLE, because a play leaves the robot at stance.
 Switching it off, losing the link, or leaving the editor cancels the stream.
 The robot stays in the explicit, sticky ANIMATE (spec section 3) holding the last pose; the way back is a mode change from the controller page.
 A STAND or walking mode eases the pose home before the mode switches; DEACTIVATED, IDLE and POSE apply at once (see [Mode, borrow and hand-back](#mode-borrow-and-hand-back)).
 
 "Play on robot" uploads the current document, overwriting any robot file of the same name, then plays it with the Animation panel's preview values.
 Stop sends `animation_stop`.
+The robot ignores a play from DEACTIVATED or IDLE, but the app's mode store only learns the robot's mode from changes after connecting, so Play (here and in the Library) still sends the play and shows a warning when the store reads DEACTIVATED or IDLE.
 
 ### Drafts and preview height
 
@@ -293,7 +295,8 @@ Drafts live in `persistentStore('animation_drafts')`, the browser's localStorage
 They are a per-browser convenience and are not synced anywhere; a draft that no longer validates is left out of the lists.
 
 The preview runs on one fixed ride-height base, the file's `ride_height` or else the height slider's `h * 50`, and uses the feet-distance slider for the stance.
-The firmware instead blends the base during Entry (see [Ride height](#ride-height)), so a file that fixes `ride_height` away from the slider's height previews differently during Entry and Exit only.
+While "Show on robot" is on, the preview and the stream use the slider's base instead, because `PoseData` carries no base and the robot holds a puppeteer pose at the slider height; a file with a different fixed `ride_height` shows a hint next to the toggle.
+The firmware blends the base during Entry and holds the clip's height through Exit, settling to the slider only once the player is idle (see [Ride height](#ride-height)), so a file that fixes `ride_height` away from the slider's height previews differently during Entry and the settle after Exit only.
 
 ## Acceptance on hardware
 
@@ -352,6 +355,7 @@ Record the outcomes in the same handoff file.
 - Save draft reports success even when the browser refuses to store it, because `persistentStore` swallows the storage error; the draft then lives in memory until the page reloads.
 - Robot rows have no description and no parameter sliders, and play with the defaults: the list response carries only name and size.
 - A built-in's Play assumes the file is on the robot's LittleFS from `uploadfs`; the app does not check or upload it.
-- The preview skips the firmware's Entry and Exit ride-height blend, so a file that fixes `ride_height` away from the slider's height previews differently during Entry and Exit.
+- The preview skips the firmware's Entry ride-height blend and the settle to the slider after Exit, so a file that fixes `ride_height` away from the slider's height previews differently there.
+- `PoseData` carries no base, so the robot cannot be puppeteered at a file's fixed ride height; that needs a firmware change.
 - The Timeline's Loop replays the whole play, Exit and Entry included, each cycle, and does nothing for a `hold_end` animation, which holds until Stop.
 - A refused edit (a keyframe time out of order, for example) shows the error but leaves the typed value in the input.

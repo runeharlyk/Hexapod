@@ -13,6 +13,7 @@ import { loadAnimationJson, serializeAnimation, type Vec3 } from '$lib/animation
 import { DEFAULT_FEET } from '$lib/animation/evaluator'
 import { builtIn } from '$lib/animation/library'
 import { createEditor, shown, stanceFor } from '$lib/stores/animation-editor'
+import { outControllerData } from '$lib/stores'
 
 const crouch = () => {
   const found = builtIn.find(a => a.name === 'crouch')
@@ -89,11 +90,11 @@ describe('editor store', () => {
 
   it('changes the angles when scrubbing into a crouch', () => {
     expect(ed.open(crouch())).toBeNull()
-    const atStart = get(ed.angles)
+    const atStart = get(ed.frame).preview.angles
     ed.setScrub(0.25)
-    const scrubbed = get(ed.angles)
+    const scrubbed = get(ed.frame).preview.angles
     expect(scrubbed).toHaveLength(18)
-    const moved = scrubbed.some((v, i) => Math.abs(v - atStart[i]) > 1)
+    const moved = scrubbed.some((v, i) => Math.abs(v - atStart[i]) > 1 * (Math.PI / 180))
     expect(moved).toBe(true)
     expect(get(ed.pose).body[5]).toBeGreaterThan(0)
   })
@@ -106,7 +107,7 @@ describe('editor store', () => {
     })
     const other = createEditor(broken)
     expect(get(other.validation)).toMatch(/0 or 6 legs/)
-    expect(get(other.angles)).toHaveLength(18)
+    expect(get(other.frame).preview.angles).toHaveLength(18)
   })
 
   it('refuses to open an invalid document and keeps the current one', () => {
@@ -133,6 +134,35 @@ describe('editor store', () => {
     ed.setPlayback(null)
     expect(get(ed).playing).toBe(false)
     expect(get(ed.pose).body[5]).toBe(0)
+  })
+
+  it('stops the preview playback when another document opens', () => {
+    ed.addKeyframe(0)
+    ed.setPlayback({ body: [0, 0, 0, 0, 0, 42], legs: get(ed.pose).legs })
+    ed.setScrub(0.3)
+    expect(ed.open(crouch())).toBeNull()
+    expect(get(ed).playing).toBe(false)
+    expect(get(ed).scrub).toBe(0)
+    expect(get(ed.pose).body[5]).toBe(0)
+    ed.setPlayback({ body: [0, 0, 0, 0, 0, 42], legs: get(ed.pose).legs })
+    ed.newDocument()
+    expect(get(ed).playing).toBe(false)
+  })
+
+  it('mirrors on the robot at the slider height, else at the file ride height', () => {
+    ed.setMeta({ rideHeight: 0 })
+    ed.setBody(0, 5, 10)
+    outControllerData.set([0, 0, 0, 0, 0.6, 0, 0, 0])
+    try {
+      expect(get(ed.frame).preview.body.zm).toBeCloseTo(10, 6)
+      ed.setShowOnRobot(true)
+      expect(get(ed.frame).preview.body.zm).toBeCloseTo(40, 6)
+      expect(get(ed.pose).body[5]).toBeCloseTo(10, 6)
+      ed.setShowOnRobot(false)
+      expect(get(ed.frame).preview.body.zm).toBeCloseTo(10, 6)
+    } finally {
+      outControllerData.set([0, 0, 0, 0, 0, 0, 0, 0])
+    }
   })
 
   it('keeps the ease and removes keyframes but never the first', () => {

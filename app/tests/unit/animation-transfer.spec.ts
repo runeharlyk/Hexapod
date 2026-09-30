@@ -223,7 +223,9 @@ describe('PoseSender', () => {
     const p = pose()
     const before = structuredClone(p)
 
-    sender.send(p)
+    const first = stancePose()
+    first.body = [9, 9, 9, 9, 9, 9]
+    sender.send(first)
     sender.send(p)
     expect(poses()).toHaveLength(0)
     vi.advanceTimersByTime(49)
@@ -238,6 +240,25 @@ describe('PoseSender', () => {
     expect(data.legs[3].foot).toEqual({ x: 1, y: 2, z: 3 })
     expect(data.legs[0].foot).toEqual({ x: 0, y: 0, z: 0 })
     expect(p).toEqual(before)
+  })
+
+  it('resends the last pose even though it is unchanged', () => {
+    vi.useFakeTimers()
+    const sender = new PoseSender()
+    sender.send(pose())
+    vi.advanceTimersByTime(50)
+    sender.resend()
+    vi.advanceTimersByTime(50)
+
+    expect(poses()).toHaveLength(2)
+    expect(poses()[1].pose).toEqual(poses()[0].pose)
+  })
+
+  it('resends nothing before a first pose', () => {
+    vi.useFakeTimers()
+    new PoseSender().resend()
+    vi.advanceTimersByTime(50)
+    expect(poses()).toHaveLength(0)
   })
 
   it('sends nothing while the link is down', () => {
