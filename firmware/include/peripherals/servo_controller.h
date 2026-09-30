@@ -3,6 +3,7 @@
 
 #include <esp_log.h>
 #include <esp_timer.h>
+#include <cmath>
 #include <cstdint>
 #include <event_bus.h>
 #include <message_types.h>
@@ -89,6 +90,11 @@ class ServoController {
     void setAngles(float new_angles[NUM_SERVO]) {
         control_state = SERVO_CONTROL_STATE::ANGLE;
         for (int i = 0; i < NUM_SERVO; i++) {
+            // Last line of defence: a NaN or infinity from any mode keeps the servo where it was.
+            if (!std::isfinite(new_angles[i])) {
+                _nonFiniteSinceLog++;
+                continue;
+            }
             const int joint = i % 3;
             const float limit = JOINT_LIMIT_DEG[joint];
             const float requested = std::fabs(new_angles[i]);
@@ -113,6 +119,10 @@ class ServoController {
         if (now - _lastClampLog < 2000000) return;
         _lastClampLog = now;
         const uint32_t total = _clampedSinceLog[0] + _clampedSinceLog[1] + _clampedSinceLog[2];
+        if (_nonFiniteSinceLog) {
+            ESP_LOGE(TAG, "%lu non-finite joint commands ignored", (unsigned long)_nonFiniteSinceLog);
+            _nonFiniteSinceLog = 0;
+        }
         if (total) {
             ESP_LOGW(TAG,
                      "joint travel exceeded: coxa %lu femur %lu tibia %lu commands clamped; "
@@ -210,6 +220,7 @@ class ServoController {
     int64_t _lastClampLog{0};
     // Per joint type: coxa, femur, tibia. Reset each log window.
     uint32_t _clampedSinceLog[3] = {0, 0, 0};
+    uint32_t _nonFiniteSinceLog = 0;
     float _peakAbs[3] = {0.0f, 0.0f, 0.0f};
     uint8_t _peakLeg[3] = {0, 0, 0};
     float target_angles[NUM_SERVO] = {0};

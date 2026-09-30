@@ -192,7 +192,6 @@ struct PlayerCase {
 };
 
 struct Fixtures {
-    float tolerance = 1e-4f;
     std::vector<EvalRow> evaluate;
     std::vector<PlayerCase> player;
 };
@@ -208,9 +207,7 @@ const Fixtures &fixtures() {
         std::stringstream ss(line);
         std::string kind;
         ss >> kind;
-        if (kind == "T") {
-            ss >> f.tolerance;
-        } else if (kind == "E") {
+        if (kind == "E") {
             EvalRow r;
             std::string params;
             ss >> r.animation >> params >> r.t >> r.mask;

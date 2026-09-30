@@ -5,7 +5,7 @@ import numpy as np
 
 import gen_animation_fixtures as gen
 from src.robot import animation as an
-from src.robot.animation_files import load_json
+from src.robot.animation_files import load_json, to_proto
 
 
 def test_every_fixture_animation_is_valid_and_covered():
@@ -45,8 +45,7 @@ def test_player_traces_visit_every_state():
     assert states == {"ENTRY", "PLAYING", "HOLD", "EXIT", "IDLE"}
 
 
-def test_expected_txt_and_fixture_binaries_are_current(tmp_path):
-    from src.robot.animation_files import load_json, to_proto
+def test_expected_txt_and_fixture_binaries_are_current():
     assert gen.EXPECTED_TXT.read_bytes() == gen.text_dump(gen.generate()).encode()
     for path in sorted(gen.FIXTURE_DIR.glob("fx_*.json")):
         assert path.with_suffix(".pb").read_bytes() == to_proto(load_json(path)).SerializeToString(), path.name

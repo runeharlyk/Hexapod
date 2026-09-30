@@ -10,6 +10,7 @@
 #include <cJSON.h>
 
 #include <filesystem.h>
+#include <file_transfer.h>
 #include <communication/webserver.h>
 
 // HTTP (not the message bus — file content is large/on-network). Paths reject ".." so a request
@@ -17,8 +18,7 @@
 namespace fs_api {
 
 inline bool resolve(const char *rel, std::string &full) {
-    if (!rel || rel[0] != '/') return false;
-    if (strstr(rel, "..")) return false;
+    if (!file_transfer::validPath(rel)) return false;
     full = std::string(MOUNT_POINT) + rel;
     return true;
 }

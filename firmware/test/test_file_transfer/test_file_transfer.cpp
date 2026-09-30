@@ -73,6 +73,22 @@ void test_a_chunk_past_the_total_or_past_the_end_is_refused() {
     remove(path.c_str());
 }
 
+void test_a_refused_chunk_touches_no_file() {
+    const std::string path = tmpFile();
+    const uint8_t a[4] = {7, 7, 7, 7};
+    TEST_ASSERT_EQUAL(200, file_transfer::write(path.c_str(), 0, 4, a, 4));
+    // An overshooting first chunk must be refused before offset 0 truncates the file.
+    TEST_ASSERT_EQUAL(400, file_transfer::write(path.c_str(), 0, 3, a, 4));
+    const std::vector<uint8_t> got = contents(path);
+    TEST_ASSERT_EQUAL(4, got.size());
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(a, got.data(), 4);
+    remove(path.c_str());
+
+    const std::string missing = tmpFile();
+    TEST_ASSERT_EQUAL(400, file_transfer::write(missing.c_str(), 2, 6, a, 2));
+    TEST_ASSERT_EQUAL(-1, file_transfer::fileSize(missing.c_str()));
+}
+
 void test_read_returns_the_window_and_the_total() {
     const std::string path = tmpFile();
     uint8_t data[700];
@@ -97,6 +113,7 @@ int main(int, char **) {
     RUN_TEST(test_chunks_assemble_the_file_in_order);
     RUN_TEST(test_offset_zero_truncates_a_previous_file);
     RUN_TEST(test_a_chunk_past_the_total_or_past_the_end_is_refused);
+    RUN_TEST(test_a_refused_chunk_touches_no_file);
     RUN_TEST(test_read_returns_the_window_and_the_total);
     return UNITY_END();
 }

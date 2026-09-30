@@ -12,6 +12,7 @@
 #include <new>
 #include <esp_heap_caps.h>
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -67,7 +68,7 @@ class AnimationRunner {
             ESP_LOGW(TAG, "play %s refused: %s", cmd.name, error);
         }
         xSemaphoreGive(loadMutex_);
-        logLoadStackOnce();
+        logStackOnce(playStackLogged_, "load");
         return ok;
     }
 
@@ -110,6 +111,7 @@ class AnimationRunner {
             report.clamped_mask = sweepClampMask(*scratch_);
         }
         xSemaphoreGive(validateMutex_);
+        logStackOnce(validateStackLogged_, "validate");
     }
 
     // Control task, on the first ANIMATE tick: the pose the robot holds now is where the first play's
@@ -139,6 +141,7 @@ class AnimationRunner {
     // Control task, every tick in ANIMATE. Fills body (offsets applied to the stance) and the 18
     // angles.
     void tick(float dt, BodyStateMsg &body, float angles[18]) {
+        const int64_t startUs = esp_timer_get_time();
         // Taken before the requests so a play or stop consumed this tick counts as a change.
         const anim::State before = player_->state();
         const anim::Clip *clipBefore = player_->clip();
@@ -154,6 +157,7 @@ class AnimationRunner {
             if (!current_.legs[i].joints)
                 for (int k = 0; k < 3; ++k) body.feet[i][k] += current_.legs[i].v[k];
         publishStatus(before != player_->state() || clipBefore != player_->clip());
+        recordTickCost(startUs);
     }
 
     // Control task. A borrowed mode is handed back on this, not on a finish edge, so a play that was
@@ -167,6 +171,7 @@ class AnimationRunner {
     static constexpr const char *TAG = "AnimationRunner";
     static constexpr float PUPPET_SMOOTHING = 0.06f; // the STAND smoothing factor
     static constexpr float PUPPET_SWITCH_DEG = 0.5f;
+    static constexpr int64_t TICK_COST_WINDOW_US = 5000000;
     Kinematics *kin_ = nullptr;
     const float (*stance_)[4] = nullptr;
     AnimationStore store_;
@@ -188,13 +193,27 @@ class AnimationRunner {
     anim::Pose current_;
     uint32_t clampMask_ = 0;
     unsigned long lastStatusMs_ = 0;
+    std::atomic<bool> playStackLogged_ {false};
+    std::atomic<bool> validateStackLogged_ {false};
+    int64_t tickCostMaxUs_ = 0;
+    int64_t tickCostWindowStartUs_ = 0;
 
-    // The load runs on whichever transport task delivered the play; the first one reports its headroom.
-    static void logLoadStackOnce() {
-        static std::atomic<bool> logged {false};
+    // A load runs on whichever transport task delivered the request; the first of each kind reports
+    // its headroom.
+    static void logStackOnce(std::atomic<bool> &logged, const char *what) {
         if (logged.exchange(true)) return;
-        ESP_LOGI(TAG, "load ran on %s, stack high water mark %u B", pcTaskGetName(nullptr),
+        ESP_LOGI(TAG, "%s ran on %s, stack high water mark %u B", what, pcTaskGetName(nullptr),
                  (unsigned)uxTaskGetStackHighWaterMark(nullptr));
+    }
+
+    // The worst tick in each window, so the cost of evaluation, IK and status can be read on hardware.
+    void recordTickCost(int64_t startUs) {
+        const int64_t nowUs = esp_timer_get_time();
+        if (nowUs - startUs > tickCostMaxUs_) tickCostMaxUs_ = nowUs - startUs;
+        if (nowUs - tickCostWindowStartUs_ < TICK_COST_WINDOW_US) return;
+        ESP_LOGD(TAG, "tick max %lld us over the last 5 s", (long long)tickCostMaxUs_);
+        tickCostWindowStartUs_ = nowUs;
+        tickCostMaxUs_ = 0;
     }
 
     static anim::Clip *allocClip() {

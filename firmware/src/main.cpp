@@ -434,7 +434,7 @@ static void registerHandlers(CommAdapterBase &c) {
                 auto &list = res.response.animation_list;
                 list.entries_count = 0;
                 AnimationStore::list([&list](const char *name, uint32_t size) {
-                    if (list.entries_count >= 32) return;
+                    if (list.entries_count >= sizeof(list.entries) / sizeof(list.entries[0])) return;
                     auto &e = list.entries[list.entries_count++];
                     strncpy(e.name, name, sizeof(e.name) - 1);
                     e.size = size;
