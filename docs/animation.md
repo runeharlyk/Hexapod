@@ -71,8 +71,8 @@ There are two ways in.
 
 Every mode decision is made on the `ModeMsg` worker, in the order the messages arrive, by `decideMode` in `firmware/include/animation/mode_arbiter.h`; `firmware/test/test_mode_arbiter` replays the interleavings.
 
-- A borrow reaching the worker after a DEACTIVATED, IDLE or POSE is refused, the loaded play is dropped, and the standing mode is published again.
-- The hand-back is only requested by the control task, as a `ModeMsg` with `handback` set, at most once until the worker has handled a mode message.
+- A borrow reaching the worker after a DEACTIVATED, IDLE or POSE is refused, the loaded play is dropped, and the standing mode is published again as `APPLIED`.
+- The hand-back is only requested by the control task, as a `ModeMsg` of kind `HANDBACK`, at most once until the worker has handled a mode message.
   The worker applies it only while the robot is still in a borrowed ANIMATE, so an emergency stop or a sticky ANIMATE handled first wins.
 - An explicit STAND, WALK or WALK_NN while ANIMATE is playing or has a play pending does not leave at once.
   The player is stopped, the requested mode becomes the hand-back target, and the mode changes when Exit has eased every leg home.
@@ -80,6 +80,15 @@ Every mode decision is made on the `ModeMsg` worker, in the order the messages a
   The requested mode is published when it arrives, so a mode observer sees it about one exit time before the robot switches.
 - DEACTIVATED, IDLE and POSE apply at once even mid-play, because cutting or centring the servos immediately is the safety property.
 - Any other explicit mode ends a borrow, so an explicit ANIMATE mid-play makes the robot stay in ANIMATE afterwards.
+
+A `ModeMsg` carries a `ModeMsgKind` (`firmware/include/message_types.h`):
+
+- `REQUEST` is a mode asked for by a client, the ESP-NOW controller, the OTA service or the firmware itself; every `{MOTION_STATE::X}` initialiser is one.
+- `BORROW` is a play asking for ANIMATE, and `HANDBACK` is the control task asking for the borrowed mode back; the worker decides both against the mode at delivery.
+- `APPLIED` is `MotionService` reporting the mode it switched to, or kept, for a `BORROW` or `HANDBACK`; the worker ignores it.
+
+The `ModeData` bridge to the clients and the ESP-NOW adapter's mode mirror pass only `REQUEST` and `APPLIED`.
+A client therefore sees every requested mode when it arrives and every mode the animation borrow or hand-back actually produced, and never a borrow that was refused or a hand-back that was ignored.
 
 Exit returns to zero offsets on the slider's ride height, not the body pose the other STAND sliders held before the animation.
 A play while playing chains from the current pose.

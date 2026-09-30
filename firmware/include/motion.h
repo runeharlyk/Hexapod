@@ -75,19 +75,26 @@ class MotionService {
         for (int i = 0; i < 6; i++) target_gait_state.offset[i] = gait_state.offset[i];
     }
 
-    // Mode worker. The rules live in decideMode (animation/mode_arbiter.h); this executes them.
+    // Mode worker. The rules live in decideMode (animation/mode_arbiter.h); this executes them. A
+    // BORROW or HANDBACK is internal, so the mode it applied or kept is published as APPLIED for the
+    // observers, which see only REQUEST and APPLIED.
     void handleInputMode(ModeMsg const &m) {
-        ESP_LOGI("MotionService", "Mode %d%s", (int)m.mode, m.borrow ? " (borrow)" : m.handback ? " (hand-back)" : "");
+        if (m.kind == ModeMsgKind::APPLIED) return;
+        ESP_LOGI("MotionService", "Mode %d%s", (int)m.mode,
+                 m.kind == ModeMsgKind::BORROW     ? " (borrow)"
+                 : m.kind == ModeMsgKind::HANDBACK ? " (hand-back)"
+                                                   : "");
         _handbackSent = false;
-        const ModeArbiterDecision d = decideMode({motionState, _borrowedMode, _previousMode, m.mode, m.borrow,
-                                                  m.handback, !_animation.idleAndNothingPending()});
+        const ModeArbiterDecision d = decideMode(
+            {motionState, _borrowedMode, _previousMode, m.mode, m.kind, !_animation.idleAndNothingPending()});
         _borrowedMode = d.borrowed;
         _previousMode = d.previous;
         if (d.cancelPending) _animation.cancelPendingPlay();
         if (d.requestStop) _animation.requestStop();
+        const bool internal = m.kind != ModeMsgKind::REQUEST;
         switch (d.action) {
             case ModeArbiterDecision::APPLY: break;
-            case ModeArbiterDecision::RESTATE: EventBus<ModeMsg>::publish({motionState}); return;
+            case ModeArbiterDecision::RESTATE: EventBus<ModeMsg>::publish({motionState, ModeMsgKind::APPLIED}); return;
             case ModeArbiterDecision::IGNORE:
             case ModeArbiterDecision::GRACEFUL_LEAVE: return;
         }
@@ -98,6 +105,7 @@ class MotionService {
         // ANIMATE drives no gait, so a half-stride left in gait_state would resume after it.
         if (!isWalkingMode(d.mode)) stopLocomotionCommand(!actuated(d.mode) || d.mode == MOTION_STATE::ANIMATE);
         motionState == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
+        if (internal) EventBus<ModeMsg>::publish({motionState, ModeMsgKind::APPLIED});
     }
 
     // Adapter task. A play from any active mode borrows ANIMATE and hands the mode back when the
@@ -108,7 +116,7 @@ class MotionService {
         if (!actuated(motionState)) return;
         if (!_animation.requestPlay(c)) return;
         if (motionState == MOTION_STATE::ANIMATE) return;
-        EventBus<ModeMsg>::publish({MOTION_STATE::ANIMATE, true});
+        EventBus<ModeMsg>::publish({MOTION_STATE::ANIMATE, ModeMsgKind::BORROW});
     }
 
     // Adapter task. A stop only makes sense in ANIMATE.
@@ -288,7 +296,7 @@ class MotionService {
                 // wins. The flag is raised before the publish so the worker's clear cannot be lost.
                 if (_borrowedMode && !_handbackSent && _animation.idleAndNothingPending()) {
                     _handbackSent = true;
-                    if (!EventBus<ModeMsg>::publish({_previousMode, false, true})) _handbackSent = false;
+                    if (!EventBus<ModeMsg>::publish({_previousMode, ModeMsgKind::HANDBACK})) _handbackSent = false;
                 }
                 break;
             }

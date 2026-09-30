@@ -11,10 +11,16 @@
 
 enum class MOTION_STATE { DEACTIVATED, IDLE, POSE, STAND, WALK, WALK_NN, ANIMATE };
 
+// REQUEST: a mode asked for by a client, the controller or the firmware itself. BORROW: an animation
+// play asking for ANIMATE. HANDBACK: the control task asking for the borrowed mode back. BORROW and
+// HANDBACK are decided against the mode at delivery. APPLIED: MotionService reporting the mode it
+// switched to or kept for a BORROW or HANDBACK; it is not a request. Mode observers outside
+// MotionService see only REQUEST and APPLIED.
+enum class ModeMsgKind { REQUEST, BORROW, HANDBACK, APPLIED };
+
 struct ModeMsg {
     MOTION_STATE mode;
-    bool borrow = false;   // an animation play asking for ANIMATE; decided against the mode at delivery
-    bool handback = false; // the control task asking for the borrowed mode back; decided at delivery
+    ModeMsgKind kind = ModeMsgKind::REQUEST;
 };
 
 // TUNED is the CMA-ES-searched gait from simulation/src/resources/gait_library.json, emitted into

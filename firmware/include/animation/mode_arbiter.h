@@ -6,9 +6,10 @@
 // hand-back can never overtake an emergency stop that was handled first.
 //
 // Rules:
+// - An APPLIED message is MotionService reporting its own decision and is never a request: ignored.
 // - A borrow (a play asking for ANIMATE) from a mode that is not actuated is refused: the loaded play
-//   is cancelled and the standing mode is restated, because every mode observer has just seen the
-//   refused ANIMATE. A DEACTIVATED handled while the clip loaded therefore wins over the play.
+//   is cancelled and the standing mode is restated as APPLIED, so the client that asked for the play
+//   learns the answer. A DEACTIVATED handled while the clip loaded therefore wins over the play.
 // - A borrow from an actuated mode other than ANIMATE enters ANIMATE and records that mode for the
 //   hand-back; a borrow while already in ANIMATE (a chained play) changes nothing.
 // - A hand-back returns to the recorded mode only while ANIMATE is still borrowed; an explicit mode
@@ -34,8 +35,7 @@ struct ModeArbiterInput {
     bool borrowed;
     MOTION_STATE previous;
     MOTION_STATE requested;
-    bool borrow;
-    bool handback;
+    ModeMsgKind kind;
     bool playerBusy; // the player is not idle, or a play is loaded and waiting
 };
 
@@ -53,7 +53,8 @@ struct ModeArbiterDecision {
 inline ModeArbiterDecision decideMode(const ModeArbiterInput &in) {
     using D = ModeArbiterDecision;
     D d {D::IGNORE, in.current, in.borrowed, in.previous, false, false};
-    if (in.borrow) {
+    if (in.kind == ModeMsgKind::APPLIED) return d;
+    if (in.kind == ModeMsgKind::BORROW) {
         if (!actuated(in.current)) {
             d.action = D::RESTATE;
             d.cancelPending = true;
@@ -67,7 +68,7 @@ inline ModeArbiterDecision decideMode(const ModeArbiterInput &in) {
         }
         return d;
     }
-    if (in.handback) {
+    if (in.kind == ModeMsgKind::HANDBACK) {
         if (in.current == MOTION_STATE::ANIMATE && in.borrowed) {
             d.action = D::APPLY;
             d.mode = in.previous;

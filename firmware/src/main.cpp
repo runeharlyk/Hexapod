@@ -570,8 +570,10 @@ static void setupComm() {
     });
 
     // Mode and gait also change from the ESP-NOW controller and from other clients, so every
-    // change is pushed rather than assumed to originate from the viewing app.
+    // change is pushed rather than assumed to originate from the viewing app. A borrow or hand-back
+    // is only a question to MotionService; its answer arrives as APPLIED.
     addBridge<ModeMsg>(MessageTraits<socket_message_ModeData>::tag, [](const ModeMsg &m) {
+        if (m.kind != ModeMsgKind::REQUEST && m.kind != ModeMsgKind::APPLIED) return;
         socket_message_ModeData out = socket_message_ModeData_init_zero;
         out.mode = static_cast<socket_message_ModesEnum>(m.mode);
         emitAll(out);

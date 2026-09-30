@@ -10,6 +10,7 @@ namespace {
 
 using D = ModeArbiterDecision;
 using M = MOTION_STATE;
+using K = ModeMsgKind;
 
 // The worker's view of MotionService, updated exactly as handleInputMode executes a decision.
 struct Robot {
@@ -18,17 +19,18 @@ struct Robot {
     M previous = M::STAND;
 };
 
-D deliver(Robot &r, M requested, bool borrow, bool handback, bool playerBusy) {
-    const D d = decideMode({r.mode, r.borrowed, r.previous, requested, borrow, handback, playerBusy});
+D deliver(Robot &r, M requested, K kind, bool playerBusy) {
+    const D d = decideMode({r.mode, r.borrowed, r.previous, requested, kind, playerBusy});
     r.borrowed = d.borrowed;
     r.previous = d.previous;
     if (d.action == D::APPLY) r.mode = d.mode;
     return d;
 }
 
-D explicitMode(Robot &r, M mode, bool playerBusy) { return deliver(r, mode, false, false, playerBusy); }
-D borrow(Robot &r, bool playerBusy) { return deliver(r, M::ANIMATE, true, false, playerBusy); }
-D handback(Robot &r) { return deliver(r, r.previous, false, true, false); }
+D explicitMode(Robot &r, M mode, bool playerBusy) { return deliver(r, mode, K::REQUEST, playerBusy); }
+D borrow(Robot &r, bool playerBusy) { return deliver(r, M::ANIMATE, K::BORROW, playerBusy); }
+D handback(Robot &r) { return deliver(r, r.previous, K::HANDBACK, false); }
+D applied(Robot &r, M mode) { return deliver(r, mode, K::APPLIED, false); }
 
 void assertMode(M expected, M actual) { TEST_ASSERT_EQUAL_INT((int)expected, (int)actual); }
 
@@ -172,6 +174,29 @@ void test_an_explicit_animate_while_borrowed_becomes_sticky() {
     assertMode(M::ANIMATE, r.mode);
 }
 
+void test_an_applied_report_is_never_taken_as_a_request() {
+    // MotionService reports the mode a borrow or hand-back produced as APPLIED on the same bus; were
+    // it decided, an APPLIED STAND trailing a hand-back would end a later sticky ANIMATE.
+    Robot r {M::STAND};
+    borrow(r, true);
+    D d = applied(r, M::ANIMATE);
+    TEST_ASSERT_EQUAL_INT(D::IGNORE, d.action);
+    TEST_ASSERT_FALSE(d.cancelPending);
+    TEST_ASSERT_FALSE(d.requestStop);
+    TEST_ASSERT_TRUE(r.borrowed);
+    assertMode(M::STAND, r.previous);
+
+    explicitMode(r, M::ANIMATE, false);
+    d = applied(r, M::STAND);
+    TEST_ASSERT_EQUAL_INT(D::IGNORE, d.action);
+    assertMode(M::ANIMATE, r.mode);
+    TEST_ASSERT_FALSE(r.borrowed);
+
+    Robot off {M::DEACTIVATED};
+    TEST_ASSERT_EQUAL_INT(D::IGNORE, applied(off, M::STAND).action);
+    assertMode(M::DEACTIVATED, off.mode);
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_two_quick_plays_from_stand_keep_stand_as_the_hand_back);
@@ -182,5 +207,6 @@ int main(int, char **) {
     RUN_TEST(test_an_explicit_stand_mid_play_leaves_through_exit);
     RUN_TEST(test_cutting_modes_mid_play_apply_at_once);
     RUN_TEST(test_an_explicit_animate_while_borrowed_becomes_sticky);
+    RUN_TEST(test_an_applied_report_is_never_taken_as_a_request);
     return UNITY_END();
 }
