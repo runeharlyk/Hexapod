@@ -2,6 +2,7 @@
   "name": "spooked",
   "description": "A startled hop up and back with a tremble, then a slow settle",
   "schema": 1,
+  "rideHeight": 0,
   "keyframes": [
     {"time": 0},
     {"time": 0.15, "ease": "EASE_OUT", "body": {"z": -25, "y": -20, "pitch": 0.12}},

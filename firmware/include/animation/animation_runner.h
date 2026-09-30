@@ -6,6 +6,13 @@
 // inactive buffer under the load lock and raise a flag the control task consumes under the same lock,
 // or copy a pose under a critical section. The control task is the only reader of the active clip and
 // the only caller of enter, reset and tick, so a clip is never replaced while it is being evaluated.
+//
+// Ride height: the evaluated body z is an offset, and the runner adds a base before IK. While a clip
+// that sets ride_height plays, the base is that value; otherwise, including puppeteer poses and after
+// Exit, it is the STAND ride-height slider, so a clip played on a tall-standing robot stays tall and
+// Exit returns to the slider's height. The base eases toward its target with the STAND smoothing.
+// The evaluator and the player convert a foot leg to joints at base 0, so a clip with joint legs
+// keeps its switching keyframes continuous only with ride_height 0.
 
 #include <atomic>
 #include <cstring>
@@ -115,9 +122,12 @@ class AnimationRunner {
     }
 
     // Control task, on the first ANIMATE tick: the pose the robot holds now is where the first play's
-    // entry blend starts. With no play waiting, the pose eases to stance as a puppet target would.
-    void enter(const BodyStateMsg &live) {
+    // entry blend starts. With no play waiting, the pose eases to stance as a puppet target would. The
+    // base starts at the slider, and only the height beyond it is captured as an offset.
+    void enter(const BodyStateMsg &live, float sliderZm) {
+        baseZm_ = sliderZm;
         anim::capturePose(live, stance_, current_);
+        current_.body[anim::Z] = live.zm - baseZm_;
         havePuppet_ = !pendingPlay_.load(std::memory_order_acquire);
         if (havePuppet_) puppetTarget_ = anim::Pose {};
     }
@@ -138,9 +148,9 @@ class AnimationRunner {
         publishStatus(true);
     }
 
-    // Control task, every tick in ANIMATE. Fills body (offsets applied to the stance) and the 18
-    // angles.
-    void tick(float dt, BodyStateMsg &body, float angles[18]) {
+    // Control task, every tick in ANIMATE. sliderZm is the STAND ride-height target. Fills body (the
+    // offsets and the base applied to the stance) and the 18 angles.
+    void tick(float dt, float sliderZm, BodyStateMsg &body, float angles[18]) {
         const int64_t startUs = esp_timer_get_time();
         // Taken before the requests so a play or stop consumed this tick counts as a change.
         const anim::State before = player_->state();
@@ -148,14 +158,21 @@ class AnimationRunner {
         consumeRequests();
         if (player_->state() != anim::State::IDLE) {
             current_ = player_->update(dt);
+            // Exit ends at stance, but a leg that blended in joint space still holds it as joint
+            // angles; restate it as zero offsets so the pose reads as at stance and the feet follow the base.
+            if (player_->state() == anim::State::IDLE) current_ = anim::Pose {};
         } else if (havePuppet_) {
             approachPuppet();
         }
-        clampMask_ = anim::poseToAngles(current_, *kin_, stance_, angles);
-        anim::bodyState(current_.body, stance_, body);
+        const bool fixedBase = player_->state() != anim::State::IDLE && player_->clip()->hasRideHeight;
+        baseZm_ = lerpf(baseZm_, fixedBase ? player_->clip()->rideHeight : sliderZm, STAND_SMOOTHING);
+        anim::Pose out = current_;
+        out.body[anim::Z] += baseZm_;
+        clampMask_ = anim::poseToAngles(out, *kin_, stance_, angles);
+        anim::bodyState(out.body, stance_, body);
         for (int i = 0; i < 6; ++i)
-            if (!current_.legs[i].joints)
-                for (int k = 0; k < 3; ++k) body.feet[i][k] += current_.legs[i].v[k];
+            if (!out.legs[i].joints)
+                for (int k = 0; k < 3; ++k) body.feet[i][k] += out.legs[i].v[k];
         publishStatus(before != player_->state() || clipBefore != player_->clip());
         recordTickCost(startUs);
     }
@@ -169,7 +186,7 @@ class AnimationRunner {
 
   private:
     static constexpr const char *TAG = "AnimationRunner";
-    static constexpr float PUPPET_SMOOTHING = 0.06f; // the STAND smoothing factor
+    static constexpr float STAND_SMOOTHING = 0.06f;
     static constexpr float PUPPET_SWITCH_DEG = 0.5f;
     static constexpr int64_t TICK_COST_WINDOW_US = 5000000;
     Kinematics *kin_ = nullptr;
@@ -190,7 +207,8 @@ class AnimationRunner {
     bool puppetPending_ = false;
     bool havePuppet_ = false;
     anim::Pose puppetTarget_;
-    anim::Pose current_;
+    anim::Pose current_; // offsets; the base is added on output
+    float baseZm_ = 0.0f;
     uint32_t clampMask_ = 0;
     unsigned long lastStatusMs_ = 0;
     std::atomic<bool> playStackLogged_ {false};
@@ -256,29 +274,33 @@ class AnimationRunner {
     // in joint space, as the spec blends a joint-angle leg: a foot leg becoming a joint leg is
     // converted to joints once and lerps toward the puppet joints; a joint leg becoming a foot leg lerps
     // toward the IK of the target foot and switches to the foot offset once every joint is within
-    // PUPPET_SWITCH_DEG of it.
+    // PUPPET_SWITCH_DEG of it. The joints are solved against the body with the base, the body a foot
+    // leg is output with, so the switch is continuous.
     void approachPuppet() {
-        for (int a = 0; a < 6; ++a) current_.body[a] = lerpf(current_.body[a], puppetTarget_.body[a], PUPPET_SMOOTHING);
+        for (int a = 0; a < 6; ++a) current_.body[a] = lerpf(current_.body[a], puppetTarget_.body[a], STAND_SMOOTHING);
+        float body[6];
+        for (int a = 0; a < 6; ++a) body[a] = current_.body[a];
+        body[anim::Z] += baseZm_;
         for (int i = 0; i < 6; ++i) {
             anim::LegTarget &leg = current_.legs[i];
             const anim::LegTarget &target = puppetTarget_.legs[i];
             if (!leg.joints && target.joints) {
                 float j[3];
-                anim::legJointsDeg(*kin_, current_.body, leg.v, i, stance_, j);
+                anim::legJointsDeg(*kin_, body, leg.v, i, stance_, j);
                 leg = {true, {j[0], j[1], j[2]}};
             }
             if (leg.joints && !target.joints) {
                 float j[3];
-                anim::legJointsDeg(*kin_, current_.body, target.v, i, stance_, j);
+                anim::legJointsDeg(*kin_, body, target.v, i, stance_, j);
                 bool arrived = true;
                 for (int k = 0; k < 3; ++k) {
-                    leg.v[k] = lerpf(leg.v[k], j[k], PUPPET_SMOOTHING);
+                    leg.v[k] = lerpf(leg.v[k], j[k], STAND_SMOOTHING);
                     arrived = arrived && fabsf(leg.v[k] - j[k]) <= PUPPET_SWITCH_DEG;
                 }
                 if (arrived) leg = target;
                 continue;
             }
-            for (int k = 0; k < 3; ++k) leg.v[k] = lerpf(leg.v[k], target.v[k], PUPPET_SMOOTHING);
+            for (int k = 0; k < 3; ++k) leg.v[k] = lerpf(leg.v[k], target.v[k], STAND_SMOOTHING);
         }
     }
 

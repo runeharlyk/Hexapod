@@ -126,6 +126,7 @@ class Animation:
     keyframes: list[Keyframe] = field(default_factory=list)
     overlays: list[Overlay] = field(default_factory=list)
     params: list[ParamSpec] = field(default_factory=list)
+    ride_height: float | None = None
 
     @property
     def duration(self) -> float:
@@ -145,6 +146,8 @@ def leg_target(keyframe: Keyframe, leg: int) -> LegTarget:
 def _non_finite(anim: Animation) -> str | None:
     if not (math.isfinite(anim.entry_time) and math.isfinite(anim.exit_time)):
         return "entry_time and exit_time must be finite"
+    if anim.ride_height is not None and not math.isfinite(anim.ride_height):
+        return "ride_height must be finite"
     for i, k in enumerate(anim.keyframes):
         values = [k.time, *k.body]
         for lt in k.legs:

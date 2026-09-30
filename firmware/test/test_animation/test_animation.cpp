@@ -85,6 +85,12 @@ void test_from_proto_copies_every_fixture_and_validates() {
     TEST_ASSERT_EQUAL(0, clip.overlays[0].channel);
     TEST_ASSERT_EQUAL(anim::CHANNEL_FOOT, clip.overlays[2].kind);
     TEST_ASSERT_EQUAL(5, clip.overlays[2].channel);
+    TEST_ASSERT_FALSE(clip.hasRideHeight);
+    a.has_ride_height = true;
+    a.ride_height = -20.0f;
+    anim::fromProto(a, clip);
+    TEST_ASSERT_TRUE(clip.hasRideHeight);
+    TEST_ASSERT_EQUAL_FLOAT(-20.0f, clip.rideHeight);
 }
 
 anim::Clip twoKeyframes() {
@@ -115,6 +121,13 @@ void test_validate_reports_each_structural_rule() {
     c = twoKeyframes(); c.keyframes[1].ease = 4; expectError(c, "ease");
     c = twoKeyframes(); c.loop = true; c.holdEnd = true; expectError(c, "loop");
     c = twoKeyframes(); c.entryTime = INFINITY; expectError(c, "finite");
+    c = twoKeyframes();
+    c.hasRideHeight = true;
+    c.rideHeight = NAN;
+    expectError(c, "ride_height");
+    c = twoKeyframes();
+    c.rideHeight = NAN;
+    TEST_ASSERT_NULL(anim::validate(c));
     c = twoKeyframes(); c.overlayCount = 1; c.overlays[0].end = 1; expectError(c, "channel");
     c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {anim::CHANNEL_BODY, 6, 1, 1, 0, 0, 1}; expectError(c, "body_axis");
     c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {anim::CHANNEL_FOOT, 18, 1, 1, 0, 0, 1}; expectError(c, "foot_channel");

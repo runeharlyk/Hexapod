@@ -193,7 +193,12 @@ class Sandbox:
 
     def _apply_animation(self):
         """Playing: the player drives the pose. Idle: the scrub slider evaluates the animation directly,
-        and the scrubbed pose becomes the player's live pose so a following Play blends from it."""
+        and the scrubbed pose becomes the player's live pose so a following Play blends from it.
+
+        The evaluated body z is an offset. The base ride height is added to a copy just before IK, so
+        the player's live pose stays an offset and a following Play does not treat the STAND height as
+        one: the animation's ride_height when it sets one, else the height slider, as the firmware does.
+        """
         if self.player.state != an.State.IDLE:
             pose = self.player.update(CONTROL_DT)
         elif self.animation is not None:
@@ -202,6 +207,9 @@ class Sandbox:
             self.player.last_pose = pose
         else:
             pose = an.Pose.stance()
+        pose = pose.copy()
+        ride_height = self.animation.ride_height if self.animation is not None else None
+        pose.body[an.BodyAxis.Z] += self._height_to_zm(self.v("height")) if ride_height is None else ride_height
         angles_deg, mask = an.pose_to_angles(pose, self.kin)
         self._clamp_mask = mask
         self._animation_angles = np.radians(angles_deg)

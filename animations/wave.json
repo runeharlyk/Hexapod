@@ -2,6 +2,7 @@
   "name": "wave",
   "description": "Lean away from the right front leg, raise it, flick the foot twice",
   "schema": 1,
+  "rideHeight": 0,
   "keyframes": [
     {"time": 0},
     {"time": 0.5, "ease": "EASE_IN_OUT", "body": {"x": -25, "y": -15, "z": -5, "pitch": 0.08},

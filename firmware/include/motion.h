@@ -244,7 +244,7 @@ class MotionService {
         if ((state == MOTION_STATE::ANIMATE) != _animating) {
             _animating = state == MOTION_STATE::ANIMATE;
             if (_animating)
-                _animation.enter(body_state);
+                _animation.enter(body_state, target_body_state.zm);
             else
                 _animation.reset();
         }
@@ -283,7 +283,7 @@ class MotionService {
 #endif
             case MOTION_STATE::ANIMATE: {
                 // tick writes the angles itself; body_state carries the absolute pose for telemetry.
-                _animation.tick(dt, body_state, msgAngles.angles);
+                _animation.tick(dt, target_body_state.zm, body_state, msgAngles.angles);
                 // Only asks: the worker decides, so a mode it handled first (a stop, a sticky ANIMATE)
                 // wins. The flag is raised before the publish so the worker's clear cannot be lost.
                 if (_borrowedMode && !_handbackSent && _animation.idleAndNothingPending()) {
@@ -427,6 +427,13 @@ class MotionService {
 
     void resetCommandIfTimedOut() {
         if (lastCommandMillis == 0) return;
+        // The app sends no heartbeat in ANIMATE, and the animation base follows the height slider, so
+        // zeroing it would drop the body mid-play. The window restarts instead, so the app has a full
+        // window after a hand-back to resume its heartbeat.
+        if (motionState == MOTION_STATE::ANIMATE) {
+            lastCommandMillis = millis();
+            return;
+        }
         if (commandTimedOut) return;
         if (millis() - lastCommandMillis < COMMAND_TIMEOUT_MS) return;
 

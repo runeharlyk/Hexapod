@@ -102,6 +102,8 @@ struct Clip {
     Overlay overlays[OVERLAY_MAX];
     int paramCount = 0;
     ParamSpec params[PARAM_MAX];
+    bool hasRideHeight = false; // else the runner's base follows the ride-height slider
+    float rideHeight = 0.0f;
 
     float duration() const { return keyframeCount > 0 ? keyframes[keyframeCount - 1].time : 0.0f; }
     float entrySeconds() const { return entryTime > 0.0f ? entryTime : DEFAULT_ENTRY_S; }
@@ -140,6 +142,7 @@ inline const char *validate(const Clip &c) {
         if (k.ease < LINEAR || k.ease > EASE_IN_OUT) return "keyframe ease out of range";
     }
     if (!std::isfinite(c.entryTime) || !std::isfinite(c.exitTime)) return "entry/exit time must be finite";
+    if (c.hasRideHeight && !std::isfinite(c.rideHeight)) return "ride_height must be finite";
     for (int i = 0; i < c.keyframeCount; ++i) {
         const Keyframe &k = c.keyframes[i];
         if (!std::isfinite(k.time)) return "keyframe time must be finite";

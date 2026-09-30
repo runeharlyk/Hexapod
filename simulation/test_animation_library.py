@@ -56,6 +56,22 @@ def test_bundled_animation_stays_inside_joint_travel_at_its_parameter_extremes(p
             assert mask == 0, f"{path.stem} clamps joints {mask:018b} at t={t} with {label}"
 
 
+SLIDER_EXTREMES_MM = (-50.0, 50.0)  # the STAND ride-height slider, h * 50
+
+
+@pytest.mark.parametrize("path", FILES, ids=[p.stem for p in FILES])
+def test_bundled_animation_stays_inside_joint_travel_on_every_base_the_runner_may_add(path):
+    """A fixed ride_height is the only base; an animation following the slider must fit both ends."""
+    a = load_json(path)
+    params = an.resolve_params(a, None)
+    for base in SLIDER_EXTREMES_MM if a.ride_height is None else (a.ride_height,):
+        for t in sample_times(a):
+            pose = an.evaluate(a, params, t, KIN)
+            pose.body[an.BodyAxis.Z] += base
+            _, mask = an.pose_to_angles(pose, KIN)
+            assert mask == 0, f"{path.stem} clamps joints {mask:018b} at t={t} on a {base:+.0f} mm base"
+
+
 from src.robot.animation_files import load_binary
 
 

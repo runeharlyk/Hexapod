@@ -68,6 +68,7 @@ def test_validate_accepts_a_minimal_animation():
     (lambda a: a.overlays.append(an.Overlay(body_axis=0, amplitude=1, frequency=1, start=0, end=math.inf)),
      "overlay 0 has a non-finite value"),
     (lambda a: setattr(a, "entry_time", math.inf), "entry_time and exit_time must be finite"),
+    (lambda a: setattr(a, "ride_height", math.nan), "ride_height must be finite"),
     (lambda a: setattr(a, "description", "\u00e9" * 48 + "d"), "96 bytes"),
     (lambda a: (setattr(a, "loop", True), setattr(a, "hold_end", True)), "loop and hold_end"),
     (lambda a: a.params.append(an.ParamSpec(an.ParamId.REPEAT, 0, 1, 2)), "REPEAT needs min >= 1"),
@@ -149,6 +150,22 @@ def test_from_proto_round_trips_through_to_proto_and_json():
     assert b.params[0].id == an.ParamId.FOOT_LIFT and b.params[0].default_value == 1.0
     text = json_text(b)
     assert '"defaultValue": 1.0' in text and '"holdEnd"' not in text
+
+
+def test_ride_height_round_trips_only_when_set():
+    unset = to_proto(two_keyframes())
+    assert not unset.HasField("ride_height")
+    assert from_proto(unset).ride_height is None
+    assert "rideHeight" not in json_text(two_keyframes())
+
+    zero = to_proto(two_keyframes(ride_height=0.0))
+    assert zero.HasField("ride_height")
+    assert from_proto(pb.Animation.FromString(zero.SerializeToString())).ride_height == 0.0
+    assert '"rideHeight": 0.0' in json_text(two_keyframes(ride_height=0.0))
+
+    tall = from_proto(json_format.Parse('{"name": "t", "schema": 1, "keyframes": [{"time": 0}], "rideHeight": 30}',
+                                        pb.Animation()))
+    assert tall.ride_height == 30.0 and an.validate(tall) is None
 
 
 def test_from_proto_keeps_a_three_leg_keyframe_for_validate_to_reject():

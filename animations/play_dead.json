@@ -2,6 +2,7 @@
   "name": "play_dead",
   "description": "Drop to the belly with all legs folded up in the air, and stay there",
   "schema": 1,
+  "rideHeight": 0,
   "holdEnd": true,
   "entryTime": 0.6,
   "exitTime": 1.2,

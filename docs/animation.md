@@ -2,14 +2,13 @@
 
 Named full-body animations (wave, crouch, play dead, ...) that pose the body and feet over time.
 The firmware evaluates an animation every control tick into a body pose and foot targets, then runs the same inverse kinematics as the gait.
-Animations are offsets from the neutral body pose: zero ride height and the current feet distance.
-The STAND ride-height slider does not carry into an animation, and Exit returns to that neutral stance.
+Animations are offsets from the standing pose at the current feet distance; the runner adds a base ride height to the body `z` before IK (see [Ride height](#ride-height)).
 The design rationale is in `docs/superpowers/specs/2026-09-29-animation-system-design.md`; this document describes what is built.
 
 ## The animation file
 
 The schema is `platform_shared/animation.proto` (package `animation`).
-An `Animation` holds a name (at most 32 characters of `[a-z0-9_-]`, equal to the file stem), a description, `schema = 1`, `loop`, `hold_end`, `entry_time`, `exit_time`, up to 32 keyframes, up to 8 overlays and up to 10 declared parameters.
+An `Animation` holds a name (at most 32 characters of `[a-z0-9_-]`, equal to the file stem), a description, `schema = 1`, `loop`, `hold_end`, `entry_time`, `exit_time`, up to 32 keyframes, up to 8 overlays, up to 10 declared parameters and an optional `ride_height` (mm, finite).
 A keyframe has a time in seconds (strictly increasing, the first at 0), an ease, a body pose and 0 or 6 leg targets.
 The ease shapes the segment that ends at that keyframe.
 A leg target is either a foot offset (mm from the standing foot) or three joint angles (degrees, IK output convention: coxa yaw, absolute femur, tibia relative to femur).
@@ -60,7 +59,7 @@ A port must honour these rules.
 `MOTION_STATE::ANIMATE` is mode 6 (`ModesEnum.ANIMATE`).
 The `MotionService` ANIMATE branch advances the player with the measured `dt`, runs IK with the joint-leg overrides and clamps, and publishes the angles like any other mode.
 IMU self-levelling is off in ANIMATE.
-The command timeout that zeroes WALK does not apply.
+The command timeout that zeroes WALK does not apply, and it does not zero the ride-height slider while in ANIMATE: its window restarts every tick, so after a hand-back the app has a full window to resume its heartbeat.
 
 There are two ways in.
 
@@ -82,8 +81,22 @@ Every mode decision is made on the `ModeMsg` worker, in the order the messages a
 - DEACTIVATED, IDLE and POSE apply at once even mid-play, because cutting or centring the servos immediately is the safety property.
 - Any other explicit mode ends a borrow, so an explicit ANIMATE mid-play makes the robot stay in ANIMATE afterwards.
 
-Exit returns to zero offsets, which is the neutral stance (zero ride height, current feet distance), not the body pose the STAND sliders held before the animation.
+Exit returns to zero offsets on the slider's ride height, not the body pose the other STAND sliders held before the animation.
 A play while playing chains from the current pose.
+
+### Ride height
+
+The evaluator's body `z` is an offset; the runner (`AnimationRunner`) adds a base ride height before IK.
+When the file has no `ride_height`, the base is the current ride-height slider (the STAND target `zm`), so an animation played on a tall-standing robot stays tall and Exit returns to that height.
+When the file sets `ride_height`, the base is that value while the player is not idle, regardless of the slider, because some animations only work at one height; Exit still returns to the slider's height.
+The base eases toward its target with the STAND smoothing factor, so the change between the two is never a step.
+Puppeteer poses use the slider base.
+Entering ANIMATE starts the base at the slider and captures only the height beyond it as an offset, so the STAND height is not treated as part of the pose.
+The base is applied by each platform's runner, not by the evaluator, so the parity fixtures are unaffected; the sim sandbox adds it the same way in Animate mode.
+
+The evaluator and the player convert a foot leg to joint angles at base 0 (the mixed-leg rule and the entry and exit blends), so an animation with a joint leg keeps its switching keyframes and its exit continuous only with `ride_height: 0`.
+The stance itself has about 50 mm of femur travel at the crouched end of the slider, so no bundled animation fits the whole slider range, and all seven set `ride_height: 0`.
+`simulation/test_animation_library.py` checks every keyframe and midpoint on each base the runner may add: the fixed `ride_height`, or both slider ends (`-50` and `+50` mm) for an animation that follows the slider.
 
 ### Puppeteering
 

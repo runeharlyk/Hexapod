@@ -2,6 +2,7 @@
   "name": "stretch",
   "description": "Front legs reach forward with the chest down, then the rear legs reach back",
   "schema": 1,
+  "rideHeight": 0,
   "keyframes": [
     {"time": 0},
     {"time": 0.9, "ease": "EASE_IN_OUT", "body": {"pitch": 0.15, "z": 12, "y": -10},

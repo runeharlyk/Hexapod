@@ -17,6 +17,8 @@ inline void fromProto(const animation_Animation &m, Clip &c) {
     c.holdEnd = m.hold_end;
     c.entryTime = m.entry_time;
     c.exitTime = m.exit_time;
+    c.hasRideHeight = m.has_ride_height;
+    c.rideHeight = m.ride_height;
     c.keyframeCount = m.keyframes_count;
     for (int i = 0; i < c.keyframeCount && i < KEYFRAME_MAX; ++i) {
         const animation_Keyframe &src = m.keyframes[i];
