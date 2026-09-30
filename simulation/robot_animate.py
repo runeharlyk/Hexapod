@@ -266,6 +266,8 @@ def shell(link: Link) -> None:
             continue
         try:
             run(link, ap.parse_args(shlex.split(line)))
+        except KeyboardInterrupt:
+            print("interrupted")
         except (argparse.ArgumentError, SystemExit, KeyError, ValueError) as e:
             # SystemExit is argparse rejecting the line or a request the robot left unanswered; the port stays open.
             print(f"error: {e}")

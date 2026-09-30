@@ -159,6 +159,7 @@ class AnimationRunner {
         new (player_) anim::Player(*kin_);
         player_->setStance(stance_);
         current_ = anim::Pose {};
+        busy_.store(false, std::memory_order_release);
         publishStatus(true);
     }
 
@@ -181,6 +182,7 @@ class AnimationRunner {
         } else if (havePuppet_) {
             approachPuppet();
         }
+        busy_.store(player_->state() != anim::State::IDLE || !anim::atStance(current_), std::memory_order_release);
         anim::Pose out = current_;
         out.body[anim::Z] += baseZm_;
         clampMask_ = anim::poseToAngles(out, *kin_, stance_, angles);
@@ -196,11 +198,9 @@ class AnimationRunner {
     // waiting, or the pose is away from stance. A borrowed mode is handed back only once this clears,
     // not on a finish edge, so a play cancelled before it started cannot strand the borrow; a swap
     // deferred by lock contention keeps pendingPlay_ set, so the first tick of a borrow does not
-    // misfire.
-    bool busy() const {
-        return player_->state() != anim::State::IDLE || pendingPlay_.load(std::memory_order_acquire) ||
-               !anim::atStance(current_);
-    }
+    // misfire. The player and pose part is computed by the control task each tick, so the mode
+    // worker never reads them across tasks.
+    bool busy() const { return busy_.load(std::memory_order_acquire) || pendingPlay_.load(std::memory_order_acquire); }
 
   private:
     static constexpr const char *TAG = "AnimationRunner";
@@ -220,6 +220,7 @@ class AnimationRunner {
     SemaphoreHandle_t validateMutex_ = nullptr;
     std::atomic<bool> pendingPlay_ {false};
     std::atomic<bool> pendingStop_ {false};
+    std::atomic<bool> busy_ {false}; // player not idle or pose away from stance, as of the last tick
     AnimationCommandMsg pendingParams_ {};
     portMUX_TYPE puppetMux_ = portMUX_INITIALIZER_UNLOCKED;
     PoseMsg puppet_ {};

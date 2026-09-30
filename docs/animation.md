@@ -96,6 +96,7 @@ A client therefore sees every requested mode when it arrives and every mode the 
 
 Losing control stops the animation.
 When a client goes (a WebSocket closes, the BLE central disconnects, or the USB host disappears) and no transport has a client left, `MotionService` asks a running or held animation to stop; a borrowed mode then hands back as usual, and a sticky ANIMATE stays in ANIMATE at stance.
+Outside ANIMATE a play that is loaded but whose borrow has not landed yet is dropped, so it cannot start unattended.
 A puppeteer pose is still held on a silent stream while a client remains connected.
 Each adapter answers `hasClient()`, and `CommAdapterBase::onClientGone` fires after a client's subscriptions are dropped; `main.cpp` checks every adapter there.
 
@@ -190,7 +191,7 @@ A COM port is exclusive on Windows, so `watch` cannot run beside another command
 They return after a mode change that follows an idle status, which is the hand-back, or after 2 s without traffic, which covers a sticky ANIMATE, a refused play and a stop with nothing playing.
 They also stop following, and say why, on the first `ANIM_HOLD` status and after 2 s of `ANIM_PLAYING` whose clock has wrapped (a loop, or a repeat), because neither settles on its own; Ctrl-C stops following too.
 `shell` opens the port once and reads the same commands (`list`, `upload`, `validate`, `play`, `stop`, `mode`, `watch`, `quit`) from stdin, so a looping or holding animation can be stopped, and a play chained, while the port stays open.
-In the shell, Ctrl-C ends the current `play`, `stop` or `watch` and returns to the prompt.
+In the shell, Ctrl-C ends the current command, including a `list`, `upload` or `validate` waiting on the robot, and returns to the prompt with the port still open.
 The tool opens the port with DTR and RTS held low, so opening it should not reset the robot.
 
 ```sh
@@ -223,6 +224,7 @@ Then, on the native USB port:
    `play wave`, press Ctrl-C mid-play to return to the prompt, then `play crouch`: the second animation enters from wherever the first is, with no jump.
 5. `play wiggle`: following ends after about 2.4 s with the looping message while the robot keeps wiggling.
    Wait for the `tick max` INFO line (every 5 s while playing) and record it; `stop` then eases the robot home and hands STAND back.
+   The log is on the UART0 console, a separate port from the native USB Serial/JTAG port the shell holds, so read it with a second monitor on that port.
 6. `play play_dead`: the robot lies down and holds, and following ends with the holding message; `stop` brings it back over 1.2 s.
 7. `mode ANIMATE`, then `play crouch`: after the play the robot stays in ANIMATE (sticky) at stance.
 8. Edit `animations/wave.json` into an invalid file (a keyframe with three legs) and `upload wave`: the upload succeeds, validation reports the error, and `play wave` does nothing while the robot stays in its mode.

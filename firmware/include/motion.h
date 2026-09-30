@@ -124,9 +124,12 @@ class MotionService {
         if (motionState == MOTION_STATE::ANIMATE) _animation.requestStop();
     }
 
-    // Adapter task, when the last client on every transport has gone.
+    // Adapter task, when the last client on every transport has gone. Outside ANIMATE a play may be
+    // loaded with its borrow still in flight; dropping it keeps an unattended loop from starting.
     void animationControlLost() {
         if (motionState == MOTION_STATE::ANIMATE) _animation.controlLost();
+        else
+            _animation.cancelPendingPlay();
     }
 
     // Adapter task. Puppeteer poses apply only in ANIMATE.

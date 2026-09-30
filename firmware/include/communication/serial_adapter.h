@@ -4,6 +4,7 @@
 
 #if FT_ENABLED(USE_SERIAL_LINK)
 
+#include <atomic>
 #include <communication/comm_base.hpp>
 
 /*
@@ -39,7 +40,7 @@ class SerialAdapter : public CommAdapterBase {
     void feed(const uint8_t* data, size_t len);
 
     std::vector<uint8_t> rx_;
-    bool hostPresent_ = false;
+    std::atomic<bool> hostPresent_ {false}; // written by the rx task, read by emitters and hasClient()
 };
 
 #endif  // FT_ENABLED(USE_SERIAL_LINK)
