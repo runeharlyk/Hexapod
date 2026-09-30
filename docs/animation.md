@@ -3,7 +3,7 @@
 Named full-body animations (wave, crouch, play dead, ...) that pose the body and feet over time.
 The firmware evaluates an animation every control tick into a body pose and foot targets, then runs the same inverse kinematics as the gait.
 Animations are offsets from the standing pose at the current feet distance; the runner adds a base ride height to the body `z` before IK (see [Ride height](#ride-height)).
-The design rationale is in `docs/superpowers/specs/2026-09-29-animation-system-design.md`; this document describes what is built.
+This document describes what is built.
 
 ## The animation file
 
@@ -237,7 +237,7 @@ Then, on the native USB port:
 11. Ride height: with the app open on the robot-hosted page, put the robot in STAND and move the height slider to the end that raises the body.
     `play play_dead` and `stop` from the shell: the robot settles to the file's `ride_height` 0 while it plays, and Exit returns it to the raised height rather than to zero.
 
-Record the outcome of each step, including failures, in `docs/superpowers/handoffs/2026-09-30-animation-firmware-acceptance.md`.
+Record the outcome of each step, including failures, under this section once performed.
 
 ## Known gaps
 
