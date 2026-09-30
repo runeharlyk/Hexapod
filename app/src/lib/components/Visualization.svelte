@@ -201,7 +201,7 @@
   }
 
   const updateHandles = () => {
-    const feet = preview?.body.feet ?? DEFAULT_FEET
+    const feet = preview?.handleFeet ?? preview?.body.feet ?? DEFAULT_FEET
     const transform = sceneManager.transform
     const dragged = transform?.dragging ? transform.object : undefined
     sceneManager.handles.forEach((handle, leg) => {

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { get } from 'svelte/store'
 
@@ -6,7 +8,8 @@ vi.mock('$lib/stores', async () => {
   return { outControllerData: writable([0, 0, 0, 0, 0, 0, 0, 0]) }
 })
 
-import { Animation, Ease } from '$lib/platform_shared/animation'
+import { Animation, Ease, ParamId } from '$lib/platform_shared/animation'
+import { loadAnimationJson, serializeAnimation, type Vec3 } from '$lib/animation/model'
 import { DEFAULT_FEET } from '$lib/animation/evaluator'
 import { builtIn } from '$lib/animation/library'
 import { createEditor, shown, stanceFor } from '$lib/stores/animation-editor'
@@ -200,5 +203,104 @@ describe('shown', () => {
     expect(shown(-3.7e-15)).toBe(0)
     expect(Object.is(shown(-3.7e-15), -0)).toBe(false)
     expect(shown(30.92571)).toBe(30.9257)
+  })
+})
+
+describe('dragging a foot handle', () => {
+  const doc = Animation.fromPartial({
+    name: 'drag',
+    schema: 1,
+    keyframes: [
+      { time: 0 },
+      {
+        time: 1,
+        ease: Ease.LINEAR,
+        legs: [
+          { foot: { x: 10, y: 5, z: 20 } },
+          { joints: { coxa: 5, femur: 35, tibia: -100 } },
+          { foot: {} },
+          { foot: {} },
+          { foot: {} },
+          { foot: {} }
+        ]
+      }
+    ],
+    overlays: [
+      { footChannel: 2, amplitude: 15, frequency: 1, phase: 0.5, start: 0, end: 1 },
+      { footChannel: 3, amplitude: 12, frequency: 1, phase: 0.5, start: 0, end: 1 }
+    ],
+    params: [{ id: ParamId.FOOT_LIFT, min: 0.5, defaultValue: 1, max: 2 }]
+  })
+  const delta: Vec3 = [3, -4, 6]
+
+  const offKeyframe = () => {
+    const ed = createEditor()
+    expect(ed.open(doc)).toBeNull()
+    ed.setValue(ParamId.FOOT_LIFT, 1.7)
+    ed.selectKeyframe(1)
+    ed.setScrub(0.4)
+    return ed
+  }
+
+  const dragBy = (ed: ReturnType<typeof createEditor>, leg: number) => {
+    const handle = get(ed.frame).preview.handleFeet![leg]
+    const offset = [0, 1, 2].map(a => handle[a] - DEFAULT_FEET[leg][a] + delta[a]) as Vec3
+    expect(ed.dragFoot(leg, offset)).toBeNull()
+  }
+
+  it('adds only the drag delta to a foot leg, free of interpolation, overlays and params', () => {
+    const ed = offKeyframe()
+    const { handleFeet, body } = get(ed.frame).preview
+    expect(handleFeet![0].slice(0, 3)).toEqual([122 + 10, 152 + 5, -66 + 20])
+    expect(Math.abs(body.feet[0][2] - handleFeet![0][2])).toBeGreaterThan(1)
+    dragBy(ed, 0)
+    const foot = get(ed).document.keyframes[1].legs[0].foot!
+    expect(foot.x).toBeCloseTo(13, 9)
+    expect(foot.y).toBeCloseTo(1, 9)
+    expect(foot.z).toBeCloseTo(26, 9)
+    expect(get(ed).scrub).toBe(1)
+  })
+
+  it('turns a joint leg into a foot at its keyframe FK plus the delta', () => {
+    const reference = createEditor()
+    expect(reference.open(doc)).toBeNull()
+    reference.setLeg(1, 1, { joints: false, v: [0, 0, 0] })
+    const fk = get(reference).document.keyframes[1].legs[1].foot!
+    const ed = offKeyframe()
+    dragBy(ed, 1)
+    const foot = get(ed).document.keyframes[1].legs[1].foot!
+    expect(foot.x).toBeCloseTo(fk.x + delta[0], 6)
+    expect(foot.y).toBeCloseTo(fk.y + delta[1], 6)
+    expect(foot.z).toBeCloseTo(fk.z + delta[2], 6)
+  })
+
+  it('ignores drags while the preview plays', () => {
+    const ed = offKeyframe()
+    ed.setPlayback(get(ed.pose))
+    const before = Animation.toJSON(get(ed).document)
+    expect(ed.dragFoot(0, [1, 2, 3])).toBeNull()
+    expect(Animation.toJSON(get(ed).document)).toEqual(before)
+  })
+})
+
+describe('serializeAnimation', () => {
+  it('writes float32 values in their shortest decimal form', () => {
+    const text = readFileSync(resolve(__dirname, '../../../animations/wave.json'), 'utf8')
+    const loaded = loadAnimationJson(text)
+    if ('error' in loaded) throw new Error(loaded.error)
+    const saved = serializeAnimation(loaded.animation)
+    expect(JSON.parse(saved).keyframes[1].body.pitch).toBe(0.08)
+    expect(saved).toContain('0.08')
+    expect(saved).not.toContain('0.0799')
+    expect(saved.endsWith('}\n')).toBe(true)
+    expect(saved).toContain('\n  "name": "wave"')
+  })
+
+  it('round-trips every built-in exactly', () => {
+    for (const a of builtIn) {
+      const loaded = loadAnimationJson(serializeAnimation(a))
+      if ('error' in loaded) throw new Error(`${a.name}: ${loaded.error}`)
+      expect(loaded.animation).toEqual(a)
+    }
   })
 })

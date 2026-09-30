@@ -196,3 +196,22 @@ export const loadAnimationJson = (text: string): { animation: Animation } | { er
   const error = validate(animation)
   return error ? { error } : { animation }
 }
+
+// The shortest decimal that reads back as the same float32, so a saved file shows 0.08 rather
+// than the double 0.07999999821186066.
+const shortestFloat32 = (v: number): number => {
+  for (let p = 1; p <= 9; p++) {
+    const candidate = Number(v.toPrecision(p))
+    if (Math.fround(candidate) === v) return candidate
+  }
+  return v
+}
+
+// Canonical proto3 JSON with the two-space indentation and trailing newline of animations/*.json.
+export const serializeAnimation = (a: Animation): string =>
+  JSON.stringify(
+    Animation.toJSON(froundAnimation(a)),
+    (_, value) =>
+      typeof value === 'number' && Number.isFinite(value) ? shortestFloat32(value) : value,
+    2
+  ) + '\n'

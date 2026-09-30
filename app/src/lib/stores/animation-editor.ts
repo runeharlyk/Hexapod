@@ -160,6 +160,18 @@ const frameOf = (pose: Pose, stance: Stance, baseZ: number): Frame => {
   return { pose, angles, mask, preview: { angles: rad, body: state, mask } }
 }
 
+// A keyframe's own feet, free of interpolation, overlays and params: foot legs as stored, joint
+// legs through FK on the keyframe body at the ride-height base. The handles sit here, so a drag
+// edits the keyframe's value rather than the pose at the scrub head.
+const keyframeFeet = (k: Keyframe, stance: Stance, baseZ: number): number[][] => {
+  const body = bodyOf(k)
+  return Array.from({ length: 6 }, (_, leg) => {
+    const { joints, v } = legTarget(k, leg)
+    const offset = joints ? footFromJoints(body, v, leg, stance, baseZ) : v
+    return stance[leg].map((f, axis) => f + (offset[axis] ?? 0))
+  })
+}
+
 // A keyframe without 0 or 6 legs would crash the evaluator; the other structural errors do not.
 const evaluable = (a: Animation) =>
   a.keyframes.length > 0 && a.keyframes.every(k => k.legs.length === 0 || k.legs.length === 6)
@@ -234,7 +246,9 @@ export const createEditor = (initial: Animation = blankAnimation()) => {
       if (playing) return frameOf(playing, stance, baseZ)
       if (!evaluable(doc)) return frameOf(stancePose(), stance, baseZ)
       const params = resolveParams(doc, s.values)
-      return frameOf(evaluate(doc, params, s.scrub, kinematics, stance, baseZ), stance, baseZ)
+      const f = frameOf(evaluate(doc, params, s.scrub, kinematics, stance, baseZ), stance, baseZ)
+      f.preview.handleFeet = keyframeFeet(doc.keyframes[s.selected], stance, baseZ)
+      return f
     }
   )
 
@@ -319,6 +333,24 @@ export const createEditor = (initial: Animation = blankAnimation()) => {
           k.legs = Array.from({ length: 6 }, () => ({ foot: { x: 0, y: 0, z: 0 } }))
         k.legs[leg] = targetOf(next)
       }),
+
+    // offsetMm is a handle position as body-frame mm from DEFAULT_FEET. The handles start on the
+    // selected keyframe's own feet, so the position rebased onto the stance is the new foot
+    // offset; a joint leg becomes a foot leg there. The scrub snaps to the keyframe so the view
+    // shows what is being edited.
+    dragFoot: (leg: number, offsetMm: Vec3) => {
+      if (current.playing) return null
+      const time = current.document.keyframes[current.selected].time
+      if (current.scrub !== time) state.update(s => ({ ...s, scrub: time }))
+      const stance = stanceFor(controller[7])
+      const v = offsetMm.map((o, axis) => o + DEFAULT_FEET[leg][axis] - stance[leg][axis]) as Vec3
+      return edit(doc => {
+        const k = doc.keyframes[current.selected]
+        if (k.legs.length === 0)
+          k.legs = Array.from({ length: 6 }, () => ({ foot: { x: 0, y: 0, z: 0 } }))
+        k.legs[leg] = targetOf({ joints: false, v })
+      })
+    },
 
     addOverlay: () =>
       edit(doc => {

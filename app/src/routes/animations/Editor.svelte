@@ -5,17 +5,15 @@
   import { notifications } from '$lib/components/toasts/notifications'
   import { Animation } from '$lib/platform_shared/animation'
   import { MotionModes } from '$lib/motion'
-  import { outControllerData } from '$lib/stores'
   import { isLinked } from '$lib/stores/link'
   import { animationPreview } from '$lib/stores/animation'
-  import { clampedJoints, editor, stanceFor } from '$lib/stores/animation-editor'
+  import { clampedJoints, editor } from '$lib/stores/animation-editor'
   import { PoseSender, playAnimation, requestMode, stopAnimation } from '$lib/control'
-  import { DEFAULT_FEET } from '$lib/animation/evaluator'
   import {
     clonePose,
     froundAnimation,
-    legTarget,
     loadAnimationJson,
+    serializeAnimation,
     type Vec3
   } from '$lib/animation/model'
   import { downloadAnimation, uploadAnimation } from '$lib/animation/transfer'
@@ -71,27 +69,14 @@
     animationPreview.set(null)
   })
 
-  // The handles report body-frame mm from DEFAULT_FEET and are only exact for a zero body rotation
-  // and translation; with a keyframe body offset the stored foot differs from the dragged position
-  // by that offset. The offset is rebased onto the editor's feet-distance stance.
+  // The handles are drawn on the selected keyframe's own feet in body-frame mm and only line up
+  // with the rendered robot for a zero body rotation and translation.
   const handles = {
-    onDrag: (leg: number, offset: Vec3) => {
-      const s = get(editor)
-      if (s.playing || legTarget(s.document.keyframes[s.selected], leg).joints) return
-      const stance = stanceFor(get(outControllerData)[7])
-      editor.setLeg(s.selected, leg, {
-        joints: false,
-        v: [
-          offset[0] + DEFAULT_FEET[leg][0] - stance[leg][0],
-          offset[1] + DEFAULT_FEET[leg][1] - stance[leg][1],
-          offset[2]
-        ]
-      })
-    },
+    onDrag: (leg: number, offset: Vec3) => editor.dragFoot(leg, offset),
     onDragEnd: () => {}
   }
 
-  const document = () => froundAnimation(get(editor).document)
+  const rounded = () => froundAnimation(get(editor).document)
 
   const openFile = async (input: HTMLInputElement) => {
     const file = input.files?.[0]
@@ -122,27 +107,25 @@
   }
 
   const saveJson = () => {
-    const doc = document()
-    const blob = new Blob([JSON.stringify(Animation.toJSON(doc), null, 2)], {
-      type: 'application/json'
-    })
-    const link = window.document.createElement('a')
+    const doc = rounded()
+    const blob = new Blob([serializeAnimation(doc)], { type: 'application/json' })
+    const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
     link.download = `${doc.name}.json`
     link.click()
-    URL.revokeObjectURL(link.href)
+    setTimeout(() => URL.revokeObjectURL(link.href))
     editor.markSaved()
   }
 
   const saveToDraft = () => {
-    const doc = document()
+    const doc = rounded()
     if (!saveDraft(doc)) return notifications.error('This browser refused to store the draft', 5000)
     editor.markSaved()
     notifications.success(`Saved draft ${doc.name}`, 3000)
   }
 
   const upload = async (): Promise<boolean> => {
-    const doc = document()
+    const doc = rounded()
     try {
       const result = await uploadAnimation(doc)
       if (!result.ok) {
@@ -162,7 +145,7 @@
   }
 
   const playOnRobot = async () => {
-    if (await upload()) playAnimation(document().name, get(editor).values)
+    if (await upload()) playAnimation(rounded().name, get(editor).values)
   }
 </script>
 

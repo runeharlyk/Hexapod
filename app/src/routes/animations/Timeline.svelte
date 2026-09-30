@@ -24,6 +24,8 @@
   const MIN_GAP_S = 0.01
   const DRAG_THRESHOLD_PX = 3
 
+  const { validation } = editor
+
   let loop = $state(false)
   let speed = $state(1)
   let stopping = $state(false)
@@ -76,8 +78,8 @@
     frameId = requestAnimationFrame(step)
   }
 
-  // Pausing runs the player's Exit, as a stop on the robot does, and the preview ends in stance.
-  const pause = () => {
+  // Stopping runs the player's Exit, as a stop on the robot does, and the preview ends in stance.
+  const stop = () => {
     stopping = true
     player?.stop(baseZ)
   }
@@ -185,9 +187,14 @@
 
     <div class="flex flex-wrap items-center gap-2">
       {#if $editor.playing}
-        <button class="btn btn-sm" disabled={stopping} onclick={pause}>Pause</button>
+        <button class="btn btn-sm" disabled={stopping} onclick={stop}>Stop</button>
       {:else}
-        <button class="btn btn-sm btn-primary" onclick={play}>Play</button>
+        <button
+          class="btn btn-sm btn-primary"
+          disabled={$validation !== null}
+          title={$validation ?? 'Preview the animation'}
+          onclick={play}>Play</button
+        >
       {/if}
       <label class="flex items-center gap-1 text-sm">
         <input type="checkbox" class="toggle toggle-sm" bind:checked={loop} /> Loop
