@@ -256,6 +256,24 @@ message FileMkdirRequest {
     string path = 1;
 }
 
+// Chunked transfer over the correlation channel, for transports without HTTP. Offset 0 truncates;
+// the chunk whose end equals total_size completes the file. At most 512 bytes per chunk.
+message FileWriteChunk {
+    string path = 1;
+    uint32 offset = 2;
+    uint32 total_size = 3;
+    bytes content = 4;
+}
+message FileReadChunk {
+    string path = 1;
+    uint32 offset = 2;
+    uint32 length = 3;  // at most 512
+}
+message FileChunk {
+    bytes content = 1;
+    uint32 total_size = 2;
+}
+
 // =============================================================================
 // REST API wrappers - used by HTTP endpoints
 // =============================================================================

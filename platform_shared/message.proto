@@ -4,6 +4,7 @@ package socket_message;
 
 // api.proto settings types are reused so a setting can be read/written over any transport.
 import "api.proto";
+import "animation.proto";
 
 message Vector {
   float x = 1;
@@ -23,6 +24,7 @@ enum ModesEnum {
   STAND = 3;
   WALK = 4;
   WALK_NN = 5;
+  ANIMATE = 6;  // plays animation files; see animation.proto
 }
 
 // Mirrors firmware GaitType.
@@ -134,6 +136,11 @@ message CorrelationRequest {
     api.ServoSettings servo_settings_update = 81;
     api.PeripheralSettingsRequest peripheral_settings_get = 90;
     api.PeripheralSettings peripheral_settings_update = 91;
+    api.FileWriteChunk file_write_chunk = 100;
+    api.FileReadChunk file_read_chunk = 101;
+    api.FileDeleteRequest file_delete = 102;
+    AnimationValidate animation_validate = 110;
+    AnimationListRequest animation_list_request = 111;
   }
 }
 
@@ -153,6 +160,10 @@ message CorrelationResponse {
     api.MDNSQueryResponse mdns_query_response = 71;
     api.ServoSettings servo_settings = 80;
     api.PeripheralSettings peripheral_settings = 90;
+    api.EmptyMessage empty = 5;
+    api.FileChunk file_chunk = 101;
+    AnimationReport animation_report = 110;
+    AnimationList animation_list = 111;
   }
 }
 
@@ -180,6 +191,51 @@ message SystemCommandData {
   SystemCommand command = 1;
 }
 
+// --- Animations (animation.proto holds the file schema) ---
+
+message AnimationParam {
+  animation.ParamId id = 1;
+  float value = 2;
+}
+// Loads /littlefs/animations/<name>.pb and plays it. From any active mode the robot borrows ANIMATE
+// and hands the mode back when the player finishes; a play while playing chains.
+message AnimationPlay {
+  string name = 1;
+  repeated AnimationParam params = 2;
+}
+message AnimationStop {}
+// Puppeteer target, applied only in ANIMATE while nothing is playing; held if the stream stops.
+message PoseData {
+  animation.BodyPose body = 1;
+  repeated animation.LegTarget legs = 2;  // 0 or 6
+}
+enum AnimationState {
+  ANIM_IDLE = 0;
+  ANIM_ENTRY = 1;
+  ANIM_PLAYING = 2;
+  ANIM_HOLD = 3;
+  ANIM_EXIT = 4;
+}
+// Observable: pushed on every state change and at 5 Hz while the player is not idle.
+message AnimationStatus {
+  string name = 1;
+  AnimationState state = 2;
+  float t = 3;
+  uint32 clamped_mask = 4;  // bit leg*3+joint for joints pinned at a limit or an unreachable foot
+}
+message AnimationValidate { string name = 1; }
+message AnimationReport {
+  bool ok = 1;
+  string error = 2;          // first structural error, empty when ok
+  uint32 clamped_mask = 3;   // union over every keyframe and 32 intermediate times per segment
+}
+message AnimationListRequest {}
+message AnimationEntry {
+  string name = 1;
+  uint32 size = 2;
+}
+message AnimationList { repeated AnimationEntry entries = 1; }
+
 message Message {
   oneof message {
     SubscribeNotification sub_notif = 20;
@@ -201,5 +257,9 @@ message Message {
     api.WifiStatus wifi_status = 250;  // observable status: pushed on change (connect/disconnect)
     api.APStatus ap_status = 251;      // observable status: pushed on AP up/down/station change
     OtaStatusData ota_status = 270;    // observable status: pushed while a firmware update runs
+    AnimationPlay animation_play = 280;
+    AnimationStop animation_stop = 281;
+    PoseData pose = 282;
+    AnimationStatus animation_status = 283;  // observable status: pushed while an animation runs
   }
 }
