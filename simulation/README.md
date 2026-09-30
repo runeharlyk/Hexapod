@@ -242,3 +242,4 @@ The command is a body-frame velocity vector `[vx, vy]` (m/s) + yaw rate (rad/s).
 `uv run python gen_animation_fixtures.py` regenerates `animations/fixtures/expected.json`; `uv run pytest` fails while it is stale.
 `uv run python sim_sandbox.py` has an Animate mode for playing and scrubbing an animation.
 `uv run python scripts/compile_protos.py` generates the gitignored `src/platform_shared/animation_pb2.py`; it runs automatically on first import, and can be run by hand after editing the proto.
+`uv run python robot_animate.py --port <COMx> <command>` uploads, validates, plays, stops and watches animations over the robot's native USB port; run `--help` for the commands.

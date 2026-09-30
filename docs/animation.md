@@ -1,122 +1,175 @@
 # Animation system
 
-Procedural gesture playback: named clips ("wave", "slam") that pose the body and feet over time, evaluated into a body state that flows through the *same* IK as the gait.
-Because animations reuse the gait's IK and foot layout, they compose with body translation, rotation, and the feet-distance slider rather than fighting them.
+Named full-body animations (wave, crouch, play dead, ...) that pose the body and feet over time.
+The firmware evaluates an animation every control tick into a body pose and foot targets, then runs the same inverse kinematics as the gait.
+Animations are offsets from the standing posture, so they compose with ride height and the feet-distance slider.
+The design rationale is in `docs/superpowers/specs/2026-09-29-animation-system-design.md`; this document describes what is built.
 
-This document exists because the feature is being shelved.
-It records the parts that are not obvious from the code, and the one place the two implementations have already drifted.
+## The animation file
 
-## Where it lives
+The schema is `platform_shared/animation.proto` (package `animation`).
+An `Animation` holds a name (at most 32 characters of `[a-z0-9_-]`, equal to the file stem), a description, `schema = 1`, `loop`, `hold_end`, `entry_time`, `exit_time`, up to 32 keyframes, up to 8 overlays and up to 10 declared parameters.
+A keyframe has a time in seconds (strictly increasing, the first at 0), an ease, a body pose and 0 or 6 leg targets.
+The ease shapes the segment that ends at that keyframe.
+A leg target is either a foot offset (mm from the standing foot) or three joint angles (degrees, IK output convention: coxa yaw, absolute femur, tibia relative to femur).
+An overlay is an additive sine on one body axis or one foot channel (`leg * 3 + axis`) inside a time window.
+Parameters are a fixed set of multipliers: `SPEED`, `BODY_X` to `BODY_YAW`, `FOOT_LIFT`, `OVERLAY_AMPLITUDE`, `REPEAT`.
+An animation exposes only the ids it declares, with a minimum, default and maximum.
 
-None of the code below is in the repository.
-It was never committed: `animation.h`, `animation.ts`, `animations/presets.ts`, `MOTION_STATE::ANIMATE` and `AnimationMsg` exist only in the local git stash `animation and nets` (`git stash show -p stash@{0}` at the time of writing), taken on top of `95824a1`.
-The table records where each piece sat in that stash.
-
-| Concern | Firmware | App |
-| --- | --- | --- |
-| Engine | `firmware/include/animation.h` (`anim::Animator`) | `app/src/lib/animation.ts` (`Animator`) |
-| Clip catalogue | same file, `anim::CLIPS[]` | `app/src/lib/animations/presets.ts` |
-| Mode plumbing | `firmware/include/motion.h`, `MOTION_STATE::ANIMATE` | `app/src/lib/motion.ts`, `MotionModes.ANIMATE` |
-| Wire message | `AnimationMsg` (`message_types.h`), topic `ANIMATION = 15` | `requestAnimation` / `stopAnimation` in `app/src/lib/control.ts` |
-
-The two engines are deliberate mirrors, like the kinematics and gait: the app renders a local preview with no robot attached, the firmware runs the real thing.
-
-## The sync contract
-
-**Clips are addressed by array index, not by name.**
-`AnimationMsg.index` is an index into `anim::CLIPS[]`, and the app sends `presets.indexOf(clip)`.
-A negative index means *stop*.
-
-So `anim::CLIPS[]` and `presets` must stay in the same order.
-Reordering one array silently plays the wrong gesture, and there is no handshake that would detect it.
-
-## Data model
-
-A **Pose** is a 6-DOF body offset plus one 3-vector foot offset per leg:
-
-- body: `omega, phi, psi` (roll/pitch/yaw, **radians**) and `xm, ym, zm` (translation, **mm**)
-- feet: `[x, y, z]` per leg, **mm offsets from that leg's default standing position**
-
-Offsets, not absolute positions — that is what makes a clip independent of the current posture and of the feet-distance slider.
-
-A **Keyframe** is `{ t, ease, pose }` with `t` normalized to `[0, 1]`.
-Note the easing convention: **`ease` shapes the segment that *ends* at that keyframe**, not the one that starts there.
-
-An **Overlay** is a procedural sine/cosine added *on top of* the interpolated keyframe pose, within a normalized time window: `{ target: feet|body, leg, axis, fn, amp, freq, phase, window }`.
-`freq` counts cycles over the whole clip duration.
-Overlays are how "wiggle" works with only two (empty) keyframes.
-
-A **clip** is `{ name, duration (ms), loop, keyframes, overlays }`.
-
-### Evaluation, per tick
-
-1. Advance elapsed time; `t = elapsed / duration`, wrapped with `fmod` when `loop`, clamped to 1 otherwise.
-2. Find the bracketing keyframe pair, normalize `t` within that span, apply the *end* keyframe's easing.
-3. Lerp all six body channels and all eighteen foot channels.
-4. Add every overlay whose window contains `t`.
-5. Write body channels into the body state, and each foot as `defaultFeet[leg] + offset`.
-
-A non-looping clip returns "finished" once elapsed exceeds duration, which triggers recovery.
+Bundled animations are proto3 JSON in `animations/<name>.json` at the repository root: `wave`, `crouch`, `wiggle`, `stretch`, `spooked`, `play_dead`, `body_roll_test`.
+The robot stores the binary encoding in `/littlefs/animations/<name>.pb`.
+`firmware/scripts/pack_animations.py` converts the JSON into `firmware/data/animations/*.pb` on every firmware build, and `pio run -t uploadfs` ships them.
 
 ## Sign and coordinate conventions
 
-These are the traps. All of them are load-bearing:
+- Positive body `z` crouches the robot; negative body `z` raises it (the firmware `zm` convention).
+- Positive body `x` and `y` move the body toward negative `x` and `y`, because the feet are what the IK places.
+- Positive foot `z` lifts a foot.
+  Never push a foot below the ground: a negative foot `z` inflates the ground-contact term and launches the robot.
+- Body axes follow the gait: X lateral, Y forward, Z up, and the robot faces +Y.
+- Body angles are radians, lengths millimetres, joint angles degrees, time seconds.
 
-- Leg indices: `0,1,2` = right front/mid/rear, `3,4,5` = left front/mid/rear.
-- **`+z` lifts a foot.** Never push a foot down. A negative foot `z` inflates the ground-contact term and launches the whole robot upward, so clips only ever lift.
-- **Negative `zm` moves the body UP; positive `zm` crouches it DOWN.** The visualization renders height as `-zm/12`. This inverts the intuition for every clip that changes ride height.
-- **Forward is negative `ym`.**
-- Body angles are radians, everything positional is mm.
+## Evaluator and player rules
 
-## Authoring a pose by joint angles
+The reference is `simulation/src/robot/animation.py`; the firmware (`firmware/include/animation/`) and the app mirror it line for line.
+A port must honour these rules.
 
-Guessing an xyz foot offset for "raise the leg with the knee bent 90°" is painful, so the app has `legFromAngles(leg, coxa, femur, tibia)` in `presets.ts`.
-It runs forward kinematics on one leg and returns the resulting **offset from the standing pose** — the same offset the rest of the pipeline consumes, so an angle-authored leg still goes through IK and still composes with body motion.
+- File values are float32.
+  A port that parses JSON rounds every number to float32 before use.
+- The evaluate order is: body interpolation, then body overlays and per-leg foot overlay accumulation, then the body multipliers, then the legs.
+  A leg whose endpoints are both feet interpolates offsets, both joints interpolates angles, and mixed runs IK against the output body on the foot endpoint (with its overlay and lift applied) and interpolates in joint space with the raw joint endpoint.
+- An overlay on a joint leg is ignored, and so are the multipliers.
+- The joint clamp is symmetric `+-JOINT_LIMIT_DEG` in IK-output space.
+  An unreachable foot sets that leg's femur and tibia bits in the clamp mask.
+  The mask has bit `leg * 3 + joint`.
+- `REPEAT` is `max(1, floor(x + 0.5))`.
+  It is ignored when `loop` is set.
+- Entry and exit default to 0.5 s and run on wall time; `SPEED` scales only the playing clock.
+- The step arc is `45 mm * min(1, travel / 40 mm) * sin(pi * u)`, applied to foot legs whose horizontal travel exceeds 2 mm.
+- `play` records the live pose as `lastPose`, and Exit starts from the final keyframe.
+- Stance feet are an input (`default_feet_pos`), never a constant.
+- The player runs Entry, Playing, then Hold (when `hold_end`) or Exit, then Done.
+  Stop in any state enters Exit from the current pose; play in any state skips Exit and enters the new animation's Entry from the current pose.
+- Structural validation is identical on every platform; the rules are listed in the spec section 1 and implemented by the validator in `animation.py` and in `firmware/include/animation/animation.h`.
 
-**The firmware has no equivalent.**
-It cannot run the authoring helper, so those values are baked in as literals — see `slamRaise()` in `animation.h`, where `{-77.73, 57.27, 120.72}` is the precomputed result of `legFromAngles(0, 45, 90, -90)`.
+## Firmware
 
-Consequence: **if the kinematics config or the default posture (`genPosture(60, 75)`) changes, those literals are stale and must be regenerated** from the app side. Nothing checks this.
+### Mode, borrow and hand-back
 
-## Mode plumbing and recovery
+`MOTION_STATE::ANIMATE` is mode 6 (`ModesEnum.ANIMATE`).
+The `MotionService` ANIMATE branch advances the player with the measured `dt`, runs IK with the joint-leg overrides and clamps, and publishes the angles like any other mode.
+IMU self-levelling is off in ANIMATE.
+The command timeout that zeroes WALK does not apply.
 
-Starting a clip (`handleAnimation` in firmware, `requestAnimation` in the app):
+There are two ways in.
 
-1. Remember the current mode in `previousMode` (only if not already animating).
-2. Switch to `ANIMATE`, activate servos, `animator.play(clip)`.
+- A play from an active mode (STAND, a walking mode, or ANIMATE) borrows ANIMATE.
+  The clip is loaded before the mode changes, so a play naming a missing or invalid file leaves the robot in its mode and pose.
+  When the player is idle with nothing pending, the previous mode is handed back.
+  A play from IDLE or DEACTIVATED is ignored.
+  Any explicit mode message ends a borrow, so an explicit STAND mid-play is final.
+- Setting the mode to ANIMATE explicitly is sticky: the robot holds stance, accepts puppeteer poses and plays, and stays until the mode changes.
 
-Each tick in `ANIMATE`: advance the animator, and when the clip reports finished, begin **recovery**.
+Exit returns to zero offsets, which is the neutral stance, not the body pose the STAND sliders held before the animation.
+A play while playing chains from the current pose.
 
-Recovery eases the body and feet back to the standing pose over `RECOVER_DURATION` (0.7 s) with an `easeInOut` curve, and adds a `sin(πt)` arc of up to `RECOVER_LIFT` (45 mm) so displaced feet **step home instead of dragging**.
-The lift is scaled by how far each foot actually moved (`min(1, horiz / 40)`), so planted feet stay planted.
-When recovery completes, the mode is handed back to `previousMode` — animations are a temporary excursion, not a destination.
+### Puppeteering
 
-The app additionally short-circuits: if the body and feet are already within a small tolerance of standing, it finishes recovery immediately instead of running a pointless 0.7 s ease.
+A `PoseData` message (a `BodyPose` plus 0 or 6 `LegTarget`s) is applied only in ANIMATE while the player is idle.
+The firmware lerps toward it with the STAND smoothing factor and holds it if the stream stops.
 
-Stopping mid-clip (negative index) also routes through recovery rather than snapping.
+### Messages
 
-## Preset catalogue
+Wire tags as in `platform_shared/message.proto` and `api.proto`.
 
-| Clip | Duration | Loop | What it does |
+| Message | Tag | Direction |
+| --- | --- | --- |
+| `Message.animation_play` (`name`, repeated `AnimationParam { ParamId id; float value }`) | 280 | to robot |
+| `Message.animation_stop` | 281 | to robot |
+| `Message.pose` (`PoseData`) | 282 | to robot |
+| `Message.animation_status` (`name`, `AnimationState state`, `t`, `clamped_mask`) | 283 | from robot, observable |
+| `Message.mode` (`ModeData`) | 130 | both |
+| `Message.sub_notif` | 20 | to robot |
+
+`AnimationState` is `ANIM_IDLE`, `ANIM_ENTRY`, `ANIM_PLAYING`, `ANIM_HOLD`, `ANIM_EXIT`.
+A status is pushed on every state change and at 5 Hz while the player is not idle; a client subscribes to tag 283.
+Missing play parameters take their defaults, values are clamped to the declared range, and undeclared ids are ignored.
+
+Correlation requests, answered on the same correlation id:
+
+| Request | Tag | Response | Tag |
 | --- | --- | --- | --- |
-| `wave` | 2400 ms | no | Leans away from the front-right leg (`xm` shift, `omega`/`phi` tilt) with the other five feet counter-offset so they stay planted, lifts leg 0, then two up/down winks |
-| `slam` | see drift below | no | Rears up and cocks both front legs with a ~90° knee bend, then lunges the body forward and drops flat, accelerating in with `easeIn` |
-| `crouch` | 600 ms | no | Squat down and back up (`zm: 26`) |
-| `wiggle` | 2400 ms | **yes** | Two empty keyframes; all motion comes from three body overlays (roll sine, yaw cosine, height sine offset by π/2) |
+| `file_write_chunk` (`path`, `offset`, `total_size`, `content`) | 100 | status code only | |
+| `file_read_chunk` (`path`, `offset`, `length`) | 101 | `file_chunk` (`content`, `total_size`) | 101 |
+| `file_delete` | 102 | status code only | |
+| `animation_validate` (`name`) | 110 | `animation_report` (`ok`, `error`, `clamped_mask`) | 110 |
+| `animation_list_request` | 111 | `animation_list` (`entries` of `name`, `size`) | 111 |
 
-## Known drift and open issues
+The generic `empty` response is tag 5.
+Chunks carry at most 512 bytes, which keeps a frame well under the 2048-byte serial ceiling.
+A write is refused with 400 when the chunk is larger than 512 bytes, runs past `total_size`, or does not continue the file at its current size; the path must be absolute and free of `..`.
+Offset 0 truncates.
+A lost chunk therefore leaves a short file that the next write at the right offset continues.
+Validation decodes the file, checks the structural rules, and evaluates every keyframe and 32 intermediate times per segment, returning the first structural error or the union of clamped joints.
+A clamped joint is a warning, not a refusal.
 
-1. **`slam` duration disagrees between the mirrors** — 750 ms in `presets.ts`, 1100 ms in `animation.h`. The robot performs the gesture noticeably slower than the on-screen preview. Pick one before resuming work.
-2. **`slamRaise()` literals are frozen FK output** and will silently go wrong if the leg geometry or default posture changes.
-3. **Index coupling has no guard.** Adding, removing, or reordering a clip in one place and not the other misplays silently. A name field exists in both but is never checked over the wire.
-4. Overlays are only additive on top of keyframes; there is no way to have an overlay replace or scale a channel.
-5. Easing is per-segment and fixed to four curves; no per-channel easing and no spline interpolation.
+### Storage
 
-## Adding a clip
+Files live at `/littlefs/animations/<name>.pb`.
+The decode buffer is allocated once in PSRAM; one animation is loaded at a time.
 
-1. Author it in `app/src/lib/animations/presets.ts`, using `legFromAngles` for articulated poses.
-2. Append to the `presets` array — **append**, never insert.
-3. Mirror it in `firmware/include/animation.h`: keyframe array, any overlay array, and an entry appended to `CLIPS[]` at the same index.
-4. Bump `CLIP_COUNT`.
-5. Verify duration, loop flag, and every literal match between the two.
-6. Because the app and firmware are index-coupled, ship both together.
+## Parity and fixtures
+
+`animations/fixtures/` holds animations that exercise every path (mixed legs, overlays, parameters, single keyframe) and `expected.json`, generated from the Python reference by `simulation/gen_animation_fixtures.py`.
+It contains poses at fixed times and player traces covering entry from a displaced pose, a stop during Playing, and a chained play.
+Each platform checks itself against it.
+
+- Simulation: `uv run pytest` regenerates the expectations in memory and fails while the committed file is stale.
+- Firmware: `pio test -e native` runs the animation tests in `firmware/test/`, which compare the C++ evaluator and player with the fixtures state by state.
+- App: a TypeScript port and its `pnpm test:unit` parity test are planned with the editor.
+
+`uv run python check_animation.py` runs every bundled animation through the servo model and reports clamped joints, peak joint speed, tilt and falls.
+Regenerate the fixtures after any behaviour change in `animation.py`.
+
+## Bench tool
+
+`simulation/robot_animate.py` drives the robot over the native USB Serial/JTAG port, before the app has an animation page.
+The framing is `SerialAdapter`'s: a little-endian uint16 length followed by one `socket_message.Message`; a length of 0 or above 2048 makes the robot drop its buffer.
+The robot only sends once it sees a host on the port.
+
+```sh
+uv run python robot_animate.py --port COM5 list
+uv run python robot_animate.py --port COM5 upload wave       # ../animations/wave.json -> /animations/wave.pb
+uv run python robot_animate.py --port COM5 validate wave
+uv run python robot_animate.py --port COM5 play wave SPEED=1.5
+uv run python robot_animate.py --port COM5 stop
+uv run python robot_animate.py --port COM5 mode ANIMATE
+uv run python robot_animate.py --port COM5 watch
+```
+
+## Acceptance on hardware
+
+Not yet performed.
+Flash with `pio run -t upload`, then `pio run -t uploadfs`; the seven bundled `.pb` files land in `/littlefs/animations`.
+Then, on the native USB port:
+
+1. `list` shows the seven bundled animations with sizes.
+2. `validate wave` reports ok with an empty clamp mask; `validate play_dead` reports ok.
+3. Put the robot in STAND from the controller or `mode STAND`, then `play wave`.
+   In `watch` the status runs ENTRY, PLAYING, EXIT, IDLE and the mode returns to STAND.
+   The robot leans left and back, raises the right front leg, flicks it twice, and steps home.
+4. `play crouch` while `wave` is playing: the second animation enters from wherever the first is, with no jump.
+5. `play wiggle`, then `stop` mid-way: the robot eases home.
+6. `play play_dead`: the robot lies down and holds; `stop` brings it back over 1.2 s.
+7. `mode ANIMATE`, then `play crouch`: after the play the robot stays in ANIMATE (sticky) at stance.
+8. Edit `animations/wave.json` into an invalid file (a keyframe with three legs) and `upload wave`: the upload succeeds, validation reports the error, and `play wave` does nothing while the robot stays in its mode.
+   Restore the file and upload again.
+9. `play spooked SPEED=2`: the checker predicted a peak of 10 rad/s at speed 1, so at speed 2 the servos lag; confirm nothing worse than a softened hop.
+
+Record the outcome of each step, including failures, in `docs/superpowers/handoffs/2026-09-30-animation-firmware-acceptance.md`.
+
+## Known gaps
+
+- The app's `MotionModes` does not yet know `ANIMATE`, so the app cannot select it.
+- The app evaluator, editor and `/animations` route are not built.
+- Controller buttons are not mapped to animations.

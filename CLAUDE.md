@@ -61,6 +61,7 @@ uv run pytest -q                             # firmware/sim gait parity tests (t
 uv run python check_animation.py             # run every bundled animation through the servo model
 uv run python gen_animation_fixtures.py      # regenerate the animation parity fixtures
 uv run python scripts/compile_protos.py      # regenerate src/platform_shared/animation_pb2.py (also runs on first import)
+uv run python robot_animate.py --port <COMx> <command>  # upload/validate/play/stop/watch animations over native USB
 ```
 See `simulation/README.md` for the full control-mode and training-flag reference.
 
@@ -93,7 +94,7 @@ SvelteKit (Svelte 5) + Tailwind/daisyUI, static-adapter SPA. Routes under `app/s
 ## Further documentation
 
 - `docs/connectivity.md` — how the app reaches the robot: the browser origin constraints that gate every transport, provisioning options, the `NET_STATUS`/`NET_COMMAND` topics, and the ranked plan. **Read before proposing any connection flow.**
-- `docs/animation.md` — the procedural animation system (`ANIMATE` mode). Currently shelved; records the app/firmware sync contract, sign conventions, and known drift.
+- `docs/animation.md` — the animation system as implemented (file format, evaluator rules, firmware mode, messages); kept current.
 
 ## Connection constraint (summary)
 
