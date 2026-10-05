@@ -4,6 +4,7 @@
   import { throttler as Throttler } from '$lib/utilities'
   import { dataBroker } from '$lib/transport/databroker'
   import { ServoPWMData, ServoStateData } from '$lib/platform_shared/message'
+  import { JOINT_NAMES, LEG_NAMES, servoJoint } from '$lib/calibration/leg-pose'
 
   let active = $state(false)
 
@@ -13,6 +14,8 @@
 
   const activateServo = () => dataBroker.emit(ServoStateData, { active: true })
   const deactivateServo = () => dataBroker.emit(ServoStateData, { active: false })
+
+  const selected = $derived(servoJoint(servoId))
 
   const updatePWM = () =>
     throttler.throttle(() => dataBroker.emit(ServoPWMData, { servoId, servoPwm: pwm }), 10)
@@ -38,8 +41,11 @@
   <div class="flex flex-col">
     <h2 class="text-lg">General servo configuration</h2>
     <span class="flex items-center gap-2">
-      <label for="servoId">Servo active {servoId}</label>
-      <input type="range" min="0" max="17" step="1" bind:value={servoId} />
+      <label for="servoId"
+        >Servo {servoId}: {LEG_NAMES[selected.leg]}
+        {JOINT_NAMES[selected.joint].toLowerCase()}</label
+      >
+      <input id="servoId" type="range" min="0" max="17" step="1" bind:value={servoId} />
       <input
         type="checkbox"
         class="toggle"
