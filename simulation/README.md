@@ -243,3 +243,23 @@ The command is a body-frame velocity vector `[vx, vy]` (m/s) + yaw rate (rad/s).
 `uv run python sim_sandbox.py` has an Animate mode for playing and scrubbing an animation.
 `uv run python scripts/compile_protos.py` generates the gitignored `src/platform_shared/animation_pb2.py`; it runs automatically on first import, and can be run by hand after editing the proto.
 `uv run python robot_animate.py --port <COMx> <command>` uploads, validates, plays, stops and watches animations over the robot's native USB port; run `--help` for the commands.
+
+## Python Robot facade
+
+`src/hexapod` drives the simulation and the real robot through one `Robot`:
+
+```python
+from src.hexapod import Robot
+
+with Robot("simulation") as robot:   # or Robot("192.168.4.1"), the robot's WebSocket at ws://<host>/api/ws
+    robot.stand()
+    robot.move_forward(0.3)          # metres, open-loop on the speed model
+    robot.rotate(90)                 # degrees counter-clockwise, closed on the IMU yaw
+```
+
+The API speaks REP-103 (x forward, y left, yaw counter-clockwise); the backends convert to the robot's X-right, Y-forward body frame and to the firmware's sticks.
+`Robot("simulation", viewer=True)` opens the MuJoCo viewer and runs in real time; the simulation backend runs `src/sim/firmware_loop.py`, the firmware's STAND/WALK tick that `replay_gait.py` also uses.
+The firmware takes sticks, not velocities, so `src/resources/speed_model.json` holds the body velocity each stick produces, measured per gait in the simulation by `uv run python measure_speed_model.py`; `test_speed_model.py` fails when it no longer matches the simulation.
+It is the simulated robot's speed: check a distance on the floor before trusting it on the real one.
+On the real robot the input is re-sent every 200 ms inside the firmware's 600 ms dead-man, and a timed move raises if the link may have stalled past that or someone switched the robot out of WALK.
+Leaving the `with` block, also on an exception or Ctrl-C, stops the robot, lowers it onto its belly and switches the servos off.

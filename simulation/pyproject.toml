@@ -19,6 +19,7 @@ dependencies = [
     "optuna>=4.0",
     "cmaes>=0.11",
     "matplotlib",
+    "websockets>=15",
 ]
 
 [dependency-groups]

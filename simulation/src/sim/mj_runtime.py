@@ -140,6 +140,11 @@ class HexapodSim:
     def base_height(self) -> float:
         return float(self.data.qpos[2])
 
+    def base_yaw(self) -> float:
+        """Rotation about world Z (rad, counter-clockwise); 0 is the reset pose, facing world +Y."""
+        w, x, y, z = self.data.qpos[3:7]
+        return float(np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)))
+
     def body_tilt_deg(self) -> float:
         """Angle between the body's up axis and world up (deg) -- how far off level the robot is."""
         up_z = self.data.xmat[self.model.site_bodyid[self.imu_site]].reshape(3, 3)[2, 2]
