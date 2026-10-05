@@ -27,6 +27,7 @@
 #include <communication/espnow_adapter.h>
 #include <ota_service.h>
 #include <peripherals_settings_service.h>
+#include <imu_calibration_service.h>
 #include <ota_flash.h>
 #include <filesystem.h>
 #include <wifi/wifi_idf.h>
@@ -66,6 +67,7 @@ APService apService;
 MDNSService mdnsService;
 ServoSettingsService servoSettingsService;
 PeripheralSettingsService peripheralSettingsService;
+ImuCalibrationService imuCalibrationService;
 EspOtaFlash otaFlash;
 OtaSession otaSession{otaFlash, ota_service::inProgress};
 Websocket wsSocket{server, "/api/ws"};
@@ -413,6 +415,27 @@ static void registerHandlers(CommAdapterBase &c) {
                 snapshot(peripheralSettingsService, res.response.peripheral_settings);
                 break;
             }
+            case socket_message_CorrelationRequest_imu_calibrate_tag: {
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                if (!robot.imuPresent()) {
+                    res.status_code = 503;
+                } else if (!robot.resting()) {
+                    res.status_code = 409;
+                } else {
+                    ImuCalibration calibration;
+                    const imu_calibration::Check check = robot.calibrateIMU(calibration);
+                    if (check == imu_calibration::Check::OK) {
+                        imuCalibrationService.update(
+                            [&](ImuCalibration &state) { return ImuCalibration_update(calibration, state); },
+                            "correlation");
+                    }
+                    res.status_code = check == imu_calibration::Check::OK ? 200 : 422;
+                    ESP_LOGI(TAG, "IMU calibration: %s", check == imu_calibration::Check::OK       ? "done"
+                                                         : check == imu_calibration::Check::MOVING ? "robot moving"
+                                                                                                   : "robot tilted");
+                }
+                break;
+            }
             case socket_message_CorrelationRequest_ota_start_tag: {
                 res.which_response = socket_message_CorrelationResponse_empty_tag;
                 const OtaReply reply =
@@ -747,6 +770,7 @@ extern "C" void app_main() {
     initCoreTempSensor();
     servoSettingsService.begin();
     peripheralSettingsService.begin();
+    imuCalibrationService.begin();  // before the control task applies the offsets
 
     xTaskCreate(serviceLoop, "service", 8192, nullptr, 2, nullptr);
     xTaskCreatePinnedToCore(controlLoop, "control", 8192, nullptr, 5, nullptr, 1);

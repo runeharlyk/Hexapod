@@ -57,13 +57,43 @@ class MPU6050Driver {
         return fresh;
     }
 
+    // Raw counts for the calibration's stillness and level check; `gyro` takes `count` samples 5 ms
+    // apart, about the DMP's own rate.
+    bool sampleRaw(int16_t (*gyro)[3], size_t count, int16_t accel[3]) {
+        for (size_t s = 0; s < count; ++s) {
+            if (!readTriple(REG_GYRO_XOUT_H, gyro[s])) return false;
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+        return readTriple(REG_ACCEL_XOUT_H, accel);
+    }
+
+    // i2cdevlib's PID calibration: drives the gyro to zero and the accelerometer to (0, 0, +1 g) by
+    // writing the chip's offset registers, then restarts the DMP's FIFO from the new readings.
     bool calibrate() {
         if (!_initialized) return false;
 
         CalibrateGyro(6);
         CalibrateAccel(6);
+        resetFIFO();
 
         return true;
+    }
+
+    // The offset registers, as the calibration left them; the chip resets them at power-on.
+    bool readOffsets(int16_t accel[3], int16_t gyro[3]) {
+        for (int i = 0; i < 3; ++i) {
+            if (!readWord(REG_XA_OFFS_H + 2 * i, accel[i]) || !readWord(REG_XG_OFFS_USRH + 2 * i, gyro[i]))
+                return false;
+        }
+        return true;
+    }
+
+    void writeOffsets(const int16_t accel[3], const int16_t gyro[3]) {
+        for (int i = 0; i < 3; ++i) {
+            writeWord(REG_XA_OFFS_H + 2 * i, accel[i]);
+            writeWord(REG_XG_OFFS_USRH + 2 * i, gyro[i]);
+        }
+        resetFIFO();
     }
 
     // REG_GYRO_CONFIG is set to 0x18 (FS_SEL=3, +-2000 deg/s) => 16.4 LSB per deg/s.
@@ -464,6 +494,25 @@ class MPU6050Driver {
         kP *= x;
         kI *= x;
         PID(REG_ACCEL_XOUT_H, kP, kI, loops);
+    }
+
+    bool readWord(uint8_t reg, int16_t& out) {
+        uint8_t buf[2];
+        if (I2CBus::instance().readReg(_addr, reg, buf, 2) != ESP_OK) return false;
+        out = (int16_t)((buf[0] << 8) | buf[1]);
+        return true;
+    }
+
+    void writeWord(uint8_t reg, int16_t value) {
+        uint8_t buf[2] = {(uint8_t)((uint16_t)value >> 8), (uint8_t)(value & 0xFF)};
+        I2CBus::instance().writeReg(_addr, reg, buf, 2);
+    }
+
+    bool readTriple(uint8_t reg, int16_t out[3]) {
+        uint8_t buf[6];
+        if (I2CBus::instance().readReg(_addr, reg, buf, 6) != ESP_OK) return false;
+        for (int i = 0; i < 3; ++i) out[i] = (int16_t)((buf[2 * i] << 8) | buf[2 * i + 1]);
+        return true;
     }
 
     void PID(uint8_t readAddr, float kP, float kI, int loops) {

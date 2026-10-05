@@ -45,6 +45,8 @@ class Hexapod {
 
     bool imuPresent() const { return _peripherals.imuActive(); }
 
+    bool resting() const { return _motionService.resting(); }
+    imu_calibration::Check calibrateIMU(ImuCalibration &result) { return _peripherals.calibrateIMU(result); }
     bool magnetometerPresent() const { return _peripherals.magActive(); }
 
     void emitTelemetry() {

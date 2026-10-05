@@ -400,6 +400,11 @@ class MotionService {
         return CLIP(commanded + measured, -BODY_TILT_LIMIT_RAD, BODY_TILT_LIMIT_RAD);
     }
 
+  public:
+    // Lying on its belly with the legs limp or folded: still enough to calibrate the IMU against.
+    bool resting() const { return motionState == MOTION_STATE::DEACTIVATED || motionState == MOTION_STATE::IDLE; }
+
+  private:
     static bool isWalkingMode(MOTION_STATE mode) { return mode == MOTION_STATE::WALK || mode == MOTION_STATE::WALK_NN; }
 
     // Zeroes the locomotion command. `snap` collapses the live gait state onto it as well, for modes

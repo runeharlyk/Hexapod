@@ -120,6 +120,17 @@ message FeaturesDataResponse {
   string firmware_elf_sha256 = 8;
 }
 
+// Calibrates the MPU6050 on a robot lying still and level: the gyro bias goes to zero and the
+// accelerometer to straight down. Answered with an empty response: 200 calibrated, 409 the robot is
+// not resting (deactivated or idle), 422 it moved or lies tilted, 503 there is no IMU.
+message ImuCalibrateRequest {}
+
+// The offsets the calibration wrote into the chip, persisted and applied at boot.
+message ImuCalibration {
+  repeated sint32 accel_offsets = 1;
+  repeated sint32 gyro_offsets = 2;
+}
+
 // A firmware update over the protobuf link, for clients that cannot reach POST /api/firmware (an
 // https page on Bluetooth or USB). The image goes in order, in chunks of at most 512 bytes, into the
 // app slot the robot does not run from; the finish validates it, selects it and restarts the robot.
@@ -152,6 +163,7 @@ message CorrelationRequest {
     api.ServoSettings servo_settings_update = 81;
     api.PeripheralSettingsRequest peripheral_settings_get = 90;
     api.PeripheralSettings peripheral_settings_update = 91;
+    ImuCalibrateRequest imu_calibrate = 92;
     OtaStart ota_start = 120;
     OtaChunk ota_chunk = 121;
     OtaFinish ota_finish = 122;
