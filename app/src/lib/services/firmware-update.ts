@@ -16,8 +16,10 @@ export const fetchReleases = (repository: string) =>
     headers: GITHUB_HEADERS
   })
 
+// A release carries `<target>.factory.bin` for the web flasher and `<target>.bin` for OTA; only
+// the plain app image may go into an app slot.
 export const findFirmwareAsset = (assets: GithubAsset[], builtTarget: string) =>
-  assets.find(asset => asset.name.includes('.bin') && asset.name.includes(builtTarget))
+  assets.find(asset => asset.name === `${builtTarget}.bin`)
 
 // The robot fetches the image itself (firmware/include/ota_service.h, POST /api/firmware/download).
 export const requestFirmwareDownload = async (downloadUrl: string) => {
