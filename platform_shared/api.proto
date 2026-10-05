@@ -83,6 +83,9 @@ message WifiSettings {
     bool priority_rssi = 2;
     repeated WifiNetwork wifi_networks = 3; // max 5 networks
     uint32 selected_network = 4;
+    // Fingerprint of the secrets.h network last merged in (settings/factory_network.h); the firmware
+    // keeps it across app updates and does not send it out.
+    uint32 applied_secret = 5;
 }
 
 message WifiSettingsRequest {}

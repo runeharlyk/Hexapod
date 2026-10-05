@@ -1,6 +1,8 @@
 #include <wifi_service.h>
 #include <communication/webserver.h>
 #include <event_bus.h>
+#include <secrets.h>
+#include <settings/factory_network.h>
 
 static const char *TAG = "WiFiService";
 
@@ -24,6 +26,12 @@ void WiFiService::begin() {
     WiFi.onEvent([this](int32_t event, void *data) { this->onStationModeGotIP(event, data); }, IP_EVENT_STA_GOT_IP_IDF);
 
     _persistence.readFromFS();
+    update(
+        [](WiFiSettings &settings) {
+            return applyFactoryNetwork(settings, SECRET_WIFI_SSID, SECRET_WIFI_PASSWORD) ? StateUpdateResult::CHANGED
+                                                                                         : StateUpdateResult::UNCHANGED;
+        },
+        "secrets");
     _lastConnectionAttempt = 0;
     read([this](WiFiSettings &settings) { _nextNetwork = settings.selected_network; });
 

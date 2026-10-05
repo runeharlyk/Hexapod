@@ -195,6 +195,7 @@ static void snapshot(StatefulService<T> &service, T &out) {
 // one" (WiFiSettings_update / APSettings_update), so a client can round-trip these unchanged.
 static void redactedWifiSettings(api_WifiSettings &out) {
     snapshot(wifiService, out);
+    out.applied_secret = 0;  // a hash of the secret password; it stays on the robot
     for (pb_size_t i = 0; i < out.wifi_networks_count; i++) {
         memset(out.wifi_networks[i].password, 0, sizeof(out.wifi_networks[i].password));
     }
@@ -335,7 +336,13 @@ static void registerHandlers(CommAdapterBase &c) {
             }
             case socket_message_CorrelationRequest_wifi_settings_update_tag: {
                 StateUpdateResult r = wifiService.update(
-                    [&req](WiFiSettings &s) { return WiFiSettings_update(req.request.wifi_settings_update, s); },
+                    [&req](WiFiSettings &s) {
+                        // The app never holds the merge fingerprint; keep it, or a network deleted in
+                        // the app would come back from secrets.h at the next boot.
+                        WiFiSettings incoming = req.request.wifi_settings_update;
+                        incoming.applied_secret = s.applied_secret;
+                        return WiFiSettings_update(incoming, s);
+                    },
                     "correlation");
                 if (r == StateUpdateResult::ERROR) res.status_code = 400;
                 res.which_response = socket_message_CorrelationResponse_wifi_settings_tag;
