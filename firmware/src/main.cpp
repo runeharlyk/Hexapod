@@ -626,7 +626,9 @@ static void controlLoop(void *) {
         robot.updateActuators();
         robot.emitTelemetry();
         controlTicks.fetch_add(1, std::memory_order_relaxed);
-        vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
+        // After an overrun (an I2C timeout can stall a tick for 200 ms) the schedule restarts from now
+        // instead of replaying every missed tick back to back.
+        if (xTaskDelayUntil(&last, pdMS_TO_TICKS(5)) == pdFALSE) last = xTaskGetTickCount();
     }
 }
 
