@@ -132,18 +132,23 @@ class GaitController {
         const float X_POLAR = std::cos(angle);
         const float Z_POLAR = std::sin(angle);
 
-        float phase_power = 1.0f;
-        float inv_phase_power = std::pow(1.0f - phase, 11);
-        const float one_minus_phase = 1.0f - phase;
+        // Both power tables are built by multiplying up from 1, never by dividing down from
+        // (1 - phase)^11: that power underflows float32 near the end of a swing and a division
+        // cannot recover the weights from zero.
+        float phase_power[BEZIER_POINTS];
+        float inv_phase_power[BEZIER_POINTS];
+        phase_power[0] = 1.0f;
+        inv_phase_power[0] = 1.0f;
+        for (int i = 1; i < BEZIER_POINTS; i++) {
+            phase_power[i] = phase_power[i - 1] * phase;
+            inv_phase_power[i] = inv_phase_power[i - 1] * (1.0f - phase);
+        }
 
-        for (int i = 0; i < 12; i++) {
-            float b = COMBINATORIAL_VALUES[i] * phase_power * inv_phase_power;
+        for (int i = 0; i < BEZIER_POINTS; i++) {
+            float b = COMBINATORIAL_VALUES[i] * phase_power[i] * inv_phase_power[BEZIER_POINTS - 1 - i];
             point[0] += b * BEZIER_STEPS[i] * length * X_POLAR;
             point[1] += b * BEZIER_STEPS[i] * length * Z_POLAR;
             point[2] += b * BEZIER_HEIGHTS[i] * *height;
-
-            phase_power *= phase;
-            inv_phase_power /= one_minus_phase;
         }
     }
 

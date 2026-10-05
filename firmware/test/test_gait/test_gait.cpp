@@ -214,6 +214,34 @@ void test_swing_lifts_the_foot_and_stance_keeps_it_down() {
     }
 }
 
+void test_swing_reaches_its_end_without_a_jump() {
+    // (1 - t)^11 underflows float32 once 1 - t drops below ~8e-5. Built by dividing back up from that
+    // power, every Bernstein weight was zero for the last ticks of a swing and the foot was commanded
+    // to the curve's origin, a jump of half the stride, about once a swing in a hundred at 5 ms ticks.
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 60.0f, 0.0f, 0.0f);
+    GaitController controller;
+    controller.setGait(gait);
+    controller.snapDefaultFootTarget(STAND);
+    BodyStateMsg body = makeBody();
+
+    constexpr int SAMPLES = 400000;
+    float previous[6][2];
+    float worst = 0.0f;
+    for (int s = 0; s <= SAMPLES; ++s) {
+        controller.setPhase(static_cast<float>(s) / SAMPLES * 0.999999f);
+        controller.generateFeet(gait, body);
+        for (int i = 0; i < 6; ++i) {
+            if (s > 0) {
+                const float jump = std::hypot(body.feet[i][0] - previous[i][0], body.feet[i][1] - previous[i][1]);
+                if (jump > worst) worst = jump;
+            }
+            previous[i][0] = body.feet[i][0];
+            previous[i][1] = body.feet[i][1];
+        }
+    }
+    TEST_ASSERT_LESS_THAN_FLOAT_MESSAGE(1.0f, worst, "a foot jumped between neighbouring phases");
+}
+
 void test_stance_sweeps_the_foot_against_the_commanded_direction() {
     // Body moves +x because the loaded feet travel -x. A sign flip here walks the robot backwards
     // while every other assertion above still passes.
@@ -820,6 +848,7 @@ int main(int, char **) {
     RUN_TEST(test_command_below_deadband_does_not_start_the_cycle);
     RUN_TEST(test_phase_stays_normalized_over_a_long_walk);
     RUN_TEST(test_swing_lifts_the_foot_and_stance_keeps_it_down);
+    RUN_TEST(test_swing_reaches_its_end_without_a_jump);
     RUN_TEST(test_stance_sweeps_the_foot_against_the_commanded_direction);
     RUN_TEST(test_yaw_command_sweeps_feet_tangentially);
     RUN_TEST(test_gait_tables_cover_every_leg_once_per_cycle);
