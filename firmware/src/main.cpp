@@ -8,6 +8,7 @@
 #include <esp_flash.h>
 #include <esp_sleep.h>
 #include <esp_littlefs.h>
+#include <esp_app_desc.h>
 #include <driver/temperature_sensor.h>
 #include <nvs_flash.h>
 #include <dirent.h>
@@ -109,6 +110,13 @@ static const char *resetReasonName(esp_reset_reason_t reason) {
         case ESP_RST_CPU_LOCKUP: return "CPU lockup";
         default: return "unknown";
     }
+}
+
+// The full 32-byte hash from the app descriptor; esp_app_get_elf_sha256() would cut it to
+// CONFIG_APP_RETRIEVE_LEN_ELF_SHA digits. Writes 64 hex digits and a terminator.
+static void runningElfSha256(char out[65]) {
+    const uint8_t *sha = esp_app_get_description()->app_elf_sha256;
+    for (int i = 0; i < 32; i++) snprintf(out + 2 * i, 3, "%02x", sha[i]);
 }
 
 static void fillAnalytics(socket_message_AnalyticsData &a) {
@@ -280,8 +288,9 @@ static void registerHandlers(CommAdapterBase &c) {
                 auto &f = res.response.features_data_response;
                 strncpy(f.firmware_name, APP_NAME, sizeof(f.firmware_name) - 1);
                 strncpy(f.firmware_version, APP_VERSION, sizeof(f.firmware_version) - 1);
+                runningElfSha256(f.firmware_elf_sha256);
                 f.camera = USE_CAMERA;
-                f.imu = USE_MPU6050;
+                f.imu = robot.imuPresent();
                 f.mag = robot.magnetometerPresent();
                 f.servo = true;
                 f.mdns = USE_MDNS;
@@ -528,15 +537,17 @@ static void setupServer() {
     });
 
     server.on("/api/features", HTTP_GET, [](httpd_req_t *r) {
-        char buf[384];
+        char sha[65];
+        runningElfSha256(sha);
+        char buf[512];
         snprintf(buf, sizeof(buf),
                  "{\"camera\":%s,\"imu\":%s,\"mag\":%s,\"bmp\":false,\"mdns\":%s,\"servo\":true,"
                  "\"analytics\":true,\"sleep\":true,\"ota\":true,\"download_firmware\":true,"
-                 "\"upload_firmware\":true,"
-                 "\"firmware_version\":\"%s\",\"firmware_name\":\"%s\",\"firmware_built_target\":\"esp32-wroom-camera\"}",
-                 USE_CAMERA ? "true" : "false", USE_MPU6050 ? "true" : "false",
-                 robot.magnetometerPresent() ? "true" : "false",
-                 USE_MDNS ? "true" : "false", APP_VERSION, APP_NAME);
+                 "\"upload_firmware\":true,\"firmware_version\":\"%s\",\"firmware_name\":\"%s\","
+                 "\"firmware_built_target\":\"esp32-wroom-camera\",\"firmware_elf_sha256\":\"%s\"}",
+                 USE_CAMERA ? "true" : "false", robot.imuPresent() ? "true" : "false",
+                 robot.magnetometerPresent() ? "true" : "false", USE_MDNS ? "true" : "false", APP_VERSION, APP_NAME,
+                 sha);
         httpd_resp_set_type(r, "application/json");
         return httpd_resp_sendstr(r, buf);
     });

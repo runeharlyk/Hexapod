@@ -43,6 +43,8 @@ class Hexapod {
         _motionService.validateAnimation(name, r);
     }
 
+    bool imuPresent() const { return _peripherals.imuActive(); }
+
     bool magnetometerPresent() const { return _peripherals.magActive(); }
 
     void emitTelemetry() {

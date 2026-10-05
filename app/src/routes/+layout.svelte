@@ -24,6 +24,7 @@
   import { setAnimationStatus } from '$lib/stores/animation'
   import { connectWebsocket, isLinked } from '$lib/stores/link'
   import { COMMAND_HEARTBEAT_MS, needsHeartbeat } from '$lib/control-link'
+  import { watchUpdateOutcome } from '$lib/firmware/watch-update'
 
   // outControllerData is [lx, ly, rx, ry, height, speed, s1, feetDistance].
   const toControllerInput = (d: number[]): ControllerInputData => ({
@@ -48,10 +49,12 @@
   let currentMode = MotionModes.DEACTIVATED
   let linked = false
   let commandHeartbeatId: ReturnType<typeof setInterval> | undefined
+  let stopWatchingUpdate: (() => void) | undefined
 
   let { children }: Props = $props()
 
   onMount(() => {
+    stopWatchingUpdate = watchUpdateOutcome()
     // Only the robot-hosted http origin may open ws://; https pages reach the robot over BLE or USB.
     if (window.location.protocol === 'http:') connectWebsocket()
 
@@ -102,6 +105,7 @@
 
   onDestroy(() => {
     if (commandHeartbeatId) clearInterval(commandHeartbeatId)
+    stopWatchingUpdate?.()
   })
 
   let menuOpen = $state(false)

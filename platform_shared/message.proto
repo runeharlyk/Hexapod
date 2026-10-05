@@ -115,6 +115,9 @@ message FeaturesDataResponse {
   bool mag = 5;
   bool servo = 6;
   bool mdns = 7;
+  // SHA-256 of the running firmware's ELF, from its app descriptor, as 64 hex digits. An update
+  // that rolled back reports the previous image's hash, which is how the app tells the two apart.
+  string firmware_elf_sha256 = 8;
 }
 
 message CorrelationRequest {

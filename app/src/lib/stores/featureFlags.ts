@@ -6,6 +6,7 @@ export interface Features {
   firmware_name: string
   firmware_version: string
   firmware_built_target: string
+  firmware_elf_sha256: string
   camera: boolean
   imu: boolean
   mag: boolean
@@ -23,6 +24,7 @@ const unknownFeatures: Features = {
   firmware_name: '',
   firmware_version: '',
   firmware_built_target: '',
+  firmware_elf_sha256: '',
   camera: false,
   imu: false,
   mag: false,
@@ -55,6 +57,7 @@ const requestFeatures = async (): Promise<Features> => {
     ...buildFeatures,
     firmware_name: f.firmwareName,
     firmware_version: f.firmwareVersion,
+    firmware_elf_sha256: f.firmwareElfSha256,
     camera: f.camera,
     imu: f.imu,
     mag: f.mag,
@@ -72,18 +75,20 @@ const fetchFeaturesOverHttp = async (): Promise<Features> => {
 let featureFlagsStore: Writable<Features> | undefined
 let loading = false
 
+const fetchFeatures = () =>
+  requestFeatures().catch(error => {
+    // The robot-hosted http page can still ask the webserver when the link is not up yet.
+    if (window.location.protocol !== 'http:') throw error
+    return fetchFeaturesOverHttp()
+  })
+
 export function useFeatureFlags() {
   featureFlagsStore ??= writable<Features>(unknownFeatures)
   const store = featureFlagsStore
 
   if (!loading) {
     loading = true
-    requestFeatures()
-      .catch(error => {
-        // The robot-hosted http page can still ask the webserver when the link is not up yet.
-        if (window.location.protocol !== 'http:') throw error
-        return fetchFeaturesOverHttp()
-      })
+    fetchFeatures()
       .then(features => store.set(features))
       .catch(error => {
         // Leave the flags unknown and let the next page that needs them try again.
@@ -93,4 +98,13 @@ export function useFeatureFlags() {
   }
 
   return store
+}
+
+// After a restart the robot may run different firmware than the flags were read from.
+export async function refreshFeatureFlags(): Promise<Features> {
+  const features = await fetchFeatures()
+  featureFlagsStore ??= writable<Features>(unknownFeatures)
+  featureFlagsStore.set(features)
+  loading = true
+  return features
 }

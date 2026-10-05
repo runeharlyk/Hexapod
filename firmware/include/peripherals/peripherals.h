@@ -108,6 +108,14 @@ class Peripherals {
 #endif
     }
 
+    bool imuActive() const {
+#if FT_ENABLED(USE_MPU6050)
+        return _imuReady;
+#else
+        return false;
+#endif
+    }
+
     bool magActive() const {
 #if FT_ENABLED(USE_MAG)
         return _magReady;
