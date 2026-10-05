@@ -9,12 +9,14 @@
 #include <freertos/task.h>
 #include <esp_http_client.h>
 #include <cJSON.h>
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <atomic>
 #include <string>
 
 #include <event_bus.h>
+#include <ota_image.h>
 #include <message_types.h>
 #include <communication/webserver.h>
 #include <platform_shared/message.pb.h>
@@ -80,8 +82,10 @@ inline esp_err_t upload(httpd_req_t *req) {
         return WebServer::sendError(req, 400, "image larger than the OTA partition");
     }
 
+    // Erases sector by sector as the image arrives; sizing the erase up front blocked the server's
+    // task, and with it every WebSocket client, for the seconds a whole-image erase takes.
     esp_ota_handle_t handle = 0;
-    esp_err_t err = esp_ota_begin(target, total, &handle);
+    esp_err_t err = esp_ota_begin(target, OTA_WITH_SEQUENTIAL_WRITES, &handle);
     if (err != ESP_OK) {
         inProgress = false;
         publish(socket_message_OtaState_OTA_ERROR, 0, esp_err_to_name(err));
@@ -93,6 +97,7 @@ inline esp_err_t upload(httpd_req_t *req) {
     publish(socket_message_OtaState_OTA_PROGRESS, 0);
 
     char buf[1460]; // one TCP segment; larger buffers do not speed up a socket-bound write
+    uint8_t head[ota_image::HEAD_SIZE];
     int received = 0;
     uint32_t lastPercent = 0;
     int timeouts = 0;
@@ -119,6 +124,16 @@ inline esp_err_t upload(httpd_req_t *req) {
             inProgress = false;
             publish(socket_message_OtaState_OTA_ERROR, 0, esp_err_to_name(err));
             return WebServer::sendError(req, 500, "flash write failed");
+        }
+        if (received < (int)sizeof(head)) {
+            const int take = std::min(chunk, (int)sizeof(head) - received);
+            memcpy(head + received, buf, take);
+            if (received + take == (int)sizeof(head) && !ota_image::isAppImage(head, sizeof(head))) {
+                esp_ota_abort(handle);
+                inProgress = false;
+                publish(socket_message_OtaState_OTA_ERROR, 0, "not an app image");
+                return WebServer::sendError(req, 400, "not an app image (a factory image goes through the flasher)");
+            }
         }
         received += chunk;
 
@@ -173,6 +188,18 @@ inline void downloadTask(void *arg) {
     if (err != ESP_OK || handle == nullptr) {
         ESP_LOGE(TAG, "esp_https_ota_begin failed: %s", esp_err_to_name(err));
         publish(socket_message_OtaState_OTA_ERROR, 0, esp_err_to_name(err));
+        inProgress = false;
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    // Refuses a factory image or anything else without an app descriptor before writing the rest.
+    esp_app_desc_t incoming;
+    err = esp_https_ota_get_img_desc(handle, &incoming);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "download is not an app image: %s", esp_err_to_name(err));
+        esp_https_ota_abort(handle);
+        publish(socket_message_OtaState_OTA_ERROR, 0, "not an app image");
         inProgress = false;
         vTaskDelete(nullptr);
         return;
