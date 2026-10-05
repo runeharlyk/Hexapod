@@ -18,6 +18,10 @@
 #define NUM_SERVO 18
 #endif
 
+#ifndef FACTORY_SERVO_OSCILLATOR_FREQUENCY
+#define FACTORY_SERVO_OSCILLATOR_FREQUENCY 25000000
+#endif
+
 #ifndef FACTORY_SERVO_PWM_FREQUENCY
 #define FACTORY_SERVO_PWM_FREQUENCY 50
 #endif
@@ -52,10 +56,8 @@ class ServoController {
         if (!I2CBus::instance().isInitialized()) {
             I2CBus::instance().begin(static_cast<gpio_num_t>(SDA_PIN), static_cast<gpio_num_t>(SCL_PIN), 400000);
         }
-        _left_pca.begin();
-        _left_pca.setPWMFreq(FACTORY_SERVO_PWM_FREQUENCY);
-        _right_pca.begin();
-        _right_pca.setPWMFreq(FACTORY_SERVO_PWM_FREQUENCY);
+        _left_pca.begin(FACTORY_SERVO_OSCILLATOR_FREQUENCY, FACTORY_SERVO_PWM_FREQUENCY);
+        _right_pca.begin(FACTORY_SERVO_OSCILLATOR_FREQUENCY, FACTORY_SERVO_PWM_FREQUENCY);
 
         _signalSub = EventBus<ServoSignalMsg>::subscribe([this](ServoSignalMsg const &m) { servoEvent(m); });
         _stateSub = EventBus<ServoStateMsg>::subscribe([this](ServoStateMsg const &m) {
