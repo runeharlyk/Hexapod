@@ -145,12 +145,12 @@ class MotionService {
         steering = isWalkingMode(motionState) && (c.lx != 0.f || c.ly != 0.f || c.rx != 0.f);
         updateFeetDistanceTarget(c.fd);
         target_body_state.zm = c.h * 50;
-        target_body_state.omega = c.ry * 0.254f;
+        target_body_state.omega = c.ry * BODY_TILT_LIMIT_RAD;
         switch (motionState) {
             case MOTION_STATE::STAND: {
                 target_body_state.xm = c.lx * 50.f;
                 target_body_state.ym = -c.ly * 50.f;
-                target_body_state.phi = c.rx * 0.254f;
+                target_body_state.phi = c.rx * BODY_TILT_LIMIT_RAD;
                 target_gait_state.step_x = 0;
                 target_gait_state.step_y = 0;
                 target_gait_state.step_angle = 0;
@@ -273,9 +273,10 @@ class MotionService {
                 body_state.xm = lerpf(body_state.xm, target_body_state.xm, smoothing_factor);
                 body_state.ym = lerpf(body_state.ym, target_body_state.ym, smoothing_factor);
                 body_state.zm = lerpf(body_state.zm, target_body_state.zm, smoothing_factor);
-                body_state.phi = lerpf(body_state.phi, target_body_state.phi + _peripherals->angleY(), smoothing_factor);
-                body_state.omega =
-                    lerpf(body_state.omega, target_body_state.omega + _peripherals->angleX(), smoothing_factor);
+                body_state.phi =
+                    lerpf(body_state.phi, levelled(target_body_state.phi, _peripherals->angleY()), smoothing_factor);
+                body_state.omega = lerpf(body_state.omega, levelled(target_body_state.omega, _peripherals->angleX()),
+                                         smoothing_factor);
                 // Only ANIMATE sets yaw; ease back what a mode change mid-animation left behind.
                 body_state.psi = lerpf(body_state.psi, 0.f, smoothing_factor);
                 // STAND is not stepping, so this is where a gait selection deferred by
@@ -290,8 +291,8 @@ class MotionService {
             case MOTION_STATE::WALK_NN: {
                 // The policy owns stride, lift, cadence and ride height; it was trained with the
                 // firmware's self-levelling active, so that term stays on here too.
-                body_state.phi = lerpf(body_state.phi, _peripherals->angleY(), smoothing_factor);
-                body_state.omega = lerpf(body_state.omega, _peripherals->angleX(), smoothing_factor);
+                body_state.phi = lerpf(body_state.phi, levelled(0.f, _peripherals->angleY()), smoothing_factor);
+                body_state.omega = lerpf(body_state.omega, levelled(0.f, _peripherals->angleX()), smoothing_factor);
                 body_state.psi = lerpf(body_state.psi, 0.f, smoothing_factor);
                 if (!_policy.update(_peripherals, gait, body_state, msgAngles.angles)) return false;
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
@@ -313,9 +314,10 @@ class MotionService {
                 body_state.xm = lerpf(body_state.xm, target_body_state.xm, smoothing_factor);
                 body_state.ym = lerpf(body_state.ym, target_body_state.ym, smoothing_factor);
                 body_state.zm = lerpf(body_state.zm, target_body_state.zm, smoothing_factor);
-                body_state.phi = lerpf(body_state.phi, target_body_state.phi + _peripherals->angleY(), smoothing_factor);
-                body_state.omega =
-                    lerpf(body_state.omega, target_body_state.omega + _peripherals->angleX(), smoothing_factor);
+                body_state.phi =
+                    lerpf(body_state.phi, levelled(target_body_state.phi, _peripherals->angleY()), smoothing_factor);
+                body_state.omega = lerpf(body_state.omega, levelled(target_body_state.omega, _peripherals->angleX()),
+                                         smoothing_factor);
                 // Only ANIMATE sets yaw; ease back what a mode change mid-animation left behind.
                 body_state.psi = lerpf(body_state.psi, 0.f, smoothing_factor);
                 // Before the ramp: it clears the 2 mm deadband in one tick, closing the window.
@@ -389,6 +391,14 @@ class MotionService {
     bool steering = false;
 
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+
+    // Self-levelling adds the measured tilt to the commanded attitude. On a slope steeper than the
+    // body can lean, or with a tumbling IMU, the sum would ask the legs for a pose past the joint
+    // limits; it is held to the stick's own range instead.
+    static constexpr float BODY_TILT_LIMIT_RAD = 0.254f;
+    static float levelled(float commanded, float measured) {
+        return CLIP(commanded + measured, -BODY_TILT_LIMIT_RAD, BODY_TILT_LIMIT_RAD);
+    }
 
     static bool isWalkingMode(MOTION_STATE mode) { return mode == MOTION_STATE::WALK || mode == MOTION_STATE::WALK_NN; }
 

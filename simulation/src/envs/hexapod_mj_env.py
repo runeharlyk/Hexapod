@@ -88,6 +88,7 @@ SCHED_LAG_RATE = 0.6       # cycles/s of offset change
 SELF_LEVEL_SMOOTHING = 0.06   # firmware smoothing_factor
 SELF_LEVEL_TICK_S = 0.005     # firmware control period the factor was tuned at
 LEVEL_SIGN = 1.0
+BODY_TILT_LIMIT_RAD = 0.254   # firmware BODY_TILT_LIMIT_RAD: the levelled attitude is clipped to it
 # phase_gait scales: [step_x(mm), step_y(mm), step_angle(rad), step_height(mm), stand_frac, phase_rate(/s)]
 PG_STEP_XY = 100.0
 PG_STEP_ANGLE = 0.8
@@ -575,8 +576,10 @@ class HexapodMjEnv(gym.Env):
             return
         roll, pitch, _ = _quat_to_rpy(self.sim.base_quat())
         k = 1.0 - (1.0 - SELF_LEVEL_SMOOTHING) ** (self.dt / SELF_LEVEL_TICK_S)
-        self.body.phi += k * ((LEVEL_SIGN * pitch) - self.body.phi)
-        self.body.omega += k * ((LEVEL_SIGN * roll) - self.body.omega)
+        level_pitch = np.clip(LEVEL_SIGN * pitch, -BODY_TILT_LIMIT_RAD, BODY_TILT_LIMIT_RAD)
+        level_roll = np.clip(LEVEL_SIGN * roll, -BODY_TILT_LIMIT_RAD, BODY_TILT_LIMIT_RAD)
+        self.body.phi += k * (level_pitch - self.body.phi)
+        self.body.omega += k * (level_roll - self.body.omega)
 
     # ------------------------------------------------------------------ obs
     def _foot_contact_sensor(self):
