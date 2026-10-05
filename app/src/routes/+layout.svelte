@@ -23,6 +23,7 @@
   import { throttler } from '$lib/utilities'
   import { setAnimationStatus } from '$lib/stores/animation'
   import { connectWebsocket, isLinked } from '$lib/stores/link'
+  import { COMMAND_HEARTBEAT_MS, needsHeartbeat } from '$lib/control-link'
 
   // outControllerData is [lx, ly, rx, ry, height, speed, s1, feetDistance].
   const toControllerInput = (d: number[]): ControllerInputData => ({
@@ -43,7 +44,6 @@
   dataBroker.addTransport(ble)
 
   const throttle = new throttler()
-  const COMMAND_HEARTBEAT_MS = 250
   let lastCommand = [0, 0, 0, 0, 0, 0, 0, 0]
   let currentMode = MotionModes.DEACTIVATED
   let linked = false
@@ -95,7 +95,7 @@
 
     commandHeartbeatId = setInterval(() => {
       if (!linked) return
-      if (currentMode !== MotionModes.STAND && currentMode !== MotionModes.WALK) return
+      if (!needsHeartbeat(currentMode)) return
       dataBroker.emit(ControllerInputData, toControllerInput(lastCommand))
     }, COMMAND_HEARTBEAT_MS)
   })

@@ -142,6 +142,7 @@ class MotionService {
     void handleCommand(CommandMsg const &c) {
         lastCommandMillis = millis();
         commandTimedOut = false;
+        steering = isWalkingMode(motionState) && (c.lx != 0.f || c.ly != 0.f || c.rx != 0.f);
         updateFeetDistanceTarget(c.fd);
         target_body_state.zm = c.h * 50;
         target_body_state.omega = c.ry * 0.254f;
@@ -366,6 +367,10 @@ class MotionService {
     // stick does not jerk the stride, fast enough that the robot still feels directly driven.
     static constexpr float GAIT_COMMAND_TAU_S = 0.15f;
     static constexpr unsigned long COMMAND_TIMEOUT_MS = 2000;
+    // A walking robot covers ~0.9 m in COMMAND_TIMEOUT_MS. While a stick drives locomotion the
+    // senders repeat it (app heartbeat 200 ms, ESP-NOW controller 50 Hz), so silence for three
+    // heartbeats means the link is gone and the robot must stop walking.
+    static constexpr unsigned long STEERING_TIMEOUT_MS = 600;
     static constexpr float FEET_DISTANCE_SCALE_MIN = 0.75f;
     static constexpr float FEET_DISTANCE_SCALE_MAX = 1.25f;
     static constexpr float FEET_DISTANCE_SCALE_RANGE = FEET_DISTANCE_SCALE_MAX - FEET_DISTANCE_SCALE_MIN;
@@ -381,6 +386,7 @@ class MotionService {
     unsigned long lastMotionMicros = 0;
     unsigned long _lastTunedLog = 0;
     bool commandTimedOut = false;
+    bool steering = false;
 
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
 
@@ -451,11 +457,13 @@ class MotionService {
             return;
         }
         if (commandTimedOut) return;
-        if (millis() - lastCommandMillis < COMMAND_TIMEOUT_MS) return;
+        const unsigned long timeout = steering ? STEERING_TIMEOUT_MS : COMMAND_TIMEOUT_MS;
+        if (millis() - lastCommandMillis < timeout) return;
 
-        ESP_LOGW("MotionService", "No motion command for %lu ms, applying zero command", COMMAND_TIMEOUT_MS);
+        ESP_LOGW("MotionService", "No motion command for %lu ms, applying zero command", timeout);
         applyZeroCommand();
         commandTimedOut = true;
+        steering = false;
     }
 };
 
