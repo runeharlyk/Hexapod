@@ -27,6 +27,7 @@
 #include <communication/espnow_adapter.h>
 #include <ota_service.h>
 #include <peripherals_settings_service.h>
+#include <ota_flash.h>
 #include <filesystem.h>
 #include <wifi/wifi_idf.h>
 #include <wifi_service.h>
@@ -65,6 +66,8 @@ APService apService;
 MDNSService mdnsService;
 ServoSettingsService servoSettingsService;
 PeripheralSettingsService peripheralSettingsService;
+EspOtaFlash otaFlash;
+OtaSession otaSession{otaFlash, ota_service::inProgress};
 Websocket wsSocket{server, "/api/ws"};
 BLE bleAdapter;
 #if FT_ENABLED(USE_SERIAL_LINK)
@@ -117,6 +120,11 @@ static const char *resetReasonName(esp_reset_reason_t reason) {
 static void runningElfSha256(char out[65]) {
     const uint8_t *sha = esp_app_get_description()->app_elf_sha256;
     for (int i = 0; i < 32; i++) snprintf(out + 2 * i, 3, "%02x", sha[i]);
+}
+
+static void replyOta(socket_message_CorrelationResponse &res, const OtaReply &reply) {
+    res.status_code = reply.status;
+    strncpy(res.error_message, reply.reason, sizeof(res.error_message) - 1);
 }
 
 static void fillAnalytics(socket_message_AnalyticsData &a) {
@@ -211,6 +219,9 @@ static void registerHandlers(CommAdapterBase &c) {
     c.on<socket_message_ModeData>([](const socket_message_ModeData &m, int) {
         if ((int)m.mode < 0 || (int)m.mode > (int)socket_message_ModesEnum_ANIMATE) return;
         if (!FT_ENABLED(USE_POLICY) && m.mode == socket_message_ModesEnum_WALK_NN) return;
+        // The robot stays deactivated while a new firmware is written: a brownout mid-write would
+        // corrupt the update.
+        if (ota_service::inProgress) return;
         EventBus<ModeMsg>::publish({static_cast<MOTION_STATE>(m.mode)});
     });
     c.on<socket_message_GaitData>([](const socket_message_GaitData &g, int) {
@@ -400,6 +411,32 @@ static void registerHandlers(CommAdapterBase &c) {
                 if (r == StateUpdateResult::ERROR) res.status_code = 400;
                 res.which_response = socket_message_CorrelationResponse_peripheral_settings_tag;
                 snapshot(peripheralSettingsService, res.response.peripheral_settings);
+                break;
+            }
+            case socket_message_CorrelationRequest_ota_start_tag: {
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                const OtaReply reply =
+                    otaSession.start(req.request.ota_start.size, {adapter, clientId}, esp_timer_get_time() / 1000);
+                // Servos hold whatever pose they are in; walking while flashing risks a brownout.
+                if (reply.status == 200) ota_service::stopMotion();
+                replyOta(res, reply);
+                break;
+            }
+            case socket_message_CorrelationRequest_ota_chunk_tag: {
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                const auto &chunk = req.request.ota_chunk;
+                replyOta(res, otaSession.chunk(chunk.index, chunk.data.bytes, chunk.data.size, {adapter, clientId},
+                                               esp_timer_get_time() / 1000));
+                break;
+            }
+            case socket_message_CorrelationRequest_ota_finish_tag: {
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                const OtaReply reply = otaSession.finish({adapter, clientId});
+                replyOta(res, reply);
+                if (reply.status == 200) {
+                    ota_service::publish(socket_message_OtaState_OTA_FINISHED, 100);
+                    ota_service::rebootSoon();
+                }
                 break;
             }
             case socket_message_CorrelationRequest_file_write_chunk_tag: {
@@ -679,6 +716,8 @@ static void serviceLoop(void *) {
         }
         wifiService.loop();
         apService.loop();
+        // A client that left mid-update stops sending; its claim on the update slot ends here.
+        EXECUTE_EVERY_N_MS(1000, otaSession.expire(esp_timer_get_time() / 1000));
         EXECUTE_EVERY_N_MS(2000, {
             // sample() keeps running regardless: its uint32 idle-counter deltas only stay valid
             // over short windows. fillAnalytics() stats the filesystem, so that waits for a client.

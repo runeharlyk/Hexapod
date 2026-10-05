@@ -120,6 +120,19 @@ message FeaturesDataResponse {
   string firmware_elf_sha256 = 8;
 }
 
+// A firmware update over the protobuf link, for clients that cannot reach POST /api/firmware (an
+// https page on Bluetooth or USB). The image goes in order, in chunks of at most 512 bytes, into the
+// app slot the robot does not run from; the finish validates it, selects it and restarts the robot.
+// Refusals carry their reason in CorrelationResponse.error_message.
+message OtaStart {
+  uint32 size = 1;
+}
+message OtaChunk {
+  uint32 index = 1;
+  bytes data = 2;
+}
+message OtaFinish {}
+
 message CorrelationRequest {
   uint32 correlation_id = 1;
   oneof request {
@@ -139,6 +152,9 @@ message CorrelationRequest {
     api.ServoSettings servo_settings_update = 81;
     api.PeripheralSettingsRequest peripheral_settings_get = 90;
     api.PeripheralSettings peripheral_settings_update = 91;
+    OtaStart ota_start = 120;
+    OtaChunk ota_chunk = 121;
+    OtaFinish ota_finish = 122;
     api.FileWriteChunk file_write_chunk = 100;
     api.FileReadChunk file_read_chunk = 101;
     api.FileDeleteRequest file_delete = 102;
@@ -150,6 +166,8 @@ message CorrelationRequest {
 message CorrelationResponse {
   uint32 correlation_id = 1;
   uint32 status_code = 2;
+  // Why a request was refused, for the app to show; empty on success.
+  string error_message = 3;
   oneof response {
     FeaturesDataResponse features_data_response = 10;
     I2CScanData i2c_scan_data = 20;
