@@ -1,5 +1,5 @@
 """Drives the robot's animation system over the native USB serial link, for bench tests before the web
-app exists. The framing is SerialAdapter's: a little-endian uint16 length followed by one
+app exists. The framing is SerialAdapter's (src/robot/serial_frame.py): COBS with a CRC around one
 socket_message.Message.
 
     uv run python robot_animate.py --port COM5 list
@@ -17,7 +17,6 @@ and shell keeps the port open so a looping or holding animation can be stopped a
 import argparse
 import queue
 import shlex
-import struct
 import sys
 import threading
 import time
@@ -26,11 +25,11 @@ from pathlib import Path
 import serial
 
 from src.platform_shared import message_pb2
+from src.robot import serial_frame
 from src.robot.animation_files import load_json, to_proto
 
 ROOT = Path(__file__).resolve().parents[1]
 CHUNK = 512
-MAX_FRAME = 2048
 REQUEST_TIMEOUT_S = 5.0
 QUIET_S = 2.0
 ANIMATION_STATUS_TAG = message_pb2.Message.DESCRIPTOR.fields_by_name["animation_status"].number
@@ -46,7 +45,7 @@ class Link:
         self.ser.dtr = False
         self.ser.rts = False
         self.ser.open()
-        self.rx = bytearray()
+        self.decoder = serial_frame.Decoder(self._handle)
         self.responses: dict[int, message_pb2.CorrelationResponse] = {}
         self.next_id = 1
         self.subscribed: set[int] = set()
@@ -56,7 +55,7 @@ class Link:
 
     def send(self, msg: message_pb2.Message) -> None:
         payload = msg.SerializeToString()
-        self.ser.write(struct.pack("<H", len(payload)) + payload)
+        self.ser.write(serial_frame.encode(payload))
 
     def request(self, fill) -> message_pb2.CorrelationResponse:
         msg = message_pb2.Message()
@@ -83,28 +82,21 @@ class Link:
 
     def _reader(self) -> None:
         while True:
-            self.rx += self.ser.read(4096)
-            while len(self.rx) >= 2:
-                (length,) = struct.unpack_from("<H", self.rx, 0)
-                if length == 0 or length > MAX_FRAME:
-                    self.rx.clear()
-                    break
-                if len(self.rx) < 2 + length:
-                    break
-                payload = bytes(self.rx[2:2 + length])
-                del self.rx[:2 + length]
-                msg = message_pb2.Message()
-                try:
-                    msg.ParseFromString(payload)
-                except Exception:
-                    continue
-                kind = msg.WhichOneof("message")
-                if kind == "correlation_response":
-                    self.responses[msg.correlation_response.correlation_id] = msg.correlation_response
-                elif kind == "animation_status" and self.on_status:
-                    self.on_status(msg.animation_status)
-                elif kind == "mode" and self.on_mode:
-                    self.on_mode(msg.mode)
+            self.decoder.feed(self.ser.read(4096))
+
+    def _handle(self, payload: bytes) -> None:
+        msg = message_pb2.Message()
+        try:
+            msg.ParseFromString(payload)
+        except Exception:
+            return
+        kind = msg.WhichOneof("message")
+        if kind == "correlation_response":
+            self.responses[msg.correlation_response.correlation_id] = msg.correlation_response
+        elif kind == "animation_status" and self.on_status:
+            self.on_status(msg.animation_status)
+        elif kind == "mode" and self.on_mode:
+            self.on_mode(msg.mode)
 
 
 def upload(link: Link, name: str) -> None:

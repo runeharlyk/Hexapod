@@ -35,7 +35,7 @@ void SerialAdapter::readLoop() {
         if (present != hostPresent_) {
             hostPresent_ = present;
             if (!present) {
-                rx_.clear();
+                decoder_.reset();
                 removeClient(CLIENT_ID);
                 ESP_LOGI(TAG, "host disconnected");
             } else {
@@ -44,43 +44,21 @@ void SerialAdapter::readLoop() {
         }
 
         const int n = usb_serial_jtag_read_bytes(buf, sizeof(buf), pdMS_TO_TICKS(100));
-        if (n > 0) feed(buf, (size_t)n);
+        if (n > 0) decoder_.feed(buf, (size_t)n);
     }
-}
-
-void SerialAdapter::feed(const uint8_t* data, size_t len) {
-    if (rx_.size() + len > 2 * PROTO_BUFFER_SIZE) {
-        ESP_LOGW(TAG, "rx buffer overrun, dropping stream to resync");
-        rx_.clear();
-        return;
-    }
-    rx_.insert(rx_.end(), data, data + len);
-
-    size_t pos = 0;
-    while (rx_.size() - pos >= 2) {
-        const size_t msgLen = rx_[pos] | (rx_[pos + 1] << 8);
-        if (msgLen == 0 || msgLen > PROTO_BUFFER_SIZE) {
-            ESP_LOGW(TAG, "bogus frame length %u, dropping stream to resync", (unsigned)msgLen);
-            rx_.clear();
-            return;
-        }
-        if (rx_.size() - pos < 2 + msgLen) break;
-        handleIncoming(rx_.data() + pos + 2, msgLen, CLIENT_ID);
-        pos += 2 + msgLen;
-    }
-    if (pos > 0) rx_.erase(rx_.begin(), rx_.begin() + pos);
 }
 
 void SerialAdapter::send(const uint8_t* data, size_t len, int cid) {
     (void)cid;
-    if (!hostPresent_ || len == 0 || len > PROTO_BUFFER_SIZE) return;
+    if (!hostPresent_ || len == 0) return;
 
-    const uint8_t header[2] = {(uint8_t)(len & 0xFF), (uint8_t)(len >> 8)};
-    // Short timeout: a host that stops reading must not stall the event-bus worker behind it.
-    if (usb_serial_jtag_write_bytes(header, sizeof(header), pdMS_TO_TICKS(20)) != sizeof(header)) return;
-    for (size_t off = 0; off < len; off += TX_CHUNK) {
-        const size_t take = len - off < TX_CHUNK ? len - off : TX_CHUNK;
-        if (usb_serial_jtag_write_bytes(data + off, take, pdMS_TO_TICKS(20)) != (int)take) return;
+    const std::vector<uint8_t> frame = serial_frame::encode(data, len);
+    if (frame.empty()) return;
+    // Short timeout: a host that stops reading must not stall the event-bus worker behind it. A frame
+    // cut short is dropped by the app's CRC, and the delimiters let it find the next one.
+    for (size_t off = 0; off < frame.size(); off += TX_CHUNK) {
+        const size_t take = frame.size() - off < TX_CHUNK ? frame.size() - off : TX_CHUNK;
+        if (usb_serial_jtag_write_bytes(frame.data() + off, take, pdMS_TO_TICKS(20)) != (int)take) return;
     }
 }
 

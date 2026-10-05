@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <communication/comm_base.hpp>
+#include <communication/serial_frame.h>
 
 /*
  * Protobuf transport over the ESP32-S3's native USB Serial/JTAG port.
@@ -18,8 +19,8 @@
  * is also a secure-context API, so the same page can just open the USB port instead. See
  * docs/connectivity.md for why the https origin cannot use ws:// or the camera.
  *
- * Framing is [uint16 LE length][payload], the same as the BLE adapter, so the app reassembles both
- * with one code path.
+ * Framing is COBS with a CRC (communication/serial_frame.h): unlike BLE's reliable link, a USB
+ * serial stream can lose or cut bytes, and a bare length prefix never finds its way back.
  */
 class SerialAdapter : public CommAdapterBase {
   public:
@@ -37,9 +38,10 @@ class SerialAdapter : public CommAdapterBase {
 
     static void rxTask(void* arg);
     void readLoop();
-    void feed(const uint8_t* data, size_t len);
 
-    std::vector<uint8_t> rx_;
+    serial_frame::Decoder decoder_{[this](const uint8_t* message, size_t len) {
+        handleIncoming(message, len, CLIENT_ID);
+    }};
     std::atomic<bool> hostPresent_ {false}; // written by the rx task, read by emitters and hasClient()
 };
 

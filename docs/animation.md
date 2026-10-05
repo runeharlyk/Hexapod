@@ -185,7 +185,7 @@ Regenerate the fixtures after any behaviour change in `animation.py`.
 ## Bench tool
 
 `simulation/robot_animate.py` drives the robot over the native USB Serial/JTAG port, the serial path for a headless check.
-The framing is `SerialAdapter`'s: a little-endian uint16 length followed by one `socket_message.Message`; a length of 0 or above 2048 makes the robot drop its buffer.
+The framing is `SerialAdapter`'s: 0x00, COBS(version, one `socket_message.Message`, CRC-16), 0x00 (`firmware/include/communication/serial_frame.h`); a damaged or cut frame is dropped and the next delimiter resynchronises.
 The robot only sends once it sees a host on the port.
 A COM port is exclusive on Windows, so `watch` cannot run beside another command.
 `play` and `stop` therefore subscribe to the status (tag 283) and mode (tag 130) topics themselves and print every status and mode change by name.

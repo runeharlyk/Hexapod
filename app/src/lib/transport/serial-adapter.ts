@@ -1,13 +1,63 @@
 import { derived, writable } from 'svelte/store'
+import { Message } from '$lib/platform_shared/message'
 import { type ITransport, type LinkStatus } from '../interfaces/transport.interface'
+import { SERIAL_MAX_MESSAGE, SerialFrameDecoder, encodeSerialFrame } from './serial-framing'
 
-// Framing matches the BLE adapter and firmware/src/communication/serial_adapter.cpp:
-// [uint16 LE length][payload].
-const MAX_FRAME = 2048
+// The ESP32-S3 native USB port is CDC, so the rate is ignored -- but the API demands one.
+const BAUD_RATE = 921600
+// How often a robot that has not answered yet is pinged; it may still be booting.
+export const SERIAL_PROBE_INTERVAL_MS = 1000
+
+const PING_FRAME = encodeSerialFrame(Message.encode(Message.create({ pingmsg: {} })).finish())
 
 export const serialSupported = () => typeof navigator !== 'undefined' && 'serial' in navigator
 
-function createSerialAdapter(): ITransport {
+const sameDevice = (a: SerialPort, b: SerialPort) => {
+  const x = a.getInfo()
+  const y = b.getInfo()
+  return (
+    x.usbVendorId !== undefined &&
+    x.usbVendorId === y.usbVendorId &&
+    x.usbProductId === y.usbProductId
+  )
+}
+
+// Resolves to `granted` once it is present, or to the same device under a new port: a native USB
+// board leaves the bus while it resets and may come back as another port. Needs no user gesture.
+const presentPort = (granted: SerialPort, signal: AbortSignal) =>
+  new Promise<SerialPort>((resolve, reject) => {
+    const matches = (port: SerialPort) => port === granted || sameDevice(port, granted)
+    const settle = (outcome: () => void) => {
+      navigator.serial.removeEventListener('connect', onConnect)
+      signal.removeEventListener('abort', onAbort)
+      outcome()
+    }
+    const onConnect = (event: Event) => {
+      const port = event.target as SerialPort
+      if (matches(port)) settle(() => resolve(port))
+    }
+    const onAbort = () => settle(() => reject(signal.reason))
+    // Listening before asking, so a port arriving in between is not missed.
+    navigator.serial.addEventListener('connect', onConnect)
+    signal.addEventListener('abort', onAbort)
+    navigator.serial.getPorts().then(ports => {
+      const port = ports.find(p => p === granted) ?? ports.find(matches)
+      if (port) settle(() => resolve(port))
+    }, reject)
+  })
+
+// A port this origin was granted before; a picker is needed only when there is none or several.
+const grantedPort = async () => {
+  const ports = await navigator.serial.getPorts()
+  return ports.length === 1 ? ports[0] : undefined
+}
+
+export type SerialTransport = ITransport & { choosePort: () => Promise<void> }
+
+// The link counts as connected once the robot answers a ping: a board may reset when its port opens
+// and stays silent while it boots, and whatever is sent meanwhile is lost. After a reset or an
+// unplug the same device is reopened by itself until the user disconnects.
+export function createSerialAdapter(): SerialTransport {
   const dataCallbacks: ((data: Uint8Array) => void)[] = []
   const connectCallbacks: (() => void)[] = []
   const disconnectCallbacks: (() => void)[] = []
@@ -15,103 +65,147 @@ function createSerialAdapter(): ITransport {
   const connected = derived(status, $s => $s === 'connected')
 
   let port: SerialPort | undefined
-  let writer: WritableStreamDefaultWriter<Uint8Array> | undefined
+  let opened: SerialPort | undefined
+  let wanted = false
+  let answering = false
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
-  let rx = new Uint8Array(0)
+  let reading = Promise.resolve()
+  let writeQueue = Promise.resolve()
+  let probeId: ReturnType<typeof setInterval> | undefined
+  let waiting: AbortController | undefined
 
-  const handleChunk = (chunk: Uint8Array) => {
-    const merged = new Uint8Array(rx.length + chunk.length)
-    merged.set(rx)
-    merged.set(chunk, rx.length)
-    rx = merged
-
-    while (rx.length >= 2) {
-      const len = rx[0] | (rx[1] << 8)
-      if (len === 0 || len > MAX_FRAME) {
-        // The port carries only our frames, so a bad length means we are out of step with the
-        // stream rather than reading someone else's data. Drop it and resync.
-        rx = new Uint8Array(0)
-        return
-      }
-      if (rx.length < 2 + len) break
-      const message = rx.slice(2, 2 + len)
-      dataCallbacks.forEach(cb => cb(message))
-      rx = rx.slice(2 + len)
+  const decoder = new SerialFrameDecoder(message => {
+    // The first frame only answers a probe: nothing else is sent before it.
+    if (!answering) {
+      answering = true
+      clearInterval(probeId)
+      status.set('connected')
+      connectCallbacks.forEach(cb => cb())
+      return
     }
+    dataCallbacks.forEach(cb => cb(message))
+  })
+
+  const write = (frame: Uint8Array) => {
+    const target = opened?.writable
+    if (!target) return
+    writeQueue = writeQueue
+      .then(async () => {
+        const writer = target.getWriter()
+        try {
+          await writer.write(frame)
+        } finally {
+          writer.releaseLock()
+        }
+      })
+      .catch(error => console.error('Serial write failed:', error))
   }
 
-  const readLoop = async () => {
-    if (!port?.readable) return
-    reader = port.readable.getReader()
+  const lose = () => {
+    clearInterval(probeId)
+    const wasAnswering = answering
+    answering = false
+    decoder.reset()
+    if (wasAnswering) disconnectCallbacks.forEach(cb => cb())
+  }
+
+  const readUntilLost = async (open: SerialPort) => {
+    while (open.readable && opened === open) {
+      reader = open.readable.getReader()
+      try {
+        for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+          decoder.feed(chunk.value)
+        }
+        break
+      } catch {
+        // A framing error hands over a fresh readable; a lost device leaves none.
+      } finally {
+        reader.releaseLock()
+        reader = undefined
+      }
+    }
+    if (opened !== open) return
+    opened = undefined
+    lose()
+    await writeQueue
+    await open.close().catch(() => {})
+    if (wanted) void reopen()
+    else status.set('disconnected')
+  }
+
+  const open = async (chosen: SerialPort) => {
+    await chosen.open({ baudRate: BAUD_RATE })
+    // Asserted, these lines can hold an ESP32 in reset or in its bootloader.
+    await chosen.setSignals({ dataTerminalReady: false, requestToSend: false }).catch(() => {})
+    opened = chosen
+    decoder.reset()
+    reading = readUntilLost(chosen)
+    write(PING_FRAME)
+    probeId = setInterval(() => write(PING_FRAME), SERIAL_PROBE_INTERVAL_MS)
+  }
+
+  const reopen = async () => {
+    if (!port) return
+    status.set('connecting')
+    waiting = new AbortController()
     try {
-      for (;;) {
-        const { value, done } = await reader.read()
-        if (done) break
-        if (value) handleChunk(value)
-      }
-    } catch {
-      // Unplugged mid-read; disconnect() below does the teardown.
-    } finally {
-      reader.releaseLock()
-      reader = undefined
-      if (port) await disconnect()
+      port = await presentPort(port, waiting.signal)
+      if (wanted) await open(port)
+    } catch (error) {
+      if (!waiting.signal.aborted) console.error('Reopening the serial port failed:', error)
+      if (!opened) status.set('disconnected')
     }
   }
 
-  const connect = async () => {
+  const connectTo = async (choose: boolean) => {
     if (!serialSupported())
       throw new Error('This browser has no Web Serial support. Try Chrome or Edge.')
+    if (opened) return
     status.set('connecting')
     try {
       // requestPort must be called from a user gesture; the caller is a click handler.
-      port = await navigator.serial.requestPort()
-      // The ESP32-S3 native USB port is CDC, so the rate is ignored -- but the API demands one.
-      await port.open({ baudRate: 921600 })
-      writer = port.writable?.getWriter()
-      rx = new Uint8Array(0)
-      status.set('connected')
-      connectCallbacks.forEach(cb => cb())
-      void readLoop()
+      const chosen =
+        (!choose && (port ?? (await grantedPort()))) || (await navigator.serial.requestPort())
+      port = chosen
+      wanted = true
+      await open(chosen)
     } catch (e) {
-      port = undefined
+      wanted = false
       status.set('disconnected')
       throw e
     }
   }
 
   const disconnect = async () => {
-    const closing = port
-    port = undefined
-    try {
-      writer?.releaseLock()
-      await reader?.cancel()
-    } catch {
-      // Already gone.
+    wanted = false
+    waiting?.abort()
+    const closing = opened
+    opened = undefined
+    lose()
+    if (closing) {
+      await reader?.cancel().catch(() => {})
+      // The read loop must release its lock before the port can close.
+      await reading
+      await writeQueue
+      await closing.close().catch(() => {})
     }
-    writer = undefined
-    try {
-      await closing?.close()
-    } catch {
-      // Already gone.
-    }
-    rx = new Uint8Array(0)
     status.set('disconnected')
-    disconnectCallbacks.forEach(cb => cb())
   }
 
   const send = (data: Uint8Array) => {
-    if (!writer || data.length > MAX_FRAME) return
-    const framed = new Uint8Array(2 + data.length)
-    framed[0] = data.length & 0xff
-    framed[1] = (data.length >> 8) & 0xff
-    framed.set(data, 2)
-    void writer.write(framed).catch(() => disconnect())
+    if (!answering || data.length > SERIAL_MAX_MESSAGE) return
+    write(encodeSerialFrame(data))
   }
 
   return {
     status,
     connected,
-    connect,
+    connect: () => connectTo(false),
+    choosePort: async () => {
+      await disconnect()
+      port = undefined
+      await connectTo(true)
+    },
     disconnect,
     send,
     onData: cb => dataCallbacks.push(cb),
