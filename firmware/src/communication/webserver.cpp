@@ -1,4 +1,5 @@
 #include <communication/webserver.h>
+#include <communication/origin_policy.h>
 #include <esp_log.h>
 #include <unistd.h>
 #include <cstring>
@@ -70,9 +71,37 @@ void WebServer::applyDefaultHeaders(httpd_req_t* req) {
 
 void WebServer::addDefaultHeader(const char* key, const char* value) { defaultHeaders_[key] = value; }
 
+// A header that is absent reads as nullptr; one too long to read refuses the request.
+static bool readHeader(httpd_req_t* req, const char* field, char* value, size_t size, const char*& read) {
+    esp_err_t err = httpd_req_get_hdr_value_str(req, field, value, size);
+    read = err == ESP_OK ? value : nullptr;
+    return err == ESP_OK || err == ESP_ERR_NOT_FOUND;
+}
+
+struct RequestOrigin {
+    char origin[128];
+    char host[128];
+    const char* originRead = nullptr;
+    bool allowed = false;
+
+    explicit RequestOrigin(httpd_req_t* req) {
+        const char* hostRead = nullptr;
+        allowed = readHeader(req, "Origin", origin, sizeof(origin), originRead) &&
+                  readHeader(req, "Host", host, sizeof(host), hostRead) && originAllowed(originRead, hostRead);
+    }
+};
+
 esp_err_t WebServer::httpHandler(httpd_req_t* req) {
     WebServer* self = static_cast<WebServer*>(req->user_ctx);
     self->applyDefaultHeaders(req);
+    // CORS for the pages the origin policy allows, named back rather than "*": a wildcard let any
+    // page preflight a firmware upload. httpd keeps a pointer to the value, which lives in this
+    // frame until the route's handler has answered.
+    const RequestOrigin origin(req);
+    if (origin.allowed && origin.originRead) {
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", origin.originRead);
+        httpd_resp_set_hdr(req, "Vary", "Origin");
+    }
 
     // req->uri still carries the query string, so match on the path portion only -- otherwise every
     // endpoint taking a query parameter (e.g. /api/files/content?path=...) falls through to the 404.
@@ -102,7 +131,14 @@ esp_err_t WebServer::wsHandler(httpd_req_t* req) {
 
     if (req->method == HTTP_GET) {
         int sockfd = httpd_req_to_sockfd(req);
-        self->addWsClient(sockfd);
+        // IDF 5.4 has no pre-handshake callback, so the upgrade has been answered by now; an error
+        // here makes httpd close the session before it carries a single frame.
+        const RequestOrigin origin(req);
+        if (!origin.allowed) {
+            ESP_LOGW(TAG, "Refused a WebSocket opened by %s",
+                     origin.originRead ? origin.originRead : "an unreadable origin");
+            return ESP_FAIL;
+        }
         if (self->wsOpenHandler_) {
             self->wsOpenHandler_(req);
         }

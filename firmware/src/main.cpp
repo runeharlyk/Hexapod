@@ -518,8 +518,8 @@ static void setupServer() {
     server.config(16, 8192);
     server.listen(80);
 
-    // Answer the browser's CORS preflight so the cross-origin dev app can reach the robot.
-    server.addDefaultHeader("Access-Control-Allow-Origin", "*");
+    // Answer the browser's CORS preflight so the cross-origin dev app can reach the robot; the allowed
+    // origin itself is named per request (WebServer::httpHandler, communication/origin_policy.h).
     server.addDefaultHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     server.addDefaultHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     server.on("/*", HTTP_OPTIONS, [](httpd_req_t *r) {
