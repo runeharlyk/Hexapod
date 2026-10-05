@@ -2,6 +2,7 @@
 
 #include <esp_http_server.h>
 #include <wifi/wifi_idf.h>
+#include <atomic>
 #include <string>
 
 #include <filesystem.h>
@@ -32,21 +33,27 @@ class WiFiService : public StatefulService<WiFiSettings> {
   private:
     void onStationModeDisconnected(int32_t event, void *event_data);
     void onStationModeStop(int32_t event, void *event_data);
-    static void onStationModeGotIP(int32_t event, void *event_data);
+    void onStationModeGotIP(int32_t event, void *event_data);
 
     FSPersistencePB<WiFiSettings> _persistence;
 
     void reconfigureWiFiConnection();
     void manageSTA();
-    void configureNetwork(WiFiNetwork &network);
+    void configureNetwork(const WiFiNetwork &network, const char *hostname);
 
     unsigned long _lastConnectionAttempt;
     bool _stopping;
     uint8_t _failedAttempts {0};
+    // Set from the socket task when the settings change; the service task applies it.
+    std::atomic<uint32_t> _reconfigureAt {0};
+    uint32_t _nextNetwork {0};
+    uint32_t _connectingTo {0};
 
     // Each STA retry toggles AP<->APSTA, which churns internal DMA RAM and can starve the BT
     // controller. Back off exponentially from reconnectDelay up to maxReconnectDelay so a
     // persistently-failing network (e.g. wrong password) stops thrashing the radio.
     constexpr static uint16_t reconnectDelay {10000};
     constexpr static uint32_t maxReconnectDelay {60000};
+    // Leaves time for the reply to the save that caused the change.
+    constexpr static uint32_t reconfigureDelay {500};
 };

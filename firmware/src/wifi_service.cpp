@@ -21,10 +21,11 @@ void WiFiService::begin() {
     WiFi.onEvent([this](int32_t event, void *data) { this->onStationModeDisconnected(event, data); },
                  WIFI_EVENT_STA_DISCONNECTED);
     WiFi.onEvent([this](int32_t event, void *data) { this->onStationModeStop(event, data); }, WIFI_EVENT_STA_STOP);
-    WiFi.onEvent(onStationModeGotIP, IP_EVENT_STA_GOT_IP_IDF);
+    WiFi.onEvent([this](int32_t event, void *data) { this->onStationModeGotIP(event, data); }, IP_EVENT_STA_GOT_IP_IDF);
 
     _persistence.readFromFS();
     _lastConnectionAttempt = 0;
+    read([this](WiFiSettings &settings) { _nextNetwork = settings.selected_network; });
 
     // manageSTA() owns every connection attempt; connecting here too raced its first tick and failed
     // the second esp_wifi_connect() with ESP_ERR_WIFI_CONN, charging a false hit against the backoff.
@@ -33,14 +34,21 @@ void WiFiService::begin() {
     }
 }
 
-void WiFiService::reconfigureWiFiConnection() {
-    _lastConnectionAttempt = 0;
-    _failedAttempts = 0;
-    if (WiFi.disconnect(true)) _stopping = true;
+// Runs on the socket task while the change is saved, before its reply is sent: dropping the station
+// now would lose the reply for a client connected through it. The service task applies it shortly.
+void WiFiService::reconfigureWiFiConnection() { _reconfigureAt = esp_timer_get_time() / 1000 + reconfigureDelay; }
+
+void WiFiService::loop() {
+    const uint32_t now = esp_timer_get_time() / 1000;
+    uint32_t reconfigureAt = _reconfigureAt.load();
+    if (reconfigureAt != 0 && now >= reconfigureAt && _reconfigureAt.compare_exchange_strong(reconfigureAt, 0)) {
+        _lastConnectionAttempt = 0;
+        _failedAttempts = 0;
+        read([this](WiFiSettings &settings) { _nextNetwork = settings.selected_network; });
+        if (WiFi.disconnect(true)) _stopping = true;
+    }
+    EXECUTE_EVERY_N_MS(1000, manageSTA());
 }
-
-
-void WiFiService::loop() { EXECUTE_EVERY_N_MS(1000, manageSTA()); }
 
 int WiFiService::networksProto(api_WifiNetworkScan *buf, size_t maxCount) {
     int numNetworks = WiFi.scanComplete();
@@ -91,8 +99,20 @@ void WiFiService::manageSTA() {
         _failedAttempts = 0;
         return;
     }
-    if (state().wifi_networks_count == 0) return;
     if (_stopping) return;
+
+    // The socket task updates the settings, so this task copies what it needs under the lock.
+    WiFiNetwork network;
+    char hostname[sizeof(WiFiSettings::hostname)];
+    uint32_t count = 0;
+    read([&](WiFiSettings &settings) {
+        count = settings.wifi_networks_count;
+        if (count == 0) return;
+        _connectingTo = _nextNetwork % count;
+        network = settings.wifi_networks[_connectingTo];
+        memcpy(hostname, settings.hostname, sizeof(hostname));
+    });
+    if (count == 0) return;
 
     // Throttle to the current backoff; reconfigureWiFiConnection() zeroes the timestamp to retry now.
     uint32_t shift = _failedAttempts < 3 ? _failedAttempts : 3;
@@ -107,20 +127,20 @@ void WiFiService::manageSTA() {
     if (mode == WIFI_MODE_AP) WiFi.mode(WIFI_MODE_APSTA);
     else if (mode == WIFI_MODE_NULL) WiFi.mode(WIFI_MODE_STA);
 
-    uint32_t idx = state().selected_network;
-    if (idx >= state().wifi_networks_count) idx = 0;
-    ESP_LOGI(TAG, "Connecting to: %s", state().wifi_networks[idx].ssid);
-    configureNetwork(state().wifi_networks[idx]);
+    // A failed attempt moves on to the next saved network; one that joins is tried first next time.
+    _nextNetwork = _connectingTo + 1;
+    ESP_LOGI(TAG, "Connecting to: %s", network.ssid);
+    configureNetwork(network, hostname);
 }
 
-void WiFiService::configureNetwork(WiFiNetwork &network) {
+void WiFiService::configureNetwork(const WiFiNetwork &network, const char *hostname) {
     if (network.static_ip_config) {
         WiFi.config(IPAddress(network.local_ip), IPAddress(network.gateway_ip), IPAddress(network.subnet_mask),
                     IPAddress(network.dns_ip_1), IPAddress(network.dns_ip_2));
     } else {
         WiFi.config(IPAddress(0, 0, 0, 0), IPAddress(0, 0, 0, 0), IPAddress(0, 0, 0, 0));
     }
-    WiFi.setHostname(state().hostname);
+    WiFi.setHostname(hostname);
     WiFi.begin(network.ssid, network.password);
 
 #if CONFIG_IDF_TARGET_ESP32C3
@@ -151,6 +171,7 @@ void WiFiService::onStationModeStop(int32_t event, void *event_data) {
 }
 
 void WiFiService::onStationModeGotIP(int32_t event, void *event_data) {
+    _nextNetwork = _connectingTo;
     ESP_LOGI(TAG, "WiFi Got IP. localIP=%s, hostName=%s", WiFi.localIP().toString().c_str(), WiFi.getHostname());
     publishStatus();
 }
