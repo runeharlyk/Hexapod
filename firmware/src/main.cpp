@@ -29,6 +29,7 @@
 #include <peripherals_settings_service.h>
 #include <imu_calibration_service.h>
 #include <ota_flash.h>
+#include <telemetry/telemetry.h>
 #include <filesystem.h>
 #include <wifi/wifi_idf.h>
 #include <wifi_service.h>
@@ -69,6 +70,9 @@ ServoSettingsService servoSettingsService;
 PeripheralSettingsService peripheralSettingsService;
 ImuCalibrationService imuCalibrationService;
 EspOtaFlash otaFlash;
+// Some 24 KB: above CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL, so the allocation lands in PSRAM and the
+// scarce internal RAM stays with WiFi, BLE and the camera.
+Telemetry *telemetry = new Telemetry();
 OtaSession otaSession{otaFlash, ota_service::inProgress};
 Websocket wsSocket{server, "/api/ws"};
 BLE bleAdapter;
@@ -695,13 +699,43 @@ static void setupComm() {
     bleAdapter.begin();
 }
 
+// Ships the ticks the control task recorded, whole batches at a time, while anyone subscribes; with
+// nobody listening the control task stops recording and the leftovers are dropped.
+static void sendTelemetry() {
+    const bool listening = anyoneListening(MessageTraits<socket_message_TelemetryBatch>::tag);
+    if (!listening) {
+        if (telemetry->recording()) {
+            telemetry->setRecording(false);
+            telemetry->discardUnsent();
+        }
+        return;
+    }
+    telemetry->setRecording(true);
+    static socket_message_TelemetryBatch batch;  // about 1 KB, kept off the service task's stack
+    while (telemetry->takeBatch(batch)) emitAll(batch);
+}
+
 static void controlLoop(void *) {
     robot.initialize();
     TickType_t last = xTaskGetTickCount();
+    uint32_t seq = 0;
+    int64_t previousStartUs = esp_timer_get_time();
     for (;;) {
+        const int64_t startUs = esp_timer_get_time();
         robot.readSensors();
         robot.planMotion();
         robot.updateActuators();
+        if (telemetry->recording()) {
+            socket_message_TickSample tick = socket_message_TickSample_init_zero;
+            tick.seq = seq;
+            tick.t_us = static_cast<uint64_t>(startUs);
+            tick.period_us = static_cast<uint32_t>(startUs - previousStartUs);
+            tick.compute_us = static_cast<uint32_t>(esp_timer_get_time() - startUs);
+            robot.fillTelemetry(tick);
+            telemetry->record(tick);
+        }
+        seq++;
+        previousStartUs = startUs;
         robot.emitTelemetry();
         controlTicks.fetch_add(1, std::memory_order_relaxed);
         // After an overrun (an I2C timeout can stall a tick for 200 ms) the schedule restarts from now
@@ -748,6 +782,7 @@ static void serviceLoop(void *) {
         apService.loop();
         // A client that left mid-update stops sending; its claim on the update slot ends here.
         EXECUTE_EVERY_N_MS(1000, otaSession.expire(esp_timer_get_time() / 1000));
+        sendTelemetry();
         EXECUTE_EVERY_N_MS(2000, {
             // sample() keeps running regardless: its uint32 idle-counter deltas only stay valid
             // over short windows. fillAnalytics() stats the filesystem, so that waits for a client.

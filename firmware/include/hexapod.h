@@ -16,8 +16,10 @@ class Hexapod {
     }
 
     void readSensors() {
+        imuFresh = false;
         EXECUTE_EVERY_N_MS(25, {
             const bool imu = _peripherals.readIMU();
+            imuFresh = imu;
             // 15 Hz part; polling it on the 40 Hz IMU tick just returns the last sample.
             const bool mag = _peripherals.readMagnetometer();
             if (imu || mag) EventBus<IMUAnglesMsg>::publish(_peripherals.getIMUAngles());
@@ -45,6 +47,11 @@ class Hexapod {
 
     bool imuPresent() const { return _peripherals.imuActive(); }
 
+    void fillTelemetry(socket_message_TickSample &tick) {
+        tick.imu_fresh = imuFresh;
+        _peripherals.fillTelemetry(tick);
+        _motionService.fillTelemetry(tick);
+    }
     bool resting() const { return _motionService.resting(); }
     imu_calibration::Check calibrateIMU(ImuCalibration &result) { return _peripherals.calibrateIMU(result); }
     bool magnetometerPresent() const { return _peripherals.magActive(); }
@@ -58,4 +65,5 @@ class Hexapod {
     Peripherals _peripherals;
     ServoController _servoController;
     bool updatedMotion = false;
+    bool imuFresh = false;
 };

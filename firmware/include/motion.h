@@ -1,7 +1,9 @@
 #ifndef MotionService_h
 #define MotionService_h
 
+#include <algorithm>
 #include <atomic>
+#include <iterator>
 #include <esp_log.h>
 #include <kinematics.h>
 #include <peripherals/servo_controller.h>
@@ -141,6 +143,7 @@ class MotionService {
 
     void handleCommand(CommandMsg const &c) {
         lastCommandMillis = millis();
+        lastCommand = c;
         commandTimedOut = false;
         steering = isWalkingMode(motionState) && (c.lx != 0.f || c.ly != 0.f || c.rx != 0.f);
         updateFeetDistanceTarget(c.fd);
@@ -333,6 +336,17 @@ class MotionService {
 
     float *getAngles() { return msgAngles.angles; }
 
+    // The motion's half of a telemetry tick: what it produced and from which command and mode.
+    void fillTelemetry(socket_message_TickSample &tick) const {
+        std::copy(std::begin(msgAngles.angles), std::end(msgAngles.angles), tick.angles);
+        const float command[8] = {lastCommand.lx, lastCommand.ly, lastCommand.rx, lastCommand.ry,
+                                  lastCommand.h,  lastCommand.s,  lastCommand.s1, lastCommand.fd};
+        std::copy(std::begin(command), std::end(command), tick.command);
+        tick.command_age_ms = lastCommandMillis == 0 ? 0 : millis() - lastCommandMillis;
+        tick.mode = static_cast<uint32_t>(motionState);
+        tick.gait = static_cast<uint32_t>(gait_state.gait_type);
+    }
+
     void publishState() { EventBus<ServoAnglesMsg>::publish(msgAngles); }
 
   private:
@@ -389,6 +403,9 @@ class MotionService {
     unsigned long _lastTunedLog = 0;
     bool commandTimedOut = false;
     bool steering = false;
+    // Written on the command worker, read by the control task for telemetry only; a torn read costs
+    // one sample's command, never the motion.
+    CommandMsg lastCommand{};
 
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
 

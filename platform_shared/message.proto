@@ -144,6 +144,30 @@ message OtaChunk {
 }
 message OtaFinish {}
 
+// One 5 ms control tick, as the robot ran it: for comparing the real control loop, IMU and command
+// path with what the simulation assumes (simulation/record.py, report_recording.py).
+message TickSample {
+  uint32 seq = 1;
+  uint64 t_us = 2;               // tick start, esp_timer clock
+  uint32 period_us = 3;          // since the previous tick start
+  uint32 compute_us = 4;         // tick start to the end of the servo write
+  bool imu_fresh = 5;            // a new IMU sample was read on this tick (the IMU is polled at 40 Hz)
+  repeated float rpy = 6;        // rad, roll, pitch, yaw from the DMP
+  repeated float gyro = 7;       // rad/s, body rates
+  repeated float gravity = 8;    // unit vector, DMP convention (world up)
+  repeated float angles = 9;     // deg, the 18 joint angles the motion produced this tick
+  repeated float command = 10;   // lx, ly, rx, ry, h, s, s1, fd of the last command
+  uint32 command_age_ms = 11;    // since that command arrived; 0 before any
+  uint32 mode = 12;              // MOTION_STATE position
+  uint32 gait = 13;              // GaitType position
+}
+
+message TelemetryBatch {
+  uint32 batch_seq = 1;
+  uint32 dropped_ticks = 2;      // ticks the ring had no room for, since boot
+  repeated TickSample ticks = 3;
+}
+
 message CorrelationRequest {
   uint32 correlation_id = 1;
   oneof request {
@@ -294,5 +318,6 @@ message Message {
     AnimationStop animation_stop = 281;
     PoseData pose = 282;
     AnimationStatus animation_status = 283;  // observable status: pushed while an animation runs
+    TelemetryBatch telemetry_batch = 290;    // stream: every control tick while subscribed
   }
 }

@@ -14,6 +14,13 @@ socket_message.FeaturesDataResponse.firmware_elf_sha256 max_size:65
 socket_message.ImuCalibration.accel_offsets max_count:3
 socket_message.ImuCalibration.gyro_offsets max_count:3
 socket_message.OtaChunk.data max_size:512
+# Five ticks keep a TelemetryBatch near the size of the largest Message member already there.
+socket_message.TelemetryBatch.ticks max_count:5
+socket_message.TickSample.rpy max_count:3 fixed_count:true
+socket_message.TickSample.gyro max_count:3 fixed_count:true
+socket_message.TickSample.gravity max_count:3 fixed_count:true
+socket_message.TickSample.angles max_count:18 fixed_count:true
+socket_message.TickSample.command max_count:8 fixed_count:true
 socket_message.CorrelationResponse.error_message max_size:64
 socket_message.OtaStatusData.error max_size:48
 socket_message.AnimationPlay.name max_size:33

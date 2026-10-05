@@ -1,6 +1,7 @@
 #pragma once
 
 #include <esp_log.h>
+#include <platform_shared/message.pb.h>
 #include <atomic>
 #include <vector>
 
@@ -168,6 +169,15 @@ class Peripherals {
 #else
         return 0.0f;
 #endif
+    }
+
+    // The IMU's half of a telemetry tick, as the motion sees it.
+    void fillTelemetry(socket_message_TickSample &tick) {
+        tick.rpy[0] = angleX();
+        tick.rpy[1] = angleY();
+        tick.rpy[2] = angleZ();
+        gyroRad(tick.gyro);
+        gravityBody(tick.gravity);
     }
 
     IMUAnglesMsg getIMUAngles() {
