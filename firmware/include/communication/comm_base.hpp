@@ -91,6 +91,10 @@ class CommAdapterBase {
   protected:
     virtual void send(const uint8_t* data, size_t len, int cid = -1) = 0;
 
+    // Whether a client can take a frame now without blocking. Subscriptions stream the latest value,
+    // so a frame a client cannot take is dropped rather than queued or waited on.
+    virtual bool ready(int cid) { return true; }
+
     // The callbacks below fire outside mutex_: a handler asks every adapter whether the tag still
     // has listeners, which re-enters this lock.
     void subscribe(int32_t tag, int cid = 0) {
@@ -182,12 +186,17 @@ class CommAdapterBase {
         uint8_t* data_ = nullptr;
     };
 
+    // Sends to a copy of the list, so a slow client never holds up subscribing or closing a session.
     void sendToSubscribers(int32_t tag, const uint8_t* data, size_t len) {
-        ScopedLock lock(mutex_);
-        auto it = client_subscriptions_.find(tag);
-        if (it == client_subscriptions_.end()) return;
-        for (int cid : it->second) {
-            send(data, len, cid);
+        std::list<int> clients;
+        {
+            ScopedLock lock(mutex_);
+            auto it = client_subscriptions_.find(tag);
+            if (it == client_subscriptions_.end()) return;
+            clients = it->second;
+        }
+        for (int cid : clients) {
+            if (ready(cid)) send(data, len, cid);
         }
     }
 
