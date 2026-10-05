@@ -1,15 +1,17 @@
 #pragma once
 
 // Chunked file transfer for transports without HTTP: the app on its https origin only has BLE and
-// Web Serial. Each chunk is a self-contained stdio operation. Any status other than 200 on a chunk
-// means the client restarts the file from offset 0, or reads the size back with a read and continues
-// from there: a failed fwrite can leave a partial chunk in the file. Paths are checked by the caller
-// against the mount root with validPath().
+// Web Serial. Each chunk is a self-contained stdio operation. Chunks land in `<path>.part`, and the
+// chunk that completes the declared total replaces the file, so an upload cut off halfway leaves the
+// previous file intact. Any status other than 200 on a chunk means the client restarts the file from
+// offset 0: a failed fwrite can leave a partial chunk behind. Paths are checked by the caller against
+// the mount root with validPath().
 
 #include <sys/stat.h>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 namespace file_transfer {
 
@@ -22,23 +24,29 @@ inline long fileSize(const char *full) {
     return stat(full, &st) == 0 ? (long)st.st_size : -1;
 }
 
-// 200 written; 400 the chunk does not fit the declared total, does not continue the file, or is
+inline std::string partPath(const char *full) { return std::string(full) + ".part"; }
+
+// LittleFS renames over an existing file in one step; a host filesystem that refuses to is given the
+// remove first.
+inline bool replace(const char *from, const char *to) {
+    if (std::rename(from, to) == 0) return true;
+    std::remove(to);
+    return std::rename(from, to) == 0;
+}
+
+// 200 written; 400 the chunk does not fit the declared total, does not continue the upload, or is
 // too large; 500 the filesystem refused.
 inline int write(const char *full, uint32_t offset, uint32_t total, const uint8_t *data, size_t len) {
     if (len > CHUNK_MAX || (uint64_t)offset + len > total) return 400;
-    if (offset == 0) {
-        FILE *f = fopen(full, "wb");
-        if (!f) return 500;
-        const bool ok = fwrite(data, 1, len, f) == len;
-        fclose(f);
-        return ok ? 200 : 500;
-    }
-    if (fileSize(full) != (long)offset) return 400;
-    FILE *f = fopen(full, "ab");
+    const std::string part = partPath(full);
+    if (offset != 0 && fileSize(part.c_str()) != (long)offset) return 400;
+    FILE *f = fopen(part.c_str(), offset == 0 ? "wb" : "ab");
     if (!f) return 500;
     const bool ok = fwrite(data, 1, len, f) == len;
     fclose(f);
-    return ok ? 200 : 500;
+    if (!ok) return 500;
+    if (offset + len < total) return 200;
+    return replace(part.c_str(), full) ? 200 : 500;
 }
 
 // 200 with n bytes and the file's total; 404 no such file; 400 length over CHUNK_MAX.

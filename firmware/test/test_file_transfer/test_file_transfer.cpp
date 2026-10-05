@@ -51,13 +51,29 @@ void test_chunks_assemble_the_file_in_order() {
     remove(path.c_str());
 }
 
-void test_offset_zero_truncates_a_previous_file() {
+void test_a_complete_upload_replaces_a_longer_previous_file() {
     const std::string path = tmpFile();
     const uint8_t a[4] = {9, 9, 9, 9}, b[1] = {1};
     file_transfer::write(path.c_str(), 0, 4, a, 4);
     TEST_ASSERT_EQUAL(200, file_transfer::write(path.c_str(), 0, 1, b, 1));
-    TEST_ASSERT_EQUAL(1, contents(path).size());
+    const std::vector<uint8_t> got = contents(path);
+    TEST_ASSERT_EQUAL(1, got.size());
+    TEST_ASSERT_EQUAL_UINT8(1, got[0]);
+    TEST_ASSERT_EQUAL(-1, file_transfer::fileSize(file_transfer::partPath(path.c_str()).c_str()));
     remove(path.c_str());
+}
+
+void test_an_unfinished_upload_leaves_the_previous_file_intact() {
+    const std::string path = tmpFile();
+    const uint8_t old[3] = {5, 6, 7}, fresh[2] = {1, 2};
+    TEST_ASSERT_EQUAL(200, file_transfer::write(path.c_str(), 0, 3, old, 3));
+    // The new upload declares four bytes and stops after two, as a dropped link would.
+    TEST_ASSERT_EQUAL(200, file_transfer::write(path.c_str(), 0, 4, fresh, 2));
+    const std::vector<uint8_t> got = contents(path);
+    TEST_ASSERT_EQUAL(3, got.size());
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(old, got.data(), 3);
+    remove(path.c_str());
+    remove(file_transfer::partPath(path.c_str()).c_str());
 }
 
 void test_a_chunk_past_the_total_or_past_the_end_is_refused() {
@@ -67,10 +83,11 @@ void test_a_chunk_past_the_total_or_past_the_end_is_refused() {
     TEST_ASSERT_EQUAL(0, contents(path).size());
     TEST_ASSERT_EQUAL(200, file_transfer::write(path.c_str(), 0, 6, a, 3));
     TEST_ASSERT_EQUAL(400, file_transfer::write(path.c_str(), 4, 6, a, 2));  // gap after byte 3
-    TEST_ASSERT_EQUAL(3, contents(path).size());
+    const std::string part = file_transfer::partPath(path.c_str());
+    TEST_ASSERT_EQUAL(3, contents(part).size());
     static uint8_t big[file_transfer::CHUNK_MAX + 1];
     TEST_ASSERT_EQUAL(400, file_transfer::write(path.c_str(), 3, 1000, big, sizeof(big)));
-    remove(path.c_str());
+    remove(part.c_str());
 }
 
 void test_a_refused_chunk_touches_no_file() {
@@ -111,7 +128,8 @@ int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_paths_must_be_absolute_inside_the_mount);
     RUN_TEST(test_chunks_assemble_the_file_in_order);
-    RUN_TEST(test_offset_zero_truncates_a_previous_file);
+    RUN_TEST(test_a_complete_upload_replaces_a_longer_previous_file);
+    RUN_TEST(test_an_unfinished_upload_leaves_the_previous_file_intact);
     RUN_TEST(test_a_chunk_past_the_total_or_past_the_end_is_refused);
     RUN_TEST(test_a_refused_chunk_touches_no_file);
     RUN_TEST(test_read_returns_the_window_and_the_total);

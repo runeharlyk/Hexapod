@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <sys/stat.h>
 #include <esp_log.h>
+#include <string>
 #include <vector>
 
 static const char *TAG_PERSISTENCE = "FSPersistencePB";
@@ -31,42 +32,22 @@ class FSPersistencePB {
         enableUpdateHandler();
     }
 
+    // A file that exists but cannot be loaded (a schema change, a torn write) is kept as `.bak`
+    // before the defaults replace it, so the WiFi networks or servo calibration in it are not lost.
     void readFromFS() {
-        FILE *file = fopen(_filePath, "rb");
-
-        if (file) {
-            fseek(file, 0, SEEK_END);
-            size_t fileSize = ftell(file);
-            fseek(file, 0, SEEK_SET);
-
-            if (fileSize > 0 && fileSize <= _maxSize) {
-                std::vector<uint8_t> buffer(fileSize);
-                size_t bytesRead = fread(buffer.data(), 1, fileSize, file);
-                fclose(file);
-
-                if (bytesRead == fileSize) {
-                    T protoMsg = {};
-                    pb_istream_t stream = pb_istream_from_buffer(buffer.data(), bytesRead);
-
-                    // A file that decodes but fails validation would otherwise leave the state
-                    // zero-initialised, so it is replaced by the defaults like an unreadable one.
-                    if (pb_decode(&stream, _msgDescriptor, &protoMsg) &&
-                        _statefulService->updateWithoutPropagation([this, &protoMsg](T &state) {
-                            return _stateUpdater(protoMsg, state);
-                        }) != StateUpdateResult::ERROR) {
-                        return;
-                    }
-                    ESP_LOGW(TAG_PERSISTENCE, "Invalid settings in %s, restoring defaults", _filePath);
-                }
-            } else {
-                fclose(file);
-            }
+        if (loadFromFS()) return;
+        struct stat st;
+        if (stat(_filePath, &st) == 0) {
+            const std::string backup = std::string(_filePath) + ".bak";
+            ESP_LOGW(TAG_PERSISTENCE, "Invalid settings in %s, kept as %s, restoring defaults", _filePath,
+                     backup.c_str());
+            replaceFile(_filePath, backup.c_str());
         }
-
         applyDefaults();
         writeToFS();
     }
 
+    // Written beside the file and renamed over it, so a reset mid-write leaves the old settings.
     bool writeToFS() {
         std::vector<uint8_t> buffer(_maxSize);
         pb_ostream_t stream = pb_ostream_from_buffer(buffer.data(), _maxSize);
@@ -75,21 +56,27 @@ class FSPersistencePB {
         _statefulService->read([this, &protoMsg](const T &state) { _stateReader(state, protoMsg); });
 
         if (!pb_encode(&stream, _msgDescriptor, &protoMsg)) {
+            ESP_LOGE(TAG_PERSISTENCE, "Failed to encode %s: %s", _filePath, PB_GET_ERROR(&stream));
             return false;
         }
 
         mkdirs();
 
-        FILE *file = fopen(_filePath, "wb");
+        const std::string temp = std::string(_filePath) + ".tmp";
+        FILE *file = fopen(temp.c_str(), "wb");
         if (!file) {
-            ESP_LOGE(TAG_PERSISTENCE, "Failed to open file for writing: %s", _filePath);
+            ESP_LOGE(TAG_PERSISTENCE, "Failed to open file for writing: %s", temp.c_str());
             return false;
         }
 
-        size_t written = fwrite(buffer.data(), 1, stream.bytes_written, file);
-        fclose(file);
-
-        return written == stream.bytes_written;
+        const bool written = fwrite(buffer.data(), 1, stream.bytes_written, file) == stream.bytes_written;
+        const bool closed = fclose(file) == 0;
+        if (!written || !closed || !replaceFile(temp.c_str(), _filePath)) {
+            ESP_LOGE(TAG_PERSISTENCE, "Failed to write %s", _filePath);
+            std::remove(temp.c_str());
+            return false;
+        }
+        return true;
     }
 
     void disableUpdateHandler() {
@@ -106,6 +93,39 @@ class FSPersistencePB {
     }
 
   private:
+    // A file that decodes but fails validation would otherwise leave the state zero-initialised, so it
+    // counts as unloadable like an unreadable one.
+    bool loadFromFS() {
+        FILE *file = fopen(_filePath, "rb");
+        if (!file) return false;
+
+        fseek(file, 0, SEEK_END);
+        const long fileSize = ftell(file);
+        fseek(file, 0, SEEK_SET);
+        if (fileSize <= 0 || static_cast<size_t>(fileSize) > _maxSize) {
+            fclose(file);
+            return false;
+        }
+
+        std::vector<uint8_t> buffer(fileSize);
+        const size_t bytesRead = fread(buffer.data(), 1, fileSize, file);
+        fclose(file);
+        if (bytesRead != static_cast<size_t>(fileSize)) return false;
+
+        T protoMsg = {};
+        pb_istream_t stream = pb_istream_from_buffer(buffer.data(), bytesRead);
+        return pb_decode(&stream, _msgDescriptor, &protoMsg) &&
+               _statefulService->updateWithoutPropagation(
+                   [this, &protoMsg](T &state) { return _stateUpdater(protoMsg, state); }) != StateUpdateResult::ERROR;
+    }
+
+    // LittleFS renames over an existing file in one step.
+    static bool replaceFile(const char *from, const char *to) {
+        if (std::rename(from, to) == 0) return true;
+        std::remove(to);
+        return std::rename(from, to) == 0;
+    }
+
     ProtoStateReader _stateReader;
     ProtoStateUpdater _stateUpdater;
     StatefulService<T> *_statefulService;
