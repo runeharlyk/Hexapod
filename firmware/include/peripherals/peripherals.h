@@ -8,7 +8,7 @@
 #include <feature_flags.h>
 #include <message_types.h>
 #include <peripherals/i2c_bus.h>
-#include <settings/peripherals_settings.h>
+#include <peripherals_settings_service.h>
 #include <imu_calibration_service.h>
 #include <peripherals/imu_calibration.h>
 
