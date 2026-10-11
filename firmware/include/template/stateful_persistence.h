@@ -119,12 +119,9 @@ class FSPersistencePB {
                    [this, &protoMsg](T &state) { return _stateUpdater(protoMsg, state); }) != StateUpdateResult::ERROR;
     }
 
-    // LittleFS renames over an existing file in one step.
-    static bool replaceFile(const char *from, const char *to) {
-        if (std::rename(from, to) == 0) return true;
-        std::remove(to);
-        return std::rename(from, to) == 0;
-    }
+    // LittleFS renames over an existing file in one step. Removing the target and retrying would lose the stored
+    // settings whenever the rename failed for a reason that persists, such as a full file system.
+    static bool replaceFile(const char *from, const char *to) { return std::rename(from, to) == 0; }
 
     ProtoStateReader _stateReader;
     ProtoStateUpdater _stateUpdater;
