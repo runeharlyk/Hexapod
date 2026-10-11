@@ -50,8 +50,7 @@ async def record(url: str, out: str, seconds: float | None) -> int:
     try:
         while deadline is None or time.monotonic() < deadline:
             try:
-                async with websockets.connect(url, open_timeout=10, close_timeout=1, ping_interval=None,
-                                              max_size=None) as socket:
+                async with websockets.connect(url, open_timeout=10, close_timeout=1, max_size=None) as socket:
                     if writer is None:
                         writer = RecordingWriter(out, await read_features(socket))
                     else:

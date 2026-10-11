@@ -106,8 +106,7 @@ class RealBackend:
             await self._socket.close()
 
     async def _open(self) -> None:
-        self._socket = await websockets.connect(self._url, open_timeout=REPLY_TIMEOUT_S, close_timeout=1,
-                                                ping_interval=None)
+        self._socket = await websockets.connect(self._url, open_timeout=REPLY_TIMEOUT_S, close_timeout=1)
         for name in ("mode", "gait", "imu"):
             await self._send(pb.Message(sub_notif=pb.SubscribeNotification(tag=_tag(name))))
         self._tasks = [self._loop.create_task(self._read()), self._loop.create_task(self._keep_alive())]
