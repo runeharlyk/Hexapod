@@ -35,6 +35,8 @@ No version has been tagged yet; everything so far is unreleased.
 - Shows a connect prompt on settings pages while no robot is linked, instead of waiting out a request timeout.
 - Answers CORS for allowed origins only, and refuses WebSockets from other pages.
 - Reports the IMU as present only when it was detected at boot.
+- Runs the I2C bus at 400 kHz at most, the rating of the MPU6050 and HMC5883L, also on robots that stored a faster clock.
+- Serves the embedded app with `no-cache` and an ETag, so the browser loads the new app after a firmware update and an unchanged file costs an empty 304.
 
 ### Fixed
 
@@ -43,3 +45,6 @@ No version has been tagged yet; everything so far is unreleased.
 - Fixes the servo board waking with the last pose across a reset before the firmware turned its channels off.
 - Fixes the control loop replaying missed ticks back to back after an overrun.
 - Fixes an interrupted upload or settings write destroying the previous file, and an unloadable settings file being overwritten instead of kept as a backup.
+- Fixes the file API reading and writing the settings under `/config`, which exposed the stored WiFi and access point passwords and bypassed the settings checks.
+- Fixes WebSocket pings going unanswered and close frames going unechoed, which made clients disable their keep-alive and wait out their close timeout.
+- Fixes the I2C transfer timeout being given in ticks where the driver takes milliseconds.
