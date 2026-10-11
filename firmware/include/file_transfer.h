@@ -17,7 +17,29 @@ namespace file_transfer {
 
 constexpr size_t CHUNK_MAX = 512;
 
-inline bool validPath(const char *rel) { return rel && rel[0] == '/' && strstr(rel, "..") == nullptr; }
+// Settings are reached only through their services: a raw read would leak the passwords those
+// redact, and a raw write would bypass their validators.
+constexpr char PRIVATE_DIRECTORY[] = "config";
+
+// The filesystem skips repeated slashes and "." segments, so "//config" and "/./config" name the
+// same directory and are matched here as well.
+inline bool underPrivateDirectory(const char *rel) {
+    const size_t nameLength = sizeof(PRIVATE_DIRECTORY) - 1;
+    for (const char *segment = rel; *segment;) {
+        while (*segment == '/') ++segment;
+        const size_t length = strcspn(segment, "/");
+        if (length == 1 && segment[0] == '.') {
+            segment += length;
+            continue;
+        }
+        return length == nameLength && strncmp(segment, PRIVATE_DIRECTORY, nameLength) == 0;
+    }
+    return false;
+}
+
+inline bool validPath(const char *rel) {
+    return rel && rel[0] == '/' && strstr(rel, "..") == nullptr && !underPrivateDirectory(rel);
+}
 
 inline long fileSize(const char *full) {
     struct stat st;

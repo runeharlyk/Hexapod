@@ -39,6 +39,18 @@ void test_paths_must_be_absolute_inside_the_mount() {
     TEST_ASSERT_FALSE(file_transfer::validPath(nullptr));
 }
 
+void test_the_settings_directory_is_out_of_reach() {
+    TEST_ASSERT_FALSE(file_transfer::validPath("/config"));
+    TEST_ASSERT_FALSE(file_transfer::validPath("/config/"));
+    TEST_ASSERT_FALSE(file_transfer::validPath("/config/wifiSettings.json"));
+    TEST_ASSERT_FALSE(file_transfer::validPath("//config/wifiSettings.json"));
+    TEST_ASSERT_FALSE(file_transfer::validPath("/./config/apSettings.json"));
+    TEST_ASSERT_TRUE(file_transfer::validPath("/"));
+    TEST_ASSERT_TRUE(file_transfer::validPath("/configs/x"));
+    TEST_ASSERT_TRUE(file_transfer::validPath("/config.json"));
+    TEST_ASSERT_TRUE(file_transfer::validPath("/animations/config"));
+}
+
 void test_chunks_assemble_the_file_in_order() {
     const std::string path = tmpFile();
     const uint8_t a[3] = {1, 2, 3}, b[2] = {4, 5};
@@ -127,6 +139,7 @@ void test_read_returns_the_window_and_the_total() {
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_paths_must_be_absolute_inside_the_mount);
+    RUN_TEST(test_the_settings_directory_is_out_of_reach);
     RUN_TEST(test_chunks_assemble_the_file_in_order);
     RUN_TEST(test_a_complete_upload_replaces_a_longer_previous_file);
     RUN_TEST(test_an_unfinished_upload_leaves_the_previous_file_intact);

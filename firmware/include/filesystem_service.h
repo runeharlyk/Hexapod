@@ -14,7 +14,7 @@
 #include <communication/webserver.h>
 
 // HTTP (not the message bus — file content is large/on-network). Paths reject ".." so a request
-// can't escape the mount root.
+// can't escape the mount root, and the settings directory is neither listed nor reachable.
 namespace fs_api {
 
 inline bool resolve(const char *rel, std::string &full) {
@@ -29,6 +29,7 @@ inline void walk(const std::string &dirPath, cJSON *node) {
     for (struct dirent *e = readdir(dir); e != nullptr; e = readdir(dir)) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
         std::string child = dirPath + "/" + e->d_name;
+        if (!file_transfer::validPath(child.c_str() + strlen(MOUNT_POINT))) continue;
         struct stat st;
         if (stat(child.c_str(), &st) != 0) continue;
         if (S_ISDIR(st.st_mode)) {
