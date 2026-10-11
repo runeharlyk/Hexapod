@@ -10,7 +10,8 @@
 
 class I2CBus {
     static constexpr const char* TAG = "I2CBus";
-    static constexpr TickType_t TRANSFER_TIMEOUT = pdMS_TO_TICKS(200);
+    // The i2c_master driver takes milliseconds, not ticks.
+    static constexpr int TRANSFER_TIMEOUT_MS = 200;
     static constexpr TickType_t LOCK_TIMEOUT = pdMS_TO_TICKS(50);
 
     // Bounded acquisition: a caller that cannot get the bus fails its transfer instead of blocking the
@@ -99,7 +100,7 @@ class I2CBus {
         i2c_master_dev_handle_t dev = NULL;
         esp_err_t err = ensureDevice(addr, dev);
         if (err != ESP_OK) return err;
-        return i2c_master_transmit(dev, data, len, TRANSFER_TIMEOUT);
+        return i2c_master_transmit(dev, data, len, TRANSFER_TIMEOUT_MS);
     }
 
     esp_err_t writeReg(uint8_t addr, uint8_t reg, const uint8_t* data, size_t len) {
@@ -119,7 +120,7 @@ class I2CBus {
         if (len > 0 && data != nullptr) {
             memcpy(buf + 1, data, len);
         }
-        return i2c_master_transmit(dev, buf, len + 1, TRANSFER_TIMEOUT);
+        return i2c_master_transmit(dev, buf, len + 1, TRANSFER_TIMEOUT_MS);
     }
 
     esp_err_t readReg(uint8_t addr, uint8_t reg, uint8_t* data, size_t len) {
@@ -130,7 +131,7 @@ class I2CBus {
         i2c_master_dev_handle_t dev = NULL;
         esp_err_t err = ensureDevice(addr, dev);
         if (err != ESP_OK) return err;
-        return i2c_master_transmit_receive(dev, &reg, 1, data, len, TRANSFER_TIMEOUT);
+        return i2c_master_transmit_receive(dev, &reg, 1, data, len, TRANSFER_TIMEOUT_MS);
     }
 
     bool probe(uint8_t addr) {
@@ -138,7 +139,7 @@ class I2CBus {
         if (!lock.held()) return false;
         if (!_initialized) return false;
 
-        return i2c_master_probe(_bus, addr, TRANSFER_TIMEOUT) == ESP_OK;
+        return i2c_master_probe(_bus, addr, TRANSFER_TIMEOUT_MS) == ESP_OK;
     }
 
     // Deliberately unlocked: each probe() takes the lock on its own so a 127-address sweep from the
