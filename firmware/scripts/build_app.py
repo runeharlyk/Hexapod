@@ -91,7 +91,7 @@ def write_header():
         f.write("#pragma once\n")
         f.write("#include <cstddef>\n#include <cstdint>\n\n")
         f.write("struct WebAsset { const char* uri; const char* mime; const uint8_t* data; uint32_t len; uint32_t etag; uint8_t gz; };\n")
-        f.write("struct WebOptions { const char* default_uri; uint32_t max_age; uint8_t add_vary; };\n\n")
+        f.write("struct WebOptions { const char* default_uri; uint8_t add_vary; };\n\n")
 
         f.write("static const uint8_t WWW_BLOB[] = {\n")
         col = 0
@@ -120,7 +120,7 @@ def write_header():
 
         f.write(f"static const size_t WWW_ASSETS_COUNT = {len(assets)};\n")
         default_uri = "/index.html" if any(u == "/index.html" for u,_,_,_,_ in assets) else (assets[0][0] if assets else "/")
-        f.write(f'static const WebOptions WWW_OPT = {{ "{default_uri}", 31536000u, 1 }};\n')
+        f.write(f'static const WebOptions WWW_OPT = {{ "{default_uri}", 1 }};\n')
 
 if get_flag("EMBED_WEBAPP") == "1" and needs_rebuild():
     print("Building web app")
