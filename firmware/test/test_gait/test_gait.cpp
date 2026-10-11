@@ -269,6 +269,33 @@ void test_stance_sweeps_the_foot_against_the_commanded_direction() {
     }
 }
 
+// The stance presses the foot by step_depth mid-stance and levels it at both ends, along the stroke whatever its
+// direction. Measured along x + y instead, one diagonal lifted the foot off level at the end of the stance and the
+// other kept it pressed to lift-off, so it jumped there by the whole depth.
+void test_stance_levels_the_foot_at_lift_off_in_every_direction() {
+    const float d = 42.4264f;
+    const float strokes[][2] = {{60, 0}, {0, 60}, {d, d}, {d, -d}, {-d, d}, {-d, -d}};
+    for (const auto &stroke : strokes) {
+        gait_state_t gait = makeGait(GaitType::TRI_GATE, stroke[0], stroke[1], 0.0f);
+        gait.step_depth = 5.0f;
+        GaitController controller;
+        controller.setGait(gait);
+        controller.snapDefaultFootTarget(STAND);
+        BodyStateMsg body = makeBody();
+        for (int i = 0; i < 6; ++i) {
+            for (const float through : {0.5f, 0.995f}) {
+                controller.setPhase(std::fmod(gait.stand_frac * through - gait.offset[i] + 1.0f, 1.0f));
+                controller.generateFeet(gait, body);
+                const float pressed = std::fabs(body.feet[i][2] - STAND[i][2]);
+                if (through == 0.5f)
+                    TEST_ASSERT_FLOAT_WITHIN(0.05f * gait.step_depth, gait.step_depth, pressed);
+                else
+                    TEST_ASSERT_LESS_THAN_FLOAT(0.1f * gait.step_depth, pressed);
+            }
+        }
+    }
+}
+
 void test_yaw_command_sweeps_feet_tangentially() {
     // A pure in-place turn must move each foot perpendicular to its own radius, in a consistent
     // rotational sense: the cross product radius x displacement has the same sign for all six.
@@ -850,6 +877,7 @@ int main(int, char **) {
     RUN_TEST(test_swing_lifts_the_foot_and_stance_keeps_it_down);
     RUN_TEST(test_swing_reaches_its_end_without_a_jump);
     RUN_TEST(test_stance_sweeps_the_foot_against_the_commanded_direction);
+    RUN_TEST(test_stance_levels_the_foot_at_lift_off_in_every_direction);
     RUN_TEST(test_yaw_command_sweeps_feet_tangentially);
     RUN_TEST(test_gait_tables_cover_every_leg_once_per_cycle);
     RUN_TEST(test_inverse_kinematics_holds_the_nominal_stance);

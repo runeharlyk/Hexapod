@@ -124,7 +124,8 @@ class GaitController {
         point[1] += step * std::sin(angle);
 
         if (length != 0.0f) {
-            point[2] = *depth * std::cos((M_PI * (point[0] + point[1])) / (2.f * length));
+            // Pressed most mid-stance and level at both ends, along the stroke whatever its direction.
+            point[2] = *depth * std::cos((M_PI * step) / (2.f * length));
         }
     }
 

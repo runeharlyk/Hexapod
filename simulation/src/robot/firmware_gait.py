@@ -458,7 +458,7 @@ class GaitController:
         point[0] += step * math.cos(angle)
         point[1] += step * math.sin(angle)
         if length != 0.0:
-            point[2] = depth * math.cos((math.pi * (point[0] + point[1])) / (2.0 * length))
+            point[2] = depth * math.cos((math.pi * step) / (2.0 * length))
 
     @staticmethod
     def _bezier_curve(length, angle, height, phase, point):
