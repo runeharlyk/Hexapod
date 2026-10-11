@@ -16,7 +16,7 @@
   import type { KnownNetworkItem, WifiStatus as WifiStatusView } from '$lib/types/models'
   import { ipToString, ipToU32 } from '$lib/proto-api'
   import { dataBroker } from '$lib/transport/databroker'
-  import { WifiStatus, type WifiNetwork } from '$lib/platform_shared/api'
+  import { WifiSettings, WifiStatus, type WifiNetwork } from '$lib/platform_shared/api'
 
   // The page keeps the UI's snake_case shape; the proto carries IPs as uint32.
   type WifiSettingsForm = {
@@ -170,12 +170,12 @@
   async function postWiFiSettings(data: WifiSettingsForm) {
     try {
       const res = await dataBroker.request({
-        wifiSettingsUpdate: {
+        wifiSettingsUpdate: WifiSettings.create({
           hostname: data.hostname,
           priorityRssi: data.priority_rssi ?? true,
           selectedNetwork: data.selected_network ?? 0,
           wifiNetworks: (data.wifi_networks ?? []).map(formToNet)
-        }
+        })
       })
       if (!res.wifiSettings) {
         notifications.error('Failed to update Wi-Fi settings.', 3000)
