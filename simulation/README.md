@@ -56,7 +56,7 @@ uv run python bench_terrain.py --runs <a> <b> --baseline --curb   # how tall a s
 uv run python export_policy.py --run <name>
 ```
 
-The firmware runs the policy exported from the run `residual_gait` with `control_mode=residual_gait` (57 observations, 24 actions).
+The firmware runs the policy exported from the run `residual_gait_fw` with `control_mode=residual_gait` and a four-frame sensor history (75 observations, 24 actions).
 The first comment line of `firmware/include/policy/hexapod_policy.h` states this as `// run: <name> mode: <mode> hash: <commit>`, and the firmware build fails if the header's dimensions do not match what `PolicyRunner` assembles and applies.
 `residual_gait` lets the policy adjust the gait itself (step, lift, blend, cadence, ride height) on top of 18 foot residuals.
 `residual_pure` (18 outputs) keeps the gait fixed to the analytic command-to-gait map and learns only the foot residuals; `PolicyRunner` can drive such a header, but none is deployed.
