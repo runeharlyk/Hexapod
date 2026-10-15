@@ -28,7 +28,7 @@ BATCH_TICKS = 5
 PRE_SETTLE_S = 1.0  # the robot stood before the recording began
 STAND, WALK = 3, 4  # MOTION_STATE positions
 
-TRUTH = dict(stall=0.9, hold=1.1, kp=1.15, noload=1.0, deadband=0.012, lag_ms=13.0,
+TRUTH = dict(stall=0.9, hold=1.1, kp=1.15, noload=1.0, deadband=0.012, lag_ms=8.0,
              gyro_bias=(0.02, -0.01, 0.005), gyro_noise=0.04, rpy_noise_deg=0.8, gravity_noise=0.01)
 
 
@@ -164,7 +164,9 @@ def test_the_centre_narrows_the_randomisation_around_what_was_found(walk, tmp_pa
     np.testing.assert_allclose(ranges.gyro_bias_mean, TRUTH["gyro_bias"], atol=0.01)
     assert ranges.gyro_bias_std == default.gyro_bias_std
     assert ranges.gyro_noise_std == pytest.approx(TRUTH["gyro_noise"], rel=0.1)
-    # 0.9 ms from sensor to servo write and 13 ms of lag lie inside one 20 ms control step.
+    # 0.9 ms from sensor to servo write and 8 ms of lag lie inside one 20 ms control step, with room for the three
+    # sigmas the range adds: at 13 ms that sum sat within a millisecond of the step and each platform's floating point
+    # put it on its own side.
     assert ranges.action_latency_steps == (0, 2)
 
     env = HexapodMjEnv(randomize=True, seed=0, dr_ranges=ranges)
