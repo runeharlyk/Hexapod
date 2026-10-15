@@ -44,14 +44,14 @@ def test_a_velocity_within_the_top_comes_back_from_its_sticks(gait):
         assert (got.vx, got.vy, got.yaw_rate) == pytest.approx((wanted.vx, wanted.vy, wanted.yaw_rate), abs=1e-4)
 
 
-# TRI_GATE's leftward speed peaks at lx = 0.9 and falls at full deflection (measured): asking for more than the peak
-# must give the peak, not the larger, slower stick.
+# WAVE's rightward speed peaks at lx = -0.5 and falls to under a third of that at full deflection (measured): asking
+# for more than the peak must give the peak, not the larger, slower stick.
 def test_a_velocity_beyond_the_top_gives_the_peak_not_a_slower_full_stick():
-    table = sm._axes(Gait.TRI_GATE)["vy"]
-    assert abs(table.value(-1.0)) < abs(table.value(-0.9))
-    sticks = sm.sticks_for(Gait.TRI_GATE, Velocity(0.0, -5.0, 0.0))
-    assert sticks.lx == pytest.approx(-0.9)
-    assert sm.velocity_of(Gait.TRI_GATE, sticks).vy == pytest.approx(table.value(-0.9))
+    table = sm._axes(Gait.WAVE)["vy"]
+    assert abs(table.value(-1.0)) < abs(table.value(-0.5)) / 3
+    sticks = sm.sticks_for(Gait.WAVE, Velocity(0.0, -5.0, 0.0))
+    assert sticks.lx == pytest.approx(-0.5)
+    assert sm.velocity_of(Gait.WAVE, sticks).vy == pytest.approx(table.value(-0.5))
 
 
 def test_the_top_speed_is_reachable_both_ways():

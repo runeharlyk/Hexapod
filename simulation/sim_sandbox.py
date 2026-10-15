@@ -404,7 +404,8 @@ class Sandbox:
         sf = ttk.LabelFrame(panel, text="Servo model (LIVE) -- strength / stiffness")
         sf.pack(fill="x", **pad)
         self._slider(sf, "kp", 50, 400, SERVO_KP)               # position->velocity gain (stiffness)
-        self._slider(sf, "stall", 0.2, 1.5, SERVO_STALL, fmt="{:.2f}")   # torque envelope (N.m)
+        # driving torque (N.m); above ~0.85 the motor share of the hold exceeds the model's 1.5 N.m ctrlrange
+        self._slider(sf, "stall", 0.2, 0.85, SERVO_STALL, fmt="{:.2f}")
         self._slider(sf, "noload", 5, 25, SERVO_NOLOAD)        # no-load speed cap (rad/s)
 
         jf = ttk.LabelFrame(panel, text="Kinematic jump")

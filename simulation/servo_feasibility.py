@@ -4,7 +4,8 @@ Everything in the gait study was optimized inside the sim's MG92B model, and CMA
 spend whatever torque and joint speed that model offers. Before any of it is worth porting to the
 firmware, the winning gaits have to be checked against the envelope the hardware really has:
 
-  torque      fraction of the 0.50 N.m stall envelope used, and the fraction of samples AT the limit
+  torque      fraction of the stall torque the motor delivers, and the fraction of samples AT stall; above
+              1.0 is the motor share of holding or braking (up to (1 + k_hold) / 2, see docs/servo-model.md)
   speed       joint rate as a fraction of the 16 rad/s no-load cap
   tracking    commanded joint angle minus achieved -- the direct readout of "the servo could not
               keep up", which is what actually breaks sim-to-real for an open-loop machine

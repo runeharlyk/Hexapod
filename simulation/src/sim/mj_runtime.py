@@ -23,12 +23,21 @@ JOINT_NAMES = [f"{j}_{i}" for i in range(6) for j in ("coxa", "femur", "tibia")]
 # Motor (torque) actuators driven HERE by a cascaded position->velocity->torque loop, mimicking a hobby
 # servo's internal controller: position error sets a target velocity (capped at no-load speed), and a
 # stiff velocity loop applies up to stall torque to reach it -- full power on any error, a natural
-# top-speed cap, firm non-backdrivable holding, and the velocity loop damps position-PD shaking.
+# top-speed cap, and the velocity loop damps position-PD shaking.
+# Holding is asymmetric: driving, the joint gets at most its stall torque, but a load that would back-drive
+# it has to turn the gear train backwards, so a powered servo resists up to a larger holding torque
+# SERVO_HOLD = SERVO_K_HOLD * SERVO_STALL. Modelled as gear friction: the motor delivers up to the mean of
+# stall and hold, and a joint friction of half their difference opposes motion. MuJoCo's constraint solver
+# applies that friction implicitly, so it sticks and slips without the chatter of a velocity-switched cap;
+# being a soft constraint it still lets a held load creep by thousandths of a degree per second.
+# Driving nets motor - friction = stall; holding still, being back-driven or braking, motor + friction = hold.
 SERVO_KP = 250.0      # position->velocity gain (1/s): commands full no-load speed at ~3 deg error
 SERVO_KV = 1.5        # velocity->torque gain (N.m per rad/s): saturates to stall on small vel error
 SERVO_J_EFF = 0.004   # kg.m^2, reflected joint inertia; sets the torque-limited STOPPING profile so the
                       # joint brakes to the target with no overshoot/ringing
-SERVO_STALL = 0.50    # N.m torque envelope, flat (available at any speed); calibrated to observed behaviour
+SERVO_STALL = 0.34    # N.m driving torque envelope, flat (available at any speed); MG92B rated stall @6V
+SERVO_K_HOLD = 2.5    # PLACEHOLDER, unverified: holding/stall ratio, estimated 2-3; a bench measurement replaces it
+SERVO_HOLD = SERVO_K_HOLD * SERVO_STALL  # N.m the powered servo resists before a load back-drives it
 SERVO_NOLOAD = 16.0   # rad/s no-load speed cap (MG92B @6V); the joint's top slew speed
 
 
@@ -59,6 +68,15 @@ class HexapodSim:
         # servo params (mutable so domain randomization can scale them per episode)
         self.kp, self.kv = SERVO_KP, SERVO_KV
         self.stall, self.noload = SERVO_STALL, SERVO_NOLOAD
+        self.k_hold = SERVO_K_HOLD
+        self.base_frictionloss = self.model.dof_frictionloss[self.qvel_adr].copy()
+        # MuJoCo's frictionloss is a soft constraint that eases the joint toward zero velocity over its solref time
+        # constant; at the default 0.02 s it pushes WITH a motion the motor brakes faster than that (a 0.03 deg
+        # overshoot on a 20 deg step), so use 2 timesteps, MuJoCo's stiffest stable setting. At the default
+        # impedance (solimp 0.9-0.95) a load near either limit slips 1-3 deg in 2 s; 0.999-0.9999 cuts that to
+        # under 0.03 deg (stall < load < hold must neither lift nor back-drive the joint).
+        self.model.dof_solref[self.qvel_adr, 0] = 2.0 * self.model.opt.timestep
+        self.model.dof_solimp[self.qvel_adr, :2] = (0.999, 0.9999)
         self.j_eff = SERVO_J_EFF
         self.deadband = 0.0   # rad: gear-lash / PWM deadband -- no corrective torque within this of target
         self.joint_target = self.stand_pose.copy()
@@ -88,11 +106,13 @@ class HexapodSim:
         r = self.model.jnt_range[ids]
         return r[:, 0].copy(), r[:, 1].copy()
 
-    def set_servo_scale(self, kp=1.0, stall=1.0, noload=1.0):
-        """Domain-randomization hook: scale servo params for the episode."""
+    def set_servo_scale(self, kp=1.0, stall=1.0, noload=1.0, hold=1.0):
+        """Domain-randomization hook: scale servo params for the episode.
+        `hold` scales the holding/stall ratio, so the holding torque also follows `stall` (stall=0 is limp)."""
         self.kp = SERVO_KP * kp
         self.stall = SERVO_STALL * stall
         self.noload = SERVO_NOLOAD * noload
+        self.k_hold = SERVO_K_HOLD * hold
 
     def reset_to_stand(self):
         mujoco.mj_resetData(self.model, self.data)
@@ -108,7 +128,8 @@ class HexapodSim:
     def _apply_servo(self):
         """PD position loop with a FLAT torque envelope + a speed cap (per physics step).
         Up to +/-stall torque is available at any speed (unlike a raw DC motor's torque-speed droop);
-        the servo just can't accelerate past its no-load speed."""
+        the servo just can't accelerate past its no-load speed. The motor cap and the gear friction split
+        stall and hold as described at SERVO_K_HOLD; both scale with stall, so stall=0 is limp."""
         q = self.data.qpos[self.qpos_adr]
         qd = self.data.qvel[self.qvel_adr]
         err = self.joint_target - q
@@ -122,8 +143,14 @@ class HexapodSim:
         ae = np.abs(err)
         v_stop = np.sqrt(2.0 * (self.stall / self.j_eff) * ae)  # torque-limited stopping profile
         vel_des = np.sign(err) * np.minimum(self.kp * ae, np.minimum(v_stop, self.noload))
-        tau = np.clip(self.kv * (vel_des - qd), -self.stall, self.stall)
-        self.data.ctrl[self.act_ids] = tau
+        self.model.dof_frictionloss[self.qvel_adr] = self.base_frictionloss + 0.5 * (self.k_hold - 1.0) * self.stall
+        motor = self.motor_torque_cap
+        self.data.ctrl[self.act_ids] = np.clip(self.kv * (vel_des - qd), -motor, motor)
+
+    @property
+    def motor_torque_cap(self) -> float:
+        """The motor's own torque limit, the mean of stall and hold (see SERVO_K_HOLD)."""
+        return 0.5 * (1.0 + self.k_hold) * self.stall
 
     def step_physics(self, n: int | None = None):
         for _ in range(n if n is not None else self.frame_skip):

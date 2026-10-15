@@ -1,4 +1,5 @@
-"""The Robot facade and its motions on a scripted backend: a virtual clock that integrates the commanded velocity."""
+"""The Robot facade and its motions on a scripted backend: a virtual clock that integrates the commanded velocity
+through the firmware's command ramp."""
 import math
 from collections import deque
 
@@ -7,12 +8,15 @@ import pytest
 from src.hexapod import Gait, Mode, Robot, RobotError, RobotTimeout, Velocity
 from src.hexapod import motions
 from src.hexapod.backends.base import ZERO, RobotState
+from src.robot.firmware_gait import GAIT_COMMAND_TAU_S
 
 DT = 0.01
 
 
 class ScriptedBackend:
-    """Integrates the commanded REP-103 velocity into a pose while walking, optionally with a yaw that arrives late,
+    """Integrates the commanded REP-103 velocity into a pose while walking, ramped like the firmware's gait command
+    (the stride eases first order with GAIT_COMMAND_TAU_S and the cadence follows the stride, so the body moves at
+    the last non-zero command times the squared ramp), optionally with a yaw that arrives late,
     a gait that turns slower than commanded, a dead-man stop at `drop_at`, a mode switched from elsewhere and no IMU;
     records every command."""
 
@@ -25,6 +29,8 @@ class ScriptedBackend:
         self.mode = mode
         self.gait = Gait.TRI_GATE
         self.velocity = ZERO
+        self._heading = ZERO  # the last non-zero command, which the ramp scales up and, after a stop, back down
+        self._ramp = 0.0
         self.log = []  # (t, what, value) for every command, in order
         self.closed = False
         self._seen = deque([yaw] * (round(yaw_lag_s / DT) + 1))
@@ -55,6 +61,8 @@ class ScriptedBackend:
         clamp = lambda value, limit: max(-limit, min(limit, value))
         self.velocity = Velocity(clamp(v.vx, self.top.vx), clamp(v.vy, self.top.vy), clamp(v.yaw_rate, self.top.yaw_rate))
         self.log.append((self.t, "velocity", self.velocity))
+        if self.velocity != ZERO:
+            self._heading = self.velocity
         return self.velocity
 
     def state(self):
@@ -71,11 +79,18 @@ class ScriptedBackend:
             self._advance(dt)
 
     def _advance(self, dt):
-        v = self.velocity if self.mode is Mode.WALK else ZERO
+        walking = self.mode is Mode.WALK
+        # r(t) = a + b e^(-t/tau) toward a = 1 while commanded, 0 after a stop; travel is the exact integral of r^2.
+        tau, a = GAIT_COMMAND_TAU_S, 1.0 if walking and self.velocity != ZERO else 0.0
+        b = self._ramp - a
+        decay = math.exp(-dt / tau)
+        travel_s = a * a * dt + 2 * a * b * tau * (1 - decay) + b * b * tau / 2 * (1 - decay * decay)
+        self._ramp = a + b * decay
+        v = self._heading if walking else ZERO
         heading = math.radians(self.yaw)
-        self.x += (v.vx * math.cos(heading) - v.vy * math.sin(heading)) * dt
-        self.y += (v.vx * math.sin(heading) + v.vy * math.cos(heading)) * dt
-        self.yaw += math.degrees(v.yaw_rate * self.turn_scale) * dt
+        self.x += (v.vx * math.cos(heading) - v.vy * math.sin(heading)) * travel_s
+        self.y += (v.vx * math.sin(heading) + v.vy * math.cos(heading)) * travel_s
+        self.yaw += math.degrees(v.yaw_rate * self.turn_scale) * travel_s
         if self.drop_at is not None and self.t < self.drop_at <= self.t + dt:
             self.link_drops += 1
         if self.switch_at is not None and self.t < self.switch_at[0] <= self.t + dt:
@@ -144,22 +159,22 @@ def test_a_move_runs_half_the_top_speed_for_its_distance():
     robot.move_forward(0.6)
     (start, _, v), (end, _, stop) = [entry for entry in backend.log if entry[1] == "velocity"][-2:]
     assert v == Velocity(0.15, 0, 0) and stop == ZERO
-    assert end - start == pytest.approx(4.0)
-    assert (backend.x, backend.y) == pytest.approx((0.6, 0.0))
+    assert end - start == pytest.approx(4.0 + motions.RAMP_LAG_S)
+    assert (backend.x, backend.y) == pytest.approx((0.6, 0.0), abs=1e-3)
 
 
 def test_moves_go_back_and_to_the_left():
     robot, backend = _robot(mode=Mode.STAND)
     robot.move_forward(-0.2)
     robot.move_sideways(0.1)
-    assert (backend.x, backend.y) == pytest.approx((-0.2, 0.1))
+    assert (backend.x, backend.y) == pytest.approx((-0.2, 0.1), abs=1e-3)
     assert backend.logged("velocity")[-2].vy == pytest.approx(0.29 / 2)  # sideways defaults to the lateral top
 
 
 def test_a_move_beyond_the_top_speed_still_covers_its_distance():
     robot, backend = _robot(mode=Mode.STAND)
     robot.move_forward(0.3, speed=5.0)
-    assert backend.x == pytest.approx(0.3)
+    assert backend.x == pytest.approx(0.3, abs=1e-3)
 
 
 # The robot's yaw arrives late and its gait turns slower than commanded: the turn must still land on target.
@@ -186,7 +201,7 @@ def test_a_turn_across_the_wrap_and_a_full_circle():
 def test_without_an_imu_a_turn_is_timed():
     robot, backend = _robot(mode=Mode.STAND, imu=False)
     robot.rotate(-120)
-    assert backend.yaw == pytest.approx(-120)
+    assert backend.yaw == pytest.approx(-120, abs=0.01)
     assert {v.yaw_rate for v in backend.logged("velocity")} == {-0.75, 0.0}
 
 
