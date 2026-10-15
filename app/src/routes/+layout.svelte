@@ -7,7 +7,7 @@
   import '../app.css'
   import Menu from '../lib/components/menu/Menu.svelte'
   import Statusbar from '../lib/components/statusbar/statusbar.svelte'
-  import { mode, outControllerData, gait } from '$lib/stores'
+  import { canReachRobot, gait, location, mode, outControllerData } from '$lib/stores'
   import { MotionModes } from '$lib/motion'
   import { dataBroker } from '$lib/transport/databroker'
   import { serial } from '$lib/transport/serial-adapter'
@@ -55,8 +55,7 @@
 
   onMount(() => {
     stopWatchingUpdate = watchUpdateOutcome()
-    // Only the robot-hosted http origin may open ws://; https pages reach the robot over BLE or USB.
-    if (window.location.protocol === 'http:') connectWebsocket()
+    if (canReachRobot(page.url, $location)) connectWebsocket()
 
     let wasStop = true
     outControllerData.subscribe(data => {

@@ -1,6 +1,6 @@
 import { derived, get, writable } from 'svelte/store'
 import { type ITransport, type LinkStatus } from '../interfaces/transport.interface'
-import { location } from '$lib/stores'
+import { canReachRobot, location } from '$lib/stores/location-store'
 
 const RECONNECT_MIN_MS = 1000
 const RECONNECT_MAX_MS = 15000
@@ -16,6 +16,7 @@ function createWebSocketAdapter(): ITransport {
   let wantConnection = false
   let reconnectDelay = RECONNECT_MIN_MS
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  let refusedByBrowser = false
 
   const stopReconnecting = () => {
     if (reconnectTimer) clearTimeout(reconnectTimer)
@@ -41,8 +42,15 @@ function createWebSocketAdapter(): ITransport {
     let socket: WebSocket
     try {
       socket = new WebSocket(`ws://${host}/api/ws`)
-    } catch {
+    } catch (error) {
       status.set('disconnected')
+      // A browser without Chromium's local network exemption may refuse ws:// from an https page here;
+      // retrying would only fail again.
+      if (error instanceof DOMException && error.name === 'SecurityError') {
+        wantConnection = false
+        refusedByBrowser = true
+        return
+      }
       scheduleReconnect()
       return
     }
@@ -76,15 +84,17 @@ function createWebSocketAdapter(): ITransport {
   }
 
   const connect = async () => {
-    // Mixed-content blocking refuses ws:// from an https page, so retrying would only fail again.
-    if (window.location.protocol === 'https:')
-      throw new Error(
-        'WiFi needs the robot-hosted http page; this https page can only use BLE or USB'
-      )
+    if (!canReachRobot(new URL(window.location.href), get(location)))
+      throw new Error("WiFi from this page needs the robot's address; enter it, or use BLE or USB")
     wantConnection = true
+    refusedByBrowser = false
     reconnectDelay = RECONNECT_MIN_MS
     stopReconnecting()
     openSocket()
+    if (refusedByBrowser)
+      throw new Error(
+        'this browser blocks WiFi from an https page; use Chrome or Edge, or BLE or USB'
+      )
   }
 
   const disconnect = async () => {
