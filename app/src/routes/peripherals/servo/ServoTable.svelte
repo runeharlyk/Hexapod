@@ -18,7 +18,8 @@
 
   const save = async () => {
     try {
-      await dataBroker.request({ servoSettingsUpdate: { servos } })
+      const response = await dataBroker.request({ servoSettingsUpdate: { servos } })
+      if (response.statusCode >= 400) throw new Error(`status ${response.statusCode}`)
       notifications.success('Servo calibration saved.', 3000)
     } catch {
       notifications.error('Failed to save servo calibration.', 3000)

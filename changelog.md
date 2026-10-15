@@ -29,7 +29,7 @@ All notable changes to this project are documented in this file, following [Keep
 ### Fixed
 
 - Fixes a walk entered from STAND moving a joint up to 15.6 degrees in one tick: legs found mid-swing at the start of the cycle now replay their swing from the floor.
-- Fixes the servo settings update answering 200 to an update it rejected.
+- Fixes the servo settings update answering 200 to an update it rejected, and the servo page reporting such an update as saved.
 - Fixes the animation editor: a stale autosave could overwrite a newer draft, and storage failures went unreported.
 
 ## [0.1.1] - 2026-10-15
