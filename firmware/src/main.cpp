@@ -628,8 +628,6 @@ static void setupServer() {
 #if USE_CAMERA
     camera_service::registerRoutes(server);
 #endif
-
-    mountWebApp(server);
 }
 
 static void setupComm() {
@@ -695,6 +693,9 @@ static void setupComm() {
     serialAdapter.begin();
 #endif
     wsSocket.begin();
+    // Last of all routes: httpd matches with wildcards and refuses a handler that an earlier one
+    // already matches, so a GET "/*" registered before "/api/ws" made every WebSocket upgrade a 404.
+    mountWebApp(server);
 
     bleAdapter.begin();
 }
