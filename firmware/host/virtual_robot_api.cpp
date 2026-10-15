@@ -2,7 +2,6 @@
 // the Python simulation loads (simulation/src/sim/virtual_robot.py). One robot per module instance or process;
 // reset() starts it over.
 
-#include <memory>
 #include <virtual_robot.h>
 
 #if defined(__EMSCRIPTEN__)
@@ -16,10 +15,12 @@
 
 namespace {
 
-std::unique_ptr<VirtualRobot> robot;
+// Never destroyed at exit: its destructor drains the EventBus, whose static queues may already be gone by then, so
+// a library unloaded at process exit would crash. reset() replaces it while they are all alive.
+VirtualRobot *robot = nullptr;
 
 VirtualRobot &instance() {
-    if (!robot) robot = std::make_unique<VirtualRobot>();
+    if (!robot) robot = new VirtualRobot();
     return *robot;
 }
 
@@ -28,7 +29,8 @@ VirtualRobot &instance() {
 extern "C" {
 
 API void reset() {
-    robot.reset();
+    delete robot;
+    robot = nullptr;
     instance();
 }
 
