@@ -2,16 +2,8 @@
 // the Python simulation loads (simulation/src/sim/virtual_robot.py). One robot per module instance or process;
 // reset() starts it over.
 
+#include <host_api.h>
 #include <virtual_robot.h>
-
-#if defined(__EMSCRIPTEN__)
-#include <emscripten/emscripten.h>
-#define API EMSCRIPTEN_KEEPALIVE
-#elif defined(_WIN32)
-#define API __declspec(dllexport)
-#else
-#define API __attribute__((visibility("default")))
-#endif
 
 namespace {
 

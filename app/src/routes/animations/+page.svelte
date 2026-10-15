@@ -6,7 +6,7 @@
   import { notifications } from '$lib/components/toasts/notifications'
   import type { Animation } from '$lib/platform_shared/animation'
   import type { DraftRef } from '$lib/animation/library'
-  import { editor } from '$lib/stores/animation-editor'
+  import { editor, engineReady } from '$lib/stores/animation-editor'
   import Library from './Library.svelte'
   import Editor from './Editor.svelte'
 
@@ -64,6 +64,12 @@
   {#if view === 'library'}
     <Library onEdit={openDocument} />
   {:else}
-    <Editor onOpen={openDocument} />
+    {#await engineReady}
+      <span class="loading loading-spinner"></span>
+    {:then}
+      <Editor onOpen={openDocument} />
+    {:catch error}
+      <div role="alert" class="alert alert-error">The animation preview did not load: {error}</div>
+    {/await}
   {/if}
 </div>

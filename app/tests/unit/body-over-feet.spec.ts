@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import Kinematics, { type body_state_t } from '../../src/lib/kinematic'
 import { config } from '../../src/lib/components/config'
-import { DEFAULT_FEET } from '../../src/lib/animation/evaluator'
+import { DEFAULT_FEET } from '../../src/lib/animation/model'
 
 const kinematics = new Kinematics(config)
 const STAND_Z = DEFAULT_FEET[0][2]
@@ -23,6 +23,12 @@ const body = (pose: Partial<body_state_t>, feet = DEFAULT_FEET.map(f => [...f]))
   ...pose
 })
 
+// The inverse kinematics saturates on a foot out of reach, and then the forward kinematics does not return the foot.
+const reachable = (b: body_state_t) =>
+  kinematics
+    .forwardKinematics(b, kinematics.inverseKinematics(b))
+    .every((foot, leg) => [0, 1, 2].every(axis => Math.abs(foot[axis] - b.feet[leg][axis]) < 1e-6))
+
 // The 3D view shows only joint angles (the robot's telemetry or the firmware's code), so it recovers the body's pose
 // over the ground from them: the inverse kinematics of a known pose must come back as that pose.
 describe('the body over its feet', () => {
@@ -33,7 +39,7 @@ describe('the body over its feet', () => {
     { omega: -0.15, phi: 0.1, zm: 12 },
     { omega: 0.2, phi: 0.2, zm: -10 }
   ])('recovers omega $omega, phi $phi and zm $zm', pose => {
-    expect([0, 1, 2, 3, 4, 5].every(leg => kinematics.footReachable(body(pose), leg))).toBe(true)
+    expect(reachable(body(pose))).toBe(true)
     const found = kinematics.bodyOverFeet(kinematics.inverseKinematics(body(pose)), STAND_Z)
     expect(found.omega).toBeCloseTo(pose.omega, 6)
     expect(found.phi).toBeCloseTo(pose.phi, 6)

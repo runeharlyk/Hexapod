@@ -16,10 +16,6 @@ export const DESCRIPTION_LEN_MAX = 96
 export const SCHEMA_VERSION = 1
 export const DEFAULT_ENTRY_S = 0.5
 export const DEFAULT_EXIT_S = 0.5
-export const STEP_ARC_MM = 45
-export const STEP_ARC_FULL_TRAVEL_MM = 40
-export const STEP_ARC_MIN_TRAVEL_MM = 2
-export const JOINT_LIMIT_DEG = [31.5, 90, 149] as const
 export const PARAM_COUNT = 10
 
 export enum BodyAxis {
@@ -30,14 +26,6 @@ export enum BodyAxis {
   Y = 4,
   Z = 5
 }
-export const BODY_PARAM_FOR_AXIS = [
-  ParamId.BODY_ROLL,
-  ParamId.BODY_PITCH,
-  ParamId.BODY_YAW,
-  ParamId.BODY_X,
-  ParamId.BODY_Y,
-  ParamId.BODY_Z
-] as const
 
 export type Vec3 = [number, number, number]
 export type Leg = { joints: boolean; v: Vec3 }
@@ -46,14 +34,22 @@ export interface Pose {
   legs: Leg[]
 }
 
+// The standing feet in the body frame (mm, homogeneous) that every foot offset is relative to: MotionService's
+// default_feet_pos at the centre feet distance.
+export type Stance = readonly (readonly number[])[]
+export const DEFAULT_FEET: Stance = [
+  [122, 152, -66, 1],
+  [171, 0, -66, 1],
+  [122, -152, -66, 1],
+  [-122, 152, -66, 1],
+  [-171, 0, -66, 1],
+  [-122, -152, -66, 1]
+]
+
 export const stanceLeg = (): Leg => ({ joints: false, v: [0, 0, 0] })
 export const stancePose = (): Pose => ({
   body: [0, 0, 0, 0, 0, 0],
   legs: Array.from({ length: 6 }, stanceLeg)
-})
-export const clonePose = (p: Pose): Pose => ({
-  body: [...p.body],
-  legs: p.legs.map(l => ({ joints: l.joints, v: [...l.v] as Vec3 }))
 })
 
 export const legOf = (t: LegTarget): Leg =>
@@ -73,8 +69,6 @@ export const bodyOf = (k: Keyframe): number[] => [
 
 export const duration = (a: Animation) =>
   a.keyframes.length ? a.keyframes[a.keyframes.length - 1].time : 0
-export const entrySeconds = (a: Animation) => (a.entryTime > 0 ? a.entryTime : DEFAULT_ENTRY_S)
-export const exitSeconds = (a: Animation) => (a.exitTime > 0 ? a.exitTime : DEFAULT_EXIT_S)
 
 // File values are float32; a document parsed from JSON must be rounded before it is evaluated,
 // or the app diverges from the firmware and the fixtures.

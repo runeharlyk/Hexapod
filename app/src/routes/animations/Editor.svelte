@@ -22,7 +22,6 @@
   import { dataBroker } from '$lib/transport/databroker'
   import { AnimationState, ModeData } from '$lib/platform_shared/message'
   import {
-    clonePose,
     froundAnimation,
     loadAnimationJson,
     serializeAnimation,
@@ -65,14 +64,13 @@
         if (s.showOnRobot && !sender) {
           requestMode(MotionModes.ANIMATE)
           sender = new PoseSender()
-          sender.send(clonePose(get(pose)))
+          sender.send(get(pose))
         } else if (!s.showOnRobot && sender) {
           sender.cancel()
           sender = null
         }
       }),
-      // The player returns its pose by reference, so the sender gets a copy.
-      pose.subscribe(p => sender?.send(clonePose(p))),
+      pose.subscribe(p => sender?.send(p)),
       // The robot drops a pose sent before it applied ANIMATE, and after a play it rests at stance;
       // both leave it off the preview until the pose changes, so the pose goes out again.
       dataBroker.on(ModeData, data => {

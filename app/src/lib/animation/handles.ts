@@ -1,5 +1,4 @@
-import { DEFAULT_FEET } from './evaluator'
-import type { Vec3 } from './model'
+import { DEFAULT_FEET, type Vec3 } from './model'
 
 // Derived from orient_robot and the URDF load in populateModelCache. T * p = R * p + t, so a
 // positive xm moves the feet +x against the body, i.e. the body -x in the world, which orient_robot

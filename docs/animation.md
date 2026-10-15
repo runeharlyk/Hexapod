@@ -177,7 +177,7 @@ Each platform checks itself against it.
 - Simulation: `uv run pytest` regenerates the expectations in memory and fails while the committed file is stale.
 - Firmware: `pio test -e native` runs the animation tests in `firmware/test/`, which compare the C++ evaluator and player with the fixtures state by state.
   The C++ test reads `expected.txt`, a plain-text dump of the same data written by the same script; `expected.json` is the Python side's file.
-- App: `pnpm test:unit` runs `tests/unit/animation-parity.spec.ts`, which compares the TypeScript port in `app/src/lib/animation/` with the same `expected.json`.
+- App: `pnpm test:unit` runs `tests/unit/animation-parity.spec.ts`, which compares the firmware's evaluator and player, as the app runs them compiled to WebAssembly, with the same `expected.json`.
 
 `uv run python check_animation.py` runs every bundled animation through the servo model and reports clamped joints, peak joint speed, tilt and falls.
 Regenerate the fixtures after any behaviour change in `animation.py`.
@@ -208,19 +208,20 @@ uv run python robot_animate.py --port COM5 shell
 
 ## App
 
-The web app's animation code is a port of the reference plus the `/animations` route.
+The web app's animation code is a port of the reference's model, the firmware's evaluator and player compiled to WebAssembly, and the `/animations` route.
 
 ### The port
 
 - `app/src/lib/animation/model.ts`: the document is the ts-proto `Animation` generated from `animation.proto`; the file adds the constants, `validate` (the reference's rules in the reference's order, first failure returned), `froundAnimation`, `loadAnimationJson` (parse, `Animation.fromJSON`, round, validate) and `serializeAnimation`.
-- `evaluator.ts` and `player.ts` port the reference evaluator and player.
+- `engine.ts` runs the firmware's evaluator and player (`firmware/include/animation/animation.h`) through `firmware/host/animation_api.cpp`, compiled into the virtual robot's WebAssembly module by `app/scripts/build_virtual_robot.js`, so the editor previews a clip with the code the robot plays it with.
+  The editor shows once the module has loaded.
 - `transfer.ts` uploads, downloads, validates, lists and deletes files on the robot.
 - `library.ts` holds the built-in list, the drafts and the robot list.
   The built-ins are the root `animations/*.json`, imported at build time and validated when the module loads; a file whose `name` differs from its stem throws.
 - `app/src/lib/control.ts` (outside `animation/`) sends play, stop, mode and puppeteer poses.
 - `app/src/lib/stores/animation-editor.ts` holds the editor document, selection, scrub and preview; `app/src/lib/stores/animation.ts` holds the latest `AnimationStatus`, which the root layout subscribes to (tag 283) and clears on unlink.
 
-`app/tests/unit/animation-parity.spec.ts` checks the evaluator and player against `animations/fixtures/expected.json`, the same fixtures the firmware and the reference use.
+`app/tests/unit/animation-parity.spec.ts` checks that build and its wrapper against `animations/fixtures/expected.json`, the same fixtures the firmware and the reference use.
 
 Every document is rounded with `froundAnimation` before it is validated, evaluated, uploaded or saved; the editor itself holds the doubles typed into it.
 `serializeAnimation` writes each number as the shortest decimal that rounds back to the same float32, so re-saving a bundled file adds no float noise.
