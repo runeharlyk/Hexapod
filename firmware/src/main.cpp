@@ -41,6 +41,7 @@
 #include <communication/serial_adapter.h>
 #include <www_mount.hpp>
 #include <hexapod.h>
+#include <peripherals/i2c_bus.h>
 #include <cpu_stats.h>
 #include <filesystem_service.h>
 #include <camera_service.h>
@@ -153,6 +154,11 @@ static void fillAnalytics(socket_message_AnalyticsData &a) {
     a.cpu_usage = cpu.total;
     float celsius = 0.0f;
     if (coreTempSensor && temperature_sensor_get_celsius(coreTempSensor, &celsius) == ESP_OK) a.core_temp = celsius;
+    i2c_health::DeviceErrors devices[I2CBus::MAX_DEVICES];
+    const size_t count = I2CBus::instance().errors(devices, std::size(a.i2c_errors));
+    for (size_t i = 0; i < count; i++) a.i2c_errors[i] = {devices[i].address, devices[i].nacks, devices[i].timeouts};
+    a.i2c_errors_count = count;
+    a.i2c_bus_recoveries = I2CBus::instance().recoveries();
 }
 
 static void fillStaticInfo(socket_message_StaticSystemInformation &s) {
@@ -740,7 +746,7 @@ static void controlLoop(void *) {
         previousStartUs = startUs;
         robot.emitTelemetry();
         controlTicks.fetch_add(1, std::memory_order_relaxed);
-        // After an overrun (an I2C timeout can stall a tick for 200 ms) the schedule restarts from now
+        // After an overrun (each I2C transfer that times out stalls a tick by 20 ms) the schedule restarts from now
         // instead of replaying every missed tick back to back.
         if (xTaskDelayUntil(&last, pdMS_TO_TICKS(5)) == pdFALSE) last = xTaskGetTickCount();
     }

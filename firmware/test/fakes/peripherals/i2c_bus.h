@@ -2,11 +2,13 @@
 
 // Host stand-in for firmware/include/peripherals/i2c_bus.h, found first on the native include path.
 // Each device is a 256-byte register file; every write is recorded so a test can check the order in
-// which a driver touched the chip, not only where it left it.
+// which a driver touched the chip, not only where it left it. A device answers while it has registers
+// and is not marked absent, so a test can unplug a chip and plug it back with its registers intact.
 
 #include <array>
 #include <cstdint>
 #include <map>
+#include <set>
 #include <vector>
 
 using esp_err_t = int;
@@ -33,11 +35,14 @@ class I2CBus {
     void reset() {
         registers.clear();
         writes.clear();
+        absent.clear();
+        attempts.clear();
     }
 
-    bool probe(uint8_t addr) { return registers.count(addr) != 0; }
+    bool probe(uint8_t addr) { return registers.count(addr) != 0 && absent.count(addr) == 0; }
 
     esp_err_t writeReg(uint8_t addr, uint8_t reg, const uint8_t* data, size_t len) {
+        attempts[addr]++;
         if (!probe(addr)) return ESP_FAIL;
         writes.push_back({addr, reg, std::vector<uint8_t>(data, data + len)});
         // Auto-increment, as on the PCA9685 with MODE1.AI set.
@@ -46,6 +51,7 @@ class I2CBus {
     }
 
     esp_err_t readReg(uint8_t addr, uint8_t reg, uint8_t* data, size_t len) {
+        attempts[addr]++;
         if (!probe(addr)) return ESP_FAIL;
         for (size_t i = 0; i < len; i++) data[i] = registers[addr][(reg + i) & 0xFF];
         return ESP_OK;
@@ -53,4 +59,7 @@ class I2CBus {
 
     std::map<uint8_t, std::array<uint8_t, 256>> registers;
     std::vector<FakeWrite> writes;
+    std::set<uint8_t> absent;
+    // Register transfers addressed to each device, answered or not.
+    std::map<uint8_t, int> attempts;
 };

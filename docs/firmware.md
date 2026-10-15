@@ -22,6 +22,8 @@ Paths are relative to `firmware/` unless they start at the repository root.
 | Servo output (two PCA9685 boards) | `include/peripherals/servo_controller.h`, `include/peripherals/drivers/pca9685.h` |
 | IMU and magnetometer | `include/peripherals/peripherals.h`, `include/peripherals/drivers/mpu6050.h`, `include/peripherals/drivers/hmc5883.h`, `include/peripherals/imu_calibration.h` |
 | Shared I2C bus | `include/peripherals/i2c_bus.h` |
+| I2C error counts and bus recovery | `include/peripherals/i2c_health.h` |
+| Servo board write backoff and restart | `include/peripherals/servo_board.h` |
 | Transport base and protobuf dispatch | `include/communication/comm_base.hpp`, `include/communication/proto_helpers.h` |
 | WebSocket transport | `include/communication/websocket.h`, `src/communication/websocket.cpp`, `include/communication/ws_frame.h`, `include/communication/stall_tracker.h` |
 | BLE transport (Nordic UART Service) | `include/communication/ble.h`, `src/communication/ble.cpp` |
@@ -110,6 +112,20 @@ The bus takes its lock with a bounded wait, so a busy bus fails a transfer inste
 Bus pins and frequency come from the persisted peripheral settings and are applied at boot only: re-opening a live bus would invalidate every device handle.
 The two PCA9685 servo boards (addresses 0x40 and 0x41) sit on the same bus.
 IMU calibration offsets are measured on request while the robot rests, persisted by `ImuCalibrationService`, and written to the chip at boot because it forgets them at power-off.
+
+### I2C errors and recovery
+
+The IDF 5.4 driver fails a NACK and a timeout alike, with `ESP_ERR_INVALID_STATE`, so `I2CBus` classifies each failed transfer itself (`include/peripherals/i2c_health.h`).
+A failure that left SDA or SCL low, or that spent the transfer timeout (20 ms, less one tick), counts as a timeout; any other is a NACK.
+The counts are kept per device address since boot, survive a restart of the bus, and reach the app in `AnalyticsData.i2c_errors` with `i2c_bus_recoveries`; the metrics page lists them.
+A device cut off mid-read holds SDA low until it has clocked out its byte, and the driver's own bus clear does not free it on the ESP32-S3, because the peripheral reset that follows cuts the hardware's pulses short.
+So after a failure with SDA low and SCL high the bus releases its pins, gives up to nine SCL pulses on them and a STOP, and starts again, at most once a second.
+A held SCL is clock stretching or a device without power clamping the lines, which pulses cannot free.
+
+Each PCA9685 is a `ServoBoard` with its own write backoff, so a board that stops answering neither stalls the control loop nor stops the other board's writes.
+After three failed writes in a row a board is tried every 500 ms, and on every tick again once it answers.
+A board that answers again without auto-increment in MODE1 lost power, so it is started again: asleep, prescale set, the current pose written into its channels, and woken only if the servos were active.
+A board that did not answer at boot is started the same way when it first answers.
 
 ## Transports
 

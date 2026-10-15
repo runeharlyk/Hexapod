@@ -10,7 +10,7 @@
 #include <platform_shared/api.pb.h>
 #include <settings/servo_settings.h>
 #include <peripherals/i2c_bus.h>
-#include <peripherals/drivers/pca9685.h>
+#include <peripherals/servo_board.h>
 #include <utils/math_utils.h>
 #include <kinematics.h>
 
@@ -46,7 +46,9 @@ enum class SERVO_CONTROL_STATE { DEACTIVATED, PWM, ANGLE };
 class ServoController {
   public:
     // The PCA9685 channel span is a property of the wiring, not of whether calculatePWM() has run yet.
-    ServoController() : _left_pca(0x40), _right_pca(0x41) {
+    ServoController()
+        : _left(0x40, FACTORY_SERVO_OSCILLATOR_FREQUENCY, FACTORY_SERVO_PWM_FREQUENCY),
+          _right(0x41, FACTORY_SERVO_OSCILLATOR_FREQUENCY, FACTORY_SERVO_PWM_FREQUENCY) {
         for (const ServoCfg &servo : cfg) {
             if (servo.pin + 1 > channel_count) channel_count = servo.pin + 1;
         }
@@ -56,8 +58,9 @@ class ServoController {
         if (!I2CBus::instance().isInitialized()) {
             I2CBus::instance().begin(static_cast<gpio_num_t>(SDA_PIN), static_cast<gpio_num_t>(SCL_PIN), 400000);
         }
-        _left_pca.begin(FACTORY_SERVO_OSCILLATOR_FREQUENCY, FACTORY_SERVO_PWM_FREQUENCY);
-        _right_pca.begin(FACTORY_SERVO_OSCILLATOR_FREQUENCY, FACTORY_SERVO_PWM_FREQUENCY);
+        const int64_t now = esp_timer_get_time();
+        if (!_left.begin(now)) ESP_LOGW(TAG, "servo board 0x%02X does not answer", _left.address());
+        if (!_right.begin(now)) ESP_LOGW(TAG, "servo board 0x%02X does not answer", _right.address());
 
         _signalSub = EventBus<ServoSignalMsg>::subscribe([this](ServoSignalMsg const &m) { servoEvent(m); });
         _stateSub = EventBus<ServoStateMsg>::subscribe([this](ServoStateMsg const &m) {
@@ -72,16 +75,16 @@ class ServoController {
         if (is_active) return;
         control_state = SERVO_CONTROL_STATE::ANGLE;
         is_active = true;
-        _left_pca.wakeup();
-        _right_pca.wakeup();
+        _left.wakeup();
+        _right.wakeup();
     }
 
     void deactivate() {
         if (!is_active) return;
         is_active = false;
         control_state = SERVO_CONTROL_STATE::DEACTIVATED;
-        _left_pca.sleep();
-        _right_pca.sleep();
+        _left.sleep();
+        _right.sleep();
     }
 
     void servoEvent(ServoSignalMsg const &msg) {
@@ -158,8 +161,7 @@ class ServoController {
             left_pwm[sl.pin] = toPwm(target_angles[i], sl);
             right_pwm[sr.pin] = toPwm(target_angles[i + 9], sr);
         }
-        _left_pca.setMultiplePWM(left_pwm, channel_count);
-        _right_pca.setMultiplePWM(right_pwm, channel_count);
+        writeBoards();
     }
 
     // Pins are hardware; only the angle->PWM fields come from the proto.
@@ -178,8 +180,7 @@ class ServoController {
             left_pwm[cfg[i].pin] = cfg[i].centerPwm;
             right_pwm[cfg[i + 9].pin] = cfg[i + 9].centerPwm;
         }
-        _left_pca.setMultiplePWM(left_pwm, channel_count);
-        _right_pca.setMultiplePWM(right_pwm, channel_count);
+        writeBoards();
     }
 
     void updateServoState() {
@@ -187,6 +188,24 @@ class ServoController {
     }
 
   private:
+    void writeBoards() {
+        const int64_t now = esp_timer_get_time();
+        writeBoard(_left, left_pwm, now);
+        writeBoard(_right, right_pwm, now);
+    }
+
+    void writeBoard(ServoBoard &board, const uint16_t *pwm, int64_t now) {
+        const bool wasAnswering = board.answering();
+        board.write(pwm, channel_count, now);
+        if (board.answering() == wasAnswering) return;
+        if (wasAnswering) {
+            ESP_LOGW(TAG, "servo board 0x%02X stopped answering; retrying every %lld ms", board.address(),
+                     (long long)(WriteBackoff::RETRY_INTERVAL_US / 1000));
+        } else {
+            ESP_LOGI(TAG, "servo board 0x%02X answers again", board.address());
+        }
+    }
+
     void pcaWrite(int index, int value) {
         if (index < 0 || index >= NUM_SERVO) {
             ESP_LOGE(TAG, "Invalid servo id %d (0-%d)", index, NUM_SERVO - 1);
@@ -197,7 +216,7 @@ class ServoController {
             return;
         }
         int pin = cfg[index].pin;
-        index < 9 ? _left_pca.setPWM(pin, 0, value) : _right_pca.setPWM(pin, 0, value);
+        index < 9 ? _left.setPWM(pin, value) : _right.setPWM(pin, value);
     }
 
     static constexpr const char *TAG = "ServoController";
@@ -210,8 +229,8 @@ class ServoController {
                                {2, 306, 2, -1, 0},  {3, 306, 2, 1, 0},  {4, 306, 2, -1, 0},
                                {5, 306, 2, -1, 0},  {6, 306, 2, 1, 0},  {7, 306, 2, -1, 0}};
 
-    PCA9685Driver _left_pca;
-    PCA9685Driver _right_pca;
+    ServoBoard _left;
+    ServoBoard _right;
 
     uint16_t left_pwm[16] = {0};
     uint16_t right_pwm[16] = {0};

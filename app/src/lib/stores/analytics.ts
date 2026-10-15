@@ -1,4 +1,4 @@
-import { type AnalyticsData } from '$lib/platform_shared/message'
+import { type AnalyticsData, type I2CDeviceErrors } from '$lib/platform_shared/message'
 import { writable } from 'svelte/store'
 
 const analytics_data = {
@@ -13,7 +13,9 @@ const analytics_data = {
   core_temp: <number[]>[],
   cpu0_usage: <number[]>[],
   cpu1_usage: <number[]>[],
-  cpu_usage: <number[]>[]
+  cpu_usage: <number[]>[],
+  i2c_errors: <I2CDeviceErrors[]>[],
+  i2c_bus_recoveries: 0
 }
 
 const maxAnalyticsData = 100
@@ -45,7 +47,9 @@ function createAnalytics() {
         core_temp: [...analytics_data.core_temp, content.coreTemp].slice(-maxAnalyticsData),
         cpu0_usage: [...analytics_data.cpu0_usage, content.cpu0Usage].slice(-maxAnalyticsData),
         cpu1_usage: [...analytics_data.cpu1_usage, content.cpu1Usage].slice(-maxAnalyticsData),
-        cpu_usage: [...analytics_data.cpu_usage, content.cpuUsage].slice(-maxAnalyticsData)
+        cpu_usage: [...analytics_data.cpu_usage, content.cpuUsage].slice(-maxAnalyticsData),
+        i2c_errors: content.i2cErrors,
+        i2c_bus_recoveries: content.i2cBusRecoveries
       }))
     }
   }
