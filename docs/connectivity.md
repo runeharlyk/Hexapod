@@ -113,3 +113,11 @@ The thread had two of the three LGTMs when read, so whether and when it reached 
 Where it applies, the https app can open `ws://192.168.x.y/api/ws` and show the camera after one permission prompt, without BLE or USB.
 The app still opens the WebSocket automatically only on the robot-hosted `http:` origin (`app/src/routes/+layout.svelte`), and the firmware's origin policy (`firmware/include/communication/origin_policy.h`) already admits the Pages origin.
 In browsers without this exemption the table above still holds.
+
+## Update: the WebSocket exemption has shipped
+
+Checked 2026-10-15.
+The [Chrome 147 release notes](https://developer.chrome.com/release-notes/147), stable since 2026-04-07, list "Local network access restrictions for WebSockets": a WebSocket to a local address now goes through the same permission prompt.
+In Chrome 155 on the Pages origin `https://runeharlyk.github.io` with the permission granted, `ws://192.168.1.151/api/ws` opened and received the robot's greeting, and `fetch('http://192.168.1.151/api/features')` answered 200 through the firmware's CORS headers.
+The app therefore opens the WebSocket from https whenever a robot address is saved, and resolves robot URLs to `http://` on every origin.
+Firefox and Safari were not tested; a browser that refuses the socket gets an error naming Bluetooth and USB instead of endless retries.
