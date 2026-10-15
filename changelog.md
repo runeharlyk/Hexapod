@@ -40,6 +40,7 @@ No version has been tagged yet; everything so far is unreleased.
 
 ### Fixed
 
+- Fixes every WebSocket upgrade being answered with 404 on firmware built without the embedded app, as the web app's catch-all route was registered before the socket's.
 - Fixes over-the-air updates from a release, which picked the factory image for the app slot.
 - Fixes a swing foot jumping to the middle of its stride at the end of about one swing in a hundred, from a float underflow in the Bezier curve.
 - Fixes the servo board waking with the last pose across a reset before the firmware turned its channels off.
