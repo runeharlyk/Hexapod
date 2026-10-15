@@ -1,0 +1,5 @@
+{
+ "about": "Static internal RAM the firmware may use, in bytes (firmware/scripts/static_ram.py). Raise it only in a commit that says why the growth is worth it.",
+ "dram_bytes": 122880,
+ "iram_bytes": 98304
+}
