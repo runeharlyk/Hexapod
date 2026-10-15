@@ -61,7 +61,7 @@ export const sliderBase = (height: number) => height * 50
 // (MotionService::handleCommand, zm = h * 50). A puppeteer pose carries no base, so the robot holds
 // it at the slider height; while mirroring, the preview uses that base too so both show one pose.
 export const rideBase = (a: Animation, height: number, mirroring: boolean) =>
-  mirroring ? sliderBase(height) : a.rideHeight ?? sliderBase(height)
+  mirroring ? sliderBase(height) : (a.rideHeight ?? sliderBase(height))
 
 export interface EditorState {
   document: Animation
