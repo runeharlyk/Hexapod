@@ -18,11 +18,11 @@ def test_the_enums_are_the_wire_values():
 
 # The table is generated, so it goes stale when the gait, the model or the loop changes; regenerate it then. The
 # firmware's code compiles to slightly different floating point on each platform, which the contacts amplify: the
-# same measurement differs by about 1 % between Windows and Linux, and RIPPLE's sideways speed scatters by 37 %
-# between neighbouring sticks near full deflection, so the samples avoid that region and allow 5 %.
+# same measurement differs by about 1 % between Windows and Linux, so 5 % is allowed. RIPPLE's sideways speed has no
+# stable value to sample: it scatters by up to 37 % between neighbouring sticks and by 14 % between the platforms.
 @pytest.mark.parametrize("gait, axis, stick", [
     (Gait.TRI_GATE, "vx", 0.5), (Gait.TRI_GATE, "vy", -0.3), (Gait.TRI_GATE, "yaw_rate", 0.7),
-    (Gait.TUNED, "vx", 0.4), (Gait.RIPPLE, "vy", 0.5),
+    (Gait.TUNED, "vx", 0.4), (Gait.RIPPLE, "vx", 0.5),
 ])
 def test_the_table_still_describes_the_simulation(gait, axis, stick):
     table = sm._axes(gait)[axis]
