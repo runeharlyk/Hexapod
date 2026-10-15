@@ -16,7 +16,9 @@ const config = {
       strict: true
     }),
     output: {
-      bundleStrategy: 'single'
+      // The firmware serves the embedded build, where one bundle keeps the file list short; the
+      // hosted app splits so each page loads its code when it is first opened.
+      bundleStrategy: process.env.VITE_USE_HOST_NAME === 'true' ? 'single' : 'split'
     },
     paths: {
       base: basePath
