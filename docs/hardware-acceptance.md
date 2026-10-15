@@ -33,4 +33,12 @@ The native USB port was not connected, so nothing over the USB serial link was t
 | Firmware update over the protobuf link, same image | WebSocket | pass: 1972400 bytes in 152 s, booted from `app1`, `running image marked valid (app1)` |
 | Internal RAM after camera init | UART console | 5159 B internal, 1555 B DMA free; the base branch `feature/animation-app` leaves 4347 B and 743 B, so no regression |
 
-Not yet run on hardware: OTA over BLE and USB, a deliberate rollback, the 600 ms steering dead-man, servos staying still at boot, WiFi network cycling, IMU calibration, USB setup, and the stick direction on the floor.
+Later the same day, same image, servo power on and the robot lying flat on the bench:
+
+| Feature | Transport | Outcome |
+|---|---|---|
+| No servo moves when the board resets while deactivated | UART reset, observed | pass |
+| IMU calibration on a robot lying still | WebSocket `imu_calibrate` | pass: status 200; gyro bias at rest from (-0.121, -0.022, -0.022) to (-0.002, -0.001, -0.001) rad/s |
+| Calibration kept across a reboot | UART console, WebSocket | pass: `MPU6050 calibration applied` at boot, bias (-0.003, -0.001, -0.001) rad/s after it |
+
+Not yet run on hardware: OTA over BLE and USB, a deliberate rollback, the 600 ms steering dead-man, a reset while the servos hold a pose, WiFi network cycling, USB setup, and the stick direction on the floor.
