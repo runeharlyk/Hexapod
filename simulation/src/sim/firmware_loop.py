@@ -14,13 +14,13 @@ HEARTBEAT_TICKS = 4  # the app's 20 ms stick period
 
 def imu_reading(quat: np.ndarray, gyro: np.ndarray):
     """The MPU6050 as the training environment derives it from the base: roll, pitch and yaw of the base quaternion in
-    degrees, world up in the body frame, and the gyro sensor."""
+    radians, world up in the body frame, and the gyro sensor."""
     w, x, y, z = quat
     roll = np.arctan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
     pitch = np.arcsin(np.clip(2 * (w * y - z * x), -1, 1))
     yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
     up = (2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y))
-    return np.degrees((roll, pitch, yaw)), up, gyro
+    return (roll, pitch, yaw), up, gyro
 
 
 class FirmwareLoop:

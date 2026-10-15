@@ -4,9 +4,9 @@
 /** One pass of the firmware's control loop. */
 export const TICK_SECONDS = 0.005
 
-/** The IMU as Peripherals reports it: DMP roll, pitch and yaw in degrees, gravity up and rates in the body frame. */
+/** The IMU as Peripherals reports it: roll, pitch and yaw in radians, gravity up and rates in the body frame. */
 export interface SimImu {
-  rpyDeg: [number, number, number]
+  rpyRad: [number, number, number]
   gravityUp: [number, number, number]
   gyroRad: [number, number, number]
 }
@@ -39,7 +39,7 @@ export async function loadVirtualRobot(): Promise<VirtualRobot> {
     setMode: mode => m._setMode(mode),
     setGait: gait => m._setGait(gait),
     command: c => m._command(...c),
-    setImu: ({ rpyDeg, gravityUp, gyroRad }) => m._setImu(...rpyDeg, ...gravityUp, ...gyroRad),
+    setImu: ({ rpyRad, gravityUp, gyroRad }) => m._setImu(...rpyRad, ...gravityUp, ...gyroRad),
     tick: () => m._tick(),
     servosDriven: () => m._servosDriven() !== 0,
     servoAngles,

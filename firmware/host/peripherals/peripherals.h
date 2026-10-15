@@ -16,7 +16,7 @@ using ImuCalibration = socket_message_ImuCalibration;
 class Peripherals {
   public:
     struct Imu {
-        float rpyDeg[3] = {0, 0, 0};       // roll, pitch, yaw as the MPU6050 DMP reports them
+        float rpyRad[3] = {0, 0, 0};       // roll, pitch, yaw in radians, as the MPU6050 driver reports them
         float gravityUp[3] = {0, 0, 1};    // body-frame unit vector, DMP convention (world up)
         float gyroRad[3] = {0, 0, 0};      // body-frame rates, rad/s
     };
@@ -28,9 +28,9 @@ class Peripherals {
     bool readIMU() { return true; }
     bool readMagnetometer() { return false; }
 
-    float angleX() { return state().rpyDeg[0]; }
-    float angleY() { return state().rpyDeg[1]; }
-    float angleZ() { return state().rpyDeg[2]; }
+    float angleX() { return state().rpyRad[0]; }
+    float angleY() { return state().rpyRad[1]; }
+    float angleZ() { return state().rpyRad[2]; }
     void gravityBody(float out[3]) { std::copy_n(state().gravityUp, 3, out); }
     void gyroRad(float out[3]) { std::copy_n(state().gyroRad, 3, out); }
 
@@ -40,14 +40,14 @@ class Peripherals {
     imu_calibration::Check calibrateIMU(ImuCalibration &) { return imu_calibration::Check::MOVING; }
 
     void fillTelemetry(socket_message_TickSample &tick) {
-        std::copy_n(state().rpyDeg, 3, tick.rpy);
+        std::copy_n(state().rpyRad, 3, tick.rpy);
         gyroRad(tick.gyro);
         gravityBody(tick.gravity);
     }
 
     IMUAnglesMsg getIMUAngles() {
         IMUAnglesMsg msg;
-        std::copy_n(state().rpyDeg, 3, msg.rpy);
+        std::copy_n(state().rpyRad, 3, msg.rpy);
         msg.success = true;
         return msg;
     }

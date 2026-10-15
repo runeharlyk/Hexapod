@@ -140,7 +140,7 @@ export class HexapodSim {
     const yaw = Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
     const gyro = this.data.sensordata
     return {
-      rpyDeg: [roll / DEG, pitch / DEG, yaw / DEG],
+      rpyRad: [roll, pitch, yaw],
       gravityUp: [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
       gyroRad: [gyro[this.gyroAdr], gyro[this.gyroAdr + 1], gyro[this.gyroAdr + 2]]
     }

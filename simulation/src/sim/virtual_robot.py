@@ -94,10 +94,10 @@ class VirtualRobot:
         """A ControllerInputData message, as main.cpp's handler turns it into a CommandMsg."""
         self._lib.command(lx, ly, rx, ry, h, s, s1, fd)
 
-    def set_imu(self, rpy_deg, gravity_up, gyro_rad) -> None:
-        """The IMU as Peripherals reports it: DMP roll, pitch and yaw in degrees, world up in the body frame, and
+    def set_imu(self, rpy_rad, gravity_up, gyro_rad) -> None:
+        """The IMU as Peripherals reports it: roll, pitch and yaw in radians, world up in the body frame, and
         body rates in rad/s."""
-        self._lib.setImu(*rpy_deg, *gravity_up, *gyro_rad)
+        self._lib.setImu(*rpy_rad, *gravity_up, *gyro_rad)
 
     def tick(self) -> None:
         self._lib.tick()

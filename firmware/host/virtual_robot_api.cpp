@@ -34,7 +34,7 @@ API void command(float lx, float ly, float rx, float ry, float h, float s, float
     instance().command({lx, ly, rx, ry, h, s, s1, fd});
 }
 
-// Roll, pitch and yaw in degrees as the MPU6050 DMP reports them, the body-frame gravity unit vector
+// Roll, pitch and yaw in radians as the MPU6050 driver reports them, the body-frame gravity unit vector
 // pointing up, and the body-frame rates in rad/s.
 API void setImu(float roll, float pitch, float yaw, float gx, float gy, float gz, float wx, float wy,
                                  float wz) {
