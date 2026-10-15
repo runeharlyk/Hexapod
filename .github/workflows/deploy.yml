@@ -29,6 +29,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # nanopb, which the virtual robot (the simulation view's firmware build) compiles.
+          submodules: true
 
       - uses: pnpm/action-setup@v4
         with:
@@ -51,9 +54,16 @@ jobs:
       - run: pip install grpcio-tools
         working-directory: .
 
+      # The simulation view runs the firmware's motion code compiled to WebAssembly.
+      - uses: mymindstorm/setup-emsdk@v16
+        with:
+          version: 6.0.12
+          actions-cache-folder: emsdk-cache
+
       - run: pnpm install
       # svelte-check type-checks against the generated ts-proto sources, so generate them first.
       - run: pnpm proto
+      - run: pnpm virtual-robot
       - run: pnpm check
       - run: pnpm lint
       - run: pnpm test:unit

@@ -24,7 +24,10 @@ class VirtualRobot {
     VirtualRobot(const VirtualRobot &) = delete;
     VirtualRobot &operator=(const VirtualRobot &) = delete;
 
-    void command(const CommandMsg &c) { EventBus<CommandMsg>::publish(c); }
+    // As main.cpp's controller-input handler: a command with a non-finite field is dropped, the rest clamped.
+    void command(CommandMsg c) {
+        if (c.sanitize()) EventBus<CommandMsg>::publish(c);
+    }
     void setMode(MOTION_STATE mode) { EventBus<ModeMsg>::publish({mode}); }
     void setGait(GaitType gait) { EventBus<GaitMsg>::publish({gait}); }
     void setImu(const Peripherals::Imu &imu) { Peripherals::setImu(imu); }

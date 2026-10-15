@@ -3,9 +3,10 @@
   "version": "0.1.1",
   "private": true,
   "scripts": {
-    "dev": "pnpm proto && vite dev --host",
+    "dev": "pnpm proto && pnpm virtual-robot && vite dev --host",
     "proto": "node scripts/compile_protos.js",
-    "build": "pnpm proto && vite build",
+    "virtual-robot": "node scripts/build_virtual_robot.js",
+    "build": "pnpm proto && pnpm virtual-robot && vite build",
     "build:embedded": "pnpm proto && cross-env VITE_USE_HOST_NAME=true vite build",
     "preview": "vite preview",
     "test": "pnpm run test:integration && pnpm run test:unit",
@@ -52,6 +53,7 @@
   "type": "module",
   "dependencies": {
     "@bufbuild/protobuf": "^2.16.0",
+    "@mujoco/mujoco": "3.14.0",
     "chart.js": "^4.5.1",
     "compare-versions": "^6.1.1",
     "daisyui": "^5.7.50",

@@ -1,0 +1,1740 @@
+{
+ "constants": {
+  "kp": 250.0,
+  "kv": 1.5,
+  "j_eff": 0.004,
+  "stall": 0.34,
+  "k_hold": 2.5,
+  "noload": 16.0
+ },
+ "samples": [
+  {
+   "target": 0.32870804957149025,
+   "position": 0.08836231821635199,
+   "velocity": -0.5665856467284378,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.5525118869667113,
+   "position": -0.6452872215295211,
+   "velocity": 15.579513373960012,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.1016635425531327,
+   "position": -1.667679937178577,
+   "velocity": 17.361740638249984,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.16033367473153,
+   "position": -1.6111937429320533,
+   "velocity": -5.688192131637191,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.7518485740806538,
+   "position": 0.9565978717130101,
+   "velocity": 2.8611932291904374,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.990613385466532,
+   "position": 1.167240799355632,
+   "velocity": -7.125224356962313,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.25592586184123167,
+   "position": 0.3943879956187363,
+   "velocity": 3.77200120798787,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.5507917463615961,
+   "position": 0.41120481147585625,
+   "velocity": -6.4835509797146695,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.10469997951701493,
+   "position": 0.7013519024640681,
+   "velocity": -4.335239978873551,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 1.0441738170906436,
+   "position": 1.6211762236221197,
+   "velocity": 15.610974080191696,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.758048529891677,
+   "position": 0.9806989112685107,
+   "velocity": -10.91369625866481,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.1934275995916446,
+   "position": -1.012876468070265,
+   "velocity": 4.927485787441697,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.8577702638101663,
+   "position": 1.0839063404952944,
+   "velocity": -16.639386256704608,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.1193946192668855,
+   "position": -1.252688910491961,
+   "velocity": 13.30576590613591,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.5511730714318657,
+   "position": 0.11328887745875915,
+   "velocity": 11.483932299547334,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.7784265105538584,
+   "position": -0.5126405023209604,
+   "velocity": -10.425222280281915,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.8716294136397276,
+   "position": 0.9020546006105986,
+   "velocity": 15.059369232428153,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.09950692859782007,
+   "position": -0.12820282073143313,
+   "velocity": -17.657278607792225,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.39331905469041506,
+   "position": -0.4648664690314743,
+   "velocity": 17.096957144982397,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.8393292794523862,
+   "position": -0.2938206870235016,
+   "velocity": 18.717047596985857,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.11918552004171135,
+   "position": -0.11931054361653493,
+   "velocity": -19.41174780138523,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.7111782486895062,
+   "position": 0.6214525985083968,
+   "velocity": 14.545603609823033,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.6464586984150061,
+   "position": -0.5022025559965527,
+   "velocity": 19.247801602653773,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.075148877445417,
+   "position": -0.48103307116302807,
+   "velocity": 18.28840718443854,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.2290755844283323,
+   "position": 0.30965682549698614,
+   "velocity": -14.049439510700083,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.7235686931777872,
+   "position": -0.7715145260068719,
+   "velocity": 18.905152552918196,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.9821926905141074,
+   "position": -0.6729180761441577,
+   "velocity": 15.597422228820825,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.1927977263684415,
+   "position": 0.18970496095358425,
+   "velocity": 12.89495310172282,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.48312928123458576,
+   "position": -0.44795468899846125,
+   "velocity": -0.8004830476867113,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.4127877070952626,
+   "position": 0.7557305479518316,
+   "velocity": -10.705083214427846,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.721162934476288,
+   "position": -0.823575915249483,
+   "velocity": 12.075223148732313,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 1.0610714652155948,
+   "position": 1.34245175136207,
+   "velocity": 16.94120639133878,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.32373559621241144,
+   "position": -0.07036414262471158,
+   "velocity": -9.354789108308296,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.946811329031449,
+   "position": -0.4283397050953951,
+   "velocity": 1.5573763048874767,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.3098595636953021,
+   "position": -0.15222127636761162,
+   "velocity": -2.289886841018742,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 1.025170927362882,
+   "position": 1.2999890678544532,
+   "velocity": 17.2406926392462,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.1027742931477569,
+   "position": -0.6370323083567412,
+   "velocity": -3.7395865300749342,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.5568148695757458,
+   "position": 0.22785818367653504,
+   "velocity": 16.398358466491878,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.27449579267759194,
+   "position": -0.17603856032006782,
+   "velocity": -18.27732445727183,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.1319231237275493,
+   "position": -1.3859262153184562,
+   "velocity": 12.90825120726008,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.5261274547841768,
+   "position": 0.6294751325594561,
+   "velocity": -3.3846385051510133,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.1616198491434273,
+   "position": -1.0967112465355058,
+   "velocity": 13.19215941112411,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.6190824056554274,
+   "position": 0.9907353367507606,
+   "velocity": -19.601817567708324,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.030620935828987284,
+   "position": 0.1031920782364103,
+   "velocity": -5.398153689669174,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 1.0298501299128147,
+   "position": 0.7759555872302673,
+   "velocity": -16.854798513374405,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.0414020078622206,
+   "position": -1.1459263966451494,
+   "velocity": 6.104583053465539,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.8191614710697197,
+   "position": 1.2009066362348122,
+   "velocity": -9.046036056017712,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.0399439789589566,
+   "position": -0.8881362240552524,
+   "velocity": 8.10608282639145,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.37365605087009957,
+   "position": 0.17723712036683104,
+   "velocity": 17.75205707768363,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.16728304332520016,
+   "position": -0.3239977500151831,
+   "velocity": -14.927315909550089,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 1.1185489938817683,
+   "position": 1.1816828065073128,
+   "velocity": 14.591131816030966,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.14935642134829674,
+   "position": 0.26206546328409863,
+   "velocity": -17.62143393598646,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.5787249763897626,
+   "position": -0.16077552645969073,
+   "velocity": -4.769179667564423,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.6199782861735721,
+   "position": -1.045410040349734,
+   "velocity": -2.8090375528569353,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.026761087599685762,
+   "position": 0.4060806038575274,
+   "velocity": 19.13062855360583,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 1.1435095726465068,
+   "position": 0.8400856610330358,
+   "velocity": 3.5948011328380183,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.661658851444388,
+   "position": 0.2311547197256259,
+   "velocity": -7.212734548693401,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.4587423294737736,
+   "position": -0.25466811029585046,
+   "velocity": -12.499691370888604,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.5523917147980796,
+   "position": -0.29484947081237634,
+   "velocity": 6.901065356674771,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.8714884900543625,
+   "position": 0.47195200459308906,
+   "velocity": -12.195704061727799,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.9151372145704555,
+   "position": 0.7898059422963066,
+   "velocity": 3.1075157007143694,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.025695613304748566,
+   "position": 0.5180025327640142,
+   "velocity": 4.089567055185029,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.3736902456904194,
+   "position": -0.30000932463015184,
+   "velocity": 18.49692372497524,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 1.1878016355862029,
+   "position": 1.28180473349773,
+   "velocity": -17.109389378804927,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.44173549111751953,
+   "position": -0.8087797636485672,
+   "velocity": -0.0010870536552616272,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.7614902905762502,
+   "position": -0.7302635922348,
+   "velocity": 9.76389917130593,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.9122354911297672,
+   "position": 0.9403571640036711,
+   "velocity": -12.910930381013648,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.7496049554670094,
+   "position": 0.2563277237625359,
+   "velocity": -4.477330728619231,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.40293457337124305,
+   "position": 0.9812658051232904,
+   "velocity": -17.484180061801148,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 1.1001927162670844,
+   "position": 1.1858674368140136,
+   "velocity": 9.03523455103107,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 1.021714985314605,
+   "position": 0.4294056445117772,
+   "velocity": -16.48928452962053,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.5957964079242097,
+   "position": 0.922975449394676,
+   "velocity": -4.196331665681296,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.896454314689757,
+   "position": 0.8940107875428973,
+   "velocity": 0.3952214169679874,
+   "torque": 0.3234905546204034,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.06647919179997253,
+   "position": -0.06600664078003152,
+   "velocity": 0.22495240166110253,
+   "torque": -0.5146352349695321,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.9902926407381256,
+   "position": 0.9884760504219008,
+   "velocity": -0.01157188897632977,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.6382010825732938,
+   "position": 0.6400499030841752,
+   "velocity": -0.06189728286017504,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.9967775042682379,
+   "position": 0.9967105804850134,
+   "velocity": 0.30202312469743686,
+   "torque": -0.4279382683369746,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.8942327782826247,
+   "position": -0.8913006062824178,
+   "velocity": -0.33054810222808473,
+   "torque": -0.5632131577212668,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.0234490272064831,
+   "position": -1.025351367258429,
+   "velocity": 0.16673500553109277,
+   "torque": 0.4632750111830296,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.0312169914338767,
+   "position": -1.0284388765931312,
+   "velocity": 0.23132369896411686,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.8852503064335664,
+   "position": 0.8870558086532181,
+   "velocity": 0.23935710377289188,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.32176795043386375,
+   "position": 0.3216555134133154,
+   "velocity": -0.1421706202081346,
+   "torque": 0.25541981301783745,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.008227934882752752,
+   "position": -0.0063467304976749395,
+   "velocity": 0.2373113461968437,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.8074958011284473,
+   "position": -0.8068787076970007,
+   "velocity": -0.2197372464994679,
+   "torque": 0.09819583295670092,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.4169602505454568,
+   "position": 0.4178909769294051,
+   "velocity": -0.11015363961234476,
+   "torque": -0.18379193456207846,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.43675826917008476,
+   "position": -0.4342761245938404,
+   "velocity": -0.06604151023649613,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.5061116718382677,
+   "position": 0.5035032943367355,
+   "velocity": 0.03312798690413166,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.09514721071842058,
+   "position": -0.09313728149467018,
+   "velocity": -0.30990906756755426,
+   "torque": -0.28885985755506893,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.01792766530686518,
+   "position": 0.017218553986662614,
+   "velocity": -0.07444175948855508,
+   "torque": 0.37757938430879556,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.6951977579036888,
+   "position": 0.694151031600293,
+   "velocity": -0.3997594479144617,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.5865137432337577,
+   "position": 0.5869378519489147,
+   "velocity": 0.025728378779475314,
+   "torque": -0.1976333363530759,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.8445021893622167,
+   "position": 0.8420652602828165,
+   "velocity": 0.2505952762913539,
+   "torque": 0.5379554903380386,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.8665639701115259,
+   "position": -0.8672156875536978,
+   "velocity": 0.3976082344579934,
+   "torque": -0.35201831087250446,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.4890858462403147,
+   "position": 0.48652829232070155,
+   "velocity": -0.1195561509056895,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.770647412147133,
+   "position": 0.7705044139264349,
+   "velocity": -0.2631828479834607,
+   "torque": 0.44839860473696963,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 1.156387974892305,
+   "position": 1.1559592125411624,
+   "velocity": -0.08666016043687774,
+   "torque": 0.2907761223337657,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.8250973496849443,
+   "position": 0.824639774342767,
+   "velocity": 0.20243999189254114,
+   "torque": -0.13206923452233382,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.18214443493436905,
+   "position": -0.18162663281282435,
+   "velocity": -0.048616854513354846,
+   "torque": -0.12125051380923121,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 1.1512529004231757,
+   "position": 1.148989044384232,
+   "velocity": 0.07070408754337187,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 1.1375625716456523,
+   "position": 1.1401651851053933,
+   "velocity": -0.2981132224626632,
+   "torque": -0.5288102137088798,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.00882475008138961,
+   "position": 0.009929052769839807,
+   "velocity": 0.18089880874718423,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.6082716926013725,
+   "position": 0.6102143807517291,
+   "velocity": -0.17593407850680043,
+   "torque": -0.4646069386235192,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.9932104024155908,
+   "position": 0.9955912098091734,
+   "velocity": -0.24750595167678544,
+   "torque": -0.5215438450782952,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.05724702727499276,
+   "position": -0.0567471069934519,
+   "velocity": 0.2903599988665556,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.8730869786330036,
+   "position": 0.8703282879584312,
+   "velocity": 0.05153025689647528,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.48376455854849465,
+   "position": 0.4850334794932012,
+   "velocity": -0.012400846122999742,
+   "torque": -0.4572440850804536,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.4945817856610617,
+   "position": -0.4941676305354816,
+   "velocity": 0.31905901219878763,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.6423654479603365,
+   "position": 0.6443211912933589,
+   "velocity": -0.33119005115119793,
+   "torque": -0.23661867315660207,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.47077068081814266,
+   "position": 0.47207118490152505,
+   "velocity": 0.25743360218417166,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.41284250456495386,
+   "position": -0.41196623442355573,
+   "velocity": 0.06798614418054266,
+   "torque": -0.4305805192951119,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.7790166000358054,
+   "position": -0.7783485679301542,
+   "velocity": -0.01872926263538366,
+   "torque": -0.22241814566614349,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.4195167599214693,
+   "position": 0.41695905851721654,
+   "velocity": -0.19507998285768613,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.3292273179289533,
+   "position": -0.3307488821146475,
+   "velocity": -0.3418733210813432,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.40825000201455397,
+   "position": -0.4078037337259664,
+   "velocity": -0.3856868632824198,
+   "torque": 0.41117968670329086,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 1.0648266365500507,
+   "position": 1.064191757146224,
+   "velocity": 0.06397614445127581,
+   "torque": 0.14211555975808807,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.7216839823692331,
+   "position": -0.7187318429977445,
+   "velocity": -0.24711178123194016,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.02921677881056417,
+   "position": 0.03175925095481526,
+   "velocity": 0.38042638274145635,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.1423683183887616,
+   "position": -1.1444562709736263,
+   "velocity": -0.3140182172910822,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.8079165812713052,
+   "position": -0.807376817715408,
+   "velocity": -0.03832896933831326,
+   "torque": -0.14491787945395482,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.9202049607205487,
+   "position": 0.9213822513571694,
+   "velocity": -0.08427216234323198,
+   "torque": -0.31507574521793463,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.6941941158064231,
+   "position": 0.6920133762922284,
+   "velocity": -0.21415081977157524,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.1364051761295766,
+   "position": 0.13528075001218362,
+   "velocity": 0.19900458000314802,
+   "torque": 0.12315292401764102,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.6661118496207353,
+   "position": -0.6648163425391823,
+   "velocity": 0.11496380966424824,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.1385941982911354,
+   "position": 0.1410008468516724,
+   "velocity": 0.18060614804149588,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.1708483373273297,
+   "position": -1.171797881426093,
+   "velocity": -0.33375313928280426,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.5111847142510095,
+   "position": 0.5096183765211573,
+   "velocity": -0.11780526744287595,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.04759937840215622,
+   "position": 0.049088724052643695,
+   "velocity": 0.38666776524273716,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.17586925504742146,
+   "position": -0.1783491671087342,
+   "velocity": 0.2696376253760031,
+   "torque": 0.5255105849282703,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.1025178515054115,
+   "position": -1.1029627140636473,
+   "velocity": 0.2225985808815426,
+   "torque": -0.16707441198387513,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.7343341082380963,
+   "position": -0.7349535969151757,
+   "velocity": 0.3107919095292002,
+   "torque": -0.2338796103890276,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 1.0680591559311037,
+   "position": 1.0662721644949567,
+   "velocity": 0.10519321380929336,
+   "torque": 0.5123319678411935,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.8098326605920363,
+   "position": -0.8072052299402204,
+   "velocity": -0.11490836289874284,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.8449255979106607,
+   "position": 0.8424942579808277,
+   "velocity": 0.022625952045594366,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.7731291817546562,
+   "position": 0.7701585782445877,
+   "velocity": -0.21879968345410916,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.2608949830125409,
+   "position": -0.261957458190557,
+   "velocity": 0.22203529910536435,
+   "torque": 0.06537524309799436,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.07971955237376771,
+   "position": -0.07677508406432038,
+   "velocity": -0.26393719870810683,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.7776043383598061,
+   "position": 0.7761925091301368,
+   "velocity": 0.06175835918927258,
+   "torque": 0.4367984223420841,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.4336471813685099,
+   "position": 0.43563134696161626,
+   "velocity": 0.02871914366329148,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.8086649674297701,
+   "position": 0.8067036492518929,
+   "velocity": 0.13752224278215242,
+   "torque": 0.5292109525307431,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.618231805997097,
+   "position": 0.6187500761258873,
+   "velocity": 0.20838927893220005,
+   "torque": -0.5069352166946415,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.45905155065745107,
+   "position": 0.46180200666852744,
+   "velocity": -0.3121376911488729,
+   "torque": -0.5574880690130731,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.9911378544165073,
+   "position": 0.9924369338239021,
+   "velocity": 0.09995276933438679,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.774737119427013,
+   "position": 0.7776201672780839,
+   "velocity": -0.06883529402784577,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.7702495498008162,
+   "position": -0.7698022099062819,
+   "velocity": 0.09136114853436295,
+   "torque": -0.30479418325189606,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.4655629035515887,
+   "position": 0.4668326270248742,
+   "velocity": 0.004778107252146835,
+   "torque": -0.48331346336029113,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.2051510058254924,
+   "position": 0.20721567163492666,
+   "velocity": 0.25240832532720914,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.5589265844609166,
+   "position": 0.5599933771294924,
+   "velocity": -0.22634625514229906,
+   "torque": -0.06052786800247226,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.04806061729115507,
+   "position": 0.04727354639133077,
+   "velocity": -0.33989384410177315,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.08911725808974791,
+   "position": -0.0886629255424336,
+   "velocity": 0.04083599663464377,
+   "torque": -0.23162870019483067,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.5117547229235155,
+   "position": -0.5113742480814716,
+   "velocity": -0.2465462814917963,
+   "torque": 0.22714135647121167,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.6500359920079043,
+   "position": -0.6474165955070585,
+   "velocity": -0.34606102361258434,
+   "torque": -0.46318215239827965,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.4687250546203643,
+   "position": 0.4680510998920984,
+   "velocity": 0.21861167843301466,
+   "torque": -0.07518449454982123,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.4697072467498984,
+   "position": 0.4676959426622944,
+   "velocity": 0.25698128486233796,
+   "torque": 0.36876710555798226,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.7308419688561687,
+   "position": -0.7285803714961946,
+   "velocity": -0.08133155912141171,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 1.1324097998666691,
+   "position": 1.1347781708479903,
+   "velocity": -0.16473891186537248,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.41076187269455033,
+   "position": 0.4080514662645617,
+   "velocity": -0.17830328845043378,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.074918695703583,
+   "position": 0.0731080398886199,
+   "velocity": -0.11122285933731935,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.8188208437079221,
+   "position": 0.8196385456295189,
+   "velocity": 0.061526114493009654,
+   "torque": -0.39892739233831553,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.032350960072428325,
+   "position": -0.0306178891386193,
+   "velocity": 0.022256062489981854,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.05773231175921567,
+   "position": -0.057092156718772366,
+   "velocity": -0.11572065506184298,
+   "torque": -0.06647715757347485,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.5801414398139114,
+   "position": -0.5819919046371521,
+   "velocity": 0.10993678339054513,
+   "torque": 0.5290191336294425,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.8252748446623384,
+   "position": -0.8275689952107652,
+   "velocity": 0.14061395355796802,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.1398694751400824,
+   "position": 0.13694208363411556,
+   "velocity": -0.2855983325885756,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.27049220387550243,
+   "position": -0.2705941533948996,
+   "velocity": -0.38900971310681715,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.29736667665392225,
+   "position": 0.29546295019989594,
+   "velocity": -0.05288702052005484,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.22056667971386523,
+   "position": 0.22339646723957685,
+   "velocity": 0.2097577374873757,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.38322274228640063,
+   "position": -0.38083655167569536,
+   "velocity": 0.09132581899431036,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.4723175696058114,
+   "position": -0.46955358029022976,
+   "velocity": -0.14068289935409917,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.10979730964628787,
+   "position": 0.11042052759273238,
+   "velocity": 0.1737927514363946,
+   "torque": -0.4943958570712852,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.2696201736044417,
+   "position": 0.26971113580585754,
+   "velocity": -0.012388293512101356,
+   "torque": -0.015528385262794042,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.26591625341234093,
+   "position": 0.26791256050862233,
+   "velocity": 0.3996010818056215,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.28118877864514824,
+   "position": -0.2802746848510141,
+   "velocity": 0.2208253219558245,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.1578573773190124,
+   "position": 0.15634872337721586,
+   "velocity": 0.2645051530174073,
+   "torque": 0.1689874986475872,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 1.1658471244714057,
+   "position": 1.168452840700953,
+   "velocity": -0.1923608750889775,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.17274115429451609,
+   "position": -0.1731029575947229,
+   "velocity": -0.2781640297209489,
+   "torque": 0.5529222821589829,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.8232353150159775,
+   "position": 0.8248766523858333,
+   "velocity": -0.2405568727144,
+   "torque": -0.2546662046243374,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.0048231408633033,
+   "position": -1.0048175131213724,
+   "velocity": -0.05418802852298715,
+   "torque": 0.07917163956038811,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.9005478088847323,
+   "position": 0.8986479463433631,
+   "velocity": 0.00971929569672031,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 1.0600947732717272,
+   "position": 1.0588703343537837,
+   "velocity": -0.24431252181421242,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.5715263619505505,
+   "position": -0.5710798973377336,
+   "velocity": 0.2239558167908653,
+   "torque": -0.5033579549926518,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.8842347706013511,
+   "position": 0.885274928388702,
+   "velocity": 0.3414968485828732,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.44158803417542203,
+   "position": -0.44117892932401165,
+   "velocity": -0.06625970695213912,
+   "torque": -0.05402475885068386,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.019354072215095997,
+   "position": 0.020124825002369447,
+   "velocity": -0.09130804699142397,
+   "torque": -0.1520702247404081,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.22649904603062132,
+   "position": 0.22887154668441234,
+   "velocity": 0.08893956194733937,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.5337076174346969,
+   "position": 0.5317275481435133,
+   "velocity": 0.1313134853988045,
+   "torque": 0.5455557560956247,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.8460661092831446,
+   "position": -0.8481672160078919,
+   "velocity": 0.12822123594214774,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.5259094526324245,
+   "position": -0.5281780393044126,
+   "velocity": -0.33219282622078894,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.5536943900601667,
+   "position": 0.551153024185676,
+   "velocity": 0.06552206322775139,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.1636615543023039,
+   "position": 0.16386694044392633,
+   "velocity": 0.18873887991838045,
+   "torque": -0.36012812298598484,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.9598699042534762,
+   "position": 0.9578642911651898,
+   "velocity": 0.23645469291475962,
+   "torque": 0.39742286873525884,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.12513993122701583,
+   "position": -0.12329692364645489,
+   "velocity": 0.0708274015514821,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.2241291719187648,
+   "position": -0.22699350873548352,
+   "velocity": -0.2955415534123537,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.4643826779263147,
+   "position": -0.46513503609590556,
+   "velocity": -0.33300774088257684,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.6447058256286107,
+   "position": -0.6448666018002792,
+   "velocity": -0.1415570455153457,
+   "torque": 0.2726266326487218,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.3618392034321558,
+   "position": 0.3601383732362168,
+   "velocity": 0.34204704757277016,
+   "torque": 0.12474075211798075,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.5647535956255307,
+   "position": -0.565618158308427,
+   "velocity": -0.021905976933214055,
+   "torque": 0.35706997148591585,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.8694612495433136,
+   "position": 0.8677979981564843,
+   "velocity": 0.31637912571811844,
+   "torque": 0.1491505814838185,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.55044385043494,
+   "position": -0.5517528817969317,
+   "velocity": -0.03226003737838007,
+   "torque": 0.5392768168144482,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.6122834557443049,
+   "position": 0.609997246718792,
+   "velocity": -0.18101506381328294,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.03569477834486312,
+   "position": -0.0361330327206238,
+   "velocity": 0.3504210557102433,
+   "torque": -0.3612861926551105,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.500885427437721,
+   "position": 0.5016271308994611,
+   "velocity": -0.37981379511629243,
+   "torque": 0.29158189452191124,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.4387697359987689,
+   "position": -0.4395049554095743,
+   "velocity": -0.2521407884172814,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.9356766327280892,
+   "position": 0.9369276296278095,
+   "velocity": -0.206477623082292,
+   "torque": -0.15940740277167542,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.5623006350322004,
+   "position": -0.5639151024599307,
+   "velocity": 0.1856640666959074,
+   "torque": 0.32692918535500287,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.1851756109177323,
+   "position": -1.1873126592841068,
+   "velocity": 0.020934424401297225,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.5307978866804208,
+   "position": 0.5322912857473517,
+   "velocity": -0.028499673684746984,
+   "torque": -0.5172751395719714,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.42385071178699096,
+   "position": 0.42486308056556327,
+   "velocity": -0.2219733289822532,
+   "torque": -0.046678298491234005,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.3765634798216251,
+   "position": 0.3761397039813937,
+   "velocity": 0.205173688287689,
+   "torque": -0.14884459234475866,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.4497960055519836,
+   "position": 0.4476166092608899,
+   "velocity": -0.3063148735587257,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.2070341064443595,
+   "position": 0.20801620888033334,
+   "velocity": -0.20212702367611535,
+   "torque": -0.06509787797602179,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.9233305126115654,
+   "position": -0.9218307781120081,
+   "velocity": 0.24508825565998094,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": 0.4060889337121232,
+   "position": 0.40407258963137016,
+   "velocity": -0.039162028427126405,
+   "torque": 0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -1.1841635429263084,
+   "position": -1.1830277325047274,
+   "velocity": 0.30145418927968715,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.7611770905087185,
+   "position": -0.7620432679904278,
+   "velocity": 0.08133128338580481,
+   "torque": 0.20281963056226213,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.1898918275311643,
+   "position": -0.1874011158418262,
+   "velocity": 0.23163571756670565,
+   "torque": -0.5950000000000001,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  },
+  {
+   "target": -0.2919134870192288,
+   "position": -0.29040424889357846,
+   "velocity": -0.2500773816567031,
+   "torque": -0.19084822463382556,
+   "frictionloss": 0.26,
+   "base_frictionloss": 0.005
+  }
+ ]
+}

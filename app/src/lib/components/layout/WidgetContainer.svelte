@@ -4,6 +4,7 @@
   import Widget from './Widget.svelte'
   import Visualization from '$lib/components/Visualization.svelte'
   import Stream from '$lib/components/Stream.svelte'
+  import LazySimulationView from '$lib/components/LazySimulationView.svelte'
 
   interface Props {
     container: WidgetContainerConfig
@@ -24,6 +25,8 @@
         {#if isWidgetConfig(widget)}
           {#if widget.component === 'Visualization'}
             <Visualization />
+          {:else if widget.component === 'Simulation'}
+            <LazySimulationView />
           {:else}
             <Stream />
           {/if}
