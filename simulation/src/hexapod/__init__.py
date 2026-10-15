@@ -1,4 +1,4 @@
-"""One Robot for the simulation and the real hexapod: Robot("simulation") or Robot("192.168.4.1")."""
+"""One Robot for the simulation and the real hexapod: Robot("simulation"), Robot("192.168.4.1") or Robot("COM5")."""
 from .backends.base import Gait, Mode, RobotDisconnected, RobotError, RobotState, RobotTimeout, Velocity
 from .robot import Robot
 from .speed_model import UnmodelledGait
