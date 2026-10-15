@@ -1,75 +1,73 @@
-"""MotionService's STAND/WALK control tick (firmware/include/motion.h) driving the MuJoCo robot.
-
-The stick command reaches the gait through the firmware's first-order ramp (approachGaitCommand), the body height
-through its lerp, a gait selection is honoured only while the gait is not stepping (updateAutoGait), and physics
-stays locked to the 5 ms control tick.
+"""The firmware's control loop driving the MuJoCo robot: each 5 ms tick the firmware's own Hexapod (virtual_robot.py,
+the code main.cpp's control task runs) reads the simulated IMU and drives the servos, and physics stays locked to the
+tick. Modes, gaits and sticks reach it as a transport delivers them, and the current sticks are sent again every 20 ms,
+as the app's heartbeat does, so a held command outlasts the firmware's dead-man timeout as it does on the robot.
 """
+import numpy as np
 
-from src.robot.firmware_gait import (AUTO, BodyState, GaitController, GaitState, approach_gait_command,
-                                     command_speed01, command_to_walk_gait, gait_is_commanded, select_auto_gait,
-                                     set_gait)
 from src.sim.mj_runtime import HexapodSim
+from src.sim.virtual_robot import DEACTIVATED, STAND, WALK, VirtualRobot
 
 FIRMWARE_DT = 0.005  # control-task period (firmware/src/main.cpp)
-BODY_SMOOTHING = 0.06  # MotionService::smoothing_factor
-HEIGHT_MM_PER_UNIT = 50.0  # handleCommand: target_body_state.zm = c.h * 50
+HEARTBEAT_TICKS = 4  # the app's 20 ms stick period
+
+
+def imu_reading(quat: np.ndarray, gyro: np.ndarray):
+    """The MPU6050 as the training environment derives it from the base: roll, pitch and yaw of the base quaternion in
+    degrees, world up in the body frame, and the gyro sensor."""
+    w, x, y, z = quat
+    roll = np.arctan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
+    pitch = np.arcsin(np.clip(2 * (w * y - z * x), -1, 1))
+    yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+    up = (2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y))
+    return np.degrees((roll, pitch, yaw)), up, gyro
 
 
 class FirmwareLoop:
     def __init__(self, sim: HexapodSim, gait: int):
         self.sim = sim
-        self.target = GaitState()
-        self.live = GaitState()
-        self.requested_gait = gait
-        self.target_zm = 0.0
-        self.gc, self.body = GaitController(), BodyState()
+        self.robot = VirtualRobot()
+        self.robot.set_gait(gait)
         self.ticks = 0
         self.physics_steps = 0
-        self._apply_requested_gait()
+        self._mode = DEACTIVATED
+        self._sticks = None
+        self._writes = 0
+
+    def set_mode(self, mode: int) -> None:
+        if mode != self._mode:
+            self._mode = mode
+            self.robot.set_mode(mode)
 
     def walk(self, lx: float, ly: float, rx: float, s: float = 0.0, s1: float = 0.0, h: float = 0.0) -> None:
-        """handleCommand's WALK branch."""
-        self.target_zm = command_to_walk_gait(lx=lx, ly=ly, rx=rx, s=s, s1=s1, gait=self.target, h=h)
+        """WALK with these sticks."""
+        self.set_mode(WALK)
+        self._send(dict(lx=lx, ly=ly, rx=rx, s=s, s1=s1, h=h))
 
     def hold(self, h: float = 0.0) -> None:
-        """handleCommand's STAND branch for centred sticks: no stride, only the height."""
-        self.stop(snap=False)
-        self.target_zm = h * HEIGHT_MM_PER_UNIT
-
-    def stop(self, snap: bool) -> None:
-        """stopLocomotionCommand: zeroes the command; `snap` also collapses the live gait onto it."""
-        default = GaitState()
-        for name in ("step_x", "step_y", "step_angle", "step_speed", "step_height", "step_depth", "phase_rate"):
-            setattr(self.target, name, getattr(default, name))
-        if snap:
-            approach_gait_command(self.live, self.target, 0.0, 0.0)
-            self.gc.set_phase(0.0)
+        """STAND with centred sticks: no stride, only the height."""
+        self.set_mode(STAND)
+        self._send(dict(h=h))
 
     def select_gait(self, gait: int) -> None:
-        """handleInputGait: a schedule cannot be swapped mid-stride, so a selection while stepping waits."""
-        self.requested_gait = gait
-        if not gait_is_commanded(self.live):
-            self._apply_requested_gait()
+        self.robot.set_gait(gait)
 
-    def _apply_requested_gait(self) -> None:
-        self.live.gait_type = (select_auto_gait(command_speed01(self.target), self.live.gait_type)
-                               if self.requested_gait == AUTO else self.requested_gait)
-        set_gait(self.live)
-        self.target.gait_type = self.live.gait_type
-        self.target.offset = self.live.offset.copy()
-        self.target.stand_frac = self.live.stand_frac
-
-    def tick(self, actuated: bool = True) -> None:
-        """One control tick; an unactuated tick (DEACTIVATED) only advances physics."""
-        if actuated:
-            if not gait_is_commanded(self.live):
-                self._apply_requested_gait()
-            approach_gait_command(self.live, self.target, FIRMWARE_DT)
-            self.body.zm += (self.target_zm - self.body.zm) * BODY_SMOOTHING
-            self.gc.step(self.live, self.body, FIRMWARE_DT)
-            self.sim.set_joint_targets(self.sim.body_targets_from_feet(self.body))
+    def tick(self) -> None:
+        if self._sticks is not None and self.ticks % HEARTBEAT_TICKS == 0:
+            self.robot.command(**self._sticks)
+        self.robot.set_imu(*imu_reading(self.sim.base_quat(), self.sim.gyro()))
+        self.robot.tick()
+        self.sim.set_powered(self.robot.servos_driven())
+        # Only a tick that wrote a pose moves the targets: in IDLE a raw PWM write holds, as on the robot.
+        if self.robot.servo_writes() != self._writes:
+            self._writes = self.robot.servo_writes()
+            self.sim.set_joint_targets(np.radians(self.robot.servo_angles()))
         self.ticks += 1
         # 5 ms is not a whole number of physics steps, so keep physics time locked to tick time.
         due = int(round(self.ticks * FIRMWARE_DT / self.sim.model.opt.timestep))
         self.sim.step_physics(due - self.physics_steps)
         self.physics_steps = due
+
+    def _send(self, sticks: dict) -> None:
+        self._sticks = sticks
+        self.robot.command(**sticks)

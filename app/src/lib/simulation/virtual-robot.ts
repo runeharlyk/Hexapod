@@ -20,9 +20,10 @@ export interface VirtualRobot {
   command(command: Command): void
   setImu(imu: SimImu): void
   tick(): void
-  /** The last tick's joint angles in degrees, coxa, femur and tibia per leg in leg order. */
-  angles(): Float32Array
-  mode(): number
+  /** Whether the servos are driven: the boards are awake and a pose has been sent since boot. */
+  servosDriven(): boolean
+  /** The joint angles the servos are driven to in degrees, coxa, femur and tibia per leg in leg order. */
+  servoAngles(): Float32Array
   /** The joint angles of the firmware's stand, for spawning; leaves the robot as new. */
   standPose(): Float32Array
 }
@@ -33,20 +34,20 @@ export async function loadVirtualRobot(): Promise<VirtualRobot> {
   const { default: create } = await import('./virtual-robot/virtual_robot.mjs')
   const m = await create()
   m._reset()
-  const angles = () => m.HEAPF32.slice(m._angles() / 4, m._angles() / 4 + 18)
+  const servoAngles = () => m.HEAPF32.slice(m._servoAngles() / 4, m._servoAngles() / 4 + 18)
   return {
     setMode: mode => m._setMode(mode),
     setGait: gait => m._setGait(gait),
     command: c => m._command(...c),
     setImu: ({ rpyDeg, gravityUp, gyroRad }) => m._setImu(...rpyDeg, ...gravityUp, ...gyroRad),
     tick: () => m._tick(),
-    angles,
-    mode: () => m._mode(),
+    servosDriven: () => m._servosDriven() !== 0,
+    servoAngles,
     standPose: () => {
       m._reset()
       m._setMode(STAND)
       m._tick()
-      const pose = angles()
+      const pose = servoAngles()
       m._reset()
       return pose
     }

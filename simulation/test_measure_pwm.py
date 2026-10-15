@@ -81,13 +81,14 @@ def test_servos_that_match_the_firmware_measure_its_conversion():
 def test_the_measurement_hands_the_robot_back_standing_under_the_motion():
     robot = standing(2.28)
     backend = robot._backend
-    before = backend.sim.joint_target.copy()
     measurement.measure(robot)
     robot.sleep(1.0)
-    state = robot.state()
-    assert state.mode is Mode.STAND
-    assert abs(state.roll) < 0.5
-    assert np.degrees(np.abs(backend.sim.joint_target - before)).max() < 0.5
+    assert robot.state().mode is Mode.STAND
+    # The mean: in STAND the firmware's self-levelling keeps the roll swinging about it.
+    assert abs(measurement.roll_samples(robot, 1.0).mean()) < 0.5
+    # The servos get the motion's pose again, not a femur step the measurement left behind.
+    pose = np.degrees(np.radians(backend._loop.robot.servo_angles()))
+    assert np.array_equal(backend._servos.pwm, FACTORY.pwm(pose))
 
 
 def test_the_measurement_refuses_a_robot_that_does_not_stand():

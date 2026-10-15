@@ -51,6 +51,32 @@ void test_a_new_robot_is_deactivated() {
     TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, robot.mode());
 }
 
+// What a simulated robot's actuators read (servosDriven, servoAngles): what ServoController was last told.
+void test_a_new_robot_drives_no_servo() {
+    VirtualRobot robot;
+    robot.tick();
+    TEST_ASSERT_FALSE(robot.servosDriven());
+}
+
+void test_idle_from_boot_wakes_the_boards_but_sends_no_pose() {
+    VirtualRobot robot;
+    robot.setMode(MOTION_STATE::IDLE);
+    robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::IDLE, robot.mode());
+    TEST_ASSERT_FALSE(robot.servosDriven());
+    TEST_ASSERT_EQUAL_UINT(0, robot.servoWrites());
+}
+
+void test_a_standing_robot_drives_its_servos_to_the_motions_pose() {
+    VirtualRobot robot;
+    standUp(robot);
+    TEST_ASSERT_TRUE(robot.servosDriven());
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(robot.angles(), robot.servoAngles(), 18);
+    robot.setMode(MOTION_STATE::DEACTIVATED);
+    robot.tick();
+    TEST_ASSERT_FALSE(robot.servosDriven());
+}
+
 void test_a_mode_request_reaches_the_motion_through_the_bus() {
     VirtualRobot robot;
     robot.setMode(MOTION_STATE::STAND);
@@ -135,6 +161,9 @@ void test_a_gait_selected_while_standing_is_applied() {
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_new_robot_is_deactivated);
+    RUN_TEST(test_a_new_robot_drives_no_servo);
+    RUN_TEST(test_idle_from_boot_wakes_the_boards_but_sends_no_pose);
+    RUN_TEST(test_a_standing_robot_drives_its_servos_to_the_motions_pose);
     RUN_TEST(test_a_mode_request_reaches_the_motion_through_the_bus);
     RUN_TEST(test_a_standing_robot_holds_still);
     RUN_TEST(test_a_stick_held_in_walk_steps_the_legs);

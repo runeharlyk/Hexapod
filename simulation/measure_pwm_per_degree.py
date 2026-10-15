@@ -179,9 +179,6 @@ def measure(robot: Robot, steps=STEPS) -> Measurement:
                       "what this measures")
     robot.stand()
     robot.sleep(STAND_SETTLE_S)
-    spread = roll_samples(robot, STILL_S).std()
-    if spread > MAX_STILL_SPREAD_DEG:
-        raise Refused(f"the robot is not still: its roll wavers by {spread:.2f} degrees")
     calibration = robot.servo_calibration()
     stand_pwm = calibration.pwm(KINEMATICS.inverse_kinematics(BodyState()))
     offsets = np.array([sign * n for n in steps for sign in (1, -1)])
@@ -190,6 +187,12 @@ def measure(robot: Robot, steps=STEPS) -> Measurement:
     rolls = []
     try:
         femurs.write_stand()
+        # Stillness is checked where the measurement runs: in IDLE nothing moves the servos, while in STAND the
+        # firmware's self-levelling keeps answering the IMU.
+        robot.sleep(STAND_SETTLE_S)
+        spread = roll_samples(robot, STILL_S).std()
+        if spread > MAX_STILL_SPREAD_DEG:
+            raise Refused(f"the robot is not still: its roll wavers by {spread:.2f} degrees")
         before = femurs.held(0)
         for offset in offsets:
             during = femurs.held(int(offset))

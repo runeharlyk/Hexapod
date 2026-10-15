@@ -211,6 +211,7 @@ The command is a body-frame velocity vector `[vx, vy]` (m/s) + yaw rate (rad/s).
 ## Layout
 
 - `src/robot/firmware_gait.py` — NumPy port of the firmware gait + IK (the deploy target).
+- `src/sim/virtual_robot.py` / `src/sim/firmware_loop.py` — the firmware's own Hexapod (`firmware/host/`) as a native library, compiled on first use with `$CXX` (C++20), driving MuJoCo for replay, the speed model and the `Robot` simulation backend.
 - `src/resources/build_model.py` → `model.xml` — MuJoCo model (0.68 kg; legs 0.077 kg each).
 - `src/sim/mj_runtime.py` — MuJoCo runtime wrapper.
 - `docs/servo-model.md` - the non-back-drivable servo model (stall versus holding torque), its placeholder holding ratio and the bench measurement that replaces it.
