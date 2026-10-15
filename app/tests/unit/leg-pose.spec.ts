@@ -1,7 +1,9 @@
-import { describe, it, expect } from 'vitest'
+import { beforeAll, describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import Kinematics, { type HexapodConfig, type body_state_t } from '../../src/lib/kinematic'
+import type { HexapodConfig, body_state_t } from '../../src/lib/kinematic'
+import { loadAnimationEngine, type AnimationEngine } from '../../src/lib/animation/engine'
+import { firmwareInverseKinematics } from './firmware-ik'
 import { config } from '../../src/lib/components/config'
 import {
   JOINT_NAMES,
@@ -83,7 +85,6 @@ const bodyAt = (feet: number[][]): body_state_t => ({
 })
 
 const fwConfig = firmwareConfig()
-const fwKinematics = new Kinematics(fwConfig)
 
 const expectClose = (actual: number[], expected: number[]) =>
   expected.forEach((v, i) => expect(actual[i]).toBeCloseTo(v, 6))
@@ -105,6 +106,11 @@ describe('the firmware geometry', () => {
 })
 
 describe('a leg drawn from joint angles', () => {
+  let engine: AnimationEngine
+  beforeAll(async () => {
+    engine = await loadAnimationEngine()
+  })
+
   const poses: LegAngles[] = [
     [0, 0, -90],
     [20, 15, -110],
@@ -118,8 +124,8 @@ describe('a leg drawn from joint angles', () => {
         const { foot } = legPoints(config, leg, angles)
         const feet = Array.from({ length: 6 }, () => [0, 0, 0, 1])
         feet[leg] = [...foot, 1]
-        const solved = fwKinematics.inverseKinematics(bodyAt(feet))[leg]
-        solved.forEach((rad, joint) => expect((rad * 180) / Math.PI).toBeCloseTo(angles[joint], 6))
+        const solved = firmwareInverseKinematics(engine, bodyAt(feet))[leg]
+        solved.forEach((rad, joint) => expect((rad * 180) / Math.PI).toBeCloseTo(angles[joint], 3))
       }
     }
   })

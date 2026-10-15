@@ -14,7 +14,7 @@
   import { requestMode } from '$lib/control'
   import { isLinked } from '$lib/stores/link'
   import { animationPreview, type AnimationPreview } from '$lib/stores/animation'
-  import Kinematics, { type body_state_t } from '$lib/kinematic'
+  import Kinematics, { levelBody, type body_state_t } from '$lib/kinematic'
   import { config } from '$lib/components/config'
   import {
     loadVirtualRobot,
@@ -54,25 +54,9 @@
 
   const kinematics = new Kinematics(config)
   const STAND_Z = DEFAULT_FEET[0][2]
-  // The body pose shown: recovered from the feet of the joint angles shown, whoever produced them.
-  let shownBody = kinematics.bodyOverFeet(
-    kinematics.inverseKinematics({
-      omega: 0,
-      phi: 0,
-      psi: 0,
-      xm: 0,
-      ym: 0,
-      zm: 0,
-      feet: DEFAULT_FEET.map(foot => [...foot]),
-      cumulative_x: 0,
-      cumulative_y: 0,
-      cumulative_z: 0,
-      cumulative_roll: 0,
-      cumulative_pitch: 0,
-      cumulative_yaw: 0
-    }),
-    STAND_Z
-  )
+  // The body pose shown: recovered from the feet of the joint angles shown, whoever produced them. Before any arrive,
+  // the robot stands level on its stance.
+  let shownBody = levelBody()
 
   // While no robot sends its angles, the firmware's own motion code animates the model. The robot-hosted build is
   // always linked, and the build-time constant leaves the virtual robot out of it.
