@@ -7,7 +7,7 @@ import {
   sceneToOffset,
   stanceToScene
 } from '$lib/animation/handles'
-import { DEFAULT_FEET } from '$lib/animation/evaluator'
+import { DEFAULT_FEET } from '$lib/animation/model'
 import type { Vec3 } from '$lib/animation/model'
 
 const stance: Vec3 = [122, 152, -66]

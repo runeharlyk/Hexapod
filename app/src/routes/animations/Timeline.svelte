@@ -3,13 +3,13 @@
   import { get } from 'svelte/store'
   import { Ease, type Overlay } from '$lib/platform_shared/animation'
   import { outControllerData } from '$lib/stores'
-  import { clonePose, duration, froundAnimation, stancePose } from '$lib/animation/model'
-  import { Player, State } from '$lib/animation/player'
+  import { duration, froundAnimation, stancePose } from '$lib/animation/model'
+  import { State, type Player } from '$lib/animation/engine'
   import {
     LEG_NAMES,
+    animationEngine,
     commitNumber,
     editor,
-    kinematics,
     previewClip,
     rideBase,
     shown,
@@ -48,15 +48,21 @@
     // The preview holds one base throughout, so it skips the firmware's base blend between the
     // height slider and a fixed ride height during Entry and Exit.
     baseZ = rideBase(doc, controller[4], s.showOnRobot)
-    player = new Player(kinematics, stanceFor(controller[7]))
+    releasePlayer()
+    player = animationEngine().player(stanceFor(controller[7]))
     player.play(previewClip(doc, loop), s.values, stancePose(), baseZ)
+  }
+
+  const releasePlayer = () => {
+    player?.dispose()
+    player = null
   }
 
   const step = (now: number) => {
     if (!player) return
     // Opening or creating a document clears playing; the old clip must not drive the new one.
     if (!get(editor).playing) {
-      player = null
+      releasePlayer()
       stopping = false
       return
     }
@@ -65,13 +71,13 @@
     const pose = player.update(dt, baseZ)
     if (player.state === State.PLAYING) editor.setScrub(player.t)
     if (player.state === State.IDLE) return finish()
-    editor.setPlayback(clonePose(pose))
+    editor.setPlayback(pose)
     frameId = requestAnimationFrame(step)
   }
 
   const finish = () => {
     cancelAnimationFrame(frameId)
-    player = null
+    releasePlayer()
     stopping = false
     editor.setPlayback(null)
     editor.setScrub(0)
@@ -81,7 +87,7 @@
     start()
     stopping = false
     last = performance.now()
-    editor.setPlayback(clonePose(player!.lastPose))
+    editor.setPlayback(player!.lastPose)
     frameId = requestAnimationFrame(step)
   }
 
@@ -94,6 +100,7 @@
   onDestroy(() => {
     cancelAnimationFrame(frameId)
     if (player) editor.setPlayback(null)
+    releasePlayer()
   })
 
   let axis: HTMLDivElement | undefined = $state()

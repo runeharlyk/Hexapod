@@ -23,7 +23,7 @@
     type VirtualRobot
   } from '$lib/simulation/virtual-robot'
   import type { Vec3 } from '$lib/animation/model'
-  import { DEFAULT_FEET } from '$lib/animation/evaluator'
+  import { DEFAULT_FEET } from '$lib/animation/model'
   import { handleColor, legMask, sceneToOffset, stanceToScene } from '$lib/animation/handles'
 
   interface Props {

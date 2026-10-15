@@ -1,18 +1,18 @@
+// The app previews animations with the firmware's evaluator and player compiled to WebAssembly; these fixtures, from
+// the Python reference, check that build and its wrapper. Needs the virtual robot built (scripts/build_virtual_robot.js).
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { ParamId } from '$lib/platform_shared/animation'
-import Kinematics, { type body_state_t } from '$lib/kinematic'
-import { config } from '$lib/components/config'
-import { loadAnimationJson, type Pose, type Vec3 } from '$lib/animation/model'
+import type { body_state_t } from '$lib/kinematic'
 import {
   DEFAULT_FEET,
-  evaluate,
-  poseToAngles,
-  resolveParams,
-  type Stance
-} from '$lib/animation/evaluator'
-import { Player, State } from '$lib/animation/player'
+  loadAnimationJson,
+  type Pose,
+  type Stance,
+  type Vec3
+} from '$lib/animation/model'
+import { State, loadAnimationEngine, type AnimationEngine } from '$lib/animation/engine'
 
 const FIXTURES = resolve(__dirname, '../../../animations/fixtures')
 const expected = JSON.parse(readFileSync(resolve(FIXTURES, 'expected.json'), 'utf8'))
@@ -23,7 +23,7 @@ const clip = (name: string) => {
 }
 const params = (values: Record<string, number>) =>
   new Map(Object.entries(values).map(([k, v]) => [ParamId[k as keyof typeof ParamId], v]))
-const kin = new Kinematics(config)
+let engine: AnimationEngine
 
 // A live body state as offsets from the stance, the pose the player enters from.
 const capturePose = (body: body_state_t, stance: Stance): Pose => ({
@@ -35,14 +35,17 @@ const capturePose = (body: body_state_t, stance: Stance): Pose => ({
 })
 
 describe('parity with the reference fixtures', () => {
+  beforeAll(async () => {
+    engine = await loadAnimationEngine()
+  })
+
   it('matches every evaluate sample', () => {
     let checked = 0
     for (const c of expected.evaluate) {
       const a = clip(c.animation)
-      const p = resolveParams(a, params(c.params))
       for (const s of c.samples) {
-        const pose = evaluate(a, p, s.t, kin, DEFAULT_FEET)
-        const { angles, mask } = poseToAngles(pose, kin, DEFAULT_FEET)
+        const pose = engine.evaluate(a, params(c.params), s.t, DEFAULT_FEET)!
+        const { angles, mask } = engine.poseToAngles(pose, DEFAULT_FEET)
         expect(mask, `${c.animation} t=${s.t}`).toBe(s.mask)
         angles.forEach((v, j) =>
           expect(v, `${c.animation} t=${s.t} joint ${j}`).toBeCloseTo(s.angles[j], 3)
@@ -55,7 +58,7 @@ describe('parity with the reference fixtures', () => {
   it('matches every player trace step', () => {
     let steps = 0
     for (const [ci, c] of expected.player.entries()) {
-      const player = new Player(kin, DEFAULT_FEET)
+      const player = engine.player(DEFAULT_FEET)
       const live = {
         omega: c.live.body[0],
         phi: c.live.body[1],
@@ -84,13 +87,14 @@ describe('parity with the reference fixtures', () => {
           else player.stop()
         }
         const pose = player.update(c.dt)
-        const { angles, mask } = poseToAngles(pose, kin, DEFAULT_FEET)
+        const { angles, mask } = engine.poseToAngles(pose, DEFAULT_FEET)
         const where = `case ${ci} step ${step}`
         expect(State[player.state], where).toBe(row.state)
         expect(mask, where).toBe(row.mask)
         angles.forEach((v, j) => expect(v, `${where} joint ${j}`).toBeCloseTo(row.angles[j], 3))
         steps++
       }
+      player.dispose()
     }
     expect(steps).toBe(819)
   })

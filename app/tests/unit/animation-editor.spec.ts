@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { get } from 'svelte/store'
 
 vi.mock('$lib/stores', async () => {
@@ -9,8 +9,12 @@ vi.mock('$lib/stores', async () => {
 })
 
 import { Animation, Ease, ParamId } from '$lib/platform_shared/animation'
-import { loadAnimationJson, serializeAnimation, type Vec3 } from '$lib/animation/model'
-import { DEFAULT_FEET } from '$lib/animation/evaluator'
+import {
+  DEFAULT_FEET,
+  loadAnimationJson,
+  serializeAnimation,
+  type Vec3
+} from '$lib/animation/model'
 import {
   builtIn,
   deleteDraft,
@@ -20,16 +24,22 @@ import {
   saveDraft,
   type DraftRef
 } from '$lib/animation/library'
-import { Player, State } from '$lib/animation/player'
+import { State } from '$lib/animation/engine'
 import {
+  animationEngine,
   commitNumber,
   createEditor,
-  kinematics,
+  engineReady,
   previewClip,
   shown,
   stanceFor
 } from '$lib/stores/animation-editor'
 import { outControllerData } from '$lib/stores'
+
+// The editor previews with the firmware's code compiled to WebAssembly (scripts/build_virtual_robot.js).
+beforeAll(async () => {
+  await engineReady
+})
 
 const crouch = () => {
   const found = builtIn.find(a => a.name === 'crouch')
@@ -528,7 +538,7 @@ describe('a refused number entry', () => {
 describe('the preview Loop', () => {
   // Runs the preview player for the given seconds and returns every state it passed through.
   const statesOver = (clip: Animation, seconds: number) => {
-    const player = new Player(kinematics, stanceFor(0))
+    const player = animationEngine().player(stanceFor(0))
     player.play(clip, undefined, undefined)
     const seen = new Set<State>()
     for (let t = 0; t < seconds; t += 0.02) {

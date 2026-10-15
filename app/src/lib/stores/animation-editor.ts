@@ -13,6 +13,7 @@ import { config } from '$lib/components/config'
 import { outControllerData } from '$lib/stores'
 import {
   BodyAxis,
+  DEFAULT_FEET,
   SCHEMA_VERSION,
   bodyOf,
   duration,
@@ -22,20 +23,22 @@ import {
   validate,
   type Leg,
   type Pose,
+  type Stance,
   type Vec3
 } from '$lib/animation/model'
-import {
-  DEFAULT_FEET,
-  evaluate,
-  legJointsDeg,
-  poseToAngles,
-  resolveParams,
-  type Stance
-} from '$lib/animation/evaluator'
+import { loadAnimationEngine, type AnimationEngine } from '$lib/animation/engine'
 import type { AnimationPreview } from './animation'
 import type { DraftRef } from '$lib/animation/library'
 
 export const kinematics = new Kinematics(config)
+
+let engine: AnimationEngine | undefined
+// The editor previews with the firmware's evaluator and player, so the animations page shows it once they have loaded.
+export const engineReady: Promise<AnimationEngine> = loadAnimationEngine().then(e => (engine = e))
+export const animationEngine = (): AnimationEngine => {
+  if (!engine) throw new Error('the animation engine has not loaded')
+  return engine
+}
 
 export const LEG_NAMES = ['RF', 'RM', 'RR', 'LF', 'LM', 'LR'] as const
 export const JOINT_NAMES = ['coxa', 'femur', 'tibia'] as const
@@ -157,7 +160,7 @@ const footFromJoints = (
 const frameOf = (pose: Pose, stance: Stance, baseZ: number): Frame => {
   const body = [...pose.body]
   body[BodyAxis.Z] += baseZ
-  const { angles, mask } = poseToAngles({ body, legs: pose.legs }, kinematics, stance)
+  const { angles, mask } = animationEngine().poseToAngles({ body, legs: pose.legs }, stance)
   const state = bodyState(body, stance, 0)
   const rad = angles.map(v => v * RAD)
   const fk = feetFromJoints(
@@ -182,7 +185,7 @@ const keyframeFeet = (k: Keyframe, stance: Stance, baseZ: number): number[][] =>
   })
 }
 
-// A keyframe without 0 or 6 legs would crash the evaluator; the other structural errors do not.
+// A keyframe with neither 0 nor 6 legs leaves legs without a target, which validation reports; the view rests at stance.
 const evaluable = (a: Animation) =>
   a.keyframes.length > 0 && a.keyframes.every(k => k.legs.length === 0 || k.legs.length === 6)
 
@@ -322,9 +325,11 @@ export const createEditor = (initial: Animation = blankAnimation(), autosaveKey?
       const stance = stanceFor(ctrl[7])
       const baseZ = rideBase(doc, ctrl[4], s.showOnRobot)
       if (playing) return frameOf(playing, stance, baseZ)
-      if (!evaluable(doc)) return frameOf(stancePose(), stance, baseZ)
-      const params = resolveParams(doc, s.values)
-      const f = frameOf(evaluate(doc, params, s.scrub, kinematics, stance, baseZ), stance, baseZ)
+      // A document past the schema's limits does not decode either.
+      const pose =
+        evaluable(doc) && animationEngine().evaluate(doc, s.values, s.scrub, stance, baseZ)
+      if (!pose) return frameOf(stancePose(), stance, baseZ)
+      const f = frameOf(pose, stance, baseZ)
       f.preview.handleFeet = keyframeFeet(doc.keyframes[s.selected], stance, baseZ)
       return f
     }
@@ -404,7 +409,7 @@ export const createEditor = (initial: Animation = blankAnimation(), autosaveKey?
             joints: target.joints,
             v:
               target.joints ?
-                legJointsDeg(kinematics, body, now.v, leg, stance, baseZ)
+                animationEngine().legJointsDeg(body, now.v, leg, stance, baseZ)
               : footFromJoints(body, now.v, leg, stance, baseZ)
           }
         }

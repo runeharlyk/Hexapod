@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Compiles the firmware's Hexapod (firmware/host/virtual_robot.h) to WebAssembly for the simulation view:
-// the same MotionService, gait, kinematics, policy and animation runner the robot runs, so the view needs
-// no copy of them. Needs Emscripten: em++ from $EMSDK or on PATH. Without it the output is a module that
+// Compiles the firmware's Hexapod (firmware/host/virtual_robot.h) to WebAssembly for the simulation view, and its
+// animation evaluator and player (firmware/host/animation_api.cpp) for the animation editor: the same MotionService,
+// gait, kinematics, policy and animation code the robot runs, so the app needs no copy of them. Needs Emscripten: em++ from $EMSDK or on PATH. Without it the output is a module that
 // rejects with the reason, so the rest of the app still builds; CI must have it and fails without it.
 import { execFileSync } from 'child_process'
 import fs from 'fs'
@@ -72,6 +72,7 @@ for (const script of ['compile_protos.py', 'pack_animations.py']) {
 const generated = path.join('firmware', 'src', 'platform_shared')
 const sources = [
   'firmware/host/virtual_robot_api.cpp',
+  'firmware/host/animation_api.cpp',
   'firmware/host/filesystem_host.cpp',
   ...['pb_common.c', 'pb_decode.c', 'pb_encode.c'].map(f => path.join('submodules', 'nanopb', f)),
   ...['animation.pb.c', 'api.pb.c', 'message.pb.c'].map(f => path.join(generated, f))
@@ -93,7 +94,7 @@ execFileSync(
     '-sEXPORT_NAME=createVirtualRobot',
     '-sENVIRONMENT=web,node',
     '-sALLOW_MEMORY_GROWTH',
-    '-sEXPORTED_RUNTIME_METHODS=HEAPF32',
+    '-sEXPORTED_RUNTIME_METHODS=HEAPF32,HEAPU8,UTF8ToString',
     '-o',
     output
   ],
