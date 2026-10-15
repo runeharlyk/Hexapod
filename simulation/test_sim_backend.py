@@ -31,6 +31,21 @@ def test_a_standing_robot_is_level_at_its_stance_height(sim):
     assert sim.state().t == pytest.approx(1.0)
 
 
+def test_a_standing_robot_on_miscalibrated_servos_holds_still():
+    # Servos at 2.28 PWM counts per degree against the factory 2.0 tilt the stand, which STAND's self-levelling must
+    # correct and then hold. Fed the IMU's angles in degrees where the firmware reads radians, it swung 3.5 deg.
+    backend = SimBackend(servo_scale=2.28)
+    backend.connect()
+    backend.set_mode(Mode.STAND)
+    backend.sleep(2.0)
+    rolls = []
+    for _ in range(60):
+        backend.sleep(0.05)
+        rolls.append(backend.state().roll)
+    backend.close()
+    assert np.ptp(rolls) < 0.5
+
+
 # The physical check of the axis mapping: REP-103 forward, left and counter-clockwise, in the world.
 def test_forward_left_and_counter_clockwise_follow_rep103(sim):
     sim.set_mode(Mode.WALK)
