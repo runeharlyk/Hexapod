@@ -17,6 +17,7 @@ All notable changes to this project are documented in this file, following [Keep
 - Adds a sign-convention fixture, `platform_shared/sign_convention.json`, asserted by the firmware, simulation and app tests, and `docs/conventions.md`.
 - Adds `docs/firmware.md` (architecture) and `docs/releasing.md`.
 - Adds the release's ELF as a release asset, for decoding core dumps.
+- Shows each saved robot's firmware version, build and servo calibration state on the start page; a robot that cannot be asked shows its last report, labelled with its age, and `/api/features` now reports `servos_calibrated`.
 
 ### Changed
 

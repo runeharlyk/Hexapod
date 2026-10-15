@@ -7,12 +7,16 @@
   import { connectBluetooth, connectWebsocket, link } from '$lib/stores/link'
   import {
     addRobot,
+    agoLabel,
+    firmwareLabel,
     forgetRobot,
     markSeen,
+    recordFirmware,
     robots,
     subnetPrefix,
     type Robot
   } from '$lib/stores/robots'
+  import { readFirmwareReport } from '$lib/services/firmware-report'
   import {
     normalizeRobotAddress,
     normalizeSubnetPrefix,
@@ -36,7 +40,10 @@
   let prefixDraft = $state('')
   let manualAddress = $state('')
   let reachability = $state<Record<string, Reachability>>({})
+  // Robots that reported their firmware during this visit; the others show their last known report.
+  let reported = $state<Record<string, boolean>>({})
   let controller: AbortController | undefined
+  const reports = new AbortController()
 
   const unsaved = (address: string) => !$robots.some(r => r.address === address)
 
@@ -63,18 +70,24 @@
     void refreshSaved()
   })
 
-  onDestroy(() => controller?.abort())
+  onDestroy(() => {
+    controller?.abort()
+    reports.abort()
+  })
 
-  const refreshSaved = async () => {
-    for (const robot of $robots) reachability[robot.address] = 'probing'
-    await Promise.all(
-      $robots.map(async robot => {
-        const isReachable = await probeAddress(robot.address)
-        reachability[robot.address] = isReachable ? 'online' : 'offline'
-        if (isReachable) markSeen(robot.address)
-      })
-    )
+  const refresh = async (address: string) => {
+    reachability[address] = 'probing'
+    const isReachable = await probeAddress(address)
+    reachability[address] = isReachable ? 'online' : 'offline'
+    if (!isReachable) return
+    markSeen(address)
+    const report = await readFirmwareReport(address, reports.signal)
+    if (!report) return
+    recordFirmware(address, report)
+    reported[address] = true
   }
+
+  const refreshSaved = () => Promise.all($robots.map(robot => refresh(robot.address)))
 
   const search = async () => {
     controller?.abort()
@@ -137,9 +150,8 @@
     }
     manualAddress = ''
     addRobot(address)
-    reachability[address] = 'probing'
-    reachability[address] = (await probeAddress(address)) ? 'online' : 'offline'
     adding = false
+    await refresh(address)
   }
 
   const statusLabel = (robot: Robot) => {
@@ -147,9 +159,7 @@
     if (state === 'probing') return 'Checking…'
     if (state === 'online') return 'Online'
     if (!robot.lastSeenAt) return 'Offline'
-    const minutes = Math.round((Date.now() - robot.lastSeenAt) / 60000)
-    if (minutes < 60) return `Offline · seen ${Math.max(1, minutes)} min ago`
-    return `Offline · seen ${Math.round(minutes / 60)} h ago`
+    return `Offline · seen ${agoLabel(robot.lastSeenAt)}`
   }
 </script>
 
@@ -198,6 +208,9 @@
               <div class="min-w-0 flex-1">
                 <div class="truncate font-medium">{robot.name}</div>
                 <div class="truncate text-xs opacity-60">{statusLabel(robot)}</div>
+                <div class="truncate text-xs opacity-60">
+                  {firmwareLabel(robot, reported[robot.address] ?? false)}
+                </div>
               </div>
               <button
                 class="btn btn-sm btn-primary"

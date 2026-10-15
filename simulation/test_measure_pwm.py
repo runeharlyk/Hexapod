@@ -12,7 +12,7 @@ from src.hexapod import Mode, Robot
 from src.hexapod.backends.sim import SimBackend
 from src.hexapod.servos import FACTORY
 
-SERVO_SETTINGS_H = Path(__file__).resolve().parents[1] / "firmware" / "include" / "settings" / "servo_settings.h"
+SERVO_FACTORY_H = Path(__file__).resolve().parents[1] / "firmware" / "include" / "settings" / "servo_factory.h"
 
 
 class ReportedRoll:
@@ -38,12 +38,13 @@ def standing(servo_scale: float | None) -> Robot:
 
 
 def test_the_factory_calibration_is_the_firmwares():
-    header = SERVO_SETTINGS_H.read_text()
-    directions = re.search(r"direction\[18\] = \{([^}]*)\}", header)[1]
+    header = SERVO_FACTORY_H.read_text()
+    assert int(re.search(r"FACTORY_SERVO_COUNT = (\d+);", header)[1]) == 18
+    directions = re.search(r"FACTORY_DIRECTION\[FACTORY_SERVO_COUNT\] = \{([^}]*)\}", header)[1]
     assert FACTORY.direction == tuple(float(v) for v in directions.split(","))
-    assert FACTORY.center_pwm == (float(re.search(r"center_pwm = ([\d.]+);", header)[1]),) * 18
-    assert FACTORY.conversion == (float(re.search(r"conversion = ([\d.]+);", header)[1]),) * 18
-    assert FACTORY.center_angle == (float(re.search(r"center_angle = ([\d.-]+);", header)[1]),) * 18
+    assert FACTORY.center_pwm == (float(re.search(r"FACTORY_CENTER_PWM = ([\d.]+);", header)[1]),) * 18
+    assert FACTORY.conversion == (float(re.search(r"FACTORY_CONVERSION = ([\d.]+);", header)[1]),) * 18
+    assert FACTORY.center_angle == (float(re.search(r"FACTORY_CENTER_ANGLE = ([\d.-]+);", header)[1]),) * 18
 
 
 def test_pwm_is_servo_controllers_to_pwm_and_angles_inverts_it():

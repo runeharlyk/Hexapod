@@ -39,7 +39,7 @@ class ServoCalibration:
         return turned - np.asarray(self.center_angle) - TIBIA_OFFSET_DEG
 
 
-# ServoSettings_defaults (firmware/include/settings/servo_settings.h).
+# ServoSettings_defaults (firmware/include/settings/servo_factory.h).
 FACTORY = ServoCalibration(
     center_pwm=(306.0,) * NUM_SERVOS,
     direction=(-1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0),
