@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-15
+
+Fixes found running 0.1.0 on the robot, and WiFi from the hosted app.
+
+### Added
+
+- Adds WiFi from the hosted https app in Chromium 147 and later: with a robot address saved and local network access granted, it opens the robot's WebSocket and camera.
+
 ### Fixed
 
 - Fixes the robot crashing after every successful firmware upload over HTTP, so the app reported a failed update that had in fact landed.
@@ -61,5 +69,6 @@ The first tagged release: the animation system and the ports from the SpotMicro 
 - Fixes the I2C transfer timeout being given in ticks where the driver takes milliseconds.
 - Fixes a stance foot on a diagonal stride jumping by the whole stance depth at lift-off, as its press was measured along x + y instead of along the stroke.
 
-[Unreleased]: https://github.com/runeharlyk/Hexapod/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/runeharlyk/Hexapod/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/runeharlyk/Hexapod/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/runeharlyk/Hexapod/releases/tag/v0.1.0
