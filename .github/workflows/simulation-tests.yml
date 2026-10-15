@@ -40,7 +40,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      # No test imports torch; skipping it and its CUDA 11.8 wheels saves gigabytes per run.
+      # No test imports torch; skipping it and its CUDA wheels saves gigabytes per run.
       - name: Install dependencies without torch
         run: >-
           uv sync --locked

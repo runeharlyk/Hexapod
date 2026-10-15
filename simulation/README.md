@@ -7,7 +7,7 @@ servos have no encoders) and acts through the firmware gait/IK.
 ## Setup (uv)
 
 ```sh
-uv sync                 # core MuJoCo + SB3 + torch (cu118) stack, plus pytest (dev group)
+uv sync                 # core MuJoCo + SB3 + torch (cu126) stack, plus pytest (dev group)
 ```
 
 Run anything with `uv run`, e.g. `uv run python train_mj.py --smoke`.
