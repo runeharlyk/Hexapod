@@ -2,6 +2,9 @@ import adapter from '@sveltejs/adapter-static'
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte'
 
 const basePath = process.env.BASE_PATH ?? ''
+// The robot serves the embedded build over plain http, where a service worker has nothing to add
+// and would only pin the robot's own pages to a stale cache.
+const servedFromRobot = process.env.VITE_USE_HOST_NAME === 'true'
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
@@ -22,6 +25,9 @@ const config = {
     },
     paths: {
       base: basePath
+    },
+    serviceWorker: {
+      register: !servedFromRobot
     }
   }
 }
