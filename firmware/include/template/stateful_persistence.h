@@ -102,7 +102,8 @@ class FSPersistencePB {
         fseek(file, 0, SEEK_END);
         const long fileSize = ftell(file);
         fseek(file, 0, SEEK_SET);
-        if (fileSize <= 0 || static_cast<size_t>(fileSize) > _maxSize) {
+        // Zero bytes is a valid message: every field at its default, as an uncalibrated IMU saves.
+        if (fileSize < 0 || static_cast<size_t>(fileSize) > _maxSize) {
             fclose(file);
             return false;
         }
