@@ -1,4 +1,5 @@
-"""One Robot for the simulation and the real hexapod: Robot("simulation") or Robot("192.168.4.1").
+"""One Robot for the simulation and the real hexapod: Robot("simulation"), Robot("192.168.4.1") over WiFi, or
+Robot("COM5") (any COMx or /dev/ port) over the robot's native USB port.
 
 Velocities are REP-103 (forward, left, counter-clockwise) in m/s and rad/s, angles in degrees; backends/base.py has
 the mapping onto the robot's X-right, Y-forward body frame. Leaving the `with` block, on an exception or Ctrl-C
@@ -11,6 +12,7 @@ included, stops the robot, sits it down and switches its servos off.
 """
 from . import motions
 from .backends.base import ZERO, Backend, Gait, Mode, RobotError, RobotState, Velocity
+from .servos import ServoCalibration
 
 # The modes a script may walk from. DEACTIVATED is the app's stop button and IDLE, POSE and ANIMATE are the user's:
 # walking would take over servos the user put somewhere else.
@@ -81,6 +83,19 @@ class Robot:
     def deactivate(self) -> None:
         self.stop()
         self._backend.set_mode(Mode.DEACTIVATED)
+
+    def idle(self) -> None:
+        """Stops the motion and leaves every servo powered where it is (IDLE): the one mode in which a PWM written
+        with set_servo_pwm stays, since every other mode writes the motion's angles over it on its next tick."""
+        self.stop()
+        self._backend.set_mode(Mode.IDLE)
+
+    def servo_calibration(self) -> ServoCalibration:
+        return self._backend.servo_calibration()
+
+    def set_servo_pwm(self, servo: int, pwm: int) -> None:
+        """Writes one servo's raw PWM in PCA9685 counts; see idle()."""
+        self._backend.set_servo_pwm(servo, pwm)
 
     def set_gait(self, gait: Gait) -> None:
         """Stops first: the firmware swaps the leg schedule only once the gait has stopped stepping."""

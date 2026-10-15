@@ -20,6 +20,7 @@ dependencies = [
     "cmaes>=0.11",
     "matplotlib",
     "websockets>=15",
+    "opencv-contrib-python>=4.11.0.86",
 ]
 
 [dependency-groups]

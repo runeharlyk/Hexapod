@@ -6,19 +6,51 @@ not model the link: no command is ever lost, so the dead-man stop never fires an
 import math
 import time
 
+import numpy as np
+
 from ...sim.firmware_loop import FIRMWARE_DT, FirmwareLoop
 from ...sim.mj_runtime import HexapodSim
 from .. import speed_model
+from ..servos import FACTORY, NUM_SERVOS, ServoCalibration
 from .base import Gait, Mode, RobotDisconnected, RobotError, RobotState, Velocity
 
 ACTUATED = (Mode.STAND, Mode.WALK)
+POWERED = (*ACTUATED, Mode.IDLE)
+
+
+class ServoOutput:
+    """The HexapodSim as FirmwareLoop drives it, through ServoController: each joint target becomes the PWM the firmware
+    writes for it, which a raw PWM replaces until the motion writes again. With a true `scale` (counts per degree)
+    every joint goes where its PWM turns such a servo; without, a motion target is taken as is, as before the PWM."""
+
+    def __init__(self, sim: HexapodSim, calibration: ServoCalibration, scale: float | None):
+        self.sim, self.calibration, self.scale = sim, calibration, scale
+        self.pwm = calibration.pwm(np.degrees(sim.joint_target))
+
+    def __getattr__(self, name):
+        return getattr(self.sim, name)
+
+    def set_joint_targets(self, angles_rad) -> None:
+        self.pwm = self.calibration.pwm(np.degrees(angles_rad))
+        self.sim.set_joint_targets(angles_rad if self.scale is None else self._joints())
+
+    def write_pwm(self, servo: int, pwm: int) -> None:
+        self.pwm = self.pwm.copy()
+        self.pwm[servo] = pwm
+        self.sim.set_joint_targets(self._joints())
+
+    def _joints(self) -> np.ndarray:
+        return np.radians(self.calibration.angles(self.pwm, self.scale))
 
 
 class SimBackend:
-    """`viewer` opens the MuJoCo viewer and runs sleep() in real time; without it the simulation runs flat out."""
+    """`viewer` opens the MuJoCo viewer and runs sleep() in real time; without it the simulation runs flat out.
+    `servo_scale` is the servos' true PWM counts per degree, where the firmware assumes the factory calibration's."""
 
-    def __init__(self, viewer: bool = False):
+    def __init__(self, viewer: bool = False, servo_scale: float | None = None):
         self.sim = HexapodSim()
+        self._servo_scale = servo_scale
+        self._servos: ServoOutput | None = None
         self._show = viewer
         self._viewer = None
         self._loop: FirmwareLoop | None = None
@@ -29,7 +61,8 @@ class SimBackend:
 
     def connect(self) -> None:
         self.sim.reset_to_stand()
-        self._loop = FirmwareLoop(self.sim, self._gait)
+        self._servos = ServoOutput(self.sim, FACTORY, self._servo_scale)
+        self._loop = FirmwareLoop(self._servos, self._gait)
         self.set_mode(self._mode)
         if self._show:
             import mujoco.viewer
@@ -41,10 +74,11 @@ class SimBackend:
             self._viewer.close()
 
     # MotionService.handleInputMode for the modes a script uses. STAND holds the body still: the firmware would shift
-    # and tilt it with the sticks, but the facade only sends sticks in WALK.
+    # and tilt it with the sticks, but the facade only sends sticks in WALK. IDLE leaves the servos powered where the
+    # last write put them.
     def set_mode(self, mode: Mode) -> None:
-        if mode not in (*ACTUATED, Mode.DEACTIVATED):
-            raise RobotError(f"the simulation runs STAND, WALK and DEACTIVATED, not {mode.name}")
+        if mode not in (*POWERED, Mode.DEACTIVATED):
+            raise RobotError(f"the simulation runs STAND, WALK, IDLE and DEACTIVATED, not {mode.name}")
         self._mode = mode
         if mode is Mode.DEACTIVATED:
             self._loop.stop(snap=True)
@@ -77,8 +111,11 @@ class SimBackend:
         return speed_model.max_velocity(self._gait)
 
     def state(self) -> RobotState:
+        w, x, y, z = self.sim.base_quat()
+        # The rotation about the body's forward axis, +Y: the world z of the body's +X (right) axis is -sin(roll).
+        roll = math.degrees(math.atan2(-2.0 * (x * z - w * y), 1.0 - 2.0 * (x * x + y * y)))
         return RobotState(t=self.now(), mode=self._mode, gait=self._gait, yaw=math.degrees(self.sim.base_yaw()),
-                          link_drops=0)
+                          link_drops=0, roll=roll)
 
     def now(self) -> float:
         return self._loop.ticks * FIRMWARE_DT
@@ -92,3 +129,12 @@ class SimBackend:
                     raise RobotDisconnected("the simulation viewer was closed")
                 self._viewer.sync()
                 time.sleep(max(0.0, start + tick * FIRMWARE_DT - time.monotonic()))
+
+    def servo_calibration(self) -> ServoCalibration:
+        return FACTORY
+
+    def set_servo_pwm(self, servo: int, pwm: int) -> None:
+        """ServoController::servoEvent: holds until the motion writes again, so in IDLE until the mode changes."""
+        if not 0 <= servo < NUM_SERVOS:
+            raise RobotError(f"no servo {servo} (0-{NUM_SERVOS - 1})")
+        self._servos.write_pwm(servo, pwm)
