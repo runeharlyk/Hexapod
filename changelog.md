@@ -26,6 +26,7 @@ All notable changes to this project are documented in this file, following [Keep
 
 ### Changed
 
+- Animates the 3D view with the firmware's own motion code instead of the app's copy of the gait, which is removed; the view places the body on its stance feet and walks in place, while the Simulation view shows the travel.
 - Eases the feet home over 0.5 s on a minimum-jerk path when a walk stops, and carries any remaining offset into a walk that resumes during the ease.
 - Models the simulated servo as non-back-drivable: gear friction holds well above the stall torque, while driving stays at stall.
 - Shapes both sticks with a round dead zone and an axis snap.
