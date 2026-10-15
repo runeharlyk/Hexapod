@@ -12,7 +12,8 @@ A 6-legged (18-servo) hexapod robot built on an ESP32-S3. The repo has three ind
 
 The root `animations/` directory is the bundled animation library (JSON in the `platform_shared/animation.proto` schema) shared by all three platforms.
 
-The NumPy kinematics/gait (`simulation/src/robot/firmware_gait.py`) is a faithful port of the firmware kinematics/gait (`firmware/include/kinematics.h`, `gait.h`) and is the sim-to-real deploy target — when changing motion math, keep both in sync.
+The NumPy kinematics/gait (`simulation/src/robot/firmware_gait.py`) is a faithful port of the firmware kinematics/gait (`firmware/include/kinematics.h`, `gait.h`) that the research training modes run on — when changing motion math, keep both in sync.
+The deployed modes (`residual_pure`, `residual_gait`) train on the firmware's own WALK_NN path instead, through the native library (`simulation/src/sim/firmware_policy.py`, `firmware/host/policy_api.cpp`).
 Replay, the speed model and the Python `Robot`'s simulation run no port: `src/sim/firmware_loop.py` drives MuJoCo with the firmware's own code, built as a native library by `src/sim/virtual_robot.py` on first use (a C++20 compiler as `$CXX`, else `g++`).
 
 ## Commands

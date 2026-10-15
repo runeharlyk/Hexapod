@@ -18,31 +18,31 @@ tables), and a golden TEST_OBS/TEST_ACT pair for a boot-time self-check.
 import argparse
 import os
 import subprocess
+import gymnasium as gym
 import numpy as np
 import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from src.envs.hexapod_mj_env import (
-    make_env,
+    BaseGait,
     load_env_config,
-    GAIT_COEF,
-    FOOT_RESIDUAL,
-    BODY_ZM_MM,
-    PG_STEP_XY,
-    PG_STEP_ANGLE,
-    PG_HEIGHT,
-    PG_PHASE_RATE,
+    firmware_policy_params,
     CMD_VX,
     CMD_VY,
     CMD_YAW,
     HIST_STRIDE,
     CONTACT_FORCE_THRESH,
-    GAIT_DELTA_GAIN,
 )
-from src.robot.firmware_gait import TRI_OFFSET, TRI_STAND_FRAC, BI_OFFSET, BI_STAND_FRAC
 from src.robot.gait_schedule import GaitSchedule
 from src.sim.mj_runtime import CONTROL_DT
+
+
+class _Spaces(gym.Env):
+    """The run's observation and action spaces, all VecNormalize.load needs: the export never steps an env."""
+
+    def __init__(self, observation_space, action_space):
+        self.observation_space, self.action_space = observation_space, action_space
 
 
 def extract(model):
@@ -103,37 +103,6 @@ def obs_layout_comment(obs_history, obs_contact, act_dim):
     return "\n".join(lines) + "\n"
 
 
-class BaseGait:
-    """The open-loop gait the exported residuals sit on top of, in the form the header needs.
-
-    A run trained with `--gait-from <library>` sits on a searched `GaitSchedule`, not on the legacy
-    analytic map, and baking the wrong one destroys the "zero action = base gait" property the
-    firmware relies on. Both sources produce the same six normalized gait actions from the same
-    coefficient names, so the header format is identical; only the numbers change. A schedule pins
-    the coordination pattern instead of blending tripod->bipod, which is expressed by emitting both
-    blend endpoints as the schedule's own offsets and duty.
-    """
-
-    def __init__(self, schedule: "GaitSchedule | None"):
-        self.schedule = schedule
-        if schedule is None:
-            self.coef = GAIT_COEF
-            self.tri_offset, self.bi_offset = TRI_OFFSET, BI_OFFSET
-            self.tri_stand_frac, self.bi_stand_frac = TRI_STAND_FRAC, BI_STAND_FRAC
-            self.ride_mm = 0.0
-        else:
-            offsets = schedule.offsets()
-            self.coef = schedule.to_dict()
-            self.tri_offset = self.bi_offset = offsets
-            self.tri_stand_frac = self.bi_stand_frac = float(schedule.duty)
-            self.ride_mm = float(schedule.ride_mm)
-
-    @property
-    def name(self):
-        return "legacy analytic map (resources/gait_coef.json)" if self.schedule is None \
-            else "searched gait schedule from the run config"
-
-
 ACTION_LAYOUT = {
     "residual_pure": """\
 // Action layout (residual_pure, 18): per-leg foot residuals [dx, dy, dz] * FOOT_RESIDUAL_MM,
@@ -185,37 +154,40 @@ inline void analytic_gait(const float cmd[3], float out[6]) {{
 """
 
 
-def constants_cpp(base):
+def constants_cpp(params, base):
+    """PolicyCore's constants, exactly the PolicyParams the run trained with (firmware_policy_params)."""
     coordination = "// gait_blend interpolation endpoints (tripod at blend 0 -> bipod at blend 1)" \
         if base.schedule is None else \
         "// The run's base gait pins the coordination pattern, so both blend endpoints are the\n" \
         "// schedule's own offsets and duty and the gait_blend interpolation is a no-op."
+    floats = lambda values: ", ".join(f"{v!r}f" for v in values)  # noqa: E731
     return f"""\
-// --- action decoding / application constants (mirror hexapod_mj_env.py) ---
+// --- action decoding constants: the PolicyParams PolicyCore trained with (policy/policy_core.h) ---
 constexpr float CONTROL_DT = {CONTROL_DT}f;          // s, policy rate (50 Hz)
-constexpr float FOOT_RESIDUAL_MM = {FOOT_RESIDUAL * 1000.0:.1f}f;  // residual authority per foot axis
-constexpr float PG_STEP_XY = {PG_STEP_XY}f;          // mm, step_x/step_y scale
-constexpr float PG_STEP_ANGLE = {PG_STEP_ANGLE}f;    // rad, step_angle scale
-constexpr float PG_HEIGHT_MIN = {PG_HEIGHT[0]}f, PG_HEIGHT_MAX = {PG_HEIGHT[1]}f;  // mm
-constexpr float PG_PHASE_RATE_MIN = {PG_PHASE_RATE[0]}f, PG_PHASE_RATE_MAX = {PG_PHASE_RATE[1]}f;  // cycles/s
-constexpr float STEP_DEPTH_MM = {base.coef['step_depth']:.6f}f;
-constexpr float BODY_ZM_MM = {BODY_ZM_MM}f;          // body ride-height authority (residual_gait)
+constexpr float ACTION_TAU_S = {params.action_tau_s!r}f;  // s, the action's low-pass filter time constant
+constexpr float FOOT_RESIDUAL_MM = {params.foot_residual_mm!r}f;  // residual authority per foot axis
+constexpr float PG_STEP_XY = {params.step_xy_mm!r}f;          // mm, step_x/step_y scale
+constexpr float PG_STEP_ANGLE = {params.step_angle_rad!r}f;    // rad, step_angle scale
+constexpr float PG_HEIGHT_MIN = {params.step_height_min_mm!r}f, PG_HEIGHT_MAX = {params.step_height_max_mm!r}f;  // mm
+constexpr float PG_PHASE_RATE_MIN = {params.phase_rate_min!r}f, PG_PHASE_RATE_MAX = {params.phase_rate_max!r}f;  // cycles/s
+constexpr float STEP_DEPTH_MM = {params.step_depth_mm!r}f;
+constexpr float BODY_ZM_MM = {params.body_zm_mm!r}f;          // body ride-height authority (residual_gait)
 // Base-gait ride height (mm, + = body raised). Apply as body.zm = -(BODY_RIDE_MM + policy delta);
 // the legacy analytic map leaves this at 0, a searched schedule generally does not.
-constexpr float BODY_RIDE_MM = {base.ride_mm:.6f}f;
+constexpr float BODY_RIDE_MM = {params.body_ride_mm!r}f;
 // residual_gait gait-delta gains, order [step_x, step_y, step_height, gait_blend, phase_rate]:
 // multiply the action BEFORE adding it to analytic_gait()'s output, then clip to [-1,1].
-static const float GAIT_DELTA_GAIN[5] = {{{', '.join(f'{g}f' for g in GAIT_DELTA_GAIN)}}};
-constexpr int HIST_STRIDE = {HIST_STRIDE};             // control steps between stacked sensor frames
+static const float GAIT_DELTA_GAIN[5] = {{{floats(params.gait_delta_gain)}}};
+constexpr int HIST_STRIDE = {params.hist_stride};             // control steps between stacked sensor frames
 // command scaling: joystick [-1,1] -> trained command ranges
 constexpr float CMD_VX_MIN = {CMD_VX[0]}f, CMD_VX_MAX = {CMD_VX[1]}f;  // m/s (backward, forward)
 constexpr float CMD_VY_MAX = {CMD_VY[1]}f;   // m/s
 constexpr float CMD_YAW_MAX = {CMD_YAW[1]}f;  // rad/s
 {coordination}
-static const float TRI_OFFSET[6] = {{{', '.join(f'{v}f' for v in base.tri_offset)}}};
-static const float BI_OFFSET[6] = {{{', '.join(f'{v}f' for v in base.bi_offset)}}};
-constexpr float TRI_STAND_FRAC = {base.tri_stand_frac}f;
-constexpr float BI_STAND_FRAC = {base.bi_stand_frac}f;
+static const float TRI_OFFSET[6] = {{{floats(params.tri_offset)}}};
+static const float BI_OFFSET[6] = {{{floats(params.bi_offset)}}};
+constexpr float TRI_STAND_FRAC = {params.tri_stand_frac!r}f;
+constexpr float BI_STAND_FRAC = {params.bi_stand_frac!r}f;
 """
 
 
@@ -251,7 +223,7 @@ def write_header(path, run, control_mode, layers, mean, var, clip, eps, test_obs
         # selfCheck() only exercises the network, not the layout.
         f.write(f"constexpr int OBS_HISTORY = {cfg['obs_history']};\n")
         f.write(f"constexpr float OBS_CLIP = {clip:.6f}f;\nconstexpr float OBS_EPS = {eps:.3e}f;\n\n")
-        f.write(constants_cpp(base))
+        f.write(constants_cpp(firmware_policy_params(control_mode, cfg["obs_history"], base), base))
         f.write("\n")
         f.write(analytic_gait_cpp(base))
         f.write("\n")
@@ -331,9 +303,8 @@ def main():
     base = BaseGait(GaitSchedule.from_dict(sched) if sched else None)
 
     model = PPO.load(args.model, device="cpu")
-    venv = VecNormalize.load(args.vecnorm, DummyVecEnv([make_env(
-        control_mode=cfg["control_mode"], obs_contact=cfg["obs_contact"],
-        obs_history=cfg["obs_history"], gait_schedule=base.schedule)]))
+    venv = VecNormalize.load(args.vecnorm, DummyVecEnv([lambda: _Spaces(model.observation_space,
+                                                                        model.action_space)]))
     mean = venv.obs_rms.mean.astype(np.float64)
     var = venv.obs_rms.var.astype(np.float64)
     clip, eps = float(venv.clip_obs), float(venv.epsilon)

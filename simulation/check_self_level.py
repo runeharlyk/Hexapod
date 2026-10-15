@@ -7,7 +7,9 @@ reading the code. The robot behaves correctly on hardware, so the composite is r
 which sign reproduces that in the sim, because training against an amplifying body would be worse
 than not modelling the term at all.
 
-Runs the analytic gait over rough ground with levelling off, +1 and -1, and reports mean body tilt.
+Runs the analytic gait over rough ground with levelling off, +1 and -1, and reports mean body tilt. This sets the
+sign of the environment's own copy of the term, which the research modes use; residual_pure and residual_gait run
+the firmware's levelling itself, so it measures in residual_sched, whose zero action is the same base gait.
 
   uv run python check_self_level.py
 """
@@ -20,7 +22,7 @@ from src.envs.hexapod_mj_env import HexapodMjEnv
 
 def mean_tilt(sign, self_level, terrain=0.06, steps=600, seed=0):
     E.LEVEL_SIGN = sign
-    env = HexapodMjEnv(control_mode="residual_pure", randomize=False, seed=seed,
+    env = HexapodMjEnv(control_mode="residual_sched", randomize=False, seed=seed,
                        terrain=terrain, terrain_kind="bumps", self_level=self_level)
     env.reset(seed=seed)
     env.cmd = np.array([0.25, 0.0, 0.0], dtype=np.float32)  # steady forward walk

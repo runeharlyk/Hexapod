@@ -60,6 +60,7 @@ The firmware runs the policy exported from the run `residual_gait` with `control
 The first comment line of `firmware/include/policy/hexapod_policy.h` states this as `// run: <name> mode: <mode> hash: <commit>`, and the firmware build fails if the header's dimensions do not match what `PolicyRunner` assembles and applies.
 `residual_gait` lets the policy adjust the gait itself (step, lift, blend, cadence, ride height) on top of 18 foot residuals.
 `residual_pure` (18 outputs) keeps the gait fixed to the analytic command-to-gait map and learns only the foot residuals; `PolicyRunner` can drive such a header, but none is deployed.
+Both modes train on the robot's own WALK_NN path (`src/sim/firmware_policy.py`): the firmware's `PolicyCore` builds the observation and filters and decodes the action, and its gait and inverse kinematics set the joints, so they refuse what the robot lacks (`--contact-obs`, reflexes, arc stance).
 
 ## Rough terrain
 
@@ -82,9 +83,9 @@ Training with `--randomize` draws the feature per episode, and `bench_terrain.py
 ```sh
 uv run python train_mj.py --control-mode residual_gait --randomize --curriculum \
     --terrain 0.09 --terrain-adaptive --terrain-kind mixed \
-    --obs-history 4 --contact-obs \
+    --obs-history 4 \
     --resample-steps 300 --zero-final --init-std 0.3 --target-kl 0.02 \
-    --timesteps 12_000_000 --num-envs 12 --tag rough_contact
+    --timesteps 12_000_000 --num-envs 12 --tag rough
 ```
 
 - `--obs-history N` stacks N sensor frames (gravity + gyro [+ contacts]) spaced 3 control steps
@@ -95,7 +96,8 @@ uv run python train_mj.py --control-mode residual_gait --randomize --curriculum 
   final stretch on ground that is physically impassable, which teaches stalling, not skill.
 - `--contact-obs` adds 6 per-foot contact sensors (force-thresholded, with dropouts, false closes
   and dead-sensor faults under DR). This is a **hardware** question — foot switches or FSRs the
-  robot does not have yet — so it is measured as an ablation, not assumed.
+  robot does not have yet — so it is measured as an ablation, not assumed, in `residual_sched`:
+  the robot's WALK_NN path has no contact input.
 - Sampled command speeds shrink as roughness rises (`TERRAIN_SPEED_*`): commanding a speed the
   robot cannot make good parks the tracking reward in its flat tail and teaches thrashing.
 - The leg links and chassis collide with the ground, so obstacles are solid against shins and belly
@@ -210,7 +212,8 @@ The command is a body-frame velocity vector `[vx, vy]` (m/s) + yaw rate (rad/s).
 
 ## Layout
 
-- `src/robot/firmware_gait.py` — NumPy port of the firmware gait + IK (the deploy target).
+- `src/robot/firmware_gait.py` — NumPy port of the firmware gait + IK, which the research modes run on.
+- `src/sim/firmware_policy.py` — the robot's WALK_NN path (`firmware/host/policy_api.cpp`), which `residual_pure` and `residual_gait` train on.
 - `src/sim/virtual_robot.py` / `src/sim/firmware_loop.py` — the firmware's own Hexapod (`firmware/host/`) as a native library, compiled on first use with `$CXX` (C++20), driving MuJoCo for replay, the speed model and the `Robot` simulation backend.
 - `src/resources/build_model.py` → `model.xml` — MuJoCo model (0.68 kg; legs 0.077 kg each).
 - `src/sim/mj_runtime.py` — MuJoCo runtime wrapper.

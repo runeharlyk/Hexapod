@@ -12,7 +12,7 @@ Arms:
                              `tuned_single` (the one gait with the best mean across the suite -- what
                              you could actually ship without terrain classification)
   --runs A B                 trained policies
-  --reflex                   duplicates every arm with contact reflexes in the gait engine
+  --reflex                   duplicates every open-loop arm with contact reflexes in the gait engine
 
 A policy that only beats `--baseline` has beaten one hand-tuned gait, not the gait family. The
 comparison that matters is against `tuned_oracle`.
@@ -144,8 +144,8 @@ _ARM_CACHE = {}
 
 
 def _arms(args):
-    """(label, run, schedule-resolver, reflex). Reflex duplicates every arm so the with/without
-    comparison is paired on identical terrain."""
+    """(label, run, schedule-resolver, reflex). Reflex duplicates every open-loop arm so the with/without
+    comparison is paired on identical terrain; a trained policy runs the robot's WALK_NN path, which has none."""
     if id(args) in _ARM_CACHE:
         return _ARM_CACHE[id(args)]
     base = [(r, r, None) for r in args.runs]
@@ -154,7 +154,7 @@ def _arms(args):
     base += _library_arms(args)
     pairs = [(lbl, run, res, False) for lbl, run, res in base]
     if args.reflex:
-        pairs += [(lbl + "+reflex", run, res, True) for lbl, run, res in base]
+        pairs += [(lbl + "+reflex", run, res, True) for lbl, run, res in base if run is None]
     _ARM_CACHE[id(args)] = pairs
     return pairs
 
@@ -228,7 +228,7 @@ def main():
     ap.add_argument("--workers", type=int, default=1)
     ap.add_argument("--json", default=None)
     ap.add_argument("--reflex", action="store_true",
-                    help="also evaluate every arm with contact reflexes in the gait engine")
+                    help="also evaluate every open-loop arm with contact reflexes in the gait engine")
     ap.add_argument("--curb", action="store_true",
                     help="sweep a single full-width step instead of the rough-field matrix")
     ap.add_argument("--curb-heights", nargs="*", type=float, default=list(CURB_HEIGHTS))

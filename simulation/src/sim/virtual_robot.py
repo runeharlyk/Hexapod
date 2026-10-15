@@ -6,6 +6,7 @@ instead of a port of it.
 The library is compiled on first use and again whenever a firmware source is newer than it; the compiler is $CXX,
 or g++, and needs C++20. Like the robot it holds one Hexapod per process: a new VirtualRobot starts it over.
 The animation clips are not on the host's file system, so ANIMATE has nothing to play here.
+The library also holds the WALK_NN control path the training environment runs (firmware_policy.py).
 """
 import ctypes
 import os
@@ -18,7 +19,7 @@ FIRMWARE = ROOT / "firmware"
 GENERATED = FIRMWARE / "src" / "platform_shared"
 WINDOWS = sys.platform == "win32"
 LIBRARY = ROOT / ".pio" / "virtual_robot" / ("virtual_robot.dll" if WINDOWS else "libvirtual_robot.so")
-SOURCES = [FIRMWARE / "host" / "virtual_robot_api.cpp", FIRMWARE / "host" / "filesystem_host.cpp"]
+SOURCES = [FIRMWARE / "host" / name for name in ("virtual_robot_api.cpp", "policy_api.cpp", "filesystem_host.cpp")]
 C_SOURCES = ([ROOT / "submodules" / "nanopb" / name for name in ("pb_common.c", "pb_decode.c", "pb_encode.c")]
              + [GENERATED / f"{name}.pb.c" for name in ("animation", "api", "message")])
 
@@ -74,14 +75,19 @@ def _library() -> ctypes.CDLL:
 _lib: ctypes.CDLL | None = None
 
 
+def native_library() -> ctypes.CDLL:
+    """The firmware's host build, compiled when it is missing or older than a firmware source."""
+    global _lib
+    _lib = _lib or _library()
+    return _lib
+
+
 class VirtualRobot:
     """One pass of main.cpp's 5 ms control loop per tick(); modes, gaits and commands reach the motion through its
     own EventBus subscriptions, as from a transport."""
 
     def __init__(self):
-        global _lib
-        _lib = _lib or _library()
-        self._lib = _lib
+        self._lib = native_library()
         self._lib.reset()
 
     def set_mode(self, mode: int) -> None:
