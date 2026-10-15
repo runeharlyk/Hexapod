@@ -52,8 +52,7 @@ class WebSocketTransport:
         self._socket = None
 
     async def open(self) -> None:
-        self._socket = await websockets.connect(self._url, open_timeout=REPLY_TIMEOUT_S, close_timeout=1,
-                                                ping_interval=None)
+        self._socket = await websockets.connect(self._url, open_timeout=REPLY_TIMEOUT_S, close_timeout=1)
 
     async def send(self, message: pb.Message) -> None:
         try:

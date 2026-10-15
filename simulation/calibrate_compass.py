@@ -34,7 +34,7 @@ async def _ask(socket, request: message_pb2.CorrelationRequest) -> message_pb2.C
 async def store_offset(address: str, x: float, y: float, z: float | None) -> None:
     """Writes the offset into the robot's peripheral settings, keeping the I2C configuration it holds, and its z
     offset when z is None."""
-    async with websockets.connect(f"ws://{address}/api/ws", open_timeout=10, ping_interval=None) as socket:
+    async with websockets.connect(f"ws://{address}/api/ws", open_timeout=10) as socket:
         request = message_pb2.CorrelationRequest(peripheral_settings_get=api_pb2.PeripheralSettingsRequest())
         current = await _ask(socket, request)
         settings = current.peripheral_settings
