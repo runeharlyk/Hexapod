@@ -1,0 +1,65 @@
+{
+  "description": "Body-frame sign convention shared by the firmware gait (firmware/include/gait.h, test firmware/test/test_sign_convention), the simulation's port (simulation/src/robot/firmware_gait.py, test simulation/test_sign_convention.py) and the app's mirror (app/src/lib/gait.ts, test app/tests/unit/sign-convention.spec.ts). The body frame is x lateral (+x right), y forward, z up; the robot faces +y; yaw is positive counter-clockwise seen from above. Each command is walked with the tripod gait for the sampling ticks, starting once gait.h's FEET_EASE_S carry from rest has gone; a sign is the sign of the mean per-tick stance-foot displacement (body frame, mm), of the body velocity those planted feet imply, and of the yaw rate they imply, with values within the zero band counted as 0. The stick is the app/controller input that motion.h's classical WALK branch maps onto the gait command. docs/conventions.md derives every value.",
+  "legs": ["right front", "right middle", "right rear", "left front", "left middle", "left rear"],
+  "stance_mm": [
+    [122, 152, -66],
+    [171, 0, -66],
+    [122, -152, -66],
+    [-122, 152, -66],
+    [-171, 0, -66],
+    [-122, -152, -66]
+  ],
+  "sampling": {
+    "dt_s": 0.005,
+    "ticks": 800,
+    "zero_mm_per_tick": 0.001,
+    "zero_rad_per_tick": 0.00001
+  },
+  "commands": [
+    {
+      "name": "forward",
+      "stick": { "lx": 0, "ly": 0.5, "rx": 0 },
+      "gait": { "step_x": 0, "step_y": 50, "step_angle": 0 },
+      "body_velocity_sign": [0, 1],
+      "yaw_sign": 0,
+      "stance_foot_displacement_sign": [
+        [0, -1],
+        [0, -1],
+        [0, -1],
+        [0, -1],
+        [0, -1],
+        [0, -1]
+      ]
+    },
+    {
+      "name": "right strafe",
+      "stick": { "lx": -0.5, "ly": 0, "rx": 0 },
+      "gait": { "step_x": 50, "step_y": 0, "step_angle": 0 },
+      "body_velocity_sign": [1, 0],
+      "yaw_sign": 0,
+      "stance_foot_displacement_sign": [
+        [-1, 0],
+        [-1, 0],
+        [-1, 0],
+        [-1, 0],
+        [-1, 0],
+        [-1, 0]
+      ]
+    },
+    {
+      "name": "counter-clockwise turn",
+      "stick": { "lx": 0, "ly": 0, "rx": 0.5 },
+      "gait": { "step_x": 0, "step_y": 0, "step_angle": 0.4 },
+      "body_velocity_sign": [0, 0],
+      "yaw_sign": 1,
+      "stance_foot_displacement_sign": [
+        [1, -1],
+        [0, -1],
+        [-1, -1],
+        [1, 1],
+        [0, 1],
+        [-1, 1]
+      ]
+    }
+  ]
+}
