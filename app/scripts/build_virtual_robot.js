@@ -43,6 +43,13 @@ const emxx = findEmxx()
 if (!emxx) {
   if (process.env.CI)
     throw new Error('em++ not found: the virtual robot needs Emscripten (set EMSDK)')
+  // A build from an earlier run is kept, possibly older than the firmware sources, rather than replaced by a stub.
+  if (fs.existsSync(path.join(outputDir, 'virtual_robot.wasm'))) {
+    console.warn(
+      'em++ not found; keeping the virtual robot built earlier, which may predate the firmware sources'
+    )
+    process.exit(0)
+  }
   console.warn(
     'em++ not found; the simulation view will report that the virtual robot was not built'
   )

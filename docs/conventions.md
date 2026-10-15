@@ -52,11 +52,11 @@ With +x to the right, positive `mountX` is the right side; the app's `LEG_NAMES`
 The turn row is the cross product: a foot at `(rx, ry)` moves by `-step_angle * (-ry, rx)`, which is clockwise about the body centre, so the body turns counter-clockwise.
 
 The fixture stores, for each of the three commands, the stick input, the gait command, the sign of each leg's mean stance displacement, and the signs of the body velocity and yaw rate those planted feet imply.
-It is asserted on the firmware gait (`firmware/test/test_sign_convention`), the simulation's port (`simulation/test_sign_convention.py`) and the app's mirror (`app/tests/unit/sign-convention.spec.ts`).
+It is asserted on the firmware gait (`firmware/test/test_sign_convention`), the simulation's port (`simulation/test_sign_convention.py`) and the app, which runs the firmware's code as WebAssembly and is checked from the stick on (`app/tests/unit/sign-convention.spec.ts`).
 
 ## Stick signs
 
-The stick-to-gait mapping is a separate layer, `MotionService::handleCommand` in `firmware/include/motion.h`, with ports in `simulation/src/robot/firmware_gait.py` (`command_to_walk_gait`) and `app/src/lib/motion.ts`.
+The stick-to-gait mapping is a separate layer, `MotionService::handleCommand` in `firmware/include/motion.h`, with a port in `simulation/src/robot/firmware_gait.py` (`command_to_walk_gait`); the app runs the firmware's own through the virtual robot.
 Its classical WALK branch sets `step_x = -lx * 100`, `step_y = ly * 100` and `step_angle = rx * 0.8`; the TUNED branch uses the same signs through the velocity command `(ly, -lx, rx)`.
 Under the convention above that means +ly walks forward, +lx strafes left and +rx turns counter-clockwise, so a stick pushed right on the app's joystick or a gamepad strafes and turns the robot to its left.
 The simulation measured exactly this (`simulation/src/hexapod/speed_model.py`).

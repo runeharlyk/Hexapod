@@ -6,15 +6,22 @@
   import { GUI } from 'three/addons/libs/lil-gui.module.min.js'
   import type { URDFRobot } from 'urdf-loader'
   import { degToRad, lerp } from 'three/src/math/MathUtils'
-  import { GaitLabels, GaitType } from '$lib/gait'
-  import Motion, { MotionModes } from '$lib/motion'
+  import { GaitType } from '$lib/gait'
+  import { MotionModes, urdfJointOrder } from '$lib/motion'
   import { dataBroker } from '$lib/transport/databroker'
   import { AnglesData } from '$lib/platform_shared/message'
   import { Vector3 } from 'three'
-  import { requestGait, requestMode } from '$lib/control'
+  import { requestMode } from '$lib/control'
   import { isLinked } from '$lib/stores/link'
   import { animationPreview, type AnimationPreview } from '$lib/stores/animation'
-  import type { body_state_t } from '$lib/kinematic'
+  import Kinematics, { type body_state_t } from '$lib/kinematic'
+  import { config } from '$lib/components/config'
+  import {
+    loadVirtualRobot,
+    TICK_SECONDS,
+    type Command,
+    type VirtualRobot
+  } from '$lib/simulation/virtual-robot'
   import type { Vec3 } from '$lib/animation/model'
   import { DEFAULT_FEET } from '$lib/animation/evaluator'
   import { handleColor, legMask, sceneToOffset, stanceToScene } from '$lib/animation/handles'
@@ -45,7 +52,37 @@
   const angles = new Array(18).fill(0)
   const targetAngles = new Array(18).fill(0)
 
-  const motion = new Motion()
+  const kinematics = new Kinematics(config)
+  const STAND_Z = DEFAULT_FEET[0][2]
+  // The body pose shown: recovered from the feet of the joint angles shown, whoever produced them.
+  let shownBody = kinematics.bodyOverFeet(
+    kinematics.inverseKinematics({
+      omega: 0,
+      phi: 0,
+      psi: 0,
+      xm: 0,
+      ym: 0,
+      zm: 0,
+      feet: DEFAULT_FEET.map(foot => [...foot]),
+      cumulative_x: 0,
+      cumulative_y: 0,
+      cumulative_z: 0,
+      cumulative_roll: 0,
+      cumulative_pitch: 0,
+      cumulative_yaw: 0
+    }),
+    STAND_Z
+  )
+
+  // While no robot sends its angles, the firmware's own motion code animates the model. The robot-hosted build is
+  // always linked, and the build-time constant leaves the virtual robot out of it.
+  let virtualRobot: VirtualRobot | undefined
+  let sticks: Command = [0, 0, 0, 0, 0, 0, 0, 0]
+  let pendingSeconds = 0
+  let lastFrame = 0
+  const MAX_FRAME_SECONDS = 0.05
+  const modeIndex = (m: MotionModes) => Object.values(MotionModes).indexOf(m)
+  const gaitIndex = (g: GaitType) => Object.values(GaitType).indexOf(g)
 
   let gui_panel: GUI
 
@@ -71,21 +108,33 @@
     createScene()
     if (panel) createPanel()
 
-    if (previewMode) motion.setMode(previewMode)
     unsubscribers = [
-      outControllerData.subscribe(data => motion.handleCommand(data)),
+      outControllerData.subscribe(data => (sticks = data as Command)),
       dataBroker.on(AnglesData, data => {
         settings['Internal kinematic'] = false
-        setTargetAngles(motion.order(data.angles.map(degToRad)))
+        show(data.angles)
       }),
       // Without a link no angles arrive, so the local model has to animate the robot again.
       isLinked.subscribe(linked => {
         if (!linked) settings['Internal kinematic'] = true
       }),
-      gait.subscribe(gait => motion.setGait(gait)),
+      gait.subscribe(g => virtualRobot?.setGait(gaitIndex(g))),
       animationPreview.subscribe(value => (preview = value)),
-      ...(previewMode ? [] : [mode.subscribe(mode => motion.setMode(mode))])
+      ...(previewMode ? [] : [mode.subscribe(m => virtualRobot?.setMode(modeIndex(m)))])
     ]
+    if (import.meta.env.VITE_USE_HOST_NAME !== 'true') {
+      loadVirtualRobot()
+        .then(robot => {
+          if (destroyed) return
+          // Until the firmware sends a pose, the model rests in its stand rather than with its legs out straight.
+          show(robot.standPose())
+          robot.setMode(modeIndex(previewMode ?? $mode))
+          robot.setGait(gaitIndex($gait))
+          virtualRobot = robot
+          lastFrame = performance.now()
+        })
+        .catch(error => console.warn('The 3D view cannot animate the robot on its own:', error))
+    }
   })
 
   onDestroy(() => {
@@ -104,31 +153,6 @@
     const general = gui_panel.addFolder('General')
     general.add(settings, 'Internal kinematic').listen()
     general.add(settings, 'Auto orient robot')
-
-    const gait_gui = gui_panel.addFolder('Gait')
-    gait_gui.add(motion.gait_state, 'step_height', 0, 50, 0.01).name('Step Height')
-    gait_gui.add(motion.gait_state, 'step_x', -50, 50, 0.01).name('Step X')
-    gait_gui.add(motion.gait_state, 'step_y', -50, 50, 0.01).name('Step Y')
-    gait_gui
-      .add(motion.gait_state, 'step_angle', -Math.PI / 4, Math.PI / 4, 0.01)
-      .name('Step Angle')
-    gait_gui.add(motion.gait_state, 'step_speed', 0, 2, 0.01).name('Step Speed')
-    gait_gui.add(motion.gait_state, 'step_depth', 0, 0.01, 0.001).name('Step Depth')
-    gait_gui.add(motion.gait_state, 'stand_frac', 0, 1, 0.01).name('Stand Fraction')
-    gait_gui
-      .add(motion.gait_state, 'gait_type', GaitLabels)
-      .name('Gait Type')
-      .onChange((value: GaitType) => {
-        requestGait(value)
-      })
-
-    const kin = gui_panel.addFolder('Kinematics')
-    for (const name of ['omega', 'phi', 'psi'] as const) {
-      kin.add(motion.body_state, name, -Math.PI / 10, Math.PI / 10, 0.01)
-    }
-    kin.add(motion.body_state, 'xm', -60, 60, 0.01)
-    kin.add(motion.body_state, 'ym', -60, 60, 0.01)
-    kin.add(motion.body_state, 'zm', -60, 60, 0.01)
 
     const limbs = gui_panel.addFolder('Limbs')
     limbs.add({ center: resetLimbs }, 'center')
@@ -155,6 +179,28 @@
     for (let i = 0; i < $jointNames.length; i++) {
       targetAngles[i] = jointAngles[$jointNames[i]]
     }
+  }
+
+  // Joint angles in degrees in the firmware's order, as the robot reports them and the virtual robot drives them.
+  const show = (anglesDeg: ArrayLike<number>) => {
+    const rad = Array.from(anglesDeg, degToRad)
+    setTargetAngles(urdfJointOrder(rad))
+    const legs = [0, 1, 2, 3, 4, 5].map(
+      leg => rad.slice(leg * 3, leg * 3 + 3) as [number, number, number]
+    )
+    shownBody = kinematics.bodyOverFeet(legs, STAND_Z)
+  }
+
+  // Runs the virtual robot for the time since the last frame in whole control ticks, at most MAX_FRAME_SECONDS.
+  const stepVirtualRobot = (robot: VirtualRobot) => {
+    const now = performance.now()
+    pendingSeconds = Math.min(pendingSeconds + (now - lastFrame) / 1000, MAX_FRAME_SECONDS)
+    lastFrame = now
+    for (; pendingSeconds >= TICK_SECONDS; pendingSeconds -= TICK_SECONDS) {
+      robot.command(sticks)
+      robot.tick()
+    }
+    if (robot.servosDriven()) show(robot.servoAngles())
   }
 
   const setTargetAngles = (angles: number[]) => {
@@ -233,7 +279,7 @@
       }
     }
 
-    const feetDepth = Math.max(0, motion.defaultPosition[0][2] - minZ)
+    const feetDepth = Math.max(0, STAND_Z - minZ)
 
     const bodyHeight = body.zm / 12
     return -bodyHeight + 0.5 + feetDepth
@@ -298,13 +344,12 @@
     const robot = sceneManager.model
     if (!robot) return
     if (preview) {
-      setTargetAngles(motion.order(preview.angles))
-    } else if (settings['Internal kinematic']) {
-      const updated = motion.step()
-      if (updated) setTargetAngles(motion.targetAngles)
+      setTargetAngles(urdfJointOrder(preview.angles))
+    } else if (settings['Internal kinematic'] && virtualRobot) {
+      stepVirtualRobot(virtualRobot)
     }
     update_camera(robot)
-    orient_robot(robot, preview?.body ?? motion.body_state)
+    orient_robot(robot, preview?.body ?? shownBody)
     if (handles) updateHandles()
 
     for (let i = 0; i < $jointNames.length; i++) {
