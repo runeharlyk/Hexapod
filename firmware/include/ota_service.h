@@ -184,6 +184,10 @@ inline void downloadTask(void *arg) {
     http.crt_bundle_attach = esp_crt_bundle_attach; // GitHub release assets redirect to a second host
     http.keep_alive_enable = true;
     http.timeout_ms = 15000;
+    // GitHub answers a release asset with a redirect to a signed URL of several hundred characters,
+    // which the default 512-byte buffers can neither receive in the Location header nor send back.
+    http.buffer_size = 4096;
+    http.buffer_size_tx = 2048;
 
     esp_https_ota_config_t cfg = {};
     cfg.http_config = &http;
