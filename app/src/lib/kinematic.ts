@@ -129,23 +129,27 @@ export default class Kinematics {
   }
 
   /**
-   * The body pose over the ground that put the feet where `angles` (radians, per leg, IK order) place them, for
-   * feet whose stance rests at height `standZ` (mm): the plane under all six feet is the ground, its normal in the
-   * body frame is the body's world up, which gives omega and phi, and its distance gives zm. The body's shift and
-   * yaw over its feet leave no trace in that plane, so xm, ym and psi stay 0.
+   * The ground the feet stand on, in the body frame (mm), for joint angles (radians, per leg, IK order): the plane under
+   * all six feet, its unit normal pointing up out of the ground (the body's world up) and its offset (normal . p on it),
+   * and the feet resting on it. A foot lifted in its swing is above the plane and not among them.
    */
-  bodyOverFeet(angles: [number, number, number][], standZ: number): body_state_t {
-    const level = levelBody()
-    const feet = this.forwardKinematics(level, angles).map(([x, y, z]) => [x, y, z])
-    const ground = supportingPlane(feet)
-    const [nx, ny, nz] = ground.normal
-    const phi = Math.asin(Math.max(-1, Math.min(1, nx)))
-    const omega = Math.atan2(-ny, nz)
-    return { ...level, omega, phi, zm: (ground.offset - standZ) / nz }
+  groundUnderFeet(angles: [number, number, number][]): Ground {
+    const feet = this.forwardKinematics(levelBody(), angles).map(([x, y, z]) => [x, y, z])
+    const { normal, offset } = supportingPlane(feet)
+    const planted = feet.filter(f => dot(normal, f) <= offset + SUPPORT_TOLERANCE_MM)
+    return { normal, offset, planted }
   }
 }
 
+export interface Ground {
+  normal: number[]
+  offset: number
+  planted: number[][]
+}
+
 const SUPPORT_TOLERANCE_MM = 0.5
+
+const dot = (a: readonly number[], b: readonly number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 
 // The plane through three feet that has none of the six below it, normal pointing up out of the ground.
 const supportingPlane = (feet: number[][]): { normal: number[]; offset: number } => {
@@ -159,10 +163,8 @@ const supportingPlane = (feet: number[][]): { normal: number[]; offset: number }
         const length = Math.hypot(n[0], n[1], n[2])
         if (length < 1e-9) continue
         n = n.map(v => (v / length) * Math.sign(n[2] || 1))
-        const offset = n[0] * feet[a][0] + n[1] * feet[a][1] + n[2] * feet[a][2]
-        const supports = feet.every(
-          f => n[0] * f[0] + n[1] * f[1] + n[2] * f[2] >= offset - SUPPORT_TOLERANCE_MM
-        )
+        const offset = dot(n, feet[a])
+        const supports = feet.every(f => dot(n, f) >= offset - SUPPORT_TOLERANCE_MM)
         if (supports && (!best || n[2] > best.normal[2])) best = { normal: n, offset }
       }
   if (!best) throw new Error('No three feet support the body')
