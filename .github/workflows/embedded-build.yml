@@ -76,11 +76,16 @@ jobs:
 
       # pre_build.py regenerates the nanopb sources from platform_shared/*.proto with
       # grpc_tools.protoc. EMBED_WEBAPP=0 by default, so the firmware build needs no Node.
+      # pyelftools reads the ELF for the static RAM gate.
       - name: Install PlatformIO and proto dependencies
-        run: pip install platformio==6.1.19 protobuf grpcio-tools
+        run: pip install platformio==6.1.19 protobuf grpcio-tools pyelftools
 
       - name: Build esp32-wroom-camera
         run: pio run -e esp32-wroom-camera
+
+      # Internal RAM is the robot's binding limit: a change that grows it statically fails here, not at the next boot.
+      - name: Static internal RAM within budget
+        run: python firmware/scripts/static_ram.py .pio/build/esp32-wroom-camera/firmware.elf
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4
