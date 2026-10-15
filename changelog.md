@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixes the robot crashing after every successful firmware upload over HTTP, so the app reported a failed update that had in fact landed.
+- Fixes the robot's own download of a release, which could not start its task with the camera running, crashed before answering, and could not follow GitHub's redirect.
+
 ## [0.1.0] - 2026-10-15
 
 The first tagged release: the animation system and the ports from the SpotMicro firmware.

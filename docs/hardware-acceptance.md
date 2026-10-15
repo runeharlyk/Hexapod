@@ -41,5 +41,6 @@ Later the same day, same image, servo power on and the robot lying flat on the b
 | IMU calibration on a robot lying still | WebSocket `imu_calibrate` | pass: status 200; gyro bias at rest from (-0.121, -0.022, -0.022) to (-0.002, -0.001, -0.001) rad/s |
 | Calibration kept across a reboot | UART console, WebSocket | pass: `MPU6050 calibration applied` at boot, bias (-0.003, -0.001, -0.001) rad/s after it |
 | Rollback from an image that crashes at boot | WebSocket update, UART console | pass: an image calling `abort()` first in `app_main` (built for the test, not committed) was accepted and selected, booted from `app0`, aborted, and the bootloader went back to `app1`; the robot then reported the previous ELF hash `2f877aeb6ee3` |
+| The robot downloading the `v0.1.0` release itself (`POST /api/firmware/download`) | HTTP, HTTPS to GitHub | fail on `v0.1.0` and `main`: first no internal RAM for the download task's stack, then a crash in `sendOk` (2bb8f9a), then `HTTP_CLIENT: Out of buffer` on GitHub's 925-character redirect; pass after 2bb8f9a, 48ed3bf and 933062c: 1972400 bytes in about 40 s, booted from `app1`, reporting the release's ELF hash `357a0b75a0c5` |
 
 Not yet run on hardware: OTA over BLE and USB, the 600 ms steering dead-man, a reset while the servos hold a pose, WiFi network cycling, USB setup, and the stick direction on the floor.
