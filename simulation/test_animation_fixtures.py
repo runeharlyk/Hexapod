@@ -45,8 +45,27 @@ def test_player_traces_visit_every_state():
     assert states == {"ENTRY", "PLAYING", "HOLD", "EXIT", "IDLE"}
 
 
+def _assert_same_dump(committed: str, fresh: str) -> None:
+    # Values that round to zero print as 0.000000 or -0.000000 depending on the platform's libm, and a
+    # value on a rounding boundary may land one unit either way, so numbers compare within one unit of
+    # the sixth decimal; every other token, and the line structure, must match exactly.
+    committed_lines, fresh_lines = committed.splitlines(), fresh.splitlines()
+    assert len(committed_lines) == len(fresh_lines)
+    for number, (a, b) in enumerate(zip(committed_lines, fresh_lines), 1):
+        ta, tb = a.split(), b.split()
+        assert len(ta) == len(tb), f"line {number}"
+        for x, y in zip(ta, tb):
+            if x == y:
+                continue
+            try:
+                close = abs(float(x) - float(y)) <= 1.5e-6
+            except ValueError:
+                close = False
+            assert close, f"line {number}: {x} != {y}"
+
+
 def test_expected_txt_and_fixture_binaries_are_current():
-    assert gen.EXPECTED_TXT.read_bytes() == gen.text_dump(gen.generate()).encode()
+    _assert_same_dump(gen.EXPECTED_TXT.read_text(), gen.text_dump(gen.generate()))
     for path in sorted(gen.FIXTURE_DIR.glob("fx_*.json")):
         assert path.with_suffix(".pb").read_bytes() == to_proto(load_json(path)).SerializeToString(), path.name
 
