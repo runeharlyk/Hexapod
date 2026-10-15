@@ -1,7 +1,7 @@
 <script lang="ts">
   import { BodyAxis, bodyOf, legTarget, type Vec3 } from '$lib/animation/model'
   import { legMask } from '$lib/animation/handles'
-  import { JOINT_NAMES, LEG_NAMES, editor, shown } from '$lib/stores/animation-editor'
+  import { JOINT_NAMES, LEG_NAMES, commitNumber, editor, shown } from '$lib/stores/animation-editor'
 
   const { mask } = editor
 
@@ -23,10 +23,9 @@
   const isAngle = (axis: BodyAxis) => axis <= BodyAxis.YAW
 
   const setComponent = (leg: number, axis: number, value: number) => {
-    if (!Number.isFinite(value)) return
     const v = [...legs[leg].v] as Vec3
     v[axis] = value
-    editor.setLeg(selected, leg, { joints: legs[leg].joints, v })
+    return editor.setLeg(selected, leg, { joints: legs[leg].joints, v })
   }
 
   const clampedNames = (leg: number) =>
@@ -85,7 +84,7 @@
                 class="input input-xs input-bordered w-20"
                 step={leg.joints ? 1 : 0.5}
                 value={shown(value)}
-                onchange={e => setComponent(i, axis, e.currentTarget.valueAsNumber)}
+                onchange={e => commitNumber(e.currentTarget, value, v => setComponent(i, axis, v))}
               />
             </label>
           {/each}

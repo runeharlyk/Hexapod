@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ParamId } from '$lib/platform_shared/animation'
   import { DEFAULT_ENTRY_S, DEFAULT_EXIT_S, PARAM_COUNT } from '$lib/animation/model'
-  import { editor, shown } from '$lib/stores/animation-editor'
+  import { commitNumber, editor, shown } from '$lib/stores/animation-editor'
 
   const { validation } = editor
   const SPEC_FIELDS = ['min', 'defaultValue', 'max'] as const
@@ -13,11 +13,6 @@
     )
   )
   let adding = $state<ParamId | ''>('')
-
-  const numberFrom = (e: Event, apply: (v: number) => void) => {
-    const v = (e.currentTarget as HTMLInputElement).valueAsNumber
-    if (Number.isFinite(v)) apply(v)
-  }
 
   const valueOf = (id: ParamId, fallback: number) => $editor.values.get(id) ?? fallback
 </script>
@@ -81,7 +76,8 @@
           step="0.05"
           value={shown(doc.entryTime)}
           title="0 means the default {DEFAULT_ENTRY_S} s"
-          onchange={e => numberFrom(e, v => editor.setMeta({ entryTime: v }))}
+          onchange={e =>
+            commitNumber(e.currentTarget, doc.entryTime, v => editor.setMeta({ entryTime: v }))}
         />
         s
       </label>
@@ -94,7 +90,8 @@
           step="0.05"
           value={shown(doc.exitTime)}
           title="0 means the default {DEFAULT_EXIT_S} s"
-          onchange={e => numberFrom(e, v => editor.setMeta({ exitTime: v }))}
+          onchange={e =>
+            commitNumber(e.currentTarget, doc.exitTime, v => editor.setMeta({ exitTime: v }))}
         />
         s
       </label>
@@ -114,7 +111,10 @@
             class="input input-sm input-bordered w-20"
             step="1"
             value={shown(doc.rideHeight)}
-            onchange={e => numberFrom(e, v => editor.setMeta({ rideHeight: v }))}
+            onchange={e =>
+              commitNumber(e.currentTarget, doc.rideHeight ?? 0, v =>
+                editor.setMeta({ rideHeight: v })
+              )}
           />
           mm
         </label>
@@ -135,7 +135,10 @@
                 class="input input-xs input-bordered w-16"
                 step="0.05"
                 value={shown(spec[field])}
-                onchange={e => numberFrom(e, v => editor.setParam(i, { [field]: v }))}
+                onchange={e =>
+                  commitNumber(e.currentTarget, spec[field], v =>
+                    editor.setParam(i, { [field]: v })
+                  )}
               />
             </label>
           {/each}

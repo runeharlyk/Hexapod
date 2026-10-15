@@ -15,14 +15,16 @@
     builtIn,
     deleteDraft,
     draftAnimations,
+    loadDraft,
     refreshRobotList,
-    robotAnimations
+    robotAnimations,
+    type DraftRef
   } from '$lib/animation/library'
 
   const JOINT_INDICES = Array.from({ length: 18 }, (_, j) => j)
 
   interface Props {
-    onEdit: (a: Animation) => void
+    onEdit: (a: Animation, draft?: DraftRef) => void
   }
 
   let { onEdit }: Props = $props()
@@ -87,6 +89,16 @@
         refreshRobotList()
       }
     })
+
+  const editDraft = (name: string) => {
+    const loaded = loadDraft(name)
+    if ('error' in loaded) notifications.error(loaded.error, 5000)
+    else onEdit(loaded.animation, loaded.draft)
+  }
+
+  const removeDraft = (name: string) => {
+    if (!deleteDraft(name)) notifications.error(`This browser refused to delete ${name}`, 5000)
+  }
 
   const stateLabel = (s: AnimationState) => AnimationState[s]?.replace('ANIM_', '') ?? 'UNKNOWN'
 </script>
@@ -207,8 +219,8 @@
           {@render params(a, key)}
           <div class="flex flex-wrap gap-2">
             {@render playStop(() => playDraft(a, key))}
-            <button class="btn btn-xs" onclick={() => onEdit(a)}>Edit</button>
-            <button class="btn btn-xs btn-error" onclick={() => deleteDraft(a.name)}>Delete</button>
+            <button class="btn btn-xs" onclick={() => editDraft(a.name)}>Edit</button>
+            <button class="btn btn-xs btn-error" onclick={() => removeDraft(a.name)}>Delete</button>
           </div>
         </div>
       {:else}

@@ -251,16 +251,23 @@ Play and Stop are disabled while unlinked, and On robot then says "not connected
 **Editor.**
 The toolbar has New, Open file, Open from (Built-in, Drafts, and Robot while linked), Save JSON, Save draft, Upload to robot, Play on robot, Stop and Show on robot.
 Save JSON downloads `<name>.json` written by `serializeAnimation`; Save JSON, Upload, Play on robot and Save draft are disabled while the document is invalid.
+Save draft asks before replacing a stored draft of the same name, unless that draft is the one the document was opened from or last saved as and no other tab has changed it since.
+When the browser refuses to store a draft, Save draft reports an error and the draft list stays unchanged.
+Draft reads go to `localStorage`, and the list follows other tabs through the `storage` event.
+The editor autosaves the document, its unsaved flag and the draft it belongs to (name and content fingerprint) to `localStorage` on every edit and restores them on load, so unsaved edits survive a reload or a closed tab.
+When the browser refuses the autosave, the toolbar says so and closing or reloading the tab with unsaved edits asks first.
 The 3D view is `Visualization` with a handle on each foot, drawn red when that leg clamps at the scrub head.
 The Pose panel edits the selected keyframe: six body sliders, and per leg a foot/joints toggle with three numeric fields.
 Flipping a leg converts its stored value (IK from foot to joints, FK from joints to foot) on the keyframe's body at the current stance and ride-height base.
-The Timeline has keyframe markers (click selects, drag retimes; the first stays at 0), a scrub head, Play and Stop of a local preview, Loop, a preview speed, the selected keyframe's time and ease with Add after, Duplicate and Delete, and the overlay list.
+The Timeline has keyframe markers (click selects, drag retimes; the first stays at 0), a scrub head, Play and Stop of a local preview, Loop (set before Play), a preview speed, the selected keyframe's time and ease with Add after, Duplicate and Delete, and the overlay list.
 The preview speed scales the preview clock, Entry and Exit included; it is not the `SPEED` parameter.
+Loop previews the document as if `loop` were set and `hold_end` cleared, so the clock wraps without Exit and Entry, a `hold_end` animation loops too, and Stop runs Exit.
+A number field whose edit is refused, or holds no number, shows the document's value again.
 The Animation panel edits name, description, loop or hold at end (setting one clears the other), entry and exit times, a fixed ride height, and the parameters with their range and a preview value, and shows the validation message.
 
 These deviate from spec section 4:
 
-- There is no autosave; Save draft is an explicit button, disabled while the document is invalid.
+- Autosave keeps the working document only; Save draft is still an explicit button, disabled while the document is invalid.
 - The Timeline button is Stop, not Pause: it runs the player's Exit, as a stop on the robot does.
 - Robot rows show no description and no sliders and play with the defaults, because the list response carries only name and size.
 - Joint legs use numeric fields, not angle sliders.
@@ -350,12 +357,7 @@ Record the outcomes in the same handoff file.
 
 - Controller buttons are not mapped to animations.
 - The serial adapter cannot tell a closed port from an open one, so only the end of the USB session counts as the serial host gone for the control-loss rule.
-- The editor has no autosave; unsaved edits survive leaving the route (the editor is a module singleton) but not a reload or a closed tab, and neither asks first.
-- Save draft overwrites a draft of the same name without asking.
-- Save draft reports success even when the browser refuses to store it, because `persistentStore` swallows the storage error; the draft then lives in memory until the page reloads.
 - Robot rows have no description and no parameter sliders, and play with the defaults: the list response carries only name and size.
 - A built-in's Play assumes the file is on the robot's LittleFS from `uploadfs`; the app does not check or upload it.
 - The preview skips the firmware's Entry ride-height blend and the settle to the slider after Exit, so a file that fixes `ride_height` away from the slider's height previews differently there.
 - `PoseData` carries no base, so the robot cannot be puppeteered at a file's fixed ride height; that needs a firmware change.
-- The Timeline's Loop replays the whole play, Exit and Entry included, each cycle, and does nothing for a `hold_end` animation, which holds until Stop.
-- A refused edit (a keyframe time out of order, for example) shows the error but leaves the typed value in the input.
