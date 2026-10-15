@@ -44,11 +44,11 @@ def test_a_velocity_within_the_top_comes_back_from_its_sticks(gait):
         assert (got.vx, got.vy, got.yaw_rate) == pytest.approx((wanted.vx, wanted.vy, wanted.yaw_rate), abs=1e-4)
 
 
-# WAVE's rightward speed peaks at lx = -0.5 and falls to under a third of that at full deflection (measured): asking
+# WAVE's rightward speed peaks at lx = -0.5 and falls to about half of that at full deflection (measured): asking
 # for more than the peak must give the peak, not the larger, slower stick.
 def test_a_velocity_beyond_the_top_gives_the_peak_not_a_slower_full_stick():
     table = sm._axes(Gait.WAVE)["vy"]
-    assert abs(table.value(-1.0)) < abs(table.value(-0.5)) / 3
+    assert abs(table.value(-1.0)) < abs(table.value(-0.5)) * 0.75
     sticks = sm.sticks_for(Gait.WAVE, Velocity(0.0, -5.0, 0.0))
     assert sticks.lx == pytest.approx(-0.5)
     assert sm.velocity_of(Gait.WAVE, sticks).vy == pytest.approx(table.value(-0.5))

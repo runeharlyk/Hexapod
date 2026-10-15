@@ -14,8 +14,7 @@ from .. import speed_model
 from ..servos import FACTORY, NUM_SERVOS, ServoCalibration
 from .base import Gait, Mode, RobotDisconnected, RobotError, RobotState, Velocity
 
-ACTUATED = (Mode.STAND, Mode.WALK)
-POWERED = (*ACTUATED, Mode.IDLE)
+POWERED = (Mode.STAND, Mode.WALK, Mode.IDLE)
 
 
 class ServoOutput:
@@ -73,18 +72,13 @@ class SimBackend:
         if self._viewer is not None:
             self._viewer.close()
 
-    # MotionService.handleInputMode for the modes a script uses. STAND holds the body still: the firmware would shift
-    # and tilt it with the sticks, but the facade only sends sticks in WALK. IDLE leaves the servos powered where the
-    # last write put them.
+    # The firmware applies the mode. STAND holds the body still: the firmware would shift and tilt it with the sticks,
+    # but the facade only sends sticks in WALK. IDLE leaves the servos powered where the last write put them.
     def set_mode(self, mode: Mode) -> None:
         if mode not in (*POWERED, Mode.DEACTIVATED):
             raise RobotError(f"the simulation runs STAND, WALK, IDLE and DEACTIVATED, not {mode.name}")
         self._mode = mode
-        if mode is Mode.DEACTIVATED:
-            self._loop.stop(snap=True)
-            self.sim.set_servo_scale(stall=0.0)  # no torque: the legs go limp
-            return
-        self.sim.set_servo_scale()
+        self._loop.set_mode(int(mode))
         self._command()
 
     def set_gait(self, gait: Gait) -> None:
@@ -123,7 +117,7 @@ class SimBackend:
     def sleep(self, seconds: float) -> None:
         start = time.monotonic()
         for tick in range(1, round(seconds / FIRMWARE_DT) + 1):
-            self._loop.tick(actuated=self._mode in ACTUATED)
+            self._loop.tick()
             if self._viewer is not None:
                 if not self._viewer.is_running():
                     raise RobotDisconnected("the simulation viewer was closed")

@@ -6,6 +6,7 @@ All notable changes to this project are documented in this file, following [Keep
 
 ### Added
 
+- Runs the firmware's own motion code in the Python simulation: replay, the speed model and the `Robot` API's simulation backend drive MuJoCo through the virtual robot built as a native library, and `speed_model.json` is measured through it.
 - Adds a Simulation view to the hosted app: the firmware's own motion code, compiled to WebAssembly, drives the robot in MuJoCo with the training's model and servo model, loaded only when the view is opened.
 - Adds a virtual robot, the firmware's `Hexapod` built off the robot (`firmware/host/`), with native tests of the motion pipeline that pin the steering dead-man to 600 ms.
 - Adds a configuration page that saves the servo calibration and peripheral settings to a file and loads them back, refusing a foreign or half-valid file.
@@ -35,6 +36,7 @@ All notable changes to this project are documented in this file, following [Keep
 
 ### Fixed
 
+- Fixes the simulation CI job installing the CUDA 12 wheels it meant to skip, since the torch upgrade.
 - Fixes the robot model failing to load in browsers that refuse its undeclared `xacro` XML namespace.
 - Fixes the animation packer reusing a generated module made for another protobuf runtime.
 - Fixes a walk entered from STAND moving a joint up to 15.6 degrees in one tick: legs found mid-swing at the start of the cycle now replay their swing from the floor.

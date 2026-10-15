@@ -11,6 +11,8 @@ on:
       - "platform_shared/**"
       - "animations/**"
       - "firmware/include/**"
+      - "firmware/host/**"
+      - "firmware/features.ini"
       - "firmware/scripts/**"
       - ".github/workflows/simulation-tests.yml"
   pull_request:
@@ -20,6 +22,8 @@ on:
       - "platform_shared/**"
       - "animations/**"
       - "firmware/include/**"
+      - "firmware/host/**"
+      - "firmware/features.ini"
       - "firmware/scripts/**"
       - ".github/workflows/simulation-tests.yml"
 
@@ -35,6 +39,9 @@ jobs:
         working-directory: simulation
     steps:
       - uses: actions/checkout@v4
+        with:
+          # nanopb, which the virtual robot (src/sim/virtual_robot.py) compiles.
+          submodules: true
 
       - uses: astral-sh/setup-uv@v6
         with:

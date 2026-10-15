@@ -79,6 +79,7 @@ class HexapodSim:
         self.model.dof_solimp[self.qvel_adr, :2] = (0.999, 0.9999)
         self.j_eff = SERVO_J_EFF
         self.deadband = 0.0   # rad: gear-lash / PWM deadband -- no corrective torque within this of target
+        self.powered = True
         self.joint_target = self.stand_pose.copy()
         self.imu_site = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "imu")
         self.foot_site_ids = np.array(
@@ -122,6 +123,11 @@ class HexapodSim:
         mujoco.mj_forward(self.model, self.data)
         self.data.ctrl[self.act_ids] = 0.0  # motor actuators: ctrl is torque, set by the servo loop
 
+    def set_powered(self, powered: bool) -> None:
+        """A deactivated robot's PCA9685s sleep: its servos give no torque, only their gears' own friction, and the
+        servo params stay as they are for when it is powered again."""
+        self.powered = powered
+
     def set_joint_targets(self, angles_rad: np.ndarray):
         self.joint_target = np.asarray(angles_rad, dtype=np.float64).copy()
 
@@ -130,6 +136,10 @@ class HexapodSim:
         Up to +/-stall torque is available at any speed (unlike a raw DC motor's torque-speed droop);
         the servo just can't accelerate past its no-load speed. The motor cap and the gear friction split
         stall and hold as described at SERVO_K_HOLD; both scale with stall, so stall=0 is limp."""
+        if not self.powered:
+            self.model.dof_frictionloss[self.qvel_adr] = self.base_frictionloss
+            self.data.ctrl[self.act_ids] = 0.0
+            return
         q = self.data.qpos[self.qpos_adr]
         qd = self.data.qvel[self.qvel_adr]
         err = self.joint_target - q
