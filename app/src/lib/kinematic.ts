@@ -26,76 +26,45 @@ export interface HexapodConfig {
   legMountAngle: number[]
 }
 
+/** The body level and centred over the stance, with no feet. */
+export const levelBody = (): body_state_t => ({
+  omega: 0,
+  phi: 0,
+  psi: 0,
+  xm: 0,
+  ym: 0,
+  zm: 0,
+  feet: [],
+  cumulative_x: 0,
+  cumulative_y: 0,
+  cumulative_z: 0,
+  cumulative_roll: 0,
+  cumulative_pitch: 0,
+  cumulative_yaw: 0
+})
+
+/**
+ * The legs' forward kinematics, which the firmware has no counterpart of: the app draws the robot from joint angles,
+ * and the robot only solves feet into angles (Kinematics::inverseKinematics in firmware/include/kinematics.h).
+ */
 export default class Kinematics {
-  mountX: number[]
-  mountY: number[]
-  rootJ1: number
-  j1J2: number
-  j2J3: number
-  j3Tip: number
-  mountAngles: number[]
-  mountPosition: [number, number, number][]
-  ca: number[]
-  sa: number[]
+  private readonly rootJ1: number
+  private readonly j1J2: number
+  private readonly j2J3: number
+  private readonly j3Tip: number
+  private readonly mountPosition: [number, number, number][]
+  private readonly ca: number[]
+  private readonly sa: number[]
 
   constructor(config: HexapodConfig) {
-    this.mountX = config.legMountX
-    this.mountY = config.legMountY
     this.rootJ1 = config.legRootToJoint1
     this.j1J2 = config.legJoint1ToJoint2
     this.j2J3 = config.legJoint2ToJoint3
     this.j3Tip = config.legJoint3ToTip
-    this.mountAngles = config.legMountAngle.map(a => (a * Math.PI) / 180)
-    this.mountPosition = this.mountX.map((x, i) => [x, this.mountY[i], 0])
-    this.ca = this.mountAngles.map(Math.cos)
-    this.sa = this.mountAngles.map(Math.sin)
-  }
-
-  genPosture(j2: number, j3: number): [number, number, number, number][] {
-    const ext = this.rootJ1 + this.j1J2 + this.j2J3 * Math.sin(j2) + this.j3Tip * Math.cos(j3)
-    return this.mountX.map((mx, i) => {
-      const x = mx + ext * this.ca[i]
-      const y = this.mountY[i] + ext * this.sa[i]
-      const z = this.j2J3 * Math.cos(j2) - this.j3Tip * Math.sin(j3)
-      return [x, y, z, 1] as [number, number, number, number]
-    })
-  }
-
-  inverseKinematics(bodyState: body_state_t): [number, number, number][] {
-    const T = get_transformation_matrix(bodyState)
-    const angles: [number, number, number][] = []
-
-    for (let i = 0; i < bodyState.feet.length; i++) {
-      const [wx, wy, wz] = multiplyVector(T, bodyState.feet[i])
-        .slice(0, 3)
-        .map((v, idx) => v - this.mountPosition[i][idx])
-
-      const lx = wx * this.ca[i] + wy * this.sa[i]
-      const ly = wx * this.sa[i] - wy * this.ca[i]
-      const lz = wz
-
-      const dx = lx - this.rootJ1
-      const dy = ly
-      const a0 = -Math.atan2(dy, dx)
-
-      const radial = Math.hypot(dx, dy) - this.j1J2
-      const vertical = lz
-      const base = Math.atan2(vertical, radial)
-      const lr2 = radial * radial + vertical * vertical
-      const lr = Math.sqrt(lr2)
-
-      let cosA1 = (lr2 + this.j2J3 ** 2 - this.j3Tip ** 2) / (2 * this.j2J3 * lr)
-      let cosA2 = (lr2 - this.j2J3 ** 2 + this.j3Tip ** 2) / (2 * this.j3Tip * lr)
-      cosA1 = Math.max(-1, Math.min(1, cosA1))
-      cosA2 = Math.max(-1, Math.min(1, cosA2))
-
-      const a1 = Math.acos(cosA1)
-      const a2 = Math.acos(cosA2)
-
-      angles.push([a0, base + a1, -(a1 + a2)])
-    }
-
-    return angles
+    this.mountPosition = config.legMountX.map((x, i) => [x, config.legMountY[i], 0])
+    const mountAngles = config.legMountAngle.map(a => (a * Math.PI) / 180)
+    this.ca = mountAngles.map(Math.cos)
+    this.sa = mountAngles.map(Math.sin)
   }
 
   private invertTransform(T: number[][]): number[][] {
@@ -166,21 +135,7 @@ export default class Kinematics {
    * yaw over its feet leave no trace in that plane, so xm, ym and psi stay 0.
    */
   bodyOverFeet(angles: [number, number, number][], standZ: number): body_state_t {
-    const level: body_state_t = {
-      omega: 0,
-      phi: 0,
-      psi: 0,
-      xm: 0,
-      ym: 0,
-      zm: 0,
-      feet: [],
-      cumulative_x: 0,
-      cumulative_y: 0,
-      cumulative_z: 0,
-      cumulative_roll: 0,
-      cumulative_pitch: 0,
-      cumulative_yaw: 0
-    }
+    const level = levelBody()
     const feet = this.forwardKinematics(level, angles).map(([x, y, z]) => [x, y, z])
     const ground = supportingPlane(feet)
     const [nx, ny, nz] = ground.normal
