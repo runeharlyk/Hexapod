@@ -22,6 +22,9 @@ Paths are relative to `firmware/` unless they start at the repository root.
 | Servo output (two PCA9685 boards) | `include/peripherals/servo_controller.h`, `include/peripherals/drivers/pca9685.h` |
 | IMU and magnetometer | `include/peripherals/peripherals.h`, `include/peripherals/drivers/mpu6050.h`, `include/peripherals/drivers/hmc5883.h`, `include/peripherals/imu_calibration.h` |
 | Shared I2C bus | `include/peripherals/i2c_bus.h` |
+| I2C error counts and bus recovery | `include/peripherals/i2c_health.h` |
+| Servo board write backoff and restart | `include/peripherals/servo_board.h` |
+| Status LED | `include/peripherals/status_led.h`, `include/peripherals/status_led_pattern.h` |
 | Transport base and protobuf dispatch | `include/communication/comm_base.hpp`, `include/communication/proto_helpers.h` |
 | WebSocket transport | `include/communication/websocket.h`, `src/communication/websocket.cpp`, `include/communication/ws_frame.h`, `include/communication/stall_tracker.h` |
 | BLE transport (Nordic UART Service) | `include/communication/ble.h`, `src/communication/ble.cpp` |
@@ -110,6 +113,43 @@ The bus takes its lock with a bounded wait, so a busy bus fails a transfer inste
 Bus pins and frequency come from the persisted peripheral settings and are applied at boot only: re-opening a live bus would invalidate every device handle.
 The two PCA9685 servo boards (addresses 0x40 and 0x41) sit on the same bus.
 IMU calibration offsets are measured on request while the robot rests, persisted by `ImuCalibrationService`, and written to the chip at boot because it forgets them at power-off.
+
+### I2C errors and recovery
+
+The IDF 5.4 driver fails a NACK and a timeout alike, with `ESP_ERR_INVALID_STATE`, so `I2CBus` classifies each failed transfer itself (`include/peripherals/i2c_health.h`).
+A failure that left SDA or SCL low, or that spent the transfer timeout (20 ms, less one tick), counts as a timeout; any other is a NACK.
+The counts are kept per device address since boot, survive a restart of the bus, and reach the app in `AnalyticsData.i2c_errors` with `i2c_bus_recoveries`; the metrics page lists them.
+A device cut off mid-read holds SDA low until it has clocked out its byte, and the driver's own bus clear does not free it on the ESP32-S3, because the peripheral reset that follows cuts the hardware's pulses short.
+So after a failure with SDA low and SCL high the bus releases its pins, gives up to nine SCL pulses on them and a STOP, and starts again, at most once a second.
+A held SCL is clock stretching or a device without power clamping the lines, which pulses cannot free.
+
+Each PCA9685 is a `ServoBoard` with its own write backoff, so a board that stops answering neither stalls the control loop nor stops the other board's writes.
+After three failed writes in a row a board is tried every 500 ms, and on every tick again once it answers.
+A board that answers again without auto-increment in MODE1 lost power, so it is started again: asleep, prescale set, the current pose written into its channels, and woken only if the servos were active.
+A board that did not answer at boot is started the same way when it first answers.
+
+## Status LED
+
+The board's WS2812 on `WS2812_PIN` (GPIO 48) shows the motion mode and whether a client is connected.
+
+| Mode | Colour |
+| --- | --- |
+| `DEACTIVATED` | dim white |
+| `IDLE` | blue |
+| `POSE` | magenta |
+| `STAND` | green |
+| `WALK` | cyan |
+| `WALK_NN` | yellow |
+| `ANIMATE` | orange |
+
+The colour is steady while a client is connected over WebSocket, BLE or the USB serial link, and blinks once a second, half on and half off, while none is.
+A USB host counts as a client, as it does for stopping an animation when the last client goes; the ESP-NOW controller does not, since it only broadcasts.
+The mode shown is the latest `ModeMsg` REQUEST or APPLIED, the mode the app is shown.
+Red is kept out of the mode colours for the battery warning, which becomes one more input to the pattern in `include/peripherals/status_led_pattern.h` once a battery signal exists (roadmap 2.1).
+
+The service task drives the LED every 100 ms and sends a colour only when it changes, through the IDF's RMT TX driver and its bytes encoder: one RMT channel, no DMA and no LED-strip component.
+The driver's channel, queues and encoder take an estimated few hundred bytes of internal RAM (from the IDF 5.4 sources); `logHeap("status led")` logs the free internal RAM right after they are allocated.
+The LED starts first in the service task: the WS2812 keeps its colour while powered, so a later start would leave the colour from before a reset showing through the bring-up.
 
 ## Transports
 

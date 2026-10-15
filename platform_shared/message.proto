@@ -87,6 +87,15 @@ message AnalyticsData {
   float cpu0_usage = 11;
   float cpu1_usage = 12;
   float cpu_usage = 13;
+  repeated I2CDeviceErrors i2c_errors = 14;
+  uint32 i2c_bus_recoveries = 15;  // times a device holding SDA low was clocked free
+}
+
+// One I2C device's failed transfers since boot.
+message I2CDeviceErrors {
+  uint32 address = 1;
+  uint32 nacks = 2;     // failed on a free bus within the timeout: the device did not acknowledge
+  uint32 timeouts = 3;  // left a line held low, or spent the transfer's whole timeout
 }
 
 message StaticSystemInformation {

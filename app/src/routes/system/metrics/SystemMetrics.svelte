@@ -358,4 +358,25 @@
       <canvas bind:this={temperatureChartElement}></canvas>
     </div>
   </div>
+  <div class="w-full overflow-x-auto">
+    <table class="table table-sm">
+      <thead>
+        <tr>
+          <th>I<sup>2</sup>C device</th>
+          <th>NACKs</th>
+          <th>Timeouts</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each $analytics.i2c_errors as device (device.address)}
+          <tr>
+            <td>0x{device.address.toString(16).padStart(2, '0')}</td>
+            <td>{device.nacks}</td>
+            <td>{device.timeouts}</td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+    <div class="px-2 text-sm">Bus recoveries: {$analytics.i2c_bus_recoveries}</div>
+  </div>
 </SettingsCard>
