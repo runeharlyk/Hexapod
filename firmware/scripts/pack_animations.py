@@ -29,7 +29,10 @@ def generated_module(root: Path):
         return animation_pb2
     except ImportError:
         pass
-    out = root / ".pio" / "animation_proto"
+    # Generated code only loads into the protobuf runtime it was generated for, and PlatformIO's python and a
+    # system python share this cache, so each runtime version gets its own copy.
+    from google.protobuf import __version__ as protobuf_version
+    out = root / ".pio" / "animation_proto" / protobuf_version
     out.mkdir(parents=True, exist_ok=True)
     proto = root / "platform_shared" / "animation.proto"
     stamp = out / "animation_pb2.py"
