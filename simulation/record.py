@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import time
 from datetime import datetime
+from pathlib import Path
 
 import websockets
 from google.protobuf import json_format
@@ -90,6 +91,9 @@ def main() -> None:
         frames = asyncio.run(record(f"ws://{args.robot}/api/ws", out, args.seconds))
     except KeyboardInterrupt:
         frames = None
+    # The file is created only once the robot has answered, so its absence means nothing was recorded.
+    if not Path(out).exists():
+        raise SystemExit(f"no answer from the robot at {args.robot}; nothing written")
     print(f"wrote {out}" + ("" if frames is None else f" ({frames} batches)"))
 
 

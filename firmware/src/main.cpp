@@ -766,6 +766,8 @@ static void serviceLoop(void *) {
     // After BLE so the controller claims its internal DMA first; camera init is non-fatal.
 #if USE_CAMERA
     camera_service::init();
+    // A download restarts the robot when it succeeds; after a failed one the camera stays off until then.
+    ota_service::freeInternalRam = camera_service::release;
     logHeap("camera");
 #endif
 

@@ -4,6 +4,7 @@
 #include <esp_https_ota.h>
 #include <esp_crt_bundle.h>
 #include <esp_ota_ops.h>
+#include <esp_timer.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -11,6 +12,7 @@
 #include <cJSON.h>
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <atomic>
 #include <string>
@@ -36,6 +38,10 @@ namespace ota_service {
 
 inline std::atomic<bool> inProgress{false};
 
+// Frees internal RAM for the download task. Its 8 KB stack must be internal, as flash writes turn off
+// the cache PSRAM is reached through, and once the camera is up the robot has about 5 KB left.
+inline std::function<void()> freeInternalRam;
+
 // httpd_req_recv times out after the server's recv_wait_timeout (5 s by default); a client that
 // stalls for this many in a row is treated as gone instead of holding the update slot forever.
 inline constexpr int MAX_CONSECUTIVE_RECV_TIMEOUTS = 3;
@@ -51,14 +57,20 @@ inline void publish(socket_message_OtaState state, uint32_t progress, const char
 // Servos hold whatever pose they are in; walking while flashing risks a brownout mid-write.
 inline void stopMotion() { EventBus<ModeMsg>::publish({MOTION_STATE::DEACTIVATED}); }
 
-// Reboot from a detached task so the HTTP response reaches the client first.
+// Restarts the robot a moment after the reply has gone out, from a timer made at boot: a task made at
+// the end of an update found no internal RAM for its stack with the camera running, so the robot kept
+// running the old image and refused every later update as already running.
+inline esp_timer_handle_t rebootTimer = nullptr;
+
+inline void prepareReboot() {
+    esp_timer_create_args_t args = {};
+    args.callback = [](void *) { esp_restart(); };
+    args.name = "ota_reboot";
+    if (esp_timer_create(&args, &rebootTimer) != ESP_OK) rebootTimer = nullptr;
+}
+
 inline void rebootSoon() {
-    xTaskCreate(
-        [](void *) {
-            vTaskDelay(pdMS_TO_TICKS(1500));
-            esp_restart();
-        },
-        "ota_reboot", 2048, nullptr, 5, nullptr);
+    if (!rebootTimer || esp_timer_start_once(rebootTimer, 1500 * 1000) != ESP_OK) esp_restart();
 }
 
 inline esp_err_t upload(httpd_req_t *req) {
@@ -179,6 +191,10 @@ inline void downloadTask(void *arg) {
     http.crt_bundle_attach = esp_crt_bundle_attach; // GitHub release assets redirect to a second host
     http.keep_alive_enable = true;
     http.timeout_ms = 15000;
+    // GitHub answers a release asset with a redirect to a signed URL of several hundred characters,
+    // which the default 512-byte buffers can neither receive in the Location header nor send back.
+    http.buffer_size = 4096;
+    http.buffer_size_tx = 2048;
 
     esp_https_ota_config_t cfg = {};
     cfg.http_config = &http;
@@ -278,6 +294,7 @@ inline esp_err_t download(httpd_req_t *req) {
     cJSON_Delete(body);
 
     // TLS handshake plus the OTA buffers need a deep stack; 8 KB matches IDF's own OTA examples.
+    if (freeInternalRam) freeInternalRam();
     if (xTaskCreate(downloadTask, "ota_download", 8192, args, 4, nullptr) != pdPASS) {
         delete args;
         inProgress = false;
@@ -300,6 +317,7 @@ inline void confirmRunningImage() {
 }
 
 inline void registerRoutes(WebServer &server) {
+    prepareReboot();
     server.on("/api/firmware", HTTP_POST, upload);
     server.on("/api/firmware/download", HTTP_POST, download);
 }

@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixes the robot crashing after every successful firmware upload over HTTP, so the app reported a failed update that had in fact landed.
+- Fixes the robot's own download of a release, which could not start its task with the camera running, crashed before answering, and could not follow GitHub's redirect.
+- Fixes the restart after an update, which could find no memory for its task, so the robot kept the old image and refused later uploads as busy.
+- Fixes event buses whose worker task found no internal RAM at boot and then never delivered a message; the workers now run on PSRAM stacks, which leaves about 27 KB more internal RAM after the camera starts.
+
 ## [0.1.0] - 2026-10-15
 
 The first tagged release: the animation system and the ports from the SpotMicro firmware.

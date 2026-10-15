@@ -9,9 +9,12 @@
 #include <array>
 #include <optional>
 #include <atomic>
+#include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
+#include <freertos/idf_additions.h>
+#include <esp_heap_caps.h>
 
 template <typename Sig, size_t MaxSize>
 class FixedFn;
@@ -137,7 +140,14 @@ class EventBus {
         if (!taskStarted.load(std::memory_order_acquire)) {
             bool expected = false;
             if (taskStarted.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-                xTaskCreatePinnedToCore(worker, "evtbus", 4096, nullptr, 6, nullptr, 1);
+                // One worker per bus type adds up to more internal RAM than the camera leaves, so the
+                // stacks live in PSRAM. A subscriber must therefore never touch flash: the IDF asserts
+                // that a flash access does not run on an external stack.
+                if (xTaskCreatePinnedToCoreWithCaps(worker, "evtbus", 4096, nullptr, 6, nullptr, 1, MALLOC_CAP_SPIRAM) !=
+                    pdPASS) {
+                    ESP_LOGE("EventBus", "No memory for a bus worker; messages wait for the next try");
+                    taskStarted.store(false, std::memory_order_release);
+                }
             }
         }
     }

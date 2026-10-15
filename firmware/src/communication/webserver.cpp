@@ -308,7 +308,9 @@ esp_err_t WebServer::sendError(httpd_req_t* req, int status, const char* message
     return send(req, status, (uint8_t*)message, strlen(message));
 }
 
-esp_err_t WebServer::sendOk(httpd_req_t* req) { return send(req, 200, nullptr, 0); }
+// The cast picks the byte overload: a bare nullptr deduces the protobuf template (T = nullptr_t) and
+// encodes with a null descriptor, which crashed the robot on every OK it sent.
+esp_err_t WebServer::sendOk(httpd_req_t* req) { return send(req, 200, static_cast<const uint8_t*>(nullptr), 0); }
 
 static const char* statusLine(int status) {
     switch (status) {
