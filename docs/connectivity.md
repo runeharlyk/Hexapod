@@ -103,13 +103,23 @@ Revisit protocomm only if Espressif-app interop ever matters.
 
 ## Update: Chromium's Local Network Access relaxes the binding constraint
 
-Checked 2026-10-05 against the primary sources; the WebSocket part could not be confirmed as shipped.
+Checked 2026-10-05 against the primary sources; the WebSocket part re-checked 2026-10-13 and confirmed shipped in Chrome 147.
 Chromium's Local Network Access (LNA) exempts a request from mixed-content blocking when Chrome knows before resolving that it targets the local network: a private IP literal or a `.local` name ([Chrome blog](https://developer.chrome.com/blog/local-network-access)).
 Such a request asks the user for the local network permission instead, which needs a secure context, so the https Pages origin qualifies.
 A hostname that only resolves to a private address gets no exemption.
 For `fetch()` and subresources such as the camera's `<img>`, the permission prompt launched in Chrome 142.
 For WebSockets, the [Intent to Ship](https://groups.google.com/a/chromium.org/g/blink-dev/c/O6GMKt44Ups) states that "explicit local IP addresses, and `.local` domains are exempted from mixed content checks" and targets Chrome 147 (flag `local-network-access-check-websockets`).
-The thread had two of the three LGTMs when read, so whether and when it reached stable is unverified.
+The thread showed LGTM1 (2026-03-13) and LGTM2 (2026-03-18) when read on 2026-10-13; the rest of the thread was truncated in the fetch.
+It shipped in Chrome 147, stable on 2026-04-07 (all checked 2026-10-13):
+- The [Chrome 147 release notes](https://developer.chrome.com/release-notes/147) list "Local network access restrictions for WebSockets": "WebSockets connections to local addresses now trigger permission prompts."
+- The [chromestatus entry](https://chromestatus.com/feature/5197681148428288) gives the shipping milestone as 147 on desktop and Android (none for WebView or iOS), and its milestone-147 listing files the feature under "Enabled by default"; the API Owners Intent to Ship gate reads approved.
+- The entry's status field still says "Proposed" (last updated 2026-03-24), which contradicts the milestone and the release note; the release note is taken as authoritative.
+- The source at tag `147.0.7727.99` has `kLocalNetworkAccessChecks` and `kLocalNetworkAccessChecksWebSockets` both `FEATURE_ENABLED_BY_DEFAULT` (`services/network/public/cpp/features.cc`), and `MixedContentChecker::IsWebSocketAllowed` (`third_party/blink/renderer/core/loader/mixed_content_checker.cc`) skips the mixed-content block when the URL alone maps to the local or loopback address space, which `GetAddressSpaceFromUrl` grants to private IP literals and `.local` hosts.
+So from an https page in Chrome 147 or later, `new WebSocket("ws://192.168.x.y/api/ws")` is no longer blocked as mixed content; it raises the local network permission prompt and connects once the user allows it.
+A `ws://` URL whose hostname is neither a private IP literal nor `.local` is still blocked as mixed content.
+The release note does not quote the mixed-content wording itself; that part rests on the Intent to Ship and the source above.
+A server-side Finch override could still disable the feature for some users; that cannot be checked from outside.
+chromestatus lists "No signal" from Firefox and Safari, so other browsers should be assumed to block it until checked.
 Where it applies, the https app can open `ws://192.168.x.y/api/ws` and show the camera after one permission prompt, without BLE or USB.
 The app still opens the WebSocket automatically only on the robot-hosted `http:` origin (`app/src/routes/+layout.svelte`), and the firmware's origin policy (`firmware/include/communication/origin_policy.h`) already admits the Pages origin.
 In browsers without this exemption the table above still holds.
@@ -121,3 +131,5 @@ The [Chrome 147 release notes](https://developer.chrome.com/release-notes/147), 
 In Chrome 155 on the Pages origin `https://runeharlyk.github.io` with the permission granted, `ws://192.168.1.151/api/ws` opened and received the robot's greeting, and `fetch('http://192.168.1.151/api/features')` answered 200 through the firmware's CORS headers.
 The app therefore opens the WebSocket from https whenever a robot address is saved, and resolves robot URLs to `http://` on every origin.
 Firefox and Safari were not tested; a browser that refuses the socket gets an error naming Bluetooth and USB instead of endless retries.
+
+Still open: the https app could learn the robot's IP from the BLE or serial link's network status and offer to switch to WiFi, so the address need not be typed; it should say beforehand that the permission prompt is coming.

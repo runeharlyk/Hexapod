@@ -4,6 +4,34 @@ All notable changes to this project are documented in this file, following [Keep
 
 ## [Unreleased]
 
+### Added
+
+- Adds a configuration page that saves the servo calibration and peripheral settings to a file and loads them back, refusing a foreign or half-valid file.
+- Adds recording a `.hexrec` telemetry file from the metrics page, in the format `simulation/record.py` writes.
+- Adds the compass hard-iron fit: `simulation/calibrate_compass.py` fits the offset from a recording and stores it, the firmware applies it live, and the telemetry carries the raw compass reading.
+- Adds the app as an installable offline web app (manifest and service worker), not registered in the embedded build.
+- Adds `simulation/identify.py`, which fits the servo, latency and IMU terms to a recording, and `train_mj.py --dr-centre`, which re-centres the training randomization on them.
+- Adds the floor benchmark tools: `ground_truth.py` (overhead camera and ArUco markers), `score_track.py` and `measure_pwm_per_degree.py`.
+- Adds `simulation/leg_clearance.py`, which checks adjacent legs for collision over the command envelope.
+- Adds a USB serial backend to the Python `Robot` API.
+- Adds a sign-convention fixture, `platform_shared/sign_convention.json`, asserted by the firmware, simulation and app tests, and `docs/conventions.md`.
+- Adds `docs/firmware.md` (architecture) and `docs/releasing.md`.
+- Adds the release's ELF as a release asset, for decoding core dumps.
+
+### Changed
+
+- Eases the feet home over 0.5 s on a minimum-jerk path when a walk stops, and carries any remaining offset into a walk that resumes during the ease.
+- Models the simulated servo as non-back-drivable: gear friction holds well above the stall torque, while driving stays at stall.
+- Shapes both sticks with a round dead zone and an axis snap.
+- Turns the newer-release indicator into a link to the update page.
+- Splits the hosted app's bundle so each page loads its code when opened; the embedded build keeps one bundle.
+
+### Fixed
+
+- Fixes a walk entered from STAND moving a joint up to 15.6 degrees in one tick: legs found mid-swing at the start of the cycle now replay their swing from the floor.
+- Fixes the servo settings update answering 200 to an update it rejected.
+- Fixes the animation editor: a stale autosave could overwrite a newer draft, and storage failures went unreported.
+
 ## [0.1.1] - 2026-10-15
 
 Fixes found running 0.1.0 on the robot, and WiFi from the hosted app.

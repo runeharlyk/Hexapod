@@ -12,6 +12,9 @@ uv sync                 # core MuJoCo + SB3 + torch (cu126) stack, plus pytest (
 
 Run anything with `uv run`, e.g. `uv run python train_mj.py --smoke`.
 `uv run pytest -q` runs the sim-to-firmware parity tests (`test_firmware_gait_parity.py`).
+`test_gait_trace_parity.py` replays `fixtures/gait_trace.json`, the feet the firmware gait commands through a scripted stand, walk and stop session (every tick run, every third recorded), through `firmware_gait.py` and holds every coordinate within 1e-3 mm.
+That bound assumes the float32 firmware and the float64 port drift apart no further than over the fixture's 695 ticks (4.5e-4 mm measured); a law change moves the feet by millimetres.
+After a change to `gait.h`, regenerate the fixture from the repository root with `GAIT_TRACE_OUT=simulation/fixtures/gait_trace.json pio test -e native -f test_gait`.
 
 ## Workflow
 
@@ -52,6 +55,11 @@ uv run python bench_terrain.py --runs <a> <b> --baseline --curb   # how tall a s
 # 7. Export the trained actor as a dependency-free C++ header for the firmware
 uv run python export_policy.py --run <name>
 ```
+
+The firmware runs the policy exported from the run `residual_gait` with `control_mode=residual_gait` (57 observations, 24 actions).
+The first comment line of `firmware/include/policy/hexapod_policy.h` states this as `// run: <name> mode: <mode> hash: <commit>`, and the firmware build fails if the header's dimensions do not match what `PolicyRunner` assembles and applies.
+`residual_gait` lets the policy adjust the gait itself (step, lift, blend, cadence, ride height) on top of 18 foot residuals.
+`residual_pure` (18 outputs) keeps the gait fixed to the analytic command-to-gait map and learns only the foot residuals; `PolicyRunner` can drive such a header, but none is deployed.
 
 ## Rough terrain
 
@@ -190,7 +198,7 @@ The command is a body-frame velocity vector `[vx, vy]` (m/s) + yaw rate (rad/s).
   factor and the metachronal leg phasing (slew-limited, since re-timing a leg cannot be a step
   change). `residual_gait` can only interpolate tripod(duty 0.52)→bipod(0.35), so it cannot reach
   the duty ≈ 0.63–0.73 the gait search finds optimal on rough ground. Zero action = the base gait.
-- **`residual_pure`** (deploy target) — gait settings come from the analytic command→gait map
+- **`residual_pure`** — gait settings come from the analytic command→gait map
   (`analytic_gait_action`, coefficients in `resources/gait_coef.json`, tuned by `optimize_gait.py`);
   the policy outputs only 6×3 foot residuals (±20 mm) on top.
   Zero action reproduces the classical gait exactly, so train with `--zero-final --init-std 0.3`
@@ -205,6 +213,7 @@ The command is a body-frame velocity vector `[vx, vy]` (m/s) + yaw rate (rad/s).
 - `src/robot/firmware_gait.py` — NumPy port of the firmware gait + IK (the deploy target).
 - `src/resources/build_model.py` → `model.xml` — MuJoCo model (0.68 kg; legs 0.077 kg each).
 - `src/sim/mj_runtime.py` — MuJoCo runtime wrapper.
+- `docs/servo-model.md` - the non-back-drivable servo model (stall versus holding torque), its placeholder holding ratio and the bench measurement that replaces it.
 - `src/sim/domain_rand.py` - domain randomization (mass/friction/latency/IMU/pushes); servo strength is randomized by the env's `set_servo_scale`.
 - `src/sim/terrain.py` — per-episode heightfield generation (bumps/rocks/steps/waves + the `curb`
   measurement fixture). The policy has no exteroception, so terrain skill comes from the IMU,
@@ -222,6 +231,7 @@ The command is a body-frame velocity vector `[vx, vy]` (m/s) + yaw rate (rad/s).
 - `optimize_gait.py` / `export_policy.py` — tune the analytic gait map / export the actor to C++.
 - `export_gait.py` - write a `gait_library.json` entry as `firmware/include/gait_tuned.h`.
 - `test_firmware_gait_parity.py` - pytest module (and CLI) checking `gait_tuned.h` against the library and `firmware_gait.py` against the firmware headers.
+- `test_gait_trace_parity.py` - replays the firmware's tick-by-tick gait trace (`fixtures/gait_trace.json`) through `firmware_gait.py`.
 - `ik_feasibility.py` - fraction of a gait's commanded joint angles outside the servo range.
 - `servo_feasibility.py` / `servo_margin.py` - whether the real servos can run a gait, and how much torque margin it leaves.
 - `reward_alignment.py` / `reward_resolution.py` - whether the training reward ranks gaits like the benchmark, globally and near the optimum.
@@ -233,6 +243,10 @@ The command is a body-frame velocity vector `[vx, vy]` (m/s) + yaw rate (rad/s).
 - `sim_sandbox.py` - manual kinematics/gait sandbox and speed/stability tester, no RL.
 - `controller_bridge.py` - reads the ESP-NOW handheld controller over USB for the sim.
 - `lidar_slam.py` - standalone 2D LiDAR SLAM for the LD500 scanner, unrelated to the gait stack.
+- `src/hexapod/backends/serial_link.py` - the robot's native USB serial link (COBS frames, request correlation, a wait for the board to answer), shared by `Robot("COM5")` (or `Robot("/dev/ttyACM0")`) and `robot_animate.py`; a USB-tethered run needs no WiFi.
+- `calibrate_compass.py` - `calibrate_compass.py recording.hexrec [--write <address>]` fits the compass's hard-iron offset to a `record.py` recording of the robot turned through every orientation (`src/sim/compass_fit.py`).
+  The recording holds the readings before the stored offset (`TickSample.mag`), so refitting a calibrated robot gives the same offset, not zero.
+  It refuses too little coverage or a field outside Earth's 25-65 uT; `--write` stores `mag_offset_x/y/z` in the peripheral settings and keeps the I2C pins.
 
 ## Animations
 
@@ -263,3 +277,23 @@ The firmware takes sticks, not velocities, so `src/resources/speed_model.json` h
 It is the simulated robot's speed: check a distance on the floor before trusting it on the real one.
 On the real robot the input is re-sent every 200 ms inside the firmware's 600 ms dead-man, and a timed move raises if the link may have stalled past that or someone switched the robot out of WALK.
 Leaving the `with` block, also on an exception or Ctrl-C, stops the robot, lowers it onto its belly and switches the servos off.
+
+## Floor benchmark
+
+Three tools check the robot against the floor rather than against itself.
+
+```sh
+uv run python ground_truth.py course.json --write-markers markers/    # print the course's ArUco markers to size
+uv run python ground_truth.py course.json --camera 0 --out run.csv    # the body's floor track from an overhead camera (or --video run.mp4)
+uv run python score_track.py run.hexrec run.csv                       # the recording's motion against that track
+uv run python measure_pwm_per_degree.py 192.168.4.1                   # the servos' PWM counts per degree from the IMU's roll (see below)
+uv run python measure_pwm_per_degree.py simulation --sim-scale 2.28   # the same on MuJoCo servos of a known scale
+```
+
+`ground_truth.py` finds an ArUco marker on the robot's back over four floor markers at known positions, takes the marker's height out of the floor homography, and writes `t,x,y,yaw` in metres and radians in the robot's frame convention (`docs/conventions.md`: yaw 0 faces the floor's +y).
+Its docstring describes the course file; on a rendered video the track comes within 1 mm RMS (`test_ground_truth.py`).
+`score_track.py` aligns the track's clock with a `record.py` recording on the start motion (open a course with a turn in place from standing), then prints, per estimate, the distance made good, the position and yaw error, the yaw drift per metre walked and the ratio of the paths.
+The estimate is the commanded motion, each tick's sticks through the speed model in WALK; the robot reports no odometry yet, and odometry columns (`odometry_x`, `odometry_y`, `odometry_yaw`) in a recording's ticks are scored beside it when present.
+`measure_pwm_per_degree.py` sets the nominal stand height, switches the robot to IDLE and steps the six femurs through raw PWMs, left side against right, and fits the counts per degree that make the firmware's leg geometry predict the body roll each step gave; `test_measure_pwm.py` recovers a scale injected into the simulated servos within 2 %.
+On the robot it needs the real backend's roll, `servo_calibration` and `set_servo_pwm`, which are being added to `src/hexapod/backends/real.py`; until then it refuses and names what is missing.
+The operator stands the robot on a flat, level floor before running it; the script refuses a robot that is not standing still.
