@@ -16,7 +16,8 @@ from src.envs.hexapod_mj_env import HexapodMjEnv
 from src.platform_shared import message_pb2
 from src.robot.firmware_gait import TRI_GATE
 from src.sim.domain_rand import Ranges
-from src.sim.firmware_loop import FIRMWARE_DT, FirmwareLoop
+from src.sim.firmware_loop import FIRMWARE_DT
+from src.sim.virtual_robot import STAND, WALK, VirtualRobot
 from src.sim.mj_runtime import SERVO_STALL, HexapodSim
 from src.sim.recording import RecordingWriter, load
 
@@ -32,20 +33,23 @@ TRUTH = dict(stall=0.9, hold=1.1, kp=1.15, noload=1.0, deadband=0.012, lag_ms=13
 
 
 def joint_commands(stand_s: float, walk_s: float, stick) -> np.ndarray:
-    """The firmware's STAND then WALK ticks (deg, as the telemetry carries them)."""
-    sim = HexapodSim()
-    sim.reset_to_stand()
-    loop = FirmwareLoop(sim, TRI_GATE)
+    """The firmware's STAND then WALK ticks (deg, as the telemetry carries them), on a level IMU: with no physics in
+    the loop the commands are the same on every platform, where feeding back a simulated IMU would let the contacts
+    amplify each platform's floating point into a different walk."""
+    robot = VirtualRobot()
+    robot.set_gait(TRI_GATE)
+    robot.set_mode(STAND)
+    lx, ly, rx = stick
     angles = []
     for _ in range(round(stand_s / FIRMWARE_DT)):
-        loop.hold()
-        loop.tick()
-        angles.append(sim.joint_target.copy())
+        robot.tick()
+        angles.append(robot.servo_angles())
+    robot.set_mode(WALK)
     for _ in range(round(walk_s / FIRMWARE_DT)):
-        loop.walk(*stick)
-        loop.tick()
-        angles.append(sim.joint_target.copy())
-    return np.degrees(np.array(angles))
+        robot.command(lx=lx, ly=ly, rx=rx)
+        robot.tick()
+        angles.append(robot.servo_angles())
+    return np.array(angles)
 
 
 def write(path, *, stall, hold, kp, noload, deadband, lag_ms, gyro_bias, gyro_noise, rpy_noise_deg, gravity_noise,
@@ -104,7 +108,7 @@ def write(path, *, stall, hold, kp, noload, deadband, lag_ms, gyro_bias, gyro_no
 @pytest.fixture(scope="module")
 def walk(tmp_path_factory):
     path = tmp_path_factory.mktemp("identify") / "walk.hexrec"
-    write(path, **TRUTH, stand_s=2.0, walk_s=6.0)
+    write(path, **TRUTH, stand_s=2.0, walk_s=10.0)
     return path, identify.identify(load(path))
 
 
