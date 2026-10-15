@@ -48,3 +48,4 @@ No version has been tagged yet; everything so far is unreleased.
 - Fixes the file API reading and writing the settings under `/config`, which exposed the stored WiFi and access point passwords and bypassed the settings checks.
 - Fixes WebSocket pings going unanswered and close frames going unechoed, which made clients disable their keep-alive and wait out their close timeout.
 - Fixes the I2C transfer timeout being given in ticks where the driver takes milliseconds.
+- Fixes a stance foot on a diagonal stride jumping by the whole stance depth at lift-off, as its press was measured along x + y instead of along the stroke.
