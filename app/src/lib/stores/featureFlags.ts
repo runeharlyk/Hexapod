@@ -1,6 +1,7 @@
 import { api } from '$lib/api'
 import { dataBroker } from '$lib/transport/databroker'
-import { writable, type Writable } from 'svelte/store'
+import { get, writable, type Writable } from 'svelte/store'
+import { canReachRobot, location } from './location-store'
 
 export interface Features {
   firmware_name: string
@@ -77,8 +78,8 @@ let loading = false
 
 const fetchFeatures = () =>
   requestFeatures().catch(error => {
-    // The robot-hosted http page can still ask the webserver when the link is not up yet.
-    if (window.location.protocol !== 'http:') throw error
+    // A page that can reach the robot can still ask its webserver when the link is not up yet.
+    if (!canReachRobot(new URL(window.location.href), get(location))) throw error
     return fetchFeaturesOverHttp()
   })
 

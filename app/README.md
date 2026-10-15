@@ -32,4 +32,5 @@ It needs a python with `grpcio-tools` on PATH.
 ## Transports
 
 Which transport a page can use depends on its origin: an https page gets Bluetooth and USB but no WebSocket or camera, while the robot-hosted http page gets WebSocket and camera but neither Bluetooth nor USB, since both need a secure context.
+Chromium 147 and later lift this for a saved robot address: after the local network permission, the https page gets WebSocket and camera too.
 See `../docs/connectivity.md` for the full matrix and the reasoning behind it.
