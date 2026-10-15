@@ -44,6 +44,8 @@ export { default as BluetoothConnected } from '~icons/mdi/bluetooth-connected'
 export { default as BluetoothDisconnected } from '~icons/mdi/bluetooth-disabled'
 
 export { default as FileIcon } from '~icons/mdi/file'
+export { default as DownloadIcon } from '~icons/mdi/download'
+export { default as UploadIcon } from '~icons/mdi/upload'
 export { default as FolderIcon } from '~icons/mdi/folder-outline'
 export { default as FolderOpenOutline } from '~icons/mdi/folder-open-outline'
 export { default as TrashIcon } from '~icons/mdi/trash'
