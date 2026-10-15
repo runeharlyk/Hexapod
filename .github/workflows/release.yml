@@ -10,6 +10,8 @@ permissions:
 jobs:
   firmware:
     uses: ./.github/workflows/embedded-build.yml
+    with:
+      elf: true
 
   release:
     needs: firmware
@@ -24,19 +26,26 @@ jobs:
           name: firmware-esp32-wroom-camera
           path: firmware
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: elf-esp32-wroom-camera
+          path: elf
+
       # The factory image (bootloader + partitions + app at offset 0) is for the web flasher;
       # the plain app image is what an OTA update writes into the inactive app slot.
-      - name: Collect the factory and app images
+      # The ELF decodes a core dump the robot kept (docs/firmware.md); deploy.yml takes only the factory image.
+      - name: Collect the factory and app images, and the ELF
         run: |
           mkdir release
           cp firmware/firmware.factory.bin release/esp32-wroom-camera.factory.bin
           cp firmware/firmware.bin release/esp32-wroom-camera.bin
+          cp elf/firmware.elf release/esp32-wroom-camera.elf
           ls -l release
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" release/*.bin --repo "${{ github.repository }}" --generate-notes
+        run: gh release create "${{ github.ref_name }}" release/*.bin release/*.elf --repo "${{ github.repository }}" --generate-notes
 
       # The github-pages environment only accepts deployments from main, so the flasher is
       # refreshed by re-running the Pages workflow there rather than deploying from the tag.
