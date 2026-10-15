@@ -2,3 +2,6 @@
 pnpm-lock.yaml
 package-lock.json
 yarn.lock
+
+# Written by simulation/scripts/make_servo_fixture.py
+tests/unit/fixtures/servo_model.json

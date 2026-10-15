@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file, following [Keep
 
 ### Added
 
+- Adds a Simulation view to the hosted app: the firmware's own motion code, compiled to WebAssembly, drives the robot in MuJoCo with the training's model and servo model, loaded only when the view is opened.
+- Adds a virtual robot, the firmware's `Hexapod` built off the robot (`firmware/host/`), with native tests of the motion pipeline that pin the steering dead-man to 600 ms.
 - Adds a configuration page that saves the servo calibration and peripheral settings to a file and loads them back, refusing a foreign or half-valid file.
 - Adds recording a `.hexrec` telemetry file from the metrics page, in the format `simulation/record.py` writes.
 - Adds the compass hard-iron fit: `simulation/calibrate_compass.py` fits the offset from a recording and stores it, the firmware applies it live, and the telemetry carries the raw compass reading.
@@ -33,6 +35,8 @@ All notable changes to this project are documented in this file, following [Keep
 
 ### Fixed
 
+- Fixes the robot model failing to load in browsers that refuse its undeclared `xacro` XML namespace.
+- Fixes the animation packer reusing a generated module made for another protobuf runtime.
 - Fixes a walk entered from STAND moving a joint up to 15.6 degrees in one tick: legs found mid-swing at the start of the cycle now replay their swing from the floor.
 - Fixes the servo settings update answering 200 to an update it rejected, and the servo page reporting such an update as saved.
 - Fixes the animation editor: a stale autosave could overwrite a newer draft, and storage failures went unreported.

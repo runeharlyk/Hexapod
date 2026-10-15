@@ -20,3 +20,7 @@ scripts/ts-proto-plugin.sh
 
 # Type declarations written by @niku/vite-env-caster on every dev and build run
 env.d.ts
+
+# The virtual robot, built by scripts/build_virtual_robot.js; only its type declarations are sources
+src/lib/simulation/virtual-robot/*
+!src/lib/simulation/virtual-robot/virtual_robot.d.mts

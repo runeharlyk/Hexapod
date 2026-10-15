@@ -15,6 +15,9 @@ importers:
       '@bufbuild/protobuf':
         specifier: ^2.16.0
         version: 2.16.0
+      '@mujoco/mujoco':
+        specifier: 3.14.0
+        version: 3.14.0
       chart.js:
         specifier: ^4.5.1
         version: 4.5.1
@@ -406,6 +409,9 @@ packages:
 
   '@kurkle/color@0.3.4':
     resolution: {integrity: sha512-M5UknZPHRu3DEDWoipU6sE8PdkZ6Z/S+v4dD+Ke8IaNlpdSQah50lz1KtcFBa2vsdOnwbbnxJwVM4wty6udA5w==}
+
+  '@mujoco/mujoco@3.14.0':
+    resolution: {integrity: sha512-WPUYidu4Fx8+uM4hQv80SOA0ifpWGrsNJguKs8JBV8SCTxjKQ2/rqsh880nUH0/Vwa8vuefghvCQkkoed3bkUg==}
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     resolution: {integrity: sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ==}
@@ -2339,6 +2345,8 @@ snapshots:
       type-detect: 4.1.0
 
   '@kurkle/color@0.3.4': {}
+
+  '@mujoco/mujoco@3.14.0': {}
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true

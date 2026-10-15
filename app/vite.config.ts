@@ -19,8 +19,9 @@ export default defineConfig({
     EnvCaster()
   ],
   server: {
-    // The root animations/ directory is imported by src/lib/animation/library.ts.
-    fs: { allow: ['../animations'] },
+    // The root animations/ directory is imported by src/lib/animation/library.ts, and the simulation's MuJoCo
+    // model by src/lib/simulation/load.ts.
+    fs: { allow: ['../animations', '../simulation/src/resources'] },
     proxy: {
       '/api': {
         target: 'http://192.168.0.221',

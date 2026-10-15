@@ -1,9 +1,10 @@
+import appEnv from 'app-env'
 import { persistentStore } from '$lib/utilities'
 import { get, type Writable } from 'svelte/store'
 
 export interface WidgetConfig {
   id: string | number
-  component: 'Visualization' | 'Stream'
+  component: 'Visualization' | 'Stream' | 'Simulation'
 }
 
 export interface WidgetContainerConfig {
@@ -48,11 +49,20 @@ const defaultViews: View[] = [
         { id: 2, component: 'Visualization' }
       ]
     }
-  }
+  },
+  // The robot-hosted build leaves the simulation out: the physics engine alone is 10 MB.
+  ...(appEnv.VITE_USE_HOST_NAME ?
+    []
+  : [
+      {
+        name: 'Simulation',
+        content: { id: 'root', layout: 'column', widgets: [{ id: 2, component: 'Simulation' }] }
+      } satisfies View
+    ])
 ]
 
 // Bump the version whenever defaultViews changes shape, so stored layouts do not shadow it.
-const VIEWS_KEY = 'views_v2'
+const VIEWS_KEY = 'views_v3'
 
 export const views: Writable<View[]> = persistentStore(VIEWS_KEY, defaultViews)
 

@@ -260,3 +260,11 @@ The release workflow publishes that image, and the GitHub Pages site serves it t
 
 Header-only logic (gait, mode arbiter, animation, serial framing, OTA session, telemetry ring, origin policy and others) is unit-tested on the host with Unity in the `native` environment: one suite per directory in `test/test_<name>/`, fakes in `test/fakes/`.
 Run them with `pio test -e native`; the suites need a C++20 host compiler.
+
+## Virtual robot
+
+`firmware/host/virtual_robot.h` runs the firmware's own `Hexapod` off the robot: the real `MotionService`, gait, kinematics, policy and animation runner, built against host stand-ins in `firmware/host/` for the clock, logging, FreeRTOS, the EventBus, `Peripherals` and `ServoController`.
+The EventBus stand-in queues each publish with the real queue depth and delivers on `host_bus::drainAll()`, and a tick is one pass of `main.cpp`'s 5 ms control loop.
+`test/test_virtual_robot/` exercises the motion pipeline through it natively, the steering dead-man's 600 ms among it.
+`firmware/host/wasm_api.cpp` exposes it as a C interface, which `app/scripts/build_virtual_robot.js` compiles with Emscripten (`pnpm virtual-robot`) for the app's simulation view, with the flags in `features.ini` and the packed animations embedded.
+Anything the motion code includes must therefore build against `firmware/host/` as well: a new ESP-IDF header in that path needs a stand-in there.

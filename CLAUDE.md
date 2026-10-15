@@ -39,6 +39,7 @@ pnpm install
 pnpm dev                # vite dev server (--host)
 pnpm build              # production build -> app/build (used for GitHub Pages deploy)
 pnpm build:embedded     # build with VITE_USE_HOST_NAME=true (for embedding into firmware)
+pnpm virtual-robot      # compile the firmware's motion code to WebAssembly for the simulation view (needs Emscripten; also run by dev/build)
 pnpm check              # svelte-check type checking
 pnpm lint               # prettier --check + eslint
 pnpm format             # prettier --write

@@ -1,0 +1,146 @@
+// The firmware's Hexapod run off the robot (firmware/host/virtual_robot.h): commands reach the motion
+// through its own EventBus subscriptions, and the clock is the control loop's 5 ms tick.
+
+#define USE_POLICY 1
+#define USE_MPU6050 1
+
+#include <unity.h>
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <vector>
+#include <virtual_robot.h>
+
+namespace {
+
+constexpr int TICKS_PER_SECOND = 200;
+constexpr int COMMAND_PERIOD_TICKS = 4;  // the app's 20 ms stick period
+constexpr float STEPPING_DEG_PER_TICK = 0.05f;
+
+int ticksFor(float seconds) { return static_cast<int>(std::lround(seconds * TICKS_PER_SECOND)); }
+
+// The largest joint step over the ticks run, in degrees: what a moving gait produces and a resting one does not.
+float largestStep(VirtualRobot &robot, int ticks, const CommandMsg *heartbeat = nullptr) {
+    float previous[18];
+    std::copy_n(robot.angles(), 18, previous);
+    float largest = 0.0f;
+    for (int t = 0; t < ticks; ++t) {
+        if (heartbeat && t % COMMAND_PERIOD_TICKS == 0) robot.command(*heartbeat);
+        robot.tick();
+        for (int j = 0; j < 18; ++j) largest = std::max(largest, std::fabs(robot.angles()[j] - previous[j]));
+        std::copy_n(robot.angles(), 18, previous);
+    }
+    return largest;
+}
+
+void standUp(VirtualRobot &robot) {
+    robot.setMode(MOTION_STATE::STAND);
+    largestStep(robot, ticksFor(1.0f));
+}
+
+const CommandMsg FORWARD{0, 1, 0, 0, 0, 0, 0, 0};
+
+}  // namespace
+
+void setUp() {}
+void tearDown() {}
+
+void test_a_new_robot_is_deactivated() {
+    VirtualRobot robot;
+    robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, robot.mode());
+}
+
+void test_a_mode_request_reaches_the_motion_through_the_bus() {
+    VirtualRobot robot;
+    robot.setMode(MOTION_STATE::STAND);
+    robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, robot.mode());
+}
+
+void test_a_standing_robot_holds_still() {
+    VirtualRobot robot;
+    standUp(robot);
+    TEST_ASSERT_LESS_THAN_FLOAT(1e-3f, largestStep(robot, ticksFor(0.5f)));
+}
+
+void test_a_stick_held_in_walk_steps_the_legs() {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setMode(MOTION_STATE::WALK);
+    TEST_ASSERT_GREATER_THAN_FLOAT(STEPPING_DEG_PER_TICK, largestStep(robot, ticksFor(1.0f), &FORWARD));
+    TEST_ASSERT_EQUAL(MOTION_STATE::WALK, robot.mode());
+}
+
+// Joint angles per tick of a walk whose heartbeat stops at `cut` ticks, or never when `cut` is negative.
+std::vector<std::array<float, 18>> walkWithHeartbeatUntil(int cut, int ticks) {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setMode(MOTION_STATE::WALK);
+    std::vector<std::array<float, 18>> trace;
+    for (int t = 0; t < ticks; ++t) {
+        if ((cut < 0 || t < cut) && t % COMMAND_PERIOD_TICKS == 0) robot.command(FORWARD);
+        robot.tick();
+        std::array<float, 18> angles;
+        std::copy_n(robot.angles(), 18, angles.begin());
+        trace.push_back(angles);
+    }
+    return trace;
+}
+
+// The steering dead-man (motion.h STEERING_TIMEOUT_MS): a walk whose commands stop moves exactly as one
+// that still hears them until 600 ms after the last command, and departs from it right after.
+void test_a_walk_obeys_its_last_command_for_600_ms_and_no_longer() {
+    const int lastCommand = ticksFor(1.0f);
+    const int cut = lastCommand + 1;
+    const std::vector<std::array<float, 18>> heard = walkWithHeartbeatUntil(-1, ticksFor(2.0f));
+    const std::vector<std::array<float, 18>> cutOff = walkWithHeartbeatUntil(cut, ticksFor(2.0f));
+    size_t departed = heard.size();
+    for (size_t t = 0; t < heard.size() && departed == heard.size(); ++t) {
+        if (heard[t] != cutOff[t]) departed = t;
+    }
+    const float msAfterLastCommand = (departed - lastCommand) * 1000.0f / TICKS_PER_SECOND;
+    TEST_ASSERT_FLOAT_WITHIN(5.0f, 600.0f, msAfterLastCommand);
+}
+
+void test_a_walk_without_commands_comes_to_rest() {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setMode(MOTION_STATE::WALK);
+    largestStep(robot, ticksFor(1.0f), &FORWARD);
+    largestStep(robot, ticksFor(0.6f + 1.1f));  // the timeout, then the ramp's settle and the feet's ease
+    TEST_ASSERT_LESS_THAN_FLOAT(1e-3f, largestStep(robot, ticksFor(0.5f)));
+    TEST_ASSERT_EQUAL(MOTION_STATE::WALK, robot.mode());
+}
+
+void test_deactivating_mid_walk_freezes_the_joints() {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setMode(MOTION_STATE::WALK);
+    largestStep(robot, ticksFor(0.5f), &FORWARD);
+    robot.setMode(MOTION_STATE::DEACTIVATED);
+    robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, robot.mode());
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, largestStep(robot, ticksFor(0.5f), &FORWARD));
+}
+
+void test_a_gait_selected_while_standing_is_applied() {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setGait(GaitType::BI_GATE);
+    robot.tick();
+    TEST_ASSERT_EQUAL(GaitType::BI_GATE, robot.gait());
+}
+
+int main(int, char **) {
+    UNITY_BEGIN();
+    RUN_TEST(test_a_new_robot_is_deactivated);
+    RUN_TEST(test_a_mode_request_reaches_the_motion_through_the_bus);
+    RUN_TEST(test_a_standing_robot_holds_still);
+    RUN_TEST(test_a_stick_held_in_walk_steps_the_legs);
+    RUN_TEST(test_a_walk_obeys_its_last_command_for_600_ms_and_no_longer);
+    RUN_TEST(test_a_walk_without_commands_comes_to_rest);
+    RUN_TEST(test_deactivating_mid_walk_freezes_the_joints);
+    RUN_TEST(test_a_gait_selected_while_standing_is_applied);
+    return UNITY_END();
+}
