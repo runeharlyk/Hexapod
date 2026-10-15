@@ -55,6 +55,12 @@ inline bool init() {
     return true;
 }
 
+// Gives back the camera's internal DMA buffer, the largest block of internal RAM the robot holds, to
+// work that needs it more; the handlers below find no frame and no sensor afterwards and say so.
+inline void release() {
+    if (esp_camera_deinit() == ESP_OK) ESP_LOGI(TAG, "Camera released");
+}
+
 #define CAMERA_STREAM_BOUNDARY "hexapodframe"
 
 inline esp_err_t stream(httpd_req_t *req) {

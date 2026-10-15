@@ -11,6 +11,7 @@
 #include <cJSON.h>
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <atomic>
 #include <string>
@@ -35,6 +36,10 @@
 namespace ota_service {
 
 inline std::atomic<bool> inProgress{false};
+
+// Frees internal RAM for the download task. Its 8 KB stack must be internal, as flash writes turn off
+// the cache PSRAM is reached through, and once the camera is up the robot has about 5 KB left.
+inline std::function<void()> freeInternalRam;
 
 // httpd_req_recv times out after the server's recv_wait_timeout (5 s by default); a client that
 // stalls for this many in a row is treated as gone instead of holding the update slot forever.
@@ -278,6 +283,7 @@ inline esp_err_t download(httpd_req_t *req) {
     cJSON_Delete(body);
 
     // TLS handshake plus the OTA buffers need a deep stack; 8 KB matches IDF's own OTA examples.
+    if (freeInternalRam) freeInternalRam();
     if (xTaskCreate(downloadTask, "ota_download", 8192, args, 4, nullptr) != pdPASS) {
         delete args;
         inProgress = false;
