@@ -307,6 +307,20 @@ def test_connecting_subscribes_sets_the_gait_and_reads_the_imu(robot, fake):
     assert state.yaw == pytest.approx(-math.degrees(0.3))  # the DMP yaw is clockwise-positive
 
 
+# The firmware answers pings (ws_frame.h), so the client keeps websockets' keep-alive, which finds a link that died
+# without a close frame, such as a robot that lost power, even while nothing else is sent.
+def test_the_websocket_link_keeps_its_keep_alive(fake):
+    async def opened_interval():
+        link = real.WebSocketTransport(f"127.0.0.1:{fake.ws_port}")
+        await link.open()
+        try:
+            return link._socket.ping_interval
+        finally:
+            await link.close()
+
+    assert asyncio.run(opened_interval()) is not None
+
+
 def test_a_robot_without_an_imu_has_no_yaw(transport, monkeypatch):
     fake = FakeRobot(imu=False)
     try:
