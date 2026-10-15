@@ -40,5 +40,6 @@ Later the same day, same image, servo power on and the robot lying flat on the b
 | No servo moves when the board resets while deactivated | UART reset, observed | pass |
 | IMU calibration on a robot lying still | WebSocket `imu_calibrate` | pass: status 200; gyro bias at rest from (-0.121, -0.022, -0.022) to (-0.002, -0.001, -0.001) rad/s |
 | Calibration kept across a reboot | UART console, WebSocket | pass: `MPU6050 calibration applied` at boot, bias (-0.003, -0.001, -0.001) rad/s after it |
+| Rollback from an image that crashes at boot | WebSocket update, UART console | pass: an image calling `abort()` first in `app_main` (built for the test, not committed) was accepted and selected, booted from `app0`, aborted, and the bootloader went back to `app1`; the robot then reported the previous ELF hash `2f877aeb6ee3` |
 
-Not yet run on hardware: OTA over BLE and USB, a deliberate rollback, the 600 ms steering dead-man, a reset while the servos hold a pose, WiFi network cycling, USB setup, and the stick direction on the floor.
+Not yet run on hardware: OTA over BLE and USB, the 600 ms steering dead-man, a reset while the servos hold a pose, WiFi network cycling, USB setup, and the stick direction on the floor.
