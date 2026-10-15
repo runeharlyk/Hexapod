@@ -64,7 +64,7 @@ for (const script of ['compile_protos.py', 'pack_animations.py']) {
 
 const generated = path.join('firmware', 'src', 'platform_shared')
 const sources = [
-  'firmware/host/wasm_api.cpp',
+  'firmware/host/virtual_robot_api.cpp',
   'firmware/host/filesystem_host.cpp',
   ...['pb_common.c', 'pb_decode.c', 'pb_encode.c'].map(f => path.join('submodules', 'nanopb', f)),
   ...['animation.pb.c', 'api.pb.c', 'message.pb.c'].map(f => path.join(generated, f))

@@ -1,4 +1,4 @@
-// The Emscripten module scripts/build_virtual_robot.js writes beside this file (firmware/host/wasm_api.cpp).
+// The Emscripten module scripts/build_virtual_robot.js writes beside this file (firmware/host/virtual_robot_api.cpp).
 export interface VirtualRobotModule {
   HEAPF32: Float32Array
   _reset(): void
@@ -16,9 +16,8 @@ export interface VirtualRobotModule {
   ): void
   _setImu(...values: number[]): void
   _tick(): void
-  _angles(): number
-  _mode(): number
-  _gait(): number
+  _servosDriven(): number
+  _servoAngles(): number
 }
 
 export default function createVirtualRobot(): Promise<VirtualRobotModule>

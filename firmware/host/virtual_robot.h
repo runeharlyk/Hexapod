@@ -14,6 +14,7 @@ class VirtualRobot {
     static constexpr int64_t TICK_US = 5000;
 
     VirtualRobot() {
+        ServoController::reset();
         _robot.initialize();
         host_bus::drainAll();
     }
@@ -46,6 +47,12 @@ class VirtualRobot {
     // The joint angles the motion produced on the last tick, in degrees, three per leg in leg order.
     const float *angles() const { return _sample.angles; }
     MOTION_STATE mode() const { return static_cast<MOTION_STATE>(_sample.mode); }
+
+    // What the servos receive: they are driven once the boards are awake and a pose has been sent, to the last pose.
+    // The count of poses sent tells a tick that wrote one from a tick that left the servos where they were.
+    bool servosDriven() const { return ServoController::output().awake && ServoController::output().writes > 0; }
+    const float *servoAngles() const { return ServoController::output().angles; }
+    unsigned servoWrites() const { return ServoController::output().writes; }
     GaitType gait() const { return static_cast<GaitType>(_sample.gait); }
 
   private:

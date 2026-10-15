@@ -13,7 +13,6 @@ export const JOINTS = [0, 1, 2, 3, 4, 5].flatMap(leg =>
 
 /** The most simulated time one call may advance, so a tab returning from the background resumes instead of replaying. */
 export const MAX_FRAME_SECONDS = 0.05
-const DEACTIVATED = 0
 const FALLEN_TILT_COS = Math.cos((60 * Math.PI) / 180)
 const DEG = Math.PI / 180
 
@@ -85,10 +84,10 @@ export class HexapodSim {
   tick() {
     this.robot.setImu(this.imu())
     this.robot.tick()
-    const angles = this.robot.angles()
+    const powered = this.robot.servosDriven()
+    const angles = this.robot.servoAngles()
     for (let i = 0; i < 18; i++) this.targets[i] = angles[i] * DEG
     this.ticks++
-    const powered = this.robot.mode() !== DEACTIVATED
     const due = Math.round((this.ticks * TICK_SECONDS) / this.model.opt.timestep)
     for (; this.steps < due; this.steps++) {
       this.applyServos(powered)
