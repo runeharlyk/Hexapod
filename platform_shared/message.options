@@ -10,4 +10,24 @@ socket_message.StaticSystemInformation.sdk_version max_size:16
 socket_message.StaticSystemInformation.cpu_reset_reason max_size:24
 socket_message.FeaturesDataResponse.firmware_name max_size:32
 socket_message.FeaturesDataResponse.firmware_version max_size:16
+socket_message.FeaturesDataResponse.firmware_elf_sha256 max_size:65
+socket_message.ImuCalibration.accel_offsets max_count:3
+socket_message.ImuCalibration.gyro_offsets max_count:3
+socket_message.OtaChunk.data max_size:512
+# Five ticks keep a TelemetryBatch near the size of the largest Message member already there.
+socket_message.TelemetryBatch.ticks max_count:5
+socket_message.TickSample.rpy max_count:3 fixed_count:true
+socket_message.TickSample.gyro max_count:3 fixed_count:true
+socket_message.TickSample.gravity max_count:3 fixed_count:true
+socket_message.TickSample.angles max_count:18 fixed_count:true
+socket_message.TickSample.command max_count:8 fixed_count:true
+socket_message.CorrelationResponse.error_message max_size:64
 socket_message.OtaStatusData.error max_size:48
+socket_message.AnimationPlay.name max_size:33
+socket_message.AnimationPlay.params max_count:10
+socket_message.PoseData.legs max_count:6
+socket_message.AnimationStatus.name max_size:33
+socket_message.AnimationValidate.name max_size:33
+socket_message.AnimationReport.error max_size:96
+socket_message.AnimationList.entries max_count:32
+socket_message.AnimationEntry.name max_size:33

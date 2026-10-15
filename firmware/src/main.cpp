@@ -8,6 +8,7 @@
 #include <esp_flash.h>
 #include <esp_sleep.h>
 #include <esp_littlefs.h>
+#include <esp_app_desc.h>
 #include <driver/temperature_sensor.h>
 #include <nvs_flash.h>
 #include <dirent.h>
@@ -26,6 +27,9 @@
 #include <communication/espnow_adapter.h>
 #include <ota_service.h>
 #include <peripherals_settings_service.h>
+#include <imu_calibration_service.h>
+#include <ota_flash.h>
+#include <telemetry/telemetry.h>
 #include <filesystem.h>
 #include <wifi/wifi_idf.h>
 #include <wifi_service.h>
@@ -44,6 +48,9 @@
 #include <event_bus.h>
 #include <message_types.h>
 #include <platform_shared/message.pb.h>
+#include <animation/animation.h>
+#include <animation/animation_store.h>
+#include <file_transfer.h>
 
 static const char *TAG = "main";
 
@@ -61,6 +68,12 @@ APService apService;
 MDNSService mdnsService;
 ServoSettingsService servoSettingsService;
 PeripheralSettingsService peripheralSettingsService;
+ImuCalibrationService imuCalibrationService;
+EspOtaFlash otaFlash;
+// Some 24 KB: above CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL, so the allocation lands in PSRAM and the
+// scarce internal RAM stays with WiFi, BLE and the camera.
+Telemetry *telemetry = new Telemetry();
+OtaSession otaSession{otaFlash, ota_service::inProgress};
 Websocket wsSocket{server, "/api/ws"};
 BLE bleAdapter;
 #if FT_ENABLED(USE_SERIAL_LINK)
@@ -106,6 +119,18 @@ static const char *resetReasonName(esp_reset_reason_t reason) {
         case ESP_RST_CPU_LOCKUP: return "CPU lockup";
         default: return "unknown";
     }
+}
+
+// The full 32-byte hash from the app descriptor; esp_app_get_elf_sha256() would cut it to
+// CONFIG_APP_RETRIEVE_LEN_ELF_SHA digits. Writes 64 hex digits and a terminator.
+static void runningElfSha256(char out[65]) {
+    const uint8_t *sha = esp_app_get_description()->app_elf_sha256;
+    for (int i = 0; i < 32; i++) snprintf(out + 2 * i, 3, "%02x", sha[i]);
+}
+
+static void replyOta(socket_message_CorrelationResponse &res, const OtaReply &reply) {
+    res.status_code = reply.status;
+    strncpy(res.error_message, reply.reason, sizeof(res.error_message) - 1);
 }
 
 static void fillAnalytics(socket_message_AnalyticsData &a) {
@@ -174,6 +199,7 @@ static void snapshot(StatefulService<T> &service, T &out) {
 // one" (WiFiSettings_update / APSettings_update), so a client can round-trip these unchanged.
 static void redactedWifiSettings(api_WifiSettings &out) {
     snapshot(wifiService, out);
+    out.applied_secret = 0;  // a hash of the secret password; it stays on the robot
     for (pb_size_t i = 0; i < out.wifi_networks_count; i++) {
         memset(out.wifi_networks[i].password, 0, sizeof(out.wifi_networks[i].password));
     }
@@ -198,8 +224,11 @@ static void registerHandlers(CommAdapterBase &c) {
         if (cmd.sanitize()) EventBus<CommandMsg>::publish(cmd);
     });
     c.on<socket_message_ModeData>([](const socket_message_ModeData &m, int) {
-        if ((int)m.mode < 0 || (int)m.mode > (int)socket_message_ModesEnum_WALK_NN) return;
+        if ((int)m.mode < 0 || (int)m.mode > (int)socket_message_ModesEnum_ANIMATE) return;
         if (!FT_ENABLED(USE_POLICY) && m.mode == socket_message_ModesEnum_WALK_NN) return;
+        // The robot stays deactivated while a new firmware is written: a brownout mid-write would
+        // corrupt the update.
+        if (ota_service::inProgress) return;
         EventBus<ModeMsg>::publish({static_cast<MOTION_STATE>(m.mode)});
     });
     c.on<socket_message_GaitData>([](const socket_message_GaitData &g, int) {
@@ -211,6 +240,37 @@ static void registerHandlers(CommAdapterBase &c) {
     });
     c.on<socket_message_ServoStateData>(
         [](const socket_message_ServoStateData &s, int) { EventBus<ServoStateMsg>::publish({s.active}); });
+    c.on<socket_message_AnimationPlay>([](const socket_message_AnimationPlay &p, int) {
+        if (!anim::validName(p.name)) return;
+        AnimationCommandMsg cmd {};
+        strncpy(cmd.name, p.name, sizeof(cmd.name) - 1);
+        cmd.paramCount = p.params_count < 10 ? p.params_count : 10;
+        for (int i = 0; i < cmd.paramCount; ++i) {
+            if (!std::isfinite(p.params[i].value)) return;
+            cmd.params[i] = {(int)p.params[i].id, p.params[i].value};
+        }
+        robot.animationPlay(cmd);
+    });
+    c.on<socket_message_AnimationStop>([](const socket_message_AnimationStop &, int) { robot.animationStop(); });
+    c.on<socket_message_PoseData>([](const socket_message_PoseData &p, int) {
+        if (p.legs_count != 0 && p.legs_count != 6) return;
+        PoseMsg pose {};
+        const float body[6] = {p.body.roll, p.body.pitch, p.body.yaw, p.body.x, p.body.y, p.body.z};
+        for (int a = 0; a < 6; ++a) {
+            if (!std::isfinite(body[a])) return;
+            pose.body[a] = body[a];
+        }
+        for (int i = 0; i < (int)p.legs_count; ++i) {
+            const animation_LegTarget &lt = p.legs[i];
+            pose.joints[i] = lt.which_target == animation_LegTarget_joints_tag;
+            const float *v = pose.joints[i] ? &lt.target.joints.coxa : &lt.target.foot.x;
+            for (int k = 0; k < 3; ++k) {
+                if (!std::isfinite(v[k])) return;
+                pose.legs[i][k] = v[k];
+            }
+        }
+        robot.animationPose(pose);
+    });
 
     c.on<socket_message_SystemCommandData>([](const socket_message_SystemCommandData &cmd, int) {
         switch (cmd.command) {
@@ -246,8 +306,9 @@ static void registerHandlers(CommAdapterBase &c) {
                 auto &f = res.response.features_data_response;
                 strncpy(f.firmware_name, APP_NAME, sizeof(f.firmware_name) - 1);
                 strncpy(f.firmware_version, APP_VERSION, sizeof(f.firmware_version) - 1);
+                runningElfSha256(f.firmware_elf_sha256);
                 f.camera = USE_CAMERA;
-                f.imu = USE_MPU6050;
+                f.imu = robot.imuPresent();
                 f.mag = robot.magnetometerPresent();
                 f.servo = true;
                 f.mdns = USE_MDNS;
@@ -279,7 +340,13 @@ static void registerHandlers(CommAdapterBase &c) {
             }
             case socket_message_CorrelationRequest_wifi_settings_update_tag: {
                 StateUpdateResult r = wifiService.update(
-                    [&req](WiFiSettings &s) { return WiFiSettings_update(req.request.wifi_settings_update, s); },
+                    [&req](WiFiSettings &s) {
+                        // The app never holds the merge fingerprint; keep it, or a network deleted in
+                        // the app would come back from secrets.h at the next boot.
+                        WiFiSettings incoming = req.request.wifi_settings_update;
+                        incoming.applied_secret = s.applied_secret;
+                        return WiFiSettings_update(incoming, s);
+                    },
                     "correlation");
                 if (r == StateUpdateResult::ERROR) res.status_code = 400;
                 res.which_response = socket_message_CorrelationResponse_wifi_settings_tag;
@@ -359,6 +426,101 @@ static void registerHandlers(CommAdapterBase &c) {
                 snapshot(peripheralSettingsService, res.response.peripheral_settings);
                 break;
             }
+            case socket_message_CorrelationRequest_imu_calibrate_tag: {
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                if (!robot.imuPresent()) {
+                    res.status_code = 503;
+                } else if (!robot.resting()) {
+                    res.status_code = 409;
+                } else {
+                    ImuCalibration calibration;
+                    const imu_calibration::Check check = robot.calibrateIMU(calibration);
+                    if (check == imu_calibration::Check::OK) {
+                        imuCalibrationService.update(
+                            [&](ImuCalibration &state) { return ImuCalibration_update(calibration, state); },
+                            "correlation");
+                    }
+                    res.status_code = check == imu_calibration::Check::OK ? 200 : 422;
+                    ESP_LOGI(TAG, "IMU calibration: %s", check == imu_calibration::Check::OK       ? "done"
+                                                         : check == imu_calibration::Check::MOVING ? "robot moving"
+                                                                                                   : "robot tilted");
+                }
+                break;
+            }
+            case socket_message_CorrelationRequest_ota_start_tag: {
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                const OtaReply reply =
+                    otaSession.start(req.request.ota_start.size, {adapter, clientId}, esp_timer_get_time() / 1000);
+                // Servos hold whatever pose they are in; walking while flashing risks a brownout.
+                if (reply.status == 200) ota_service::stopMotion();
+                replyOta(res, reply);
+                break;
+            }
+            case socket_message_CorrelationRequest_ota_chunk_tag: {
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                const auto &chunk = req.request.ota_chunk;
+                replyOta(res, otaSession.chunk(chunk.index, chunk.data.bytes, chunk.data.size, {adapter, clientId},
+                                               esp_timer_get_time() / 1000));
+                break;
+            }
+            case socket_message_CorrelationRequest_ota_finish_tag: {
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                const OtaReply reply = otaSession.finish({adapter, clientId});
+                replyOta(res, reply);
+                if (reply.status == 200) {
+                    ota_service::publish(socket_message_OtaState_OTA_FINISHED, 100);
+                    ota_service::rebootSoon();
+                }
+                break;
+            }
+            case socket_message_CorrelationRequest_file_write_chunk_tag: {
+                const api_FileWriteChunk &w = req.request.file_write_chunk;
+                std::string full;
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                res.status_code = fs_api::resolve(w.path, full)
+                                      ? file_transfer::write(full.c_str(), w.offset, w.total_size, w.content.bytes,
+                                                             w.content.size)
+                                      : 400;
+                break;
+            }
+            case socket_message_CorrelationRequest_file_read_chunk_tag: {
+                const api_FileReadChunk &r = req.request.file_read_chunk;
+                std::string full;
+                auto &chunk = res.response.file_chunk;
+                res.which_response = socket_message_CorrelationResponse_file_chunk_tag;
+                size_t n = 0;
+                res.status_code = fs_api::resolve(r.path, full)
+                                      ? file_transfer::read(full.c_str(), r.offset, r.length, chunk.content.bytes, n,
+                                                            chunk.total_size)
+                                      : 400;
+                chunk.content.size = n;
+                break;
+            }
+            case socket_message_CorrelationRequest_file_delete_tag: {
+                std::string full;
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                res.status_code =
+                    fs_api::resolve(req.request.file_delete.path, full) && unlink(full.c_str()) == 0 ? 200 : 400;
+                break;
+            }
+            case socket_message_CorrelationRequest_animation_validate_tag: {
+                res.which_response = socket_message_CorrelationResponse_animation_report_tag;
+                robot.validateAnimation(req.request.animation_validate.name, res.response.animation_report);
+                if (!res.response.animation_report.ok) res.status_code = 422;
+                break;
+            }
+            case socket_message_CorrelationRequest_animation_list_request_tag: {
+                res.which_response = socket_message_CorrelationResponse_animation_list_tag;
+                auto &list = res.response.animation_list;
+                list.entries_count = 0;
+                AnimationStore::list([&list](const char *name, uint32_t size) {
+                    if (list.entries_count >= sizeof(list.entries) / sizeof(list.entries[0])) return;
+                    auto &e = list.entries[list.entries_count++];
+                    strncpy(e.name, name, sizeof(e.name) - 1);
+                    e.size = size;
+                });
+                break;
+            }
             default: res.status_code = 400; break;
         }
         adapter->emit(res, clientId);
@@ -388,6 +550,14 @@ static bool anyoneListening(int32_t tag) {
     return wsSocket.hasSubscribers(tag) || bleAdapter.hasSubscribers(tag)
 #if FT_ENABLED(USE_SERIAL_LINK)
            || serialAdapter.hasSubscribers(tag)
+#endif
+        ;
+}
+
+static bool anyClientConnected() {
+    return wsSocket.hasClient() || bleAdapter.hasClient()
+#if FT_ENABLED(USE_SERIAL_LINK)
+           || serialAdapter.hasClient()
 #endif
         ;
 }
@@ -428,8 +598,8 @@ static void setupServer() {
     server.config(16, 8192);
     server.listen(80);
 
-    // Answer the browser's CORS preflight so the cross-origin dev app can reach the robot.
-    server.addDefaultHeader("Access-Control-Allow-Origin", "*");
+    // Answer the browser's CORS preflight so the cross-origin dev app can reach the robot; the allowed
+    // origin itself is named per request (WebServer::httpHandler, communication/origin_policy.h).
     server.addDefaultHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     server.addDefaultHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     server.on("/*", HTTP_OPTIONS, [](httpd_req_t *r) {
@@ -438,15 +608,17 @@ static void setupServer() {
     });
 
     server.on("/api/features", HTTP_GET, [](httpd_req_t *r) {
-        char buf[384];
+        char sha[65];
+        runningElfSha256(sha);
+        char buf[512];
         snprintf(buf, sizeof(buf),
                  "{\"camera\":%s,\"imu\":%s,\"mag\":%s,\"bmp\":false,\"mdns\":%s,\"servo\":true,"
                  "\"analytics\":true,\"sleep\":true,\"ota\":true,\"download_firmware\":true,"
-                 "\"upload_firmware\":true,"
-                 "\"firmware_version\":\"%s\",\"firmware_name\":\"%s\",\"firmware_built_target\":\"esp32-wroom-camera\"}",
-                 USE_CAMERA ? "true" : "false", USE_MPU6050 ? "true" : "false",
-                 robot.magnetometerPresent() ? "true" : "false",
-                 USE_MDNS ? "true" : "false", APP_VERSION, APP_NAME);
+                 "\"upload_firmware\":true,\"firmware_version\":\"%s\",\"firmware_name\":\"%s\","
+                 "\"firmware_built_target\":\"esp32-wroom-camera\",\"firmware_elf_sha256\":\"%s\"}",
+                 USE_CAMERA ? "true" : "false", robot.imuPresent() ? "true" : "false",
+                 robot.magnetometerPresent() ? "true" : "false", USE_MDNS ? "true" : "false", APP_VERSION, APP_NAME,
+                 sha);
         httpd_resp_set_type(r, "application/json");
         return httpd_resp_sendstr(r, buf);
     });
@@ -456,8 +628,6 @@ static void setupServer() {
 #if USE_CAMERA
     camera_service::registerRoutes(server);
 #endif
-
-    mountWebApp(server);
 }
 
 static void setupComm() {
@@ -488,8 +658,10 @@ static void setupComm() {
     });
 
     // Mode and gait also change from the ESP-NOW controller and from other clients, so every
-    // change is pushed rather than assumed to originate from the viewing app.
+    // change is pushed rather than assumed to originate from the viewing app. A borrow or hand-back
+    // is only a question to MotionService; its answer arrives as APPLIED.
     addBridge<ModeMsg>(MessageTraits<socket_message_ModeData>::tag, [](const ModeMsg &m) {
+        if (m.kind != ModeMsgKind::REQUEST && m.kind != ModeMsgKind::APPLIED) return;
         socket_message_ModeData out = socket_message_ModeData_init_zero;
         out.mode = static_cast<socket_message_ModesEnum>(m.mode);
         emitAll(out);
@@ -504,26 +676,72 @@ static void setupComm() {
     observeStatus<socket_message_OtaStatusData>();
     observeStatus<api_WifiStatus>();
     observeStatus<api_APStatus>();
+    observeStatus<socket_message_AnimationStatus>();
+
+    // Losing the last client on every transport stops an animation, so nothing plays unattended.
+    const auto onClientGone = [] {
+        if (!anyClientConnected()) robot.animationControlLost();
+    };
+    wsSocket.onClientGone(onClientGone);
+    bleAdapter.onClientGone(onClientGone);
+#if FT_ENABLED(USE_SERIAL_LINK)
+    serialAdapter.onClientGone(onClientGone);
+#endif
 
     // Transports start only once every bridge exists, so an early subscription finds its bridge.
 #if FT_ENABLED(USE_SERIAL_LINK)
     serialAdapter.begin();
 #endif
     wsSocket.begin();
+    // Last of all routes: httpd matches with wildcards and refuses a handler that an earlier one
+    // already matches, so a GET "/*" registered before "/api/ws" made every WebSocket upgrade a 404.
+    mountWebApp(server);
 
     bleAdapter.begin();
+}
+
+// Ships the ticks the control task recorded, whole batches at a time, while anyone subscribes; with
+// nobody listening the control task stops recording and the leftovers are dropped.
+static void sendTelemetry() {
+    const bool listening = anyoneListening(MessageTraits<socket_message_TelemetryBatch>::tag);
+    if (!listening) {
+        if (telemetry->recording()) {
+            telemetry->setRecording(false);
+            telemetry->discardUnsent();
+        }
+        return;
+    }
+    telemetry->setRecording(true);
+    static socket_message_TelemetryBatch batch;  // about 1 KB, kept off the service task's stack
+    while (telemetry->takeBatch(batch)) emitAll(batch);
 }
 
 static void controlLoop(void *) {
     robot.initialize();
     TickType_t last = xTaskGetTickCount();
+    uint32_t seq = 0;
+    int64_t previousStartUs = esp_timer_get_time();
     for (;;) {
+        const int64_t startUs = esp_timer_get_time();
         robot.readSensors();
         robot.planMotion();
         robot.updateActuators();
+        if (telemetry->recording()) {
+            socket_message_TickSample tick = socket_message_TickSample_init_zero;
+            tick.seq = seq;
+            tick.t_us = static_cast<uint64_t>(startUs);
+            tick.period_us = static_cast<uint32_t>(startUs - previousStartUs);
+            tick.compute_us = static_cast<uint32_t>(esp_timer_get_time() - startUs);
+            robot.fillTelemetry(tick);
+            telemetry->record(tick);
+        }
+        seq++;
+        previousStartUs = startUs;
         robot.emitTelemetry();
         controlTicks.fetch_add(1, std::memory_order_relaxed);
-        vTaskDelayUntil(&last, pdMS_TO_TICKS(5));
+        // After an overrun (an I2C timeout can stall a tick for 200 ms) the schedule restarts from now
+        // instead of replaying every missed tick back to back.
+        if (xTaskDelayUntil(&last, pdMS_TO_TICKS(5)) == pdFALSE) last = xTaskGetTickCount();
     }
 }
 
@@ -563,6 +781,9 @@ static void serviceLoop(void *) {
         }
         wifiService.loop();
         apService.loop();
+        // A client that left mid-update stops sending; its claim on the update slot ends here.
+        EXECUTE_EVERY_N_MS(1000, otaSession.expire(esp_timer_get_time() / 1000));
+        sendTelemetry();
         EXECUTE_EVERY_N_MS(2000, {
             // sample() keeps running regardless: its uint32 idle-counter deltas only stay valid
             // over short windows. fillAnalytics() stats the filesystem, so that waits for a client.
@@ -592,6 +813,7 @@ extern "C" void app_main() {
     initCoreTempSensor();
     servoSettingsService.begin();
     peripheralSettingsService.begin();
+    imuCalibrationService.begin();  // before the control task applies the offsets
 
     xTaskCreate(serviceLoop, "service", 8192, nullptr, 2, nullptr);
     xTaskCreatePinnedToCore(controlLoop, "control", 8192, nullptr, 5, nullptr, 1);

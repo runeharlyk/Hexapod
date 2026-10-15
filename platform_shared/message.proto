@@ -4,6 +4,7 @@ package socket_message;
 
 // api.proto settings types are reused so a setting can be read/written over any transport.
 import "api.proto";
+import "animation.proto";
 
 message Vector {
   float x = 1;
@@ -23,6 +24,7 @@ enum ModesEnum {
   STAND = 3;
   WALK = 4;
   WALK_NN = 5;
+  ANIMATE = 6;  // plays animation files; see animation.proto
 }
 
 // Mirrors firmware GaitType.
@@ -113,6 +115,57 @@ message FeaturesDataResponse {
   bool mag = 5;
   bool servo = 6;
   bool mdns = 7;
+  // SHA-256 of the running firmware's ELF, from its app descriptor, as 64 hex digits. An update
+  // that rolled back reports the previous image's hash, which is how the app tells the two apart.
+  string firmware_elf_sha256 = 8;
+}
+
+// Calibrates the MPU6050 on a robot lying still and level: the gyro bias goes to zero and the
+// accelerometer to straight down. Answered with an empty response: 200 calibrated, 409 the robot is
+// not resting (deactivated or idle), 422 it moved or lies tilted, 503 there is no IMU.
+message ImuCalibrateRequest {}
+
+// The offsets the calibration wrote into the chip, persisted and applied at boot.
+message ImuCalibration {
+  repeated sint32 accel_offsets = 1;
+  repeated sint32 gyro_offsets = 2;
+}
+
+// A firmware update over the protobuf link, for clients that cannot reach POST /api/firmware (an
+// https page on Bluetooth or USB). The image goes in order, in chunks of at most 512 bytes, into the
+// app slot the robot does not run from; the finish validates it, selects it and restarts the robot.
+// Refusals carry their reason in CorrelationResponse.error_message.
+message OtaStart {
+  uint32 size = 1;
+}
+message OtaChunk {
+  uint32 index = 1;
+  bytes data = 2;
+}
+message OtaFinish {}
+
+// One 5 ms control tick, as the robot ran it: for comparing the real control loop, IMU and command
+// path with what the simulation assumes (simulation/record.py, report_recording.py).
+message TickSample {
+  uint32 seq = 1;
+  uint64 t_us = 2;               // tick start, esp_timer clock
+  uint32 period_us = 3;          // since the previous tick start
+  uint32 compute_us = 4;         // tick start to the end of the servo write
+  bool imu_fresh = 5;            // a new IMU sample was read on this tick (the IMU is polled at 40 Hz)
+  repeated float rpy = 6;        // rad, roll, pitch, yaw from the DMP
+  repeated float gyro = 7;       // rad/s, body rates
+  repeated float gravity = 8;    // unit vector, DMP convention (world up)
+  repeated float angles = 9;     // deg, the 18 joint angles the motion produced this tick
+  repeated float command = 10;   // lx, ly, rx, ry, h, s, s1, fd of the last command
+  uint32 command_age_ms = 11;    // since that command arrived; 0 before any
+  uint32 mode = 12;              // MOTION_STATE position
+  uint32 gait = 13;              // GaitType position
+}
+
+message TelemetryBatch {
+  uint32 batch_seq = 1;
+  uint32 dropped_ticks = 2;      // ticks the ring had no room for, since boot
+  repeated TickSample ticks = 3;
 }
 
 message CorrelationRequest {
@@ -134,12 +187,23 @@ message CorrelationRequest {
     api.ServoSettings servo_settings_update = 81;
     api.PeripheralSettingsRequest peripheral_settings_get = 90;
     api.PeripheralSettings peripheral_settings_update = 91;
+    ImuCalibrateRequest imu_calibrate = 92;
+    OtaStart ota_start = 120;
+    OtaChunk ota_chunk = 121;
+    OtaFinish ota_finish = 122;
+    api.FileWriteChunk file_write_chunk = 100;
+    api.FileReadChunk file_read_chunk = 101;
+    api.FileDeleteRequest file_delete = 102;
+    AnimationValidate animation_validate = 110;
+    AnimationListRequest animation_list_request = 111;
   }
 }
 
 message CorrelationResponse {
   uint32 correlation_id = 1;
   uint32 status_code = 2;
+  // Why a request was refused, for the app to show; empty on success.
+  string error_message = 3;
   oneof response {
     FeaturesDataResponse features_data_response = 10;
     I2CScanData i2c_scan_data = 20;
@@ -153,6 +217,10 @@ message CorrelationResponse {
     api.MDNSQueryResponse mdns_query_response = 71;
     api.ServoSettings servo_settings = 80;
     api.PeripheralSettings peripheral_settings = 90;
+    api.EmptyMessage empty = 5;
+    api.FileChunk file_chunk = 101;
+    AnimationReport animation_report = 110;
+    AnimationList animation_list = 111;
   }
 }
 
@@ -180,6 +248,51 @@ message SystemCommandData {
   SystemCommand command = 1;
 }
 
+// --- Animations (animation.proto holds the file schema) ---
+
+message AnimationParam {
+  animation.ParamId id = 1;
+  float value = 2;
+}
+// Loads /littlefs/animations/<name>.pb and plays it. From any active mode the robot borrows ANIMATE
+// and hands the mode back when the player finishes; a play while playing chains.
+message AnimationPlay {
+  string name = 1;
+  repeated AnimationParam params = 2;
+}
+message AnimationStop {}
+// Puppeteer target, applied only in ANIMATE while nothing is playing; held if the stream stops.
+message PoseData {
+  animation.BodyPose body = 1;
+  repeated animation.LegTarget legs = 2;  // 0 or 6
+}
+enum AnimationState {
+  ANIM_IDLE = 0;
+  ANIM_ENTRY = 1;
+  ANIM_PLAYING = 2;
+  ANIM_HOLD = 3;
+  ANIM_EXIT = 4;
+}
+// Observable: pushed on every state change and at 5 Hz while the player is not idle.
+message AnimationStatus {
+  string name = 1;
+  AnimationState state = 2;
+  float t = 3;
+  uint32 clamped_mask = 4;  // bit leg*3+joint for joints pinned at a limit or an unreachable foot
+}
+message AnimationValidate { string name = 1; }
+message AnimationReport {
+  bool ok = 1;
+  string error = 2;          // first structural error, empty when ok
+  uint32 clamped_mask = 3;   // union over every keyframe and 32 intermediate times per segment
+}
+message AnimationListRequest {}
+message AnimationEntry {
+  string name = 1;
+  uint32 size = 2;
+}
+message AnimationList { repeated AnimationEntry entries = 1; }
+
 message Message {
   oneof message {
     SubscribeNotification sub_notif = 20;
@@ -201,5 +314,10 @@ message Message {
     api.WifiStatus wifi_status = 250;  // observable status: pushed on change (connect/disconnect)
     api.APStatus ap_status = 251;      // observable status: pushed on AP up/down/station change
     OtaStatusData ota_status = 270;    // observable status: pushed while a firmware update runs
+    AnimationPlay animation_play = 280;
+    AnimationStop animation_stop = 281;
+    PoseData pose = 282;
+    AnimationStatus animation_status = 283;  // observable status: pushed while an animation runs
+    TelemetryBatch telemetry_batch = 290;    // stream: every control tick while subscribed
   }
 }

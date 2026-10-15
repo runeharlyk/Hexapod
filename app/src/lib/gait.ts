@@ -228,7 +228,7 @@ export function sine_curve(length: number, angle: number, height: number, phase:
   const step = length * (1 - 2 * phase)
   const x = step * Math.cos(angle)
   const z = step * Math.sin(angle)
-  const y = length ? height * Math.cos((Math.PI * (x + z)) / (2 * length)) : 0
+  const y = length ? height * Math.cos((Math.PI * step) / (2 * length)) : 0
   return [x, z, y]
 }
 

@@ -1,5 +1,8 @@
 #include <communication/webserver.h>
+#include <communication/origin_policy.h>
+#include <communication/ws_frame.h>
 #include <esp_log.h>
+#include <lwip/sockets.h>
 #include <unistd.h>
 #include <cstring>
 #include <algorithm>
@@ -8,15 +11,9 @@ static const char* TAG = "WebServer";
 
 WebServer server;
 
-WebServer::WebServer() {
-    config_ = HTTPD_DEFAULT_CONFIG();
-    wsMutex_ = xSemaphoreCreateMutex();
-}
+WebServer::WebServer() { config_ = HTTPD_DEFAULT_CONFIG(); }
 
-WebServer::~WebServer() {
-    stop();
-    vSemaphoreDelete(wsMutex_);
-}
+WebServer::~WebServer() { stop(); }
 
 void WebServer::config(size_t maxUriHandlers, size_t stackSize) {
     config_.max_uri_handlers = maxUriHandlers;
@@ -28,15 +25,29 @@ void WebServer::config(size_t maxUriHandlers, size_t stackSize) {
     // close_fn runs for every terminated session; the CLOSE-frame path alone misses a dropped TCP
     // connection, leaving the client subscribed and every later emit failing to send.
     config_.global_user_ctx = this;
+    config_.open_fn = &WebServer::sessionOpened;
     config_.close_fn = &WebServer::sessionClosed;
+    // A peer that vanished without closing is found within about 11 s instead of after minutes of
+    // retransmissions, so the control-loss stop in main.cpp follows it promptly.
+    config_.keep_alive_enable = true;
+    config_.keep_alive_idle = 5;
+    config_.keep_alive_interval = 2;
+    config_.keep_alive_count = 3;
+}
+
+// Nagle would hold a small reply until the client acknowledged the previous segment, which a
+// delayed ACK puts off by tens of milliseconds on every request.
+esp_err_t WebServer::sessionOpened(httpd_handle_t, int sockfd) {
+    int noDelay = 1;
+    if (setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &noDelay, sizeof(noDelay)) != 0) {
+        ESP_LOGW(TAG, "TCP_NODELAY not set on socket %d", sockfd);
+    }
+    return ESP_OK;
 }
 
 void WebServer::sessionClosed(httpd_handle_t hd, int sockfd) {
     auto* self = static_cast<WebServer*>(httpd_get_global_user_ctx(hd));
-    if (self) {
-        self->removeWsClient(sockfd);
-        if (self->wsCloseHandler_) self->wsCloseHandler_(sockfd);
-    }
+    if (self && self->wsCloseHandler_) self->wsCloseHandler_(sockfd);
     // The server only closes the socket itself when no custom close_fn is set.
     close(sockfd);
 }
@@ -70,9 +81,37 @@ void WebServer::applyDefaultHeaders(httpd_req_t* req) {
 
 void WebServer::addDefaultHeader(const char* key, const char* value) { defaultHeaders_[key] = value; }
 
+// A header that is absent reads as nullptr; one too long to read refuses the request.
+static bool readHeader(httpd_req_t* req, const char* field, char* value, size_t size, const char*& read) {
+    esp_err_t err = httpd_req_get_hdr_value_str(req, field, value, size);
+    read = err == ESP_OK ? value : nullptr;
+    return err == ESP_OK || err == ESP_ERR_NOT_FOUND;
+}
+
+struct RequestOrigin {
+    char origin[128];
+    char host[128];
+    const char* originRead = nullptr;
+    bool allowed = false;
+
+    explicit RequestOrigin(httpd_req_t* req) {
+        const char* hostRead = nullptr;
+        allowed = readHeader(req, "Origin", origin, sizeof(origin), originRead) &&
+                  readHeader(req, "Host", host, sizeof(host), hostRead) && originAllowed(originRead, hostRead);
+    }
+};
+
 esp_err_t WebServer::httpHandler(httpd_req_t* req) {
     WebServer* self = static_cast<WebServer*>(req->user_ctx);
     self->applyDefaultHeaders(req);
+    // CORS for the pages the origin policy allows, named back rather than "*": a wildcard let any
+    // page preflight a firmware upload. httpd keeps a pointer to the value, which lives in this
+    // frame until the route's handler has answered.
+    const RequestOrigin origin(req);
+    if (origin.allowed && origin.originRead) {
+        httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", origin.originRead);
+        httpd_resp_set_hdr(req, "Vary", "Origin");
+    }
 
     // req->uri still carries the query string, so match on the path portion only -- otherwise every
     // endpoint taking a query parameter (e.g. /api/files/content?path=...) falls through to the 404.
@@ -102,7 +141,14 @@ esp_err_t WebServer::wsHandler(httpd_req_t* req) {
 
     if (req->method == HTTP_GET) {
         int sockfd = httpd_req_to_sockfd(req);
-        self->addWsClient(sockfd);
+        // IDF 5.4 has no pre-handshake callback, so the upgrade has been answered by now; an error
+        // here makes httpd close the session before it carries a single frame.
+        const RequestOrigin origin(req);
+        if (!origin.allowed) {
+            ESP_LOGW(TAG, "Refused a WebSocket opened by %s",
+                     origin.originRead ? origin.originRead : "an unreadable origin");
+            return ESP_FAIL;
+        }
         if (self->wsOpenHandler_) {
             self->wsOpenHandler_(req);
         }
@@ -135,13 +181,26 @@ esp_err_t WebServer::wsHandler(httpd_req_t* req) {
         }
     }
 
-    if (frame.type == HTTPD_WS_TYPE_CLOSE) {
-        int sockfd = httpd_req_to_sockfd(req);
-        self->removeWsClient(sockfd);
-        if (self->wsCloseHandler_) {
-            self->wsCloseHandler_(sockfd);
+    // Control frames are answered here, as handle_ws_control_frames leaves them to us; without the
+    // close echo a client waits out its close timeout, and without the pong its keep-alive gives up on
+    // a healthy link.
+    if (frame.type & HTTPD_WS_TYPE_CLOSE) {
+        const int sockfd = httpd_req_to_sockfd(req);
+        const ws_frame::Reply reply =
+            ws_frame::controlReply(static_cast<ws_frame::Opcode>(frame.type), frame.payload, frame.len);
+        if (reply.opcode != ws_frame::NONE) {
+            httpd_ws_frame_t answer = {.final = true,
+                                       .fragmented = false,
+                                       .type = static_cast<httpd_ws_type_t>(reply.opcode),
+                                       .payload = const_cast<uint8_t*>(reply.payload),
+                                       .len = reply.len};
+            httpd_ws_send_frame(req, &answer);
         }
-        ESP_LOGI(TAG, "WebSocket client disconnected: %d", sockfd);
+        if (reply.endsSession) {
+            if (self->wsCloseHandler_) self->wsCloseHandler_(sockfd);
+            ESP_LOGI(TAG, "WebSocket client disconnected: %d", sockfd);
+            httpd_sess_trigger_close(req->handle, sockfd);
+        }
         if (frame.payload) free(frame.payload);
         return ESP_OK;
     }
@@ -207,42 +266,42 @@ void WebServer::onWsOpen(WsOpenHandler handler) { wsOpenHandler_ = handler; }
 
 void WebServer::onWsClose(WsCloseHandler handler) { wsCloseHandler_ = handler; }
 
-void WebServer::addWsClient(int sockfd) {
-    xSemaphoreTake(wsMutex_, portMAX_DELAY);
-    wsClients_.push_back(sockfd);
-    xSemaphoreGive(wsMutex_);
-}
-
-void WebServer::removeWsClient(int sockfd) {
-    xSemaphoreTake(wsMutex_, portMAX_DELAY);
-    wsClients_.erase(std::remove(wsClients_.begin(), wsClients_.end(), sockfd), wsClients_.end());
-    xSemaphoreGive(wsMutex_);
-}
-
-
-esp_err_t WebServer::wsSendFrame(int sockfd, const uint8_t* data, size_t len) {
-    httpd_ws_frame_t frame = {.final = true,
-                              .fragmented = false,
-                              .type = HTTPD_WS_TYPE_BINARY,
-                              .payload = const_cast<uint8_t*>(data),
-                              .len = len};
-    return httpd_ws_send_frame_async(server_, sockfd, &frame);
-}
-
+// httpd writes a frame's header and payload with two sends, which with TCP_NODELAY are two segments
+// on the air; a small frame goes out whole from one buffer instead. Not writev: lwIP keeps "more data
+// follows" set through a vectored write's last part, so its segment lacks PSH. Callers serialize
+// sends per socket (CommAdapterBase holds its encode lock across encode and send).
 esp_err_t WebServer::wsSend(int sockfd, const uint8_t* data, size_t len) {
-    xSemaphoreTake(wsMutex_, portMAX_DELAY);
-    esp_err_t result = wsSendFrame(sockfd, data, len);
-    xSemaphoreGive(wsMutex_);
-    return result;
+    if (len > SINGLE_SEND_MAX) {
+        httpd_ws_frame_t frame = {.final = true,
+                                  .fragmented = false,
+                                  .type = HTTPD_WS_TYPE_BINARY,
+                                  .payload = const_cast<uint8_t*>(data),
+                                  .len = len};
+        return httpd_ws_send_frame_async(server_, sockfd, &frame);
+    }
+    uint8_t frame[ws_frame::MAX_HEADER + SINGLE_SEND_MAX];
+    const size_t headerLen = ws_frame::binaryHeader(frame, len);
+    memcpy(frame + headerLen, data, len);
+    const ssize_t frameLen = headerLen + len;
+    const ssize_t sent = ::send(sockfd, frame, frameLen, 0);
+    if (sent == frameLen) return ESP_OK;
+    // Nothing more may go on a socket that holds part of a frame: the client would read the next
+    // frame's bytes as the rest of this one.
+    if (sent > 0) endSession(sockfd);
+    ESP_LOGW(TAG, "Frame to socket %d not sent (%d of %d bytes, errno %d)", sockfd, (int)sent, (int)frameLen, errno);
+    return ESP_FAIL;
 }
 
-esp_err_t WebServer::wsSendAll(const uint8_t* data, size_t len) {
-    xSemaphoreTake(wsMutex_, portMAX_DELAY);
-    for (int sockfd : wsClients_) {
-        wsSendFrame(sockfd, data, len);
-    }
-    xSemaphoreGive(wsMutex_);
-    return ESP_OK;
+void WebServer::endSession(int sockfd) {
+    if (server_) httpd_sess_trigger_close(server_, sockfd);
+}
+
+bool WebServer::writable(int sockfd) {
+    fd_set set;
+    FD_ZERO(&set);
+    FD_SET(sockfd, &set);
+    timeval now = {.tv_sec = 0, .tv_usec = 0};
+    return select(sockfd + 1, nullptr, &set, nullptr, &now) > 0;
 }
 
 esp_err_t WebServer::sendError(httpd_req_t* req, int status, const char* message) {

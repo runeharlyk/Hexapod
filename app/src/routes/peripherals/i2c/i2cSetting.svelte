@@ -101,9 +101,9 @@
             id="frequency"
             type="number"
             required
-            placeholder="Type a number between 100000 to 1000000"
+            placeholder="Type a number between 100000 to 400000"
             min="100000"
-            max="1000000"
+            max="400000"
             title="I2C frequency in Hz"
             disabled={!isEditing}
             bind:value={settings.frequency}

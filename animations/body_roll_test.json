@@ -2,6 +2,7 @@
   "name": "body_roll_test",
   "description": "Sweep roll, pitch and yaw one at a time to their usable limits",
   "schema": 1,
+  "rideHeight": 0,
   "keyframes": [
     {"time": 0},
     {"time": 0.8, "ease": "EASE_IN_OUT", "body": {"roll": 0.3}},

@@ -7,14 +7,6 @@
 #include <esp_log.h>
 #include <cstring>
 
-#ifndef FACTORY_WIFI_SSID
-#define FACTORY_WIFI_SSID ""
-#endif
-
-#ifndef FACTORY_WIFI_PASSWORD
-#define FACTORY_WIFI_PASSWORD ""
-#endif
-
 #ifndef FACTORY_WIFI_HOSTNAME
 #define FACTORY_WIFI_HOSTNAME "#{platform}-#{unique_id}"
 #endif
@@ -26,29 +18,13 @@
 using WiFiNetwork = api_WifiNetwork;
 using WiFiSettings = api_WifiSettings;
 
-inline WiFiNetwork WiFiNetwork_defaults() {
-    WiFiNetwork network = api_WifiNetwork_init_zero;
-    strncpy(network.ssid, FACTORY_WIFI_SSID, sizeof(network.ssid) - 1);
-    strncpy(network.password, FACTORY_WIFI_PASSWORD, sizeof(network.password) - 1);
-    network.static_ip_config = false;
-    network.local_ip = 0;
-    network.gateway_ip = 0;
-    network.subnet_mask = 0;
-    network.dns_ip_1 = 0;
-    network.dns_ip_2 = 0;
-    return network;
-}
-
 inline WiFiSettings WiFiSettings_defaults() {
     WiFiSettings settings = api_WifiSettings_init_zero;
     strncpy(settings.hostname, toHostLabel(FACTORY_WIFI_HOSTNAME).c_str(), sizeof(settings.hostname) - 1);
     settings.priority_rssi = true;
     settings.wifi_networks_count = 0;
     settings.selected_network = 0;
-    if (strlen(FACTORY_WIFI_SSID) > 0) {
-        settings.wifi_networks[0] = WiFiNetwork_defaults();
-        settings.wifi_networks_count = 1;
-    }
+    // The secrets.h network is merged in on boot (WiFiService::begin), fresh robot or not.
     return settings;
 }
 
@@ -94,6 +70,7 @@ inline bool WiFiSettings_equals(const WiFiSettings &a, const WiFiSettings &b) {
     if (strncmp(a.hostname, b.hostname, sizeof(a.hostname)) != 0) return false;
     if (a.priority_rssi != b.priority_rssi) return false;
     if (a.selected_network != b.selected_network) return false;
+    if (a.applied_secret != b.applied_secret) return false;
     if (a.wifi_networks_count != b.wifi_networks_count) return false;
     for (pb_size_t i = 0; i < a.wifi_networks_count; i++) {
         if (!WiFiNetwork_equals(a.wifi_networks[i], b.wifi_networks[i])) return false;

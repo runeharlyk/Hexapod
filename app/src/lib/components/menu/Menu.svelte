@@ -23,7 +23,8 @@
     Copyright,
     Metrics,
     DNS,
-    Bluetooth
+    Bluetooth,
+    AnimationPlay
   } from '$lib/components/icons'
   import type { IconComponent } from '$lib/components/icons'
 
@@ -61,6 +62,12 @@
         title: 'Controller',
         icon: MdiController,
         href: withBase('controller'),
+        feature: true
+      },
+      {
+        title: 'Animations',
+        icon: AnimationPlay,
+        href: withBase('animations'),
         feature: true
       },
       {

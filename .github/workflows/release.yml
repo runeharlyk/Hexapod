@@ -24,16 +24,19 @@ jobs:
           name: firmware-esp32-wroom-camera
           path: firmware
 
-      - name: Collect the factory image
+      # The factory image (bootloader + partitions + app at offset 0) is for the web flasher;
+      # the plain app image is what an OTA update writes into the inactive app slot.
+      - name: Collect the factory and app images
         run: |
           mkdir release
           cp firmware/firmware.factory.bin release/esp32-wroom-camera.factory.bin
+          cp firmware/firmware.bin release/esp32-wroom-camera.bin
           ls -l release
 
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" release/*.factory.bin --repo "${{ github.repository }}" --generate-notes
+        run: gh release create "${{ github.ref_name }}" release/*.bin --repo "${{ github.repository }}" --generate-notes
 
       # The github-pages environment only accepts deployments from main, so the flasher is
       # refreshed by re-running the Pages workflow there rather than deploying from the tag.

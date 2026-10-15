@@ -64,3 +64,7 @@ api.PinConfig.role max_size:16
 # Firmware does not implement per-pin configuration; skip the field rather than
 # statically allocating 32 PinConfig entries in every copy of the message.
 api.PeripheralSettings.pins type:FT_IGNORE
+api.FileWriteChunk.path max_size:128
+api.FileWriteChunk.content max_size:512
+api.FileReadChunk.path max_size:128
+api.FileChunk.content max_size:512

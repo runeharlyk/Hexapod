@@ -1,0 +1,94 @@
+"""The MuJoCo hexapod behind the backend interface: the firmware's STAND/WALK loop, stepped only inside sleep().
+
+It takes the same sticks the real robot does, from the same speed model, so a script behaves alike on both. It does
+not model the link: no command is ever lost, so the dead-man stop never fires and link_drops stays 0.
+"""
+import math
+import time
+
+from ...sim.firmware_loop import FIRMWARE_DT, FirmwareLoop
+from ...sim.mj_runtime import HexapodSim
+from .. import speed_model
+from .base import Gait, Mode, RobotDisconnected, RobotError, RobotState, Velocity
+
+ACTUATED = (Mode.STAND, Mode.WALK)
+
+
+class SimBackend:
+    """`viewer` opens the MuJoCo viewer and runs sleep() in real time; without it the simulation runs flat out."""
+
+    def __init__(self, viewer: bool = False):
+        self.sim = HexapodSim()
+        self._show = viewer
+        self._viewer = None
+        self._loop: FirmwareLoop | None = None
+        self._mode = Mode.DEACTIVATED  # as the firmware boots
+        self._gait = Gait.TRI_GATE
+        self._height = 0.0
+        self._sticks = speed_model.CENTRED
+
+    def connect(self) -> None:
+        self.sim.reset_to_stand()
+        self._loop = FirmwareLoop(self.sim, self._gait)
+        self.set_mode(self._mode)
+        if self._show:
+            import mujoco.viewer
+
+            self._viewer = mujoco.viewer.launch_passive(self.sim.model, self.sim.data)
+
+    def close(self) -> None:
+        if self._viewer is not None:
+            self._viewer.close()
+
+    # MotionService.handleInputMode for the modes a script uses. STAND holds the body still: the firmware would shift
+    # and tilt it with the sticks, but the facade only sends sticks in WALK.
+    def set_mode(self, mode: Mode) -> None:
+        if mode not in (*ACTUATED, Mode.DEACTIVATED):
+            raise RobotError(f"the simulation runs STAND, WALK and DEACTIVATED, not {mode.name}")
+        self._mode = mode
+        if mode is Mode.DEACTIVATED:
+            self._loop.stop(snap=True)
+            self.sim.set_servo_scale(stall=0.0)  # no torque: the legs go limp
+            return
+        self.sim.set_servo_scale()
+        self._command()
+
+    def set_gait(self, gait: Gait) -> None:
+        self._gait = gait
+        self._loop.select_gait(int(gait))
+
+    def set_height(self, height: float) -> None:
+        self._height = height
+        self._command()
+
+    def set_velocity(self, velocity: Velocity) -> Velocity:
+        self._sticks = speed_model.sticks_for(self._gait, velocity)
+        self._command()
+        return speed_model.velocity_of(self._gait, self._sticks)
+
+    def _command(self) -> None:
+        if self._mode is Mode.WALK:
+            s = self._sticks
+            self._loop.walk(lx=s.lx, ly=s.ly, rx=s.rx, h=self._height)
+        elif self._mode is Mode.STAND:
+            self._loop.hold(self._height)
+
+    def max_velocity(self) -> Velocity:
+        return speed_model.max_velocity(self._gait)
+
+    def state(self) -> RobotState:
+        return RobotState(t=self.now(), mode=self._mode, gait=self._gait, yaw=math.degrees(self.sim.base_yaw()),
+                          link_drops=0)
+
+    def now(self) -> float:
+        return self._loop.ticks * FIRMWARE_DT
+
+    def sleep(self, seconds: float) -> None:
+        start = time.monotonic()
+        for tick in range(1, round(seconds / FIRMWARE_DT) + 1):
+            self._loop.tick(actuated=self._mode in ACTUATED)
+            if self._viewer is not None:
+                if not self._viewer.is_running():
+                    raise RobotDisconnected("the simulation viewer was closed")
+                self._viewer.sync()
+                time.sleep(max(0.0, start + tick * FIRMWARE_DT - time.monotonic()))

@@ -32,6 +32,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
 
       - uses: actions/setup-python@v5
         with:
@@ -40,7 +42,7 @@ jobs:
       # PlatformIO 6.2 switches to SCons 4.11, which drops SCons.Tool.FortranCommon that the pinned
       # pioarduino platform still imports; 6.1.19 ships SCons 4.8.1 and is what builds locally.
       - name: Install PlatformIO
-        run: pip install platformio==6.1.19
+        run: pip install platformio==6.1.19 protobuf grpcio-tools
 
       # The native env needs a C++20 host compiler; ubuntu-latest's g++ satisfies it.
       - name: Host tests (kinematics and gait)

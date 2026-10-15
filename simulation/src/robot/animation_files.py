@@ -55,12 +55,15 @@ def from_proto(msg: pb.Animation) -> an.Animation:
         entry_time=msg.entry_time, exit_time=msg.exit_time, keyframes=keyframes,
         overlays=[_overlay_from_proto(o) for o in msg.overlays],
         params=[an.ParamSpec(p.id, p.min, p.default_value, p.max) for p in msg.params],
+        ride_height=msg.ride_height if msg.HasField("ride_height") else None,
     )
 
 
 def to_proto(anim: an.Animation) -> pb.Animation:
     msg = pb.Animation(name=anim.name, description=anim.description, schema=anim.schema, loop=anim.loop,
                        hold_end=anim.hold_end, entry_time=anim.entry_time, exit_time=anim.exit_time)
+    if anim.ride_height is not None:
+        msg.ride_height = anim.ride_height
     for k in anim.keyframes:
         kf = msg.keyframes.add(time=k.time, ease=int(k.ease))
         kf.body.roll, kf.body.pitch, kf.body.yaw, kf.body.x, kf.body.y, kf.body.z = map(float, k.body)

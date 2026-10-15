@@ -2,6 +2,7 @@
   "name": "wiggle",
   "description": "Roll, yaw and bounce on sines until stopped",
   "schema": 1,
+  "rideHeight": 0,
   "loop": true,
   "keyframes": [{"time": 0}, {"time": 2.4}],
   "overlays": [

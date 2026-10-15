@@ -43,9 +43,10 @@ class WebServer {
     void registerWebsocket(const char* uri);
 
     esp_err_t wsSend(int sockfd, const uint8_t* data, size_t len);
-    esp_err_t wsSendAll(const uint8_t* data, size_t len);
-    void addWsClient(int sockfd);
-    void removeWsClient(int sockfd);
+    // Closes a session from any task; httpd runs close_fn on its own task.
+    void endSession(int sockfd);
+    // Whether a send to the socket would not block right now.
+    static bool writable(int sockfd);
 
     void addDefaultHeader(const char* key, const char* value);
 
@@ -83,8 +84,6 @@ class WebServer {
     httpd_config_t config_;
     std::vector<HttpRoute> routes_;
     std::map<std::string, std::string> defaultHeaders_;
-    std::vector<int> wsClients_;
-    SemaphoreHandle_t wsMutex_;
 
     WsFrameHandler wsFrameHandler_;
     WsOpenHandler wsOpenHandler_;
@@ -93,11 +92,11 @@ class WebServer {
     static esp_err_t httpHandler(httpd_req_t* req);
     static esp_err_t wsHandler(httpd_req_t* req);
 
+    static constexpr size_t SINGLE_SEND_MAX = 1024;
+
+    static esp_err_t sessionOpened(httpd_handle_t hd, int sockfd);
     // httpd close_fn: runs for every terminated session, not just a graceful WebSocket CLOSE.
     static void sessionClosed(httpd_handle_t hd, int sockfd);
-
-    // Caller must hold wsMutex_; frames from different tasks would otherwise interleave on one socket.
-    esp_err_t wsSendFrame(int sockfd, const uint8_t* data, size_t len);
 
     void applyDefaultHeaders(httpd_req_t* req);
     esp_err_t registerRoute(const HttpRoute& route);

@@ -16,7 +16,7 @@ const isWindows = os.platform() === 'win32'
 const projectRoot = path.resolve(__dirname, '..')
 const platformSharedDir = path.resolve(projectRoot, '..', 'platform_shared')
 const outputDir = path.resolve(projectRoot, 'src', 'lib', 'platform_shared')
-const protoFiles = ['message.proto', 'api.proto']
+const protoFiles = ['message.proto', 'api.proto', 'animation.proto']
 
 // An active virtualenv (e.g. simulation/.venv) shadows the system python that carries
 // grpcio-tools. Resolve python with the venv stripped from PATH so we reach the system one.

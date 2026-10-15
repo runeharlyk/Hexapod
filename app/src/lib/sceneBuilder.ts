@@ -17,13 +17,20 @@ import {
   MathUtils,
   Group,
   MeshBasicMaterial,
-  RepeatWrapping
+  RepeatWrapping,
+  Raycaster,
+  SphereGeometry,
+  Vector2,
+  type Object3D
 } from 'three'
 import { Sky } from 'three/addons/objects/Sky.js'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js'
 import { Reflector } from 'three/addons/objects/Reflector.js'
 import { type URDFRobot } from 'urdf-loader'
 import { sunCalculator } from './utilities/position-utilities'
+import { HANDLE_NEUTRAL } from './animation/handles'
+import type { Vec3 } from './animation/model'
 
 interface position {
   x?: number
@@ -50,6 +57,9 @@ export default class SceneBuilder {
   private shadowTimers: ReturnType<typeof setTimeout>[] = []
   sky!: Sky
   public modelGroup!: Group
+  public handles: Mesh<SphereGeometry, MeshBasicMaterial>[] = []
+  public transform: TransformControls | undefined
+  private raycaster = new Raycaster()
 
   constructor() {
     this.scene = new Scene()
@@ -229,11 +239,56 @@ export default class SceneBuilder {
     return this
   }
 
+  public addFootHandles = (positions: Vec3[]): Mesh[] => {
+    const geometry = new SphereGeometry(0.6, 16, 12)
+    this.handles = positions.map(position => {
+      const handle = new Mesh(geometry, new MeshBasicMaterial({ color: HANDLE_NEUTRAL }))
+      handle.position.set(...position)
+      this.scene.add(handle)
+      return handle
+    })
+
+    this.transform = new TransformControls(this.camera, this.renderer.domElement)
+    this.transform.setMode('translate')
+    this.transform.addEventListener('dragging-changed', event => {
+      this.orbit.enabled = !event.value
+    })
+    this.scene.add(this.transform)
+    // Registered after TransformControls' own listener, so a press on the gizmo is already dragging.
+    this.renderer.domElement.addEventListener('pointerdown', this.pickHandle)
+    return this.handles
+  }
+
+  public attachTransform = (target: Object3D | null) => {
+    if (target) this.transform?.attach(target)
+    else this.transform?.detach()
+  }
+
+  public setHandlePosition = (leg: number, position: Vec3) => {
+    this.handles[leg]?.position.set(...position)
+  }
+
+  private pickHandle = (event: PointerEvent) => {
+    if (event.button !== 0 || this.transform?.dragging) return
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    const pointer = new Vector2(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1
+    )
+    this.raycaster.setFromCamera(pointer, this.camera)
+    const [hit] = this.raycaster.intersectObjects(this.handles, false)
+    this.attachTransform(hit?.object ?? null)
+  }
+
   public dispose = () => {
     this.shadowTimers.forEach(clearTimeout)
     this.shadowTimers = []
     this.callback = undefined
     this.renderer?.setAnimationLoop(null)
+    this.renderer?.domElement.removeEventListener('pointerdown', this.pickHandle)
+    this.transform?.dispose()
+    this.handles.forEach(handle => handle.material.dispose())
+    this.handles[0]?.geometry.dispose()
     this.orbit?.dispose()
     this.renderer?.dispose()
   }

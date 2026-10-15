@@ -9,10 +9,18 @@
 
 // Internal EventBus message structs (in-RAM only; the wire protocol is protobuf).
 
-enum class MOTION_STATE { DEACTIVATED, IDLE, POSE, STAND, WALK, WALK_NN };
+enum class MOTION_STATE { DEACTIVATED, IDLE, POSE, STAND, WALK, WALK_NN, ANIMATE };
+
+// REQUEST: a mode asked for by a client, the controller or the firmware itself. BORROW: an animation
+// play asking for ANIMATE. HANDBACK: the control task asking for the borrowed mode back. BORROW and
+// HANDBACK are decided against the mode at delivery. APPLIED: MotionService reporting the mode it
+// switched to or kept for a BORROW or HANDBACK; it is not a request. Mode observers outside
+// MotionService see only REQUEST and APPLIED.
+enum class ModeMsgKind { REQUEST, BORROW, HANDBACK, APPLIED };
 
 struct ModeMsg {
     MOTION_STATE mode;
+    ModeMsgKind kind = ModeMsgKind::REQUEST;
 };
 
 // TUNED is the CMA-ES-searched gait from simulation/src/resources/gait_library.json, emitted into
@@ -64,4 +72,20 @@ struct BodyStateMsg {
     float feet[6][4];
 
     void updateFeet(const float newFeet[6][4]) { COPY_2D_ARRAY_6x4(feet, newFeet); }
+};
+
+// Puppeteer target from the editor: body offsets and six leg targets, foot offsets or joint angles.
+struct PoseMsg {
+    float body[6];
+    bool joints[6];
+    float legs[6][3];
+};
+
+struct AnimationCommandMsg {
+    char name[33];
+    int paramCount;
+    struct {
+        int id;
+        float value;
+    } params[10];
 };

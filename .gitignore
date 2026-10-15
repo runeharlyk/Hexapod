@@ -12,6 +12,8 @@ simulation/__pycache__
 
 # Generated embedded web app (EMBED_WEBAPP=1), 7MB blob
 firmware/include/WWWData.h
+# Credentials; created from firmware/include/secrets.example.h by the first build
+firmware/include/secrets.h
 
 # Linker map files (ad-hoc size analysis output)
 *.map
@@ -20,3 +22,5 @@ firmware/include/WWWData.h
 firmware/components/
 # packed from animations/*.json by firmware/scripts/pack_animations.py
 firmware/data/animations/
+# planning notes kept locally only
+docs/superpowers/

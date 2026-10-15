@@ -13,10 +13,18 @@
   import { serial } from '$lib/transport/serial-adapter'
   import { ble } from '$lib/transport/ble-adapter'
   import { websocket } from '$lib/transport/websocket-adapter'
-  import { ControllerInputData, ModeData, GaitData } from '$lib/platform_shared/message'
+  import {
+    AnimationStatus,
+    ControllerInputData,
+    ModeData,
+    GaitData
+  } from '$lib/platform_shared/message'
   import { GaitType } from '$lib/gait'
   import { throttler } from '$lib/utilities'
+  import { setAnimationStatus } from '$lib/stores/animation'
   import { connectWebsocket, isLinked } from '$lib/stores/link'
+  import { COMMAND_HEARTBEAT_MS, needsHeartbeat } from '$lib/control-link'
+  import { watchUpdateOutcome } from '$lib/firmware/watch-update'
 
   // outControllerData is [lx, ly, rx, ry, height, speed, s1, feetDistance].
   const toControllerInput = (d: number[]): ControllerInputData => ({
@@ -37,15 +45,16 @@
   dataBroker.addTransport(ble)
 
   const throttle = new throttler()
-  const COMMAND_HEARTBEAT_MS = 250
   let lastCommand = [0, 0, 0, 0, 0, 0, 0, 0]
   let currentMode = MotionModes.DEACTIVATED
   let linked = false
   let commandHeartbeatId: ReturnType<typeof setInterval> | undefined
+  let stopWatchingUpdate: (() => void) | undefined
 
   let { children }: Props = $props()
 
   onMount(() => {
+    stopWatchingUpdate = watchUpdateOutcome()
     // Only the robot-hosted http origin may open ws://; https pages reach the robot over BLE or USB.
     if (window.location.protocol === 'http:') connectWebsocket()
 
@@ -71,6 +80,8 @@
       if (nextMode !== undefined) mode.set(nextMode)
     })
 
+    dataBroker.on(AnimationStatus, setAnimationStatus)
+
     dataBroker.on(GaitData, data => {
       const nextGait = Object.values(GaitType)[data.gait]
       if (nextGait !== undefined) gait.set(nextGait)
@@ -82,17 +93,19 @@
 
     isLinked.subscribe(value => {
       linked = value
+      if (!value) setAnimationStatus(null)
     })
 
     commandHeartbeatId = setInterval(() => {
       if (!linked) return
-      if (currentMode !== MotionModes.STAND && currentMode !== MotionModes.WALK) return
+      if (!needsHeartbeat(currentMode)) return
       dataBroker.emit(ControllerInputData, toControllerInput(lastCommand))
     }, COMMAND_HEARTBEAT_MS)
   })
 
   onDestroy(() => {
     if (commandHeartbeatId) clearInterval(commandHeartbeatId)
+    stopWatchingUpdate?.()
   })
 
   let menuOpen = $state(false)

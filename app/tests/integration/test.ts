@@ -19,3 +19,25 @@ test('controller page renders its mode controls without a robot', async ({ page 
   await expect(page.getByText('Preview')).toBeVisible()
   expect(errors).toEqual([])
 })
+
+test('animations page lists the bundled library without a robot', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+
+  await page.goto(`${base}/animations`)
+  await expect(page).toHaveTitle('Animations')
+  await expect(page.getByRole('heading', { name: 'Built-in' })).toBeVisible()
+  const builtIn = page.locator('section', { has: page.getByRole('heading', { name: 'Built-in' }) })
+  for (const name of [
+    'body_roll_test',
+    'crouch',
+    'play_dead',
+    'spooked',
+    'stretch',
+    'wave',
+    'wiggle'
+  ])
+    await expect(builtIn.getByText(name, { exact: true })).toBeVisible()
+  await expect(page.getByText('not connected', { exact: true })).toBeVisible()
+  expect(errors).toEqual([])
+})

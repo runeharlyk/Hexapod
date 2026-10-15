@@ -1,12 +1,16 @@
 #pragma once
 
 #include <esp_log.h>
+#include <platform_shared/message.pb.h>
+#include <atomic>
 #include <vector>
 
 #include <feature_flags.h>
 #include <message_types.h>
 #include <peripherals/i2c_bus.h>
-#include <settings/peripherals_settings.h>
+#include <peripherals_settings_service.h>
+#include <imu_calibration_service.h>
+#include <peripherals/imu_calibration.h>
 
 #if FT_ENABLED(USE_MPU6050)
 #include <peripherals/drivers/mpu6050.h>
@@ -37,6 +41,15 @@ class Peripherals {
         _imuReady = _imu.begin();
         if (!_imuReady) ESP_LOGW(TAG, "MPU6050 init failed");
         else ESP_LOGI(TAG, "MPU6050 ready");
+        ImuCalibration calibration;
+        if (_imuReady && ImuCalibrationBus::peek(calibration) && calibration.accel_offsets_count == 3) {
+            const int16_t accel[3] = {(int16_t)calibration.accel_offsets[0], (int16_t)calibration.accel_offsets[1],
+                                      (int16_t)calibration.accel_offsets[2]};
+            const int16_t gyro[3] = {(int16_t)calibration.gyro_offsets[0], (int16_t)calibration.gyro_offsets[1],
+                                     (int16_t)calibration.gyro_offsets[2]};
+            _imu.writeOffsets(accel, gyro);
+            ESP_LOGI(TAG, "MPU6050 calibration applied");
+        }
 #endif
 #if FT_ENABLED(USE_MAG)
         _magReady = _mag.begin();
@@ -49,7 +62,7 @@ class Peripherals {
 
     bool readIMU() {
 #if FT_ENABLED(USE_MPU6050)
-        if (!_imuReady) return false;
+        if (!_imuReady || _calibrating) return false;
         return _imu.update();
 #else
         return false;
@@ -108,6 +121,39 @@ class Peripherals {
 #endif
     }
 
+    // Runs on the requesting adapter task for the second or two the PID loops take; the control
+    // loop skips its IMU reads meanwhile. The caller checks that the robot rests.
+    imu_calibration::Check calibrateIMU(ImuCalibration &result) {
+#if FT_ENABLED(USE_MPU6050)
+        static int16_t gyro[100][3];
+        int16_t accel[3];
+        if (!_imuReady || _calibrating.exchange(true)) return imu_calibration::Check::MOVING;
+        imu_calibration::Check check = imu_calibration::Check::MOVING;
+        if (_imu.sampleRaw(gyro, 100, accel)) check = imu_calibration::check(gyro, 100, accel);
+        int16_t accelOffsets[3], gyroOffsets[3];
+        if (check == imu_calibration::Check::OK && _imu.calibrate() && _imu.readOffsets(accelOffsets, gyroOffsets)) {
+            result = ImuCalibration_defaults();
+            result.accel_offsets_count = result.gyro_offsets_count = 3;
+            for (int i = 0; i < 3; ++i) {
+                result.accel_offsets[i] = accelOffsets[i];
+                result.gyro_offsets[i] = gyroOffsets[i];
+            }
+        }
+        _calibrating = false;
+        return check;
+#else
+        return imu_calibration::Check::MOVING;
+#endif
+    }
+
+    bool imuActive() const {
+#if FT_ENABLED(USE_MPU6050)
+        return _imuReady;
+#else
+        return false;
+#endif
+    }
+
     bool magActive() const {
 #if FT_ENABLED(USE_MAG)
         return _magReady;
@@ -123,6 +169,15 @@ class Peripherals {
 #else
         return 0.0f;
 #endif
+    }
+
+    // The IMU's half of a telemetry tick, as the motion sees it.
+    void fillTelemetry(socket_message_TickSample &tick) {
+        tick.rpy[0] = angleX();
+        tick.rpy[1] = angleY();
+        tick.rpy[2] = angleZ();
+        gyroRad(tick.gyro);
+        gravityBody(tick.gravity);
     }
 
     IMUAnglesMsg getIMUAngles() {
@@ -145,6 +200,7 @@ class Peripherals {
 #if FT_ENABLED(USE_MPU6050)
     MPU6050Driver _imu;
     bool _imuReady{false};
+    std::atomic<bool> _calibrating{false};
 #endif
 #if FT_ENABLED(USE_MAG)
     HMC5883Driver _mag;

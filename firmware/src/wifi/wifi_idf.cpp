@@ -257,6 +257,11 @@ bool WiFiClass::begin(const char* ssid, const char* password, int32_t channel, c
         ESP_LOGE(TAG, "Failed to set STA config: %s", esp_err_to_name(err));
         return false;
     }
+    // On a crowded 2.4 GHz band a 40 MHz station waits so long for the air that frames back up until
+    // the link stalls (measured on the SpotMicro firmware); 20 MHz stays clear and is ample for
+    // control traffic. Modem sleep stays on: WiFi/BLE coexistence refuses WIFI_PS_NONE.
+    err = esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
+    if (err != ESP_OK) ESP_LOGW(TAG, "Station stays at its default bandwidth: %s", esp_err_to_name(err));
 
     if (_useStaticIp) {
         esp_netif_dhcpc_stop(_sta_netif);

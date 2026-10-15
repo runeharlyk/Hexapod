@@ -33,6 +33,7 @@ class BLE : public CommAdapterBase {
     ~BLE();
 
     void begin() override;
+    bool hasClient() const override { return _deviceConnected; }
 
   private:
     NimBLEServer *_server{nullptr};
@@ -46,8 +47,10 @@ class BLE : public CommAdapterBase {
     // Serializes send() so concurrent emitters' chunks can't interleave on the wire.
     SemaphoreHandle_t _txMutex{nullptr};
 
-    // Reassembles the length-prefixed chunks a >MTU message is split into. BLE task only.
+    // Reassembles the length-prefixed chunks a >MTU message is split into. BLE_Process task only; other
+    // tasks go through requestRxReset(). A zero-length queued message is the reset marker.
     std::vector<uint8_t> _rxBuffer;
+    void requestRxReset();
 
     class ServerCallbacks : public NimBLEServerCallbacks {
         BLE *_service;

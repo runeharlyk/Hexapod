@@ -139,8 +139,17 @@
     handleJoyMove('left', { x: 0, y: 0 })
   }
 
+  // A backgrounded tab cannot see the sticks it holds, and its timers are throttled, so it stops the
+  // robot outright rather than leave a deflected stick re-sent by the heartbeat.
   const handleVisibilityChange = () => {
-    if (document.visibilityState === 'hidden') releaseAllKeys()
+    if (document.visibilityState !== 'hidden') return
+    heldKeys.clear()
+    input.update(i => {
+      i.left = { x: 0, y: 0 }
+      i.right = { x: 0, y: 0 }
+      syncCommand(i)
+      return i
+    })
   }
 
   const handleRange = (event: Event, key: SliderKey) => {

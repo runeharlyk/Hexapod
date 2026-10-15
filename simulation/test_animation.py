@@ -1,6 +1,7 @@
 """Unit tests for the animation reference implementation (src/robot/animation.py)."""
 import json
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -68,6 +69,7 @@ def test_validate_accepts_a_minimal_animation():
     (lambda a: a.overlays.append(an.Overlay(body_axis=0, amplitude=1, frequency=1, start=0, end=math.inf)),
      "overlay 0 has a non-finite value"),
     (lambda a: setattr(a, "entry_time", math.inf), "entry_time and exit_time must be finite"),
+    (lambda a: setattr(a, "ride_height", math.nan), "ride_height must be finite"),
     (lambda a: setattr(a, "description", "\u00e9" * 48 + "d"), "96 bytes"),
     (lambda a: (setattr(a, "loop", True), setattr(a, "hold_end", True)), "loop and hold_end"),
     (lambda a: a.params.append(an.ParamSpec(an.ParamId.REPEAT, 0, 1, 2)), "REPEAT needs min >= 1"),
@@ -149,6 +151,22 @@ def test_from_proto_round_trips_through_to_proto_and_json():
     assert b.params[0].id == an.ParamId.FOOT_LIFT and b.params[0].default_value == 1.0
     text = json_text(b)
     assert '"defaultValue": 1.0' in text and '"holdEnd"' not in text
+
+
+def test_ride_height_round_trips_only_when_set():
+    unset = to_proto(two_keyframes())
+    assert not unset.HasField("ride_height")
+    assert from_proto(unset).ride_height is None
+    assert "rideHeight" not in json_text(two_keyframes())
+
+    zero = to_proto(two_keyframes(ride_height=0.0))
+    assert zero.HasField("ride_height")
+    assert from_proto(pb.Animation.FromString(zero.SerializeToString())).ride_height == 0.0
+    assert '"rideHeight": 0.0' in json_text(two_keyframes(ride_height=0.0))
+
+    tall = from_proto(json_format.Parse('{"name": "t", "schema": 1, "keyframes": [{"time": 0}], "rideHeight": 30}',
+                                        pb.Animation()))
+    assert tall.ride_height == 30.0 and an.validate(tall) is None
 
 
 def test_from_proto_keeps_a_three_leg_keyframe_for_validate_to_reject():
@@ -483,3 +501,79 @@ def test_capture_pose_reads_offsets_from_a_body_state():
     pose = an.capture_pose(b)
     assert pose.body[an.BodyAxis.ROLL] == 0.1 and pose.body[an.BodyAxis.Z] == 15.0
     assert np.allclose(pose.legs[2].foot, [1, 2, 3]) and np.allclose(pose.legs[0].foot, 0)
+
+
+# The runner adds a ride-height base to the body z before IK; every foot-to-joint conversion must see it.
+BASE_MM = 30.0
+WAVE = Path(__file__).resolve().parents[1] / "animations" / "wave.json"
+
+
+def based_angles(pose, base=BASE_MM):
+    out = pose.copy()
+    out.body[an.BodyAxis.Z] += base
+    return an.pose_to_angles(out, KIN)[0]
+
+
+def slider_following_wave():
+    a = load_json(WAVE)
+    a.ride_height = None
+    return a
+
+
+def test_a_mixed_leg_is_continuous_at_every_keyframe_on_a_nonzero_base():
+    a = slider_following_wave()
+    p = an.resolve_params(a, None)
+    for k in a.keyframes:
+        before = based_angles(an.evaluate(a, p, k.time - 1e-6, KIN, base_z=BASE_MM))
+        after = based_angles(an.evaluate(a, p, k.time + 1e-6, KIN, base_z=BASE_MM))
+        assert np.max(np.abs(before - after)) < 0.05, f"jump at t={k.time}"
+
+
+def test_entry_from_a_joint_leg_ends_where_a_slider_following_clip_starts():
+    held = an.Animation(name="held", entry_time=0.4, keyframes=[
+        an.Keyframe(0.0, body=np.array([0, 0, 0, 0, 0, 5.0])), an.Keyframe(1.0, body=np.array([0, 0, 0, 0, 0, 5.0]))])
+    live = an.Pose.stance()
+    live.legs[0] = an.LegTarget(joints=np.array([10.0, 60.0, -100.0]))  # a puppeteer joint leg
+    p = an.Player(KIN)
+    p.play(held, live=live, base_z=BASE_MM)
+    while p.state == an.State.ENTRY:
+        end_of_entry = based_angles(p.update(DT, BASE_MM))
+    first_playing = based_angles(p.update(DT, BASE_MM))
+    assert p.state == an.State.PLAYING
+    assert np.max(np.abs(end_of_entry - first_playing)) < 0.05
+
+
+def test_a_stop_in_a_joint_phase_exits_exactly_to_stance_on_the_base():
+    p = an.Player(KIN)
+    p.play(slider_following_wave(), base_z=BASE_MM)
+    while p.state != an.State.PLAYING or p.t < 1.0:
+        p.update(DT, BASE_MM)
+    assert p.last_pose.legs[0].is_joints()
+    p.stop(BASE_MM)
+    while p.state != an.State.IDLE:
+        final = p.update(DT, BASE_MM)
+    assert final.legs[0].is_joints()
+    assert np.max(np.abs(based_angles(final) - based_angles(an.Pose.stance()))) < 1e-6
+
+
+RUNNER_DT = 0.005  # the firmware control tick
+STAND_SMOOTHING = 0.06
+
+
+def test_a_fixed_ride_height_entry_meets_playing_on_the_seam():
+    """The runner moves its base along the Entry blend to the base Entry converted at, then eases it
+    toward the clip's height; a short Entry far from that height must still land on the seam."""
+    a = load_json(WAVE)
+    a.ride_height, a.entry_time = 40.0, 0.1
+    start = base = -40.0
+    p = an.Player(KIN)
+    p.play(a, live=an.Pose.stance(), base_z=base)
+    while p.state == an.State.ENTRY:
+        pose = p.update(RUNNER_DT, base)
+        base = start + (p.entry_base - start) * an.ease_value(an.Ease.EASE_IN_OUT, p.blend_fraction())
+        end_of_entry = based_angles(pose, base)
+    assert base == pytest.approx(40.0)
+    base += (a.ride_height - base) * STAND_SMOOTHING
+    first_playing = based_angles(p.update(RUNNER_DT, base), base)
+    assert p.state == an.State.PLAYING
+    assert np.max(np.abs(end_of_entry - first_playing)) < 0.05

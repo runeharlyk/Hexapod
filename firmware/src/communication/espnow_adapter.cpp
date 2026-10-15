@@ -122,7 +122,10 @@ void EspNowAdapter::begin() {
         esp_timer_start_periodic(beacon, HEXAPOD_BEACON_PERIOD_MS * 1000);
     }
 
-    EventBus<ModeMsg>::consume([](const ModeMsg& m) { s_mode.store(m.mode, std::memory_order_relaxed); });
+    EventBus<ModeMsg>::consume([](const ModeMsg& m) {
+        if (m.kind == ModeMsgKind::REQUEST || m.kind == ModeMsgKind::APPLIED)
+            s_mode.store(m.mode, std::memory_order_relaxed);
+    });
     EventBus<GaitMsg>::consume([](const GaitMsg& g) { s_gait.store(g.gait, std::memory_order_relaxed); });
 
     // A STA join retunes the radio, so re-check on every connect and disconnect rather than only

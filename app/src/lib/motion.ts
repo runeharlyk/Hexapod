@@ -15,7 +15,8 @@ export enum MotionModes {
   POSE = 'pose',
   STAND = 'stand',
   WALK = 'walk',
-  WALK_NN = 'walk nn'
+  WALK_NN = 'walk nn',
+  ANIMATE = 'animate'
 }
 
 export default class Motion {
@@ -133,6 +134,9 @@ export default class Motion {
         this.targetAngles = this.order(this.kinematics.inverseKinematics(this.body_state).flat())
         break
       }
+      case MotionModes.ANIMATE:
+        // The animation preview store drives the view, not this loop.
+        return false
     }
     return true
   }

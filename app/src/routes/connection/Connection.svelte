@@ -5,6 +5,7 @@
   import {
     connectBluetooth,
     connectWebsocket,
+    chooseSerialPort,
     connectSerial,
     serialAvailable
   } from '$lib/stores/link'
@@ -103,7 +104,8 @@
           <WiFi class="h-6 w-auto text-success" />
         </button>
       {:else}
-        <button class="btn btn-sm ml-2" onclick={connectSerial}>Choose port</button>
+        <button class="btn btn-sm ml-2" onclick={connectSerial}>Connect</button>
+        <button class="btn btn-sm btn-ghost ml-2" onclick={chooseSerialPort}> Choose port </button>
       {/if}
     {/if}
   </div>

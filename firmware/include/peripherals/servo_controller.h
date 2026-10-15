@@ -3,6 +3,7 @@
 
 #include <esp_log.h>
 #include <esp_timer.h>
+#include <cmath>
 #include <cstdint>
 #include <event_bus.h>
 #include <message_types.h>
@@ -15,6 +16,10 @@
 
 #ifndef NUM_SERVO
 #define NUM_SERVO 18
+#endif
+
+#ifndef FACTORY_SERVO_OSCILLATOR_FREQUENCY
+#define FACTORY_SERVO_OSCILLATOR_FREQUENCY 25000000
 #endif
 
 #ifndef FACTORY_SERVO_PWM_FREQUENCY
@@ -51,10 +56,8 @@ class ServoController {
         if (!I2CBus::instance().isInitialized()) {
             I2CBus::instance().begin(static_cast<gpio_num_t>(SDA_PIN), static_cast<gpio_num_t>(SCL_PIN), 400000);
         }
-        _left_pca.begin();
-        _left_pca.setPWMFreq(FACTORY_SERVO_PWM_FREQUENCY);
-        _right_pca.begin();
-        _right_pca.setPWMFreq(FACTORY_SERVO_PWM_FREQUENCY);
+        _left_pca.begin(FACTORY_SERVO_OSCILLATOR_FREQUENCY, FACTORY_SERVO_PWM_FREQUENCY);
+        _right_pca.begin(FACTORY_SERVO_OSCILLATOR_FREQUENCY, FACTORY_SERVO_PWM_FREQUENCY);
 
         _signalSub = EventBus<ServoSignalMsg>::subscribe([this](ServoSignalMsg const &m) { servoEvent(m); });
         _stateSub = EventBus<ServoStateMsg>::subscribe([this](ServoStateMsg const &m) {
@@ -88,26 +91,56 @@ class ServoController {
 
     void setAngles(float new_angles[NUM_SERVO]) {
         control_state = SERVO_CONTROL_STATE::ANGLE;
-        bool clamped = false;
         for (int i = 0; i < NUM_SERVO; i++) {
-            const float limit = JOINT_LIMIT_DEG[i % 3];
+            // Last line of defence: a NaN or infinity from any mode keeps the servo where it was.
+            if (!std::isfinite(new_angles[i])) {
+                _nonFiniteSinceLog++;
+                continue;
+            }
+            const int joint = i % 3;
+            const float limit = JOINT_LIMIT_DEG[joint];
+            const float requested = std::fabs(new_angles[i]);
+            // Peak is tracked from the PRE-clamp command on every tick, not only when clamping:
+            // a run with zero clamps still needs to say how much travel was left.
+            if (requested > _peakAbs[joint]) {
+                _peakAbs[joint] = requested;
+                _peakLeg[joint] = (uint8_t)(i / 3);
+            }
             const float angle = CLIP(new_angles[i], -limit, limit);
-            if (angle != new_angles[i]) clamped = true;
-            target_angles[i] = angle + (i % 3 == 2 ? 90.0f : 0.0f);
+            if (angle != new_angles[i]) _clampedSinceLog[joint]++;
+            target_angles[i] = angle + (joint == 2 ? 90.0f : 0.0f);
         }
-        if (clamped) reportClamped();
+        reportJointTravel();
     }
 
-    // Commands beyond travel mean the gait is asking for motion the robot cannot make; say so, but
-    // not at 200 Hz.
-    void reportClamped() {
+    // Commands beyond travel mean the gait is asking for motion the robot cannot make. Report per
+    // joint type -- which joint saturates identifies the cause, and an aggregate cannot -- but not
+    // at 200 Hz. Counts are per joint command, so the ceiling is 6 legs x window, not 1 per tick.
+    void reportJointTravel() {
         const int64_t now = esp_timer_get_time();
-        _clampedSinceLog++;
         if (now - _lastClampLog < 2000000) return;
         _lastClampLog = now;
-        ESP_LOGW(TAG, "%lu servo commands clamped to joint travel in the last window",
-                 (unsigned long)_clampedSinceLog);
-        _clampedSinceLog = 0;
+        const uint32_t total = _clampedSinceLog[0] + _clampedSinceLog[1] + _clampedSinceLog[2];
+        if (_nonFiniteSinceLog) {
+            ESP_LOGE(TAG, "%lu non-finite joint commands ignored", (unsigned long)_nonFiniteSinceLog);
+            _nonFiniteSinceLog = 0;
+        }
+        if (total) {
+            ESP_LOGW(TAG,
+                     "joint travel exceeded: coxa %lu femur %lu tibia %lu commands clamped; "
+                     "peak |cmd| coxa %.1f (leg %u) femur %.1f (leg %u) tibia %.1f (leg %u) deg",
+                     (unsigned long)_clampedSinceLog[0], (unsigned long)_clampedSinceLog[1],
+                     (unsigned long)_clampedSinceLog[2], _peakAbs[0], (unsigned)_peakLeg[0],
+                     _peakAbs[1], (unsigned)_peakLeg[1], _peakAbs[2], (unsigned)_peakLeg[2]);
+        } else {
+            ESP_LOGD(TAG, "joint travel ok; peak |cmd| coxa %.1f/%.1f femur %.1f/%.1f tibia %.1f/%.1f deg",
+                     _peakAbs[0], JOINT_LIMIT_DEG[0], _peakAbs[1], JOINT_LIMIT_DEG[1], _peakAbs[2],
+                     JOINT_LIMIT_DEG[2]);
+        }
+        for (int j = 0; j < 3; j++) {
+            _clampedSinceLog[j] = 0;
+            _peakAbs[j] = 0.0f;
+        }
     }
 
     // Float -> uint16_t is undefined for negatives, and the manual pcaWrite() path already
@@ -187,7 +220,11 @@ class ServoController {
     SERVO_CONTROL_STATE control_state = SERVO_CONTROL_STATE::DEACTIVATED;
     bool is_active{false};
     int64_t _lastClampLog{0};
-    uint32_t _clampedSinceLog{0};
+    // Per joint type: coxa, femur, tibia. Reset each log window.
+    uint32_t _clampedSinceLog[3] = {0, 0, 0};
+    uint32_t _nonFiniteSinceLog = 0;
+    float _peakAbs[3] = {0.0f, 0.0f, 0.0f};
+    uint8_t _peakLeg[3] = {0, 0, 0};
     float target_angles[NUM_SERVO] = {0};
 
     EventBus<ServoSignalMsg>::Handle _signalSub;

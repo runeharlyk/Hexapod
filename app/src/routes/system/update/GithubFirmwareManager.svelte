@@ -52,7 +52,7 @@
         confirm: { label: 'Update', icon: CloudDown }
       },
       onConfirm: () => {
-        requestFirmwareDownload(url)
+        requestFirmwareDownload(url, $features.firmware_elf_sha256)
         modals.open(GithubUpdateDialog, {
           onConfirm: () => modals.closeAll()
         })

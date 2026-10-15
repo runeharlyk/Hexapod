@@ -1,6 +1,6 @@
 {
   "name": "hexapod_controller",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "pnpm proto && vite dev --host",

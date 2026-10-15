@@ -100,3 +100,16 @@ Camera needs the WebSocket/HTTP transport, so BLE alone cannot carry it.
 
 **Decision: use our own schema.** Same protobuf rigor, one schema, no second crypto stack, works from https.
 Revisit protocomm only if Espressif-app interop ever matters.
+
+## Update: Chromium's Local Network Access relaxes the binding constraint
+
+Checked 2026-10-05 against the primary sources; the WebSocket part could not be confirmed as shipped.
+Chromium's Local Network Access (LNA) exempts a request from mixed-content blocking when Chrome knows before resolving that it targets the local network: a private IP literal or a `.local` name ([Chrome blog](https://developer.chrome.com/blog/local-network-access)).
+Such a request asks the user for the local network permission instead, which needs a secure context, so the https Pages origin qualifies.
+A hostname that only resolves to a private address gets no exemption.
+For `fetch()` and subresources such as the camera's `<img>`, the permission prompt launched in Chrome 142.
+For WebSockets, the [Intent to Ship](https://groups.google.com/a/chromium.org/g/blink-dev/c/O6GMKt44Ups) states that "explicit local IP addresses, and `.local` domains are exempted from mixed content checks" and targets Chrome 147 (flag `local-network-access-check-websockets`).
+The thread had two of the three LGTMs when read, so whether and when it reached stable is unverified.
+Where it applies, the https app can open `ws://192.168.x.y/api/ws` and show the camera after one permission prompt, without BLE or USB.
+The app still opens the WebSocket automatically only on the robot-hosted `http:` origin (`app/src/routes/+layout.svelte`), and the firmware's origin policy (`firmware/include/communication/origin_policy.h`) already admits the Pages origin.
+In browsers without this exemption the table above still holds.

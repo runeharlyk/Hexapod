@@ -4,6 +4,7 @@
   import { dataBroker } from '$lib/transport/databroker'
   import { notifications } from '$lib/components/toasts/notifications'
   import type { Servo } from '$lib/platform_shared/api'
+  import LegDiagram from '$lib/components/LegDiagram.svelte'
 
   let { pwm = $bindable(306), servoId = $bindable(0) } = $props()
 
@@ -36,6 +37,10 @@
   const updateValue = (event: Event, index: number, key: NumericServoField) =>
     (servos[index][key] = Number((event.target as HTMLInputElement).value))
 </script>
+
+{#if servos.length === 18}
+  <LegDiagram {servos} {servoId} {pwm} />
+{/if}
 
 <div class="overflow-x-auto space-y-2">
   <div class="flex flex-wrap gap-2">

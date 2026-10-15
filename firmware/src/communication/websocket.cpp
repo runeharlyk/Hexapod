@@ -1,5 +1,6 @@
 #include <communication/websocket.h>
 #include <esp_log.h>
+#include <esp_timer.h>
 
 static const char* TAG = "Websocket";
 
@@ -15,12 +16,26 @@ void Websocket::begin() {
 void Websocket::onWsOpen(httpd_req_t* req) {
     int sockfd = httpd_req_to_sockfd(req);
     ESP_LOGI(TAG, "Client connected: %d", sockfd);
+    {
+        std::lock_guard<std::mutex> lock(socketsMutex_);
+        openSockets_.insert(sockfd);
+    }
     sendPong(sockfd);
 }
 
 void Websocket::onWsClose(int sockfd) {
+    {
+        std::lock_guard<std::mutex> lock(socketsMutex_);
+        if (openSockets_.erase(sockfd) == 0) return;
+    }
     ESP_LOGI(TAG, "Client disconnected: %d", sockfd);
+    stalls_.forget(sockfd);
     removeClient(sockfd);
+}
+
+bool Websocket::hasClient() const {
+    std::lock_guard<std::mutex> lock(socketsMutex_);
+    return !openSockets_.empty();
 }
 
 esp_err_t Websocket::onFrame(httpd_req_t* req, httpd_ws_frame_t* frame) {
@@ -34,13 +49,18 @@ esp_err_t Websocket::onFrame(httpd_req_t* req, httpd_ws_frame_t* frame) {
     return ESP_OK;
 }
 
+bool Websocket::ready(int cid) {
+    const bool writable = WebServer::writable(cid);
+    if (stalls_.gone(cid, writable, esp_timer_get_time() / 1000)) {
+        ESP_LOGW(TAG, "Closing client %d: it has taken nothing for %u ms", cid, (unsigned)STALL_LIMIT_MS);
+        server_.endSession(cid);
+    }
+    return writable;
+}
+
 void Websocket::send(const uint8_t* data, size_t len, int cid) {
-    if (cid >= 0) {
-        esp_err_t err = server_.wsSend(cid, data, len);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to send message to client %d: %s (len=%u)", cid, esp_err_to_name(err), len);
-        }
-    } else {
-        server_.wsSendAll(data, len);
+    esp_err_t err = server_.wsSend(cid, data, len);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to send message to client %d: %s (len=%u)", cid, esp_err_to_name(err), len);
     }
 }

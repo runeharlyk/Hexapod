@@ -6,7 +6,7 @@
 #define APP_NAME "Hexapod"
 #endif
 #ifndef APP_VERSION
-#define APP_VERSION "0.0.1"
+#define APP_VERSION "0.1.0"
 #endif
 
 namespace feature_service {

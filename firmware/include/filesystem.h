@@ -12,6 +12,7 @@
 #define SERVO_SETTINGS_FILE FS_CONFIG_DIRECTORY "/servoSettings.json"
 #define MDNS_SETTINGS_FILE FS_CONFIG_DIRECTORY "/mdnsSettings.json"
 #define PERIPHERAL_SETTINGS_FILE FS_CONFIG_DIRECTORY "/peripheralSettings.json"
+#define IMU_CALIBRATION_FILE FS_CONFIG_DIRECTORY "/imuCalibration.pb"
 
 namespace FileSystem {
 

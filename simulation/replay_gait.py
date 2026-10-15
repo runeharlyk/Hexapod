@@ -19,58 +19,29 @@ import argparse
 import time
 import numpy as np
 
+from src.robot.firmware_gait import AUTO, BI_GATE, RIPPLE, TRI_GATE, TUNED, WAVE
+from src.sim.firmware_loop import FIRMWARE_DT, FirmwareLoop
 from src.sim.mj_runtime import HexapodSim
-from src.robot.firmware_gait import (AUTO, BI_GATE, RIPPLE, TRI_GATE, TUNED, WAVE, BodyState,
-                                     GaitController, GaitState, approach_gait_command,
-                                     command_speed01, command_to_walk_gait, select_auto_gait,
-                                     set_gait)
 
-FIRMWARE_DT = 0.005          # control-task period (firmware/src/main.cpp)
-BODY_SMOOTHING = 0.06        # MotionService::smoothing_factor
 GAITS = {"tri": TRI_GATE, "bi": BI_GATE, "wave": WAVE, "ripple": RIPPLE, "tuned": TUNED, "auto": AUTO}
 
 
-class FirmwareLoop:
-    """MotionService's WALK tick for a constant stick command: ramp, gait step, body lerp."""
-
-    def __init__(self, args):
-        requested = GAITS[args.gait]
-        self.target = GaitState(gait_type=TUNED if requested == TUNED else TRI_GATE)
-        self.target_zm = command_to_walk_gait(lx=args.lx, ly=args.ly, rx=args.rx, s=args.s,
-                                              s1=args.s1, gait=self.target)
-        self.live = GaitState()
-        # The robot starts at rest, which is when a gait selection (manual or AUTO) is applied.
-        self.live.gait_type = (select_auto_gait(command_speed01(self.target), self.live.gait_type)
-                               if requested == AUTO else requested)
-        set_gait(self.live)
-        self.target.gait_type = self.live.gait_type
-        self.target.offset = self.live.offset.copy()
-        self.target.stand_frac = self.live.stand_frac
-        self.gc, self.body = GaitController(), BodyState()
-        self.ticks = 0
-        self.physics_steps = 0
-
-    def tick(self, sim):
-        approach_gait_command(self.live, self.target, FIRMWARE_DT)
-        self.body.zm += (self.target_zm - self.body.zm) * BODY_SMOOTHING
-        self.gc.step(self.live, self.body, FIRMWARE_DT)
-        sim.set_joint_targets(sim.body_targets_from_feet(self.body))
-        self.ticks += 1
-        # 5 ms is not a whole number of physics steps, so keep physics time locked to tick time.
-        due = int(round(self.ticks * FIRMWARE_DT / sim.model.opt.timestep))
-        sim.step_physics(due - self.physics_steps)
-        self.physics_steps = due
+def firmware_loop(sim, args):
+    """MotionService's WALK tick for a constant stick command, starting from rest."""
+    loop = FirmwareLoop(sim, GAITS[args.gait])
+    loop.walk(lx=args.lx, ly=args.ly, rx=args.rx, s=args.s, s1=args.s1)
+    return loop
 
 
 def run_headless(args):
     sim = HexapodSim()
     sim.reset_to_stand()
-    loop = FirmwareLoop(args)
+    loop = firmware_loop(sim, args)
     x0, y0 = sim.data.qpos[0], sim.data.qpos[1]
     heights = []
     n = int(round(args.seconds / FIRMWARE_DT))
     for _ in range(n):
-        loop.tick(sim)
+        loop.tick()
         heights.append(sim.base_height())
     dx = (sim.data.qpos[0] - x0) * 1000
     dy = (sim.data.qpos[1] - y0) * 1000
@@ -88,11 +59,11 @@ def run_viewer(args):
 
     sim = HexapodSim()
     sim.reset_to_stand()
-    loop = FirmwareLoop(args)
+    loop = firmware_loop(sim, args)
     with mujoco.viewer.launch_passive(sim.model, sim.data) as viewer:
         while viewer.is_running():
             t0 = time.time()
-            loop.tick(sim)
+            loop.tick()
             viewer.sync()
             dt = FIRMWARE_DT - (time.time() - t0)
             if dt > 0:

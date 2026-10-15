@@ -93,4 +93,5 @@ message Animation {
   repeated Keyframe keyframes = 8;
   repeated Overlay overlays = 9;
   repeated ParamSpec params = 10;  // only the ids listed are exposed
+  optional float ride_height = 11;  // mm, body z base while playing; absent = the current ride-height slider
 }

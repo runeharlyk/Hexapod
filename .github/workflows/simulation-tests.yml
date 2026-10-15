@@ -1,0 +1,64 @@
+name: Simulation tests
+
+# The NumPy gait is the firmware's sim-to-real port, and the animation and serial-framing code is
+# shared with the firmware and the app: these tests pin them to each other, so they run whenever
+# any side changes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "simulation/**"
+      - "platform_shared/**"
+      - "animations/**"
+      - "firmware/include/**"
+      - "firmware/scripts/**"
+      - ".github/workflows/simulation-tests.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "simulation/**"
+      - "platform_shared/**"
+      - "animations/**"
+      - "firmware/include/**"
+      - "firmware/scripts/**"
+      - ".github/workflows/simulation-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: simulation
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+
+      # No test imports torch; skipping it and its CUDA 11.8 wheels saves gigabytes per run.
+      - name: Install dependencies without torch
+        run: >-
+          uv sync --locked
+          --no-install-package torch --no-install-package triton
+          --no-install-package nvidia-cublas-cu11 --no-install-package nvidia-cuda-cupti-cu11
+          --no-install-package nvidia-cuda-nvrtc-cu11 --no-install-package nvidia-cuda-runtime-cu11
+          --no-install-package nvidia-cudnn-cu11 --no-install-package nvidia-cufft-cu11
+          --no-install-package nvidia-curand-cu11 --no-install-package nvidia-cusolver-cu11
+          --no-install-package nvidia-cusparse-cu11 --no-install-package nvidia-nccl-cu11
+          --no-install-package nvidia-nvtx-cu11
+
+      # The modules are generated on first use only when missing; a CI checkout has none.
+      - name: Generate the protobuf modules
+        run: uv run --no-sync python scripts/compile_protos.py
+
+      - name: Simulation, parity and framing tests
+        run: uv run --no-sync pytest -q
+
+      - name: Firmware build-script tests
+        working-directory: firmware/scripts
+        run: uv run --no-project --with pytest pytest -q

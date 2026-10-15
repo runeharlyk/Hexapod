@@ -79,10 +79,12 @@ export const connectBluetooth = () => {
 
 export const serialAvailable = serialSupported
 
-export const connectSerial = () => {
-  serial.connect().catch(error => {
-    // The port picker resolves with NotFoundError when the user closes it without choosing.
-    if (error instanceof DOMException && error.name === 'NotFoundError') return
-    notifications.error(`USB connect failed: ${error}`)
-  })
+const reportSerialError = (error: unknown) => {
+  // The port picker resolves with NotFoundError when the user closes it without choosing.
+  if (error instanceof DOMException && error.name === 'NotFoundError') return
+  notifications.error(`USB connect failed: ${error}`)
 }
+
+export const connectSerial = () => serial.connect().catch(reportSerialError)
+
+export const chooseSerialPort = () => serial.choosePort().catch(reportSerialError)

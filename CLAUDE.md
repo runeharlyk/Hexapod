@@ -61,6 +61,7 @@ uv run pytest -q                             # firmware/sim gait parity tests (t
 uv run python check_animation.py             # run every bundled animation through the servo model
 uv run python gen_animation_fixtures.py      # regenerate the animation parity fixtures
 uv run python scripts/compile_protos.py      # regenerate src/platform_shared/animation_pb2.py (also runs on first import)
+uv run python robot_animate.py --port <COMx> <command>  # upload/validate/play/stop/watch animations over native USB
 ```
 See `simulation/README.md` for the full control-mode and training-flag reference.
 
@@ -88,12 +89,13 @@ See `simulation/README.md` for the full control-mode and training-flag reference
 
 ## Web app architecture
 
-SvelteKit (Svelte 5) + Tailwind/daisyUI, static-adapter SPA. Routes under `app/src/routes/` map to controller, connection, bluetooth, per-peripheral settings (servo/imu/camera/i2c), `wifi/*` (sta/ap/mdns) and `system/*` (status/filesystem/metrics/update) pages. `app/src/lib/` holds the shared logic: `transport/` (BLE, WebSocket and Web Serial byte-pipe implementations of `ITransport`, plus `databroker.ts` for tag-based pub/sub over the one active transport (serial > websocket > ble), `request()` correlation RPC and ping/pong), `proto-api.ts` (`resolveUrl` and IP helpers for the HTTP endpoints), `kinematic.ts`/`gait.ts`/`motion.ts` (a TS mirror of the robot math for the 3D visualization), `sceneBuilder.ts` + `Visualization.svelte` (three.js URDF rendering), and `stores/` for app state. The controller sends `Command` messages and subscribes to telemetry by message tag.
+SvelteKit (Svelte 5) + Tailwind/daisyUI, static-adapter SPA. Routes under `app/src/routes/` map to controller, `animations` (library and editor), connection, bluetooth, per-peripheral settings (servo/imu/camera/i2c), `wifi/*` (sta/ap/mdns) and `system/*` (status/filesystem/metrics/update) pages. `app/src/lib/` holds the shared logic: `transport/` (BLE, WebSocket and Web Serial byte-pipe implementations of `ITransport`, plus `databroker.ts` for tag-based pub/sub over the one active transport (serial > websocket > ble), `request()` correlation RPC and ping/pong), `proto-api.ts` (`resolveUrl` and IP helpers for the HTTP endpoints), `kinematic.ts`/`gait.ts`/`motion.ts` (a TS mirror of the robot math for the 3D visualization), `sceneBuilder.ts` + `Visualization.svelte` (three.js URDF rendering), and `stores/` for app state. The controller sends `Command` messages and subscribes to telemetry by message tag.
+`app/src/lib/animation/` is the TS mirror of the animation reference (`simulation/src/robot/animation.py`), tested against the shared fixtures in `animations/fixtures/`, and backs the `/animations` route's library and editor.
 
 ## Further documentation
 
 - `docs/connectivity.md` — how the app reaches the robot: the browser origin constraints that gate every transport, provisioning options, the `NET_STATUS`/`NET_COMMAND` topics, and the ranked plan. **Read before proposing any connection flow.**
-- `docs/animation.md` — the procedural animation system (`ANIMATE` mode). Currently shelved; records the app/firmware sync contract, sign conventions, and known drift.
+- `docs/animation.md` — the animation system as implemented (file format, evaluator rules, firmware mode, messages); kept current.
 
 ## Connection constraint (summary)
 

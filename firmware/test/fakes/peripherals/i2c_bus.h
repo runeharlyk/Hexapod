@@ -1,0 +1,56 @@
+#pragma once
+
+// Host stand-in for firmware/include/peripherals/i2c_bus.h, found first on the native include path.
+// Each device is a 256-byte register file; every write is recorded so a test can check the order in
+// which a driver touched the chip, not only where it left it.
+
+#include <array>
+#include <cstdint>
+#include <map>
+#include <vector>
+
+using esp_err_t = int;
+constexpr esp_err_t ESP_OK = 0;
+constexpr esp_err_t ESP_FAIL = -1;
+
+using TickType_t = uint32_t;
+#define pdMS_TO_TICKS(ms) static_cast<TickType_t>(ms)
+inline void vTaskDelay(TickType_t) {}
+
+struct FakeWrite {
+    uint8_t addr;
+    uint8_t reg;
+    std::vector<uint8_t> bytes;
+};
+
+class I2CBus {
+  public:
+    static I2CBus& instance() {
+        static I2CBus inst;
+        return inst;
+    }
+
+    void reset() {
+        registers.clear();
+        writes.clear();
+    }
+
+    bool probe(uint8_t addr) { return registers.count(addr) != 0; }
+
+    esp_err_t writeReg(uint8_t addr, uint8_t reg, const uint8_t* data, size_t len) {
+        if (!probe(addr)) return ESP_FAIL;
+        writes.push_back({addr, reg, std::vector<uint8_t>(data, data + len)});
+        // Auto-increment, as on the PCA9685 with MODE1.AI set.
+        for (size_t i = 0; i < len; i++) registers[addr][(reg + i) & 0xFF] = data[i];
+        return ESP_OK;
+    }
+
+    esp_err_t readReg(uint8_t addr, uint8_t reg, uint8_t* data, size_t len) {
+        if (!probe(addr)) return ESP_FAIL;
+        for (size_t i = 0; i < len; i++) data[i] = registers[addr][(reg + i) & 0xFF];
+        return ESP_OK;
+    }
+
+    std::map<uint8_t, std::array<uint8_t, 256>> registers;
+    std::vector<FakeWrite> writes;
+};

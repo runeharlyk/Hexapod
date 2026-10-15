@@ -126,6 +126,7 @@ class Animation:
     keyframes: list[Keyframe] = field(default_factory=list)
     overlays: list[Overlay] = field(default_factory=list)
     params: list[ParamSpec] = field(default_factory=list)
+    ride_height: float | None = None
 
     @property
     def duration(self) -> float:
@@ -145,6 +146,8 @@ def leg_target(keyframe: Keyframe, leg: int) -> LegTarget:
 def _non_finite(anim: Animation) -> str | None:
     if not (math.isfinite(anim.entry_time) and math.isfinite(anim.exit_time)):
         return "entry_time and exit_time must be finite"
+    if anim.ride_height is not None and not math.isfinite(anim.ride_height):
+        return "ride_height must be finite"
     for i, k in enumerate(anim.keyframes):
         values = [k.time, *k.body]
         for lt in k.legs:
@@ -265,8 +268,11 @@ def _body_state(body6: np.ndarray, stance_feet: np.ndarray = DEFAULT_FEET) -> Bo
 
 
 def leg_joints_deg(kin: Kinematics, body6: np.ndarray, foot_offset: np.ndarray, leg: int,
-                   stance_feet: np.ndarray = DEFAULT_FEET) -> np.ndarray:
+                   stance_feet: np.ndarray = DEFAULT_FEET, base_z: float = 0.0) -> np.ndarray:
+    """The joints of one foot leg, solved on the body the runner outputs: the offsets plus the ride-height
+    base on z, so a joint leg meets its foot endpoint at any base."""
     b = _body_state(body6, stance_feet)
+    b.zm += base_z
     b.feet[leg, :3] += foot_offset
     return kin.inverse_kinematics(b)[leg * 3:leg * 3 + 3]
 
@@ -292,16 +298,18 @@ def _lifted(foot: np.ndarray, overlay: np.ndarray, lift: float) -> np.ndarray:
 
 
 def _resolve_leg(kin: Kinematics, a: LegTarget, b: LegTarget, overlay: np.ndarray, lift: float,
-                 body: np.ndarray, leg: int, u: float, stance_feet: np.ndarray) -> LegTarget:
+                 body: np.ndarray, leg: int, u: float, stance_feet: np.ndarray, base_z: float) -> LegTarget:
     if not a.is_joints() and not b.is_joints():
         return LegTarget(foot=_lifted(a.foot + (b.foot - a.foot) * u, overlay, lift))
-    ja = a.joints if a.is_joints() else leg_joints_deg(kin, body, _lifted(a.foot, overlay, lift), leg, stance_feet)
-    jb = b.joints if b.is_joints() else leg_joints_deg(kin, body, _lifted(b.foot, overlay, lift), leg, stance_feet)
+    ja = a.joints if a.is_joints() else leg_joints_deg(kin, body, _lifted(a.foot, overlay, lift), leg, stance_feet,
+                                                        base_z)
+    jb = b.joints if b.is_joints() else leg_joints_deg(kin, body, _lifted(b.foot, overlay, lift), leg, stance_feet,
+                                                        base_z)
     return LegTarget(joints=ja + (jb - ja) * u)
 
 
 def evaluate(anim: Animation, params: np.ndarray, t: float, kin: Kinematics,
-             stance_feet: np.ndarray = DEFAULT_FEET) -> Pose:
+             stance_feet: np.ndarray = DEFAULT_FEET, base_z: float = 0.0) -> Pose:
     """The pose at animation time t (clamped to [0, duration]), computed in this order:
 
     1. Interpolate the body between the bracketing keyframes with the end keyframe's easing.
@@ -315,7 +323,9 @@ def evaluate(anim: Animation, params: np.ndarray, t: float, kin: Kinematics,
        - mixed: the foot endpoint becomes IK(output body, lifted(foot)) and the leg is lerped in
          joint space with the raw joint endpoint.
     Because the mixed IK uses the output body and the lifted foot, a leg switching between a foot
-    and a joint target is continuous across the keyframe under any multiplier or overlay.
+    and a joint target is continuous across the keyframe under any multiplier or overlay. base_z is
+    the ride height the runner adds to the body z before IK; it enters only the mixed IK, and the
+    returned body stays an offset.
     """
     k0, k1, u = _segment(anim, t)
     t = min(max(t, 0.0), anim.duration)
@@ -332,7 +342,8 @@ def evaluate(anim: Animation, params: np.ndarray, t: float, kin: Kinematics,
     for axis, pid in enumerate(BODY_PARAM_FOR_AXIS):
         body[axis] *= params[pid]
     lift = params[ParamId.FOOT_LIFT]
-    legs = [_resolve_leg(kin, leg_target(k0, i), leg_target(k1, i), foot_overlay[i], lift, body, i, u, stance_feet)
+    legs = [_resolve_leg(kin, leg_target(k0, i), leg_target(k1, i), foot_overlay[i], lift, body, i, u, stance_feet,
+                         base_z)
             for i in range(6)]
     return Pose(body, legs)
 
@@ -395,16 +406,18 @@ def capture_pose(body: BodyState, stance_feet: np.ndarray = DEFAULT_FEET) -> Pos
     return Pose(body6, legs)
 
 
-def _blend_targets(kin: Kinematics, src: Pose, dst: Pose, stance_feet: np.ndarray) -> tuple[Pose, Pose]:
+def _blend_targets(kin: Kinematics, src: Pose, dst: Pose, stance_feet: np.ndarray, src_base_z: float,
+                   dst_base_z: float) -> tuple[Pose, Pose]:
     """Legs where either side is a joint target are converted to joints on both sides once, so the
-    blend itself is a plain lerp. Foot legs keep their offsets and get the step arc."""
+    blend itself is a plain lerp. Foot legs keep their offsets and get the step arc. The source is
+    converted at the base it is output on now, the destination at the base held when the blend ends."""
     a, b = src.copy(), dst.copy()
     for i in range(6):
         if a.legs[i].is_joints() or b.legs[i].is_joints():
             if not a.legs[i].is_joints():
-                a.legs[i] = LegTarget(joints=leg_joints_deg(kin, a.body, a.legs[i].foot, i, stance_feet))
+                a.legs[i] = LegTarget(joints=leg_joints_deg(kin, a.body, a.legs[i].foot, i, stance_feet, src_base_z))
             if not b.legs[i].is_joints():
-                b.legs[i] = LegTarget(joints=leg_joints_deg(kin, b.body, b.legs[i].foot, i, stance_feet))
+                b.legs[i] = LegTarget(joints=leg_joints_deg(kin, b.body, b.legs[i].foot, i, stance_feet, dst_base_z))
     return a, b
 
 
@@ -428,6 +441,10 @@ class Player:
 
     A non-looping animation plays max(1, floor(REPEAT + 0.5)) times: REPEAT is rounded half up and
     clamped to at least 1, so every language agrees (Python's round() would round half to even).
+
+    base_z is the ride height the runner adds to the body z at the moment of the call; it only moves
+    the foot-to-joint conversions, and the poses returned stay offsets. Entry blends toward the base
+    held once it ends (the animation's ride_height when set, else base_z) and Exit toward base_z.
     """
 
     def __init__(self, kin: Kinematics | None = None, stance_feet: np.ndarray = DEFAULT_FEET):
@@ -443,38 +460,49 @@ class Player:
         self._blend_seconds = 1.0
         self._blend_from = Pose.stance()
         self._blend_to = Pose.stance()
+        self.entry_base = 0.0  # the base the last Entry converted its destination at
 
-    def play(self, anim: Animation, values: dict[ParamId, float] | None = None, live: Pose | None = None) -> None:
+    def play(self, anim: Animation, values: dict[ParamId, float] | None = None, live: Pose | None = None,
+             base_z: float = 0.0) -> None:
         self.animation = anim
         self.params = resolve_params(anim, values)
         self.t = 0.0
         self._plays_done = 0
         start = live if live is not None else self.last_pose
         self.last_pose = start.copy()
-        self._start_blend(start, self._evaluate(0.0), anim.entry_seconds(), State.ENTRY)
+        self.entry_base = anim.ride_height if anim.ride_height is not None else base_z
+        self._start_blend(start, self._evaluate(0.0, self.entry_base), anim.entry_seconds(), State.ENTRY, base_z,
+                          self.entry_base)
 
-    def stop(self) -> None:
+    def stop(self, base_z: float = 0.0) -> None:
         if self.state == State.IDLE:
             return
-        self._start_blend(self.last_pose, Pose.stance(), self.animation.exit_seconds(), State.EXIT)
+        self._start_blend(self.last_pose, Pose.stance(), self.animation.exit_seconds(), State.EXIT, base_z, base_z)
 
-    def update(self, dt: float) -> Pose:
+    def update(self, dt: float, base_z: float = 0.0) -> Pose:
         if self.state == State.IDLE:
             return self.last_pose
         if self.state in (State.ENTRY, State.EXIT):
             pose = self._advance_blend(dt)
         elif self.state == State.HOLD:
-            pose = self._evaluate(self.animation.duration)
+            pose = self._evaluate(self.animation.duration, base_z)
         else:
-            pose = self._advance_playing(dt)
+            pose = self._advance_playing(dt, base_z)
         self.last_pose = pose
         return pose
 
-    def _evaluate(self, t: float) -> Pose:
-        return evaluate(self.animation, self.params, t, self.kin, self.stance_feet)
+    def blend_fraction(self) -> float:
+        """The last Entry or Exit blend's progress, 0 to 1. A runner moves its base along it during Entry,
+        from the base at play() to entry_base, so the base arrives exactly when Entry ends."""
+        return min(1.0, self._blend_t / self._blend_seconds)
 
-    def _start_blend(self, src: Pose, dst: Pose, seconds: float, state: State) -> None:
-        self._blend_from, self._blend_to = _blend_targets(self.kin, src, dst, self.stance_feet)
+    def _evaluate(self, t: float, base_z: float) -> Pose:
+        return evaluate(self.animation, self.params, t, self.kin, self.stance_feet, base_z)
+
+    def _start_blend(self, src: Pose, dst: Pose, seconds: float, state: State, src_base_z: float,
+                     dst_base_z: float) -> None:
+        self._blend_from, self._blend_to = _blend_targets(self.kin, src, dst, self.stance_feet, src_base_z,
+                                                          dst_base_z)
         self._blend_seconds = seconds
         self._blend_t = 0.0
         self.state = state
@@ -491,23 +519,23 @@ class Player:
                 self.state = State.IDLE
         return pose
 
-    def _advance_playing(self, dt: float) -> Pose:
+    def _advance_playing(self, dt: float, base_z: float) -> Pose:
         anim = self.animation
         duration = anim.duration
         self.t += dt * self.params[ParamId.SPEED]
         if anim.loop:
             self.t = self.t % duration if duration > 0.0 else 0.0
-            return self._evaluate(self.t)
+            return self._evaluate(self.t, base_z)
         if self.t < duration:
-            return self._evaluate(self.t)
+            return self._evaluate(self.t, base_z)
         self._plays_done += 1
         if self._plays_done < max(1, math.floor(self.params[ParamId.REPEAT] + 0.5)):
             self.t = self.t - duration if duration > 0.0 else 0.0
-            return self._evaluate(self.t)
-        final = self._evaluate(duration)
+            return self._evaluate(self.t, base_z)
+        final = self._evaluate(duration, base_z)
         if anim.hold_end:
             self.state = State.HOLD
         else:
             self.last_pose = final
-            self.stop()
+            self.stop(base_z)
         return final

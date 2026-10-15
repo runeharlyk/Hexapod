@@ -9,16 +9,34 @@
   import { dataBroker } from '$lib/transport/databroker'
   import { IMUData } from '$lib/platform_shared/message'
   import { useFeatureFlags } from '$lib/stores/featureFlags'
-  import { Compass, Rotate3d } from '$lib/components/icons'
-  import StatusItem from '$lib/components/StatusItem.svelte'
+  import { Rotate3d } from '$lib/components/icons'
+  import Compass from '$lib/components/Compass.svelte'
+  import { notifications } from '$lib/components/toasts/notifications'
+  import { calibrateImu } from '$lib/imu-calibration'
 
   const features = useFeatureFlags()
 
+  let calibrating = $state(false)
+
+  const calibrate = async () => {
+    calibrating = true
+    try {
+      const result = await calibrateImu()
+      if (result.ok) notifications.success('IMU calibrated and saved.', 4000)
+      else notifications.error(result.error, 6000)
+    } catch (error) {
+      notifications.error(`IMU calibration failed: ${error}`, 6000)
+    } finally {
+      calibrating = false
+    }
+  }
+
   Chart.register(...registerables)
 
-  let angleChartElement: HTMLCanvasElement
-  let tempChartElement: HTMLCanvasElement
-  let altitudeChartElement: HTMLCanvasElement
+  // bind:this fills these before onMount runs.
+  let angleChartElement: HTMLCanvasElement = $state()!
+  let tempChartElement: HTMLCanvasElement = $state()!
+  let altitudeChartElement: HTMLCanvasElement = $state()!
 
   let angleChart: Chart
   let tempChart: Chart
@@ -287,15 +305,23 @@
         <canvas bind:this={angleChartElement}></canvas>
       </div>
     </div>
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <span class="text-sm opacity-70">
+        With the robot deactivated, lying still on a level floor: zeroes the gyro bias and levels
+        the tilt, and keeps the result across restarts.
+      </span>
+      <button class="btn btn-primary btn-sm" onclick={calibrate} disabled={calibrating}>
+        {#if calibrating}<span class="loading loading-spinner loading-xs"></span>{/if}
+        Calibrate
+      </button>
+    </div>
   {/if}
   {#if $features.mag}
-    <div class="flex flex-col">
-      <StatusItem
-        icon={Compass}
-        title="Compass heading"
-        description={$imu.heading.length ? `${$imu.heading.at(-1)?.toFixed(1)} deg` : 'no reading'}
-      />
-    </div>
+    {#if $imu.heading.length}
+      <Compass heading={$imu.heading.at(-1)} />
+    {:else}
+      <span class="text-sm opacity-70">No compass reading yet.</span>
+    {/if}
   {/if}
   {#if $features.bmp}
     <div class="w-full overflow-x-auto">

@@ -6,6 +6,7 @@
 #include <settings/placeholders.h>
 #include <platform_shared/api.pb.h>
 #include <cstring>
+#include <secrets.h>
 
 #ifndef FACTORY_AP_PROVISION_MODE
 #define FACTORY_AP_PROVISION_MODE api_APProvisionMode_AP_MODE_DISCONNECTED
@@ -16,7 +17,7 @@
 #endif
 
 #ifndef FACTORY_AP_PASSWORD
-#define FACTORY_AP_PASSWORD "hexapod1"
+#define FACTORY_AP_PASSWORD SECRET_AP_PASSWORD
 #endif
 
 #ifndef FACTORY_AP_LOCAL_IP

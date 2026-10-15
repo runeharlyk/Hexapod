@@ -2,6 +2,9 @@
 
 #include "esp_timer.h"
 
+inline unsigned long millis() { return (unsigned long)(esp_timer_get_time() / 1000); }
+inline unsigned long micros() { return (unsigned long)esp_timer_get_time(); }
+
 #define CONCAT(a, b) a##b
 
 #define UNIQUE_VAR(base) CONCAT(base, __LINE__)

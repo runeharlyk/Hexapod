@@ -1,7 +1,22 @@
-"""Writes animations/fixtures/expected.json from the reference implementation.
+"""Writes animations/fixtures/expected.json, expected.txt and the fx_*.pb binaries from the reference implementation.
 
-The firmware and app parity tests read that file; test_animation_fixtures.py fails when it is stale.
+The firmware and app parity tests read those files; test_animation_fixtures.py fails when they are stale.
     uv run python gen_animation_fixtures.py
+
+expected.txt carries the same content as expected.json for the C++ test, which has no JSON parser.
+It holds one record per line, with tokens separated by single spaces.
+An empty parameter list is written as "-", and parameters as NAME=VALUE joined by ";".
+    T <tolerance>
+    E <animation> <params> <t> <mask> <a0> ... <a17>
+    P <index> <animation> <params> <dt> <b0> ... <b5> <f0x> <f0y> <f0z> ... <f5z>
+    V <step> stop
+    V <step> play <animation> <params>
+    S <state> <mask> <a0> ... <a17>
+E rows are the evaluate samples in file order.
+A P row opens a player case with its live pose (six body offsets, then six foot offsets).
+The V rows that follow are its events, and the S rows that follow are its trace, one per step in step order.
+Angles are degrees in IK order with six decimals; state is the State name.
+The fx_*.pb files are the nanopb-decodable binaries of the fx_*.json animations.
 
 Fixture contract for porters:
 - evaluate cases: for each sample time t, pose_to_angles(evaluate(animation, params, t)).
@@ -29,6 +44,7 @@ from src.robot.firmware_gait import BodyState, Kinematics
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_DIR = ROOT / "animations" / "fixtures"
 EXPECTED = FIXTURE_DIR / "expected.json"
+EXPECTED_TXT = FIXTURE_DIR / "expected.txt"
 TOLERANCE = 1e-4
 GRID_MARGIN_S = 1e-4
 
@@ -161,9 +177,48 @@ def generate() -> dict:
     return {"tolerance": TOLERANCE, "evaluate": evaluate, "player": player}
 
 
+def _params_token(values: dict) -> str:
+    return "-" if not values else ";".join(f"{k}={v}" for k, v in values.items())
+
+
+def _floats(xs) -> str:
+    return " ".join(f"{float(x):.6f}" for x in xs)
+
+
+def text_dump(expected: dict) -> str:
+    """The same content as expected.json in the line format firmware/test/test_animation parses."""
+    lines = [f"T {expected['tolerance']}"]
+    for case in expected["evaluate"]:
+        for s in case["samples"]:
+            lines.append(f"E {case['animation']} {_params_token(case['params'])} {s['t']} {s['mask']} {_floats(s['angles'])}")
+    for index, case in enumerate(expected["player"]):
+        live = case["live"]
+        feet = [v for foot in live["feet"] for v in foot]
+        lines.append(f"P {index} {case['animation']} {_params_token(case['params'])} {case['dt']} "
+                     f"{_floats(live['body'])} {_floats(feet)}")
+        for e in case["events"]:
+            if e["action"] == "stop":
+                lines.append(f"V {e['step']} stop")
+            else:
+                lines.append(f"V {e['step']} play {e['animation']} {_params_token(e['params'])}")
+        for s in case["trace"]:
+            lines.append(f"S {s['state']} {s['mask']} {_floats(s['angles'])}")
+    return "\n".join(lines) + "\n"
+
+
+def write_fixture_binaries() -> None:
+    """The C++ parity test decodes these with nanopb, exactly as the robot decodes an upload."""
+    from src.robot.animation_files import load_json, save_binary
+    for path in sorted(FIXTURE_DIR.glob("fx_*.json")):
+        save_binary(load_json(path), path.with_suffix(".pb"))
+
+
 def main() -> None:
-    EXPECTED.write_text(json.dumps(generate(), indent=1) + "\n", newline="\n")
-    print(f"wrote {EXPECTED}")
+    expected = generate()
+    EXPECTED.write_text(json.dumps(expected, indent=1) + "\n", newline="\n")
+    EXPECTED_TXT.write_text(text_dump(expected), newline="\n")
+    write_fixture_binaries()
+    print(f"wrote {EXPECTED}, {EXPECTED_TXT} and the fixture .pb files")
 
 
 if __name__ == "__main__":

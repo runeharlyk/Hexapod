@@ -38,6 +38,12 @@ class CommAdapterBase {
     // Fired when a tag gains its first subscriber or loses its last.
     void onSubscriptionChange(std::function<void(int32_t)> cb) { tagChangeCb_ = std::move(cb); }
 
+    // Whether a client is connected on this transport, whatever it subscribes to.
+    virtual bool hasClient() const = 0;
+
+    // Fired after a client has gone and its subscriptions are dropped, outside every adapter lock.
+    void onClientGone(std::function<void()> cb) { clientGoneCb_ = std::move(cb); }
+
     template <typename T>
     void on(std::function<void(const T&, int)> handler) {
         decoder_.on<T>(handler);
@@ -85,6 +91,10 @@ class CommAdapterBase {
   protected:
     virtual void send(const uint8_t* data, size_t len, int cid = -1) = 0;
 
+    // Whether a client can take a frame now without blocking. Subscriptions stream the latest value,
+    // so a frame a client cannot take is dropped rather than queued or waited on.
+    virtual bool ready(int cid) { return true; }
+
     // The callbacks below fire outside mutex_: a handler asks every adapter whether the tag still
     // has listeners, which re-enters this lock.
     void subscribe(int32_t tag, int cid = 0) {
@@ -122,6 +132,7 @@ class CommAdapterBase {
             }
         }
         for (int32_t tag : emptied) notifyTagChange(tag);
+        if (clientGoneCb_) clientGoneCb_();
     }
 
     void handleIncoming(const uint8_t* data, size_t len, int cid) {
@@ -175,12 +186,17 @@ class CommAdapterBase {
         uint8_t* data_ = nullptr;
     };
 
+    // Sends to a copy of the list, so a slow client never holds up subscribing or closing a session.
     void sendToSubscribers(int32_t tag, const uint8_t* data, size_t len) {
-        ScopedLock lock(mutex_);
-        auto it = client_subscriptions_.find(tag);
-        if (it == client_subscriptions_.end()) return;
-        for (int cid : it->second) {
-            send(data, len, cid);
+        std::list<int> clients;
+        {
+            ScopedLock lock(mutex_);
+            auto it = client_subscriptions_.find(tag);
+            if (it == client_subscriptions_.end()) return;
+            clients = it->second;
+        }
+        for (int cid : clients) {
+            if (ready(cid)) send(data, len, cid);
         }
     }
 
@@ -188,6 +204,7 @@ class CommAdapterBase {
     SemaphoreHandle_t encodeMutex_;
     std::map<int32_t, std::list<int>> client_subscriptions_;
     std::function<void(int32_t)> tagChangeCb_;
+    std::function<void()> clientGoneCb_;
 
     void notifyTagChange(int32_t tag) {
         if (tagChangeCb_) tagChangeCb_(tag);

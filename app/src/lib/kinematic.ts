@@ -98,6 +98,20 @@ export default class Kinematics {
     return angles
   }
 
+  // Inside the leg's reach annulus, which is exactly where neither acos argument in
+  // inverseKinematics saturates. Mirrors Kinematics::footReachable in the firmware.
+  footReachable(bodyState: body_state_t, leg: number): boolean {
+    const T = get_transformation_matrix(bodyState)
+    const [wx, wy, wz] = multiplyVector(T, bodyState.feet[leg])
+      .slice(0, 3)
+      .map((v, idx) => v - this.mountPosition[leg][idx])
+    const lx = wx * this.ca[leg] + wy * this.sa[leg]
+    const ly = wx * this.sa[leg] - wy * this.ca[leg]
+    const radial = Math.hypot(lx - this.rootJ1, ly) - this.j1J2
+    const lr = Math.hypot(radial, wz)
+    return Math.abs(this.j2J3 - this.j3Tip) <= lr && lr <= this.j2J3 + this.j3Tip
+  }
+
   private invertTransform(T: number[][]): number[][] {
     const R = [
       [T[0][0], T[0][1], T[0][2]],

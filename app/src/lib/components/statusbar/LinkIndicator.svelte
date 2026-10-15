@@ -4,6 +4,7 @@
   import { ble } from '$lib/transport/ble-adapter'
   import { websocket } from '$lib/transport/websocket-adapter'
   import { Bluetooth, Connection } from '../icons'
+  import { normalizeRobotAddress } from '$lib/services/discovery'
 
   import { latencyMs } from '$lib/stores/link'
 
@@ -69,6 +70,7 @@
         aria-label="Robot address"
         placeholder={typeof window === 'undefined' ? '' : window.location.host}
         bind:value={$location}
+        onchange={() => ($location = normalizeRobotAddress($location) ?? '')}
       />
       {#if $wsStatus === 'disconnected'}
         <button class="btn btn-sm btn-primary" onclick={connectWebsocket}>Connect</button>
