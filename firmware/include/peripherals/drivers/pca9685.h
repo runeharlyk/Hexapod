@@ -74,6 +74,13 @@ class PCA9685Driver {
 
     bool isInitialized() const { return _initialized; }
 
+    // begin() sets auto-increment, which the chip clears at power-on: a chip that answers without it has
+    // lost power since. A failed read says nothing either way.
+    bool lostConfiguration() {
+        uint8_t mode = 0;
+        return I2CBus::instance().readReg(_addr, REG_MODE1, &mode, 1) == ESP_OK && !(mode & MODE1_AI);
+    }
+
   private:
     static constexpr uint8_t REG_MODE1 = 0x00;
     static constexpr uint8_t REG_MODE2 = 0x01;

@@ -41,6 +41,8 @@
 #include <communication/serial_adapter.h>
 #include <www_mount.hpp>
 #include <hexapod.h>
+#include <peripherals/i2c_bus.h>
+#include <peripherals/status_led.h>
 #include <cpu_stats.h>
 #include <filesystem_service.h>
 #include <camera_service.h>
@@ -153,6 +155,11 @@ static void fillAnalytics(socket_message_AnalyticsData &a) {
     a.cpu_usage = cpu.total;
     float celsius = 0.0f;
     if (coreTempSensor && temperature_sensor_get_celsius(coreTempSensor, &celsius) == ESP_OK) a.core_temp = celsius;
+    i2c_health::DeviceErrors devices[I2CBus::MAX_DEVICES];
+    const size_t count = I2CBus::instance().errors(devices, std::size(a.i2c_errors));
+    for (size_t i = 0; i < count; i++) a.i2c_errors[i] = {devices[i].address, devices[i].nacks, devices[i].timeouts};
+    a.i2c_errors_count = count;
+    a.i2c_bus_recoveries = I2CBus::instance().recoveries();
 }
 
 static void fillStaticInfo(socket_message_StaticSystemInformation &s) {
@@ -563,6 +570,23 @@ static bool anyClientConnected() {
         ;
 }
 
+#ifdef WS2812_PIN
+static StatusLed statusLed;
+
+// Driven from the service task, whose stack is in internal RAM. The mode shown is the latest REQUEST or
+// APPLIED, as the app is shown it; a BORROW or HANDBACK is only a question to MotionService, which
+// answers it with an APPLIED.
+static void showStatus() {
+    static MOTION_STATE mode = MOTION_STATE::DEACTIVATED;
+    ModeMsg latest;
+    if (EventBus<ModeMsg>::peek(latest) &&
+        (latest.kind == ModeMsgKind::REQUEST || latest.kind == ModeMsgKind::APPLIED)) {
+        mode = latest.mode;
+    }
+    statusLed.show(status_led::colourAt({mode, anyClientConnected()}, esp_timer_get_time()));
+}
+#endif
+
 static void refreshBridge(int32_t tag) {
     std::lock_guard<std::mutex> lock(bridgeMutex);
     auto it = bridges().find(tag);
@@ -611,15 +635,20 @@ static void setupServer() {
     server.on("/api/features", HTTP_GET, [](httpd_req_t *r) {
         char sha[65];
         runningElfSha256(sha);
+        bool servosCalibrated = false;
+        servoSettingsService.read([&servosCalibrated](const ServoSettings &settings) {
+            servosCalibrated = ServoSettings_calibrated(settings);
+        });
         char buf[512];
         snprintf(buf, sizeof(buf),
                  "{\"camera\":%s,\"imu\":%s,\"mag\":%s,\"bmp\":false,\"mdns\":%s,\"servo\":true,"
                  "\"analytics\":true,\"sleep\":true,\"ota\":true,\"download_firmware\":true,"
                  "\"upload_firmware\":true,\"firmware_version\":\"%s\",\"firmware_name\":\"%s\","
-                 "\"firmware_built_target\":\"esp32-wroom-camera\",\"firmware_elf_sha256\":\"%s\"}",
+                 "\"firmware_built_target\":\"esp32-wroom-camera\",\"firmware_elf_sha256\":\"%s\","
+                 "\"servos_calibrated\":%s}",
                  USE_CAMERA ? "true" : "false", robot.imuPresent() ? "true" : "false",
                  robot.magnetometerPresent() ? "true" : "false", USE_MDNS ? "true" : "false", APP_VERSION, APP_NAME,
-                 sha);
+                 sha, servosCalibrated ? "true" : "false");
         httpd_resp_set_type(r, "application/json");
         return httpd_resp_sendstr(r, buf);
     });
@@ -740,13 +769,19 @@ static void controlLoop(void *) {
         previousStartUs = startUs;
         robot.emitTelemetry();
         controlTicks.fetch_add(1, std::memory_order_relaxed);
-        // After an overrun (an I2C timeout can stall a tick for 200 ms) the schedule restarts from now
+        // After an overrun (each I2C transfer that times out stalls a tick by 20 ms) the schedule restarts from now
         // instead of replaying every missed tick back to back.
         if (xTaskDelayUntil(&last, pdMS_TO_TICKS(5)) == pdFALSE) last = xTaskGetTickCount();
     }
 }
 
 static void serviceLoop(void *) {
+#ifdef WS2812_PIN
+    // First, so the LED does not go on showing the colour it held before a reset through the bring-up.
+    statusLed.begin(static_cast<gpio_num_t>(WS2812_PIN));
+    showStatus();
+    logHeap("status led");
+#endif
     WiFi.init();
     wifiService.begin();
     mdnsService.begin();
@@ -797,6 +832,9 @@ static void serviceLoop(void *) {
                 emitAll(a);
             }
         });
+#ifdef WS2812_PIN
+        showStatus();
+#endif
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }

@@ -19,6 +19,9 @@ All notable changes to this project are documented in this file, following [Keep
 - Adds a sign-convention fixture, `platform_shared/sign_convention.json`, asserted by the firmware, simulation and app tests, and `docs/conventions.md`.
 - Adds `docs/firmware.md` (architecture) and `docs/releasing.md`.
 - Adds the release's ELF as a release asset, for decoding core dumps.
+- Adds I2C NACK and timeout counts per device and the number of bus recoveries to the system analytics, listed on the metrics page.
+- Adds a status LED on the board's WS2812: a colour per motion mode, steady with a client connected and blinking without one.
+- Shows each saved robot's firmware version, build and servo calibration state on the start page; a robot that cannot be asked shows its last report, labelled with its age, and `/api/features` now reports `servos_calibrated`.
 
 ### Changed
 
@@ -27,6 +30,8 @@ All notable changes to this project are documented in this file, following [Keep
 - Shapes both sticks with a round dead zone and an axis snap.
 - Turns the newer-release indicator into a link to the update page.
 - Splits the hosted app's bundle so each page loads its code when opened; the embedded build keeps one bundle.
+- Backs off servo writes to a PCA9685 that stops answering to one every 500 ms, resumes every tick when it answers, and starts it again if it lost power or was missing at boot.
+- Shortens the I2C transfer timeout from 200 ms to 20 ms, so a held bus stalls the 5 ms control loop less.
 
 ### Fixed
 
@@ -35,6 +40,7 @@ All notable changes to this project are documented in this file, following [Keep
 - Fixes a walk entered from STAND moving a joint up to 15.6 degrees in one tick: legs found mid-swing at the start of the cycle now replay their swing from the floor.
 - Fixes the servo settings update answering 200 to an update it rejected, and the servo page reporting such an update as saved.
 - Fixes the animation editor: a stale autosave could overwrite a newer draft, and storage failures went unreported.
+- Fixes a device left holding SDA low, by a reset mid-read, failing every later I2C transfer: the bus now clocks it free, at most once a second.
 
 ## [0.1.1] - 2026-10-15
 

@@ -35,6 +35,7 @@ set(COMPONENT_REQUIRES
     esp_event
     esp_http_server
     esp_driver_i2c
+    esp_driver_rmt
     esp_driver_usb_serial_jtag
     esp_driver_tsens
     json
