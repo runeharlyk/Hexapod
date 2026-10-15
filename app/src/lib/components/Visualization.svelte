@@ -14,7 +14,8 @@
   import { requestMode } from '$lib/control'
   import { isLinked } from '$lib/stores/link'
   import { animationPreview, type AnimationPreview } from '$lib/stores/animation'
-  import Kinematics, { levelBody, type body_state_t } from '$lib/kinematic'
+  import Kinematics from '$lib/kinematic'
+  import { groundPlacement } from '$lib/ground-placement'
   import { config } from '$lib/components/config'
   import {
     loadVirtualRobot,
@@ -52,11 +53,11 @@
   const angles = new Array(18).fill(0)
   const targetAngles = new Array(18).fill(0)
 
+  type LegRad = [number, number, number]
   const kinematics = new Kinematics(config)
-  const STAND_Z = DEFAULT_FEET[0][2]
-  // The body pose shown: recovered from the feet of the joint angles shown, whoever produced them. Before any arrive,
-  // the robot stands level on its stance.
-  let shownBody = levelBody()
+  // The joint angles shown (radians, per leg, IK order), whoever produced them, which set the robot on the ground.
+  // Before any arrive, the robot stands level on its stance.
+  let shownLegs: LegRad[] | null = null
 
   // While no robot sends its angles, the firmware's own motion code animates the model. The robot-hosted build is
   // always linked, and the build-time constant leaves the virtual robot out of it.
@@ -169,11 +170,11 @@
   const show = (anglesDeg: ArrayLike<number>) => {
     const rad = Array.from(anglesDeg, degToRad)
     setTargetAngles(urdfJointOrder(rad))
-    const legs = [0, 1, 2, 3, 4, 5].map(
-      leg => rad.slice(leg * 3, leg * 3 + 3) as [number, number, number]
-    )
-    shownBody = kinematics.bodyOverFeet(legs, STAND_Z)
+    shownLegs = legsOf(rad)
   }
+
+  const legsOf = (rad: readonly number[]): LegRad[] =>
+    [0, 1, 2, 3, 4, 5].map(leg => rad.slice(leg * 3, leg * 3 + 3) as LegRad)
 
   // Runs the virtual robot for the time since the last frame in whole control ticks, at most MAX_FRAME_SECONDS.
   const stepVirtualRobot = (robot: VirtualRobot) => {
@@ -252,76 +253,19 @@
     lastRobotPosition.copy(robot.position)
   }
 
-  const calculateGroundHeight = (body: body_state_t) => {
-    const feet = body.feet
-    if (!feet || feet.length === 0) return 0
+  const ORIENT_SMOOTH = 0.1
 
-    let minZ = feet[0][2]
-    for (let i = 1; i < feet.length; i++) {
-      if (feet[i][2] < minZ) {
-        minZ = feet[i][2]
-      }
-    }
-
-    const feetDepth = Math.max(0, STAND_Z - minZ)
-
-    const bodyHeight = body.zm / 12
-    return -bodyHeight + 0.5 + feetDepth
-  }
-
-  const orient_robot = (robot: URDFRobot, body: body_state_t) => {
+  // The robot stands on the ground under its feet (ground-placement.ts); `yaw` is an animation's body yaw.
+  const placeOnGround = (robot: URDFRobot, legs: LegRad[] | null, yaw: number) => {
     if (!settings['Auto orient robot']) return
-
-    const ORIENT_SMOOTH = 0.1
-    const POSITION_SCALE = 1 / 12
-
-    const cmdXm = body.xm ?? 0
-    const cmdYm = body.ym ?? 0
-    const cmdYaw = -(body.psi ?? 0)
-    const cmdRoll = body.omega ?? 0
-    const cmdPitch = -(body.phi ?? 0)
-
-    const cumulativeYaw = body.cumulative_yaw ?? 0
-    const cumulativePitch = body.cumulative_pitch ?? 0
-    const cumulativeRoll = body.cumulative_roll ?? 0
-    const cumulativeXm = body.cumulative_x ?? 0
-    const cumulativeZm = body.cumulative_z ?? body.cumulative_y ?? 0
-
-    const totalYaw = cmdYaw + cumulativeYaw
-
-    const cosYaw = Math.cos(totalYaw)
-    const sinYaw = Math.sin(totalYaw)
-
-    const rotatedXm = cmdXm * cosYaw - cmdYm * sinYaw
-    const rotatedYm = cmdXm * sinYaw + cmdYm * cosYaw
-
-    robot.position.z = smooth(
-      robot.position.z,
-      (-rotatedXm + cumulativeXm) * POSITION_SCALE,
-      ORIENT_SMOOTH
-    )
-
-    robot.position.x = smooth(
-      robot.position.x,
-      (-rotatedYm + cumulativeZm) * POSITION_SCALE,
-      ORIENT_SMOOTH
-    )
-
-    robot.position.y = smooth(robot.position.y, calculateGroundHeight(body), ORIENT_SMOOTH)
-
-    robot.rotation.z = smooth(robot.rotation.z, totalYaw + Math.PI / 2, ORIENT_SMOOTH)
-
-    robot.rotation.x = smooth(
-      robot.rotation.x,
-      -Math.PI / 2 + cmdPitch * cosYaw - cmdRoll * sinYaw + cumulativePitch,
-      ORIENT_SMOOTH
-    )
-
-    robot.rotation.y = smooth(
-      robot.rotation.y,
-      cmdPitch * sinYaw + cmdRoll * cosYaw + cumulativeRoll,
-      ORIENT_SMOOTH
-    )
+    const { orientation, position } = groundPlacement(legs && kinematics.groundUnderFeet(legs), yaw)
+    if (settings['Smooth motion']) {
+      robot.quaternion.slerp(orientation, ORIENT_SMOOTH)
+      robot.position.lerp(position, ORIENT_SMOOTH)
+    } else {
+      robot.quaternion.copy(orientation)
+      robot.position.copy(position)
+    }
   }
 
   const render = () => {
@@ -333,7 +277,7 @@
       stepVirtualRobot(virtualRobot)
     }
     update_camera(robot)
-    orient_robot(robot, preview?.body ?? shownBody)
+    placeOnGround(robot, preview ? legsOf(preview.angles) : shownLegs, -(preview?.body.psi ?? 0))
     if (handles) updateHandles()
 
     for (let i = 0; i < $jointNames.length; i++) {
