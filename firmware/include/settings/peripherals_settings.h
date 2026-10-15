@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <platform_shared/api.pb.h>
+#include <peripherals/compass.h>
 #include <template/state_result.h>
 
 #ifndef SDA_PIN
@@ -35,9 +36,12 @@ inline StateUpdateResult PeripheralSettings_update(const PeripheralSettings &pro
     if (proto.sda < 0 || proto.sda > 48 || proto.scl < 0 || proto.scl > 48) return StateUpdateResult::ERROR;
     if (proto.sda == proto.scl) return StateUpdateResult::ERROR;
     if (proto.frequency < 100000 || proto.frequency > 1000000) return StateUpdateResult::ERROR;
+    if (!compass::valid({proto.mag_offset_x, proto.mag_offset_y, proto.mag_offset_z})) return StateUpdateResult::ERROR;
     const int32_t frequency = std::min(proto.frequency, I2C_MAX_FREQUENCY);
 
-    if (proto.sda == settings.sda && proto.scl == settings.scl && frequency == settings.frequency) {
+    if (proto.sda == settings.sda && proto.scl == settings.scl && frequency == settings.frequency &&
+        proto.mag_offset_x == settings.mag_offset_x && proto.mag_offset_y == settings.mag_offset_y &&
+        proto.mag_offset_z == settings.mag_offset_z) {
         return StateUpdateResult::UNCHANGED;
     }
 

@@ -5,6 +5,8 @@
 #include <unity.h>
 
 #include <memory>
+#include <pb_decode.h>
+#include <pb_encode.h>
 #include <thread>
 #include <telemetry/telemetry.h>
 
@@ -102,6 +104,39 @@ void test_two_tasks_lose_no_tick_unaccounted() {
     TEST_ASSERT_UINT32_WITHIN(Telemetry::BATCH_TICKS, TICKS, received + telemetry.droppedTicks());
 }
 
+// The raw compass reading is what a hard-iron fit is made from: it must survive the ring and the wire exactly, and
+// a tick that did not read the compass must say so.
+void test_the_compass_reading_survives_the_ring_and_the_wire() {
+    auto owned = std::make_unique<Telemetry>();
+    Telemetry& telemetry = *owned;
+    telemetry.setRecording(true);
+    for (uint32_t i = 0; i < Telemetry::BATCH_TICKS; ++i) {
+        socket_message_TickSample t = tick(i);
+        t.mag_fresh = i % 2 == 0;
+        t.mag[0] = 10.5f + i;
+        t.mag[1] = -85.25f;
+        t.mag[2] = 30.0f;
+        telemetry.record(t);
+    }
+    socket_message_TelemetryBatch batch;
+    TEST_ASSERT_TRUE(telemetry.takeBatch(batch));
+
+    uint8_t wire[socket_message_TelemetryBatch_size];
+    pb_ostream_t out = pb_ostream_from_buffer(wire, sizeof wire);
+    TEST_ASSERT_TRUE(pb_encode(&out, socket_message_TelemetryBatch_fields, &batch));
+    socket_message_TelemetryBatch decoded = socket_message_TelemetryBatch_init_zero;
+    pb_istream_t in = pb_istream_from_buffer(wire, out.bytes_written);
+    TEST_ASSERT_TRUE(pb_decode(&in, socket_message_TelemetryBatch_fields, &decoded));
+
+    TEST_ASSERT_EQUAL(Telemetry::BATCH_TICKS, decoded.ticks_count);
+    for (uint32_t i = 0; i < Telemetry::BATCH_TICKS; ++i) {
+        TEST_ASSERT_EQUAL(i % 2 == 0, decoded.ticks[i].mag_fresh);
+        TEST_ASSERT_EQUAL_FLOAT(10.5f + i, decoded.ticks[i].mag[0]);
+        TEST_ASSERT_EQUAL_FLOAT(-85.25f, decoded.ticks[i].mag[1]);
+        TEST_ASSERT_EQUAL_FLOAT(30.0f, decoded.ticks[i].mag[2]);
+    }
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_nothing_is_recorded_while_nobody_listens);
@@ -109,5 +144,6 @@ int main() {
     RUN_TEST(test_a_full_ring_counts_what_it_refuses);
     RUN_TEST(test_a_new_recording_starts_with_fresh_ticks);
     RUN_TEST(test_two_tasks_lose_no_tick_unaccounted);
+    RUN_TEST(test_the_compass_reading_survives_the_ring_and_the_wire);
     return UNITY_END();
 }

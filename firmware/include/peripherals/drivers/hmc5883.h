@@ -1,5 +1,6 @@
 #pragma once
 
+#include <peripherals/compass.h>
 #include <peripherals/i2c_bus.h>
 #include <utils/math_utils.h>
 
@@ -51,20 +52,20 @@ class HMC5883Driver {
         // -4096 is the datasheet's saturation/overflow marker on any axis.
         if (x == -4096 || y == -4096 || z == -4096) return false;
 
-        _uT[0] = x * LSB_TO_UT;
-        _uT[1] = y * LSB_TO_UT;
-        _uT[2] = z * LSB_TO_UT;
+        _raw[0] = x * LSB_TO_UT;
+        _raw[1] = y * LSB_TO_UT;
+        _raw[2] = z * LSB_TO_UT;
 
-        float heading = std::atan2(_uT[1], _uT[0]) + _declination;
-        if (heading < 0) heading += 2 * PI_F;
-        if (heading > 2 * PI_F) heading -= 2 * PI_F;
-        _heading = RAD_TO_DEG_F(heading);
+        float field[3];
+        compass::correct(_raw, _offset, field);
+        _heading = compass::headingDegrees(field, _declination);
         return true;
     }
 
-    float getX() const { return _uT[0]; }
-    float getY() const { return _uT[1]; }
-    float getZ() const { return _uT[2]; }
+    // Hard-iron offset in uT, subtracted from every reading from the next update on.
+    void setOffset(const compass::Offset& offset) { _offset = offset; }
+    // The last reading as the chip gave it, before the offset: what a calibration is fitted to.
+    const float* raw() const { return _raw; }
     float getHeading() const { return _heading; }
     bool isInitialized() const { return _initialized; }
 
@@ -87,6 +88,7 @@ class HMC5883Driver {
     uint8_t _addr;
     float _declination;
     bool _initialized{false};
-    float _uT[3]{0, 0, 0};
+    compass::Offset _offset;
+    float _raw[3]{0, 0, 0};
     float _heading{0};
 };

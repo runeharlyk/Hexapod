@@ -8,12 +8,13 @@
 #include <template/stateful_persistence.h>
 #include <settings/peripherals_settings.h>
 
-// One shallow slot: the I2C pin/frequency config is a rare snapshot, not a stream.
+// One shallow slot: the I2C pin/frequency config and the compass offset are a rare snapshot, not a stream.
 using PeripheralSettingsBus = EventBus<PeripheralSettings, 2, 2, 1>;
 
-// Persists the I2C bus configuration. The bus is opened once at boot with whatever is stored here;
-// changing pins on a live bus would invalidate every device handle the drivers hold, so an update
-// takes effect on the next restart.
+// Persists the I2C bus configuration and the compass's hard-iron offset. The bus is opened once at boot
+// with whatever is stored here; changing pins on a live bus would invalidate every device handle the
+// drivers hold, so new pins take effect on the next restart. The offset applies live: the compass read
+// takes it from the bus on every poll.
 class PeripheralSettingsService : public StatefulService<PeripheralSettings> {
   public:
     PeripheralSettingsService()
