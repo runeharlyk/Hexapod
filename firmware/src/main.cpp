@@ -611,15 +611,20 @@ static void setupServer() {
     server.on("/api/features", HTTP_GET, [](httpd_req_t *r) {
         char sha[65];
         runningElfSha256(sha);
+        bool servosCalibrated = false;
+        servoSettingsService.read([&servosCalibrated](const ServoSettings &settings) {
+            servosCalibrated = ServoSettings_calibrated(settings);
+        });
         char buf[512];
         snprintf(buf, sizeof(buf),
                  "{\"camera\":%s,\"imu\":%s,\"mag\":%s,\"bmp\":false,\"mdns\":%s,\"servo\":true,"
                  "\"analytics\":true,\"sleep\":true,\"ota\":true,\"download_firmware\":true,"
                  "\"upload_firmware\":true,\"firmware_version\":\"%s\",\"firmware_name\":\"%s\","
-                 "\"firmware_built_target\":\"esp32-wroom-camera\",\"firmware_elf_sha256\":\"%s\"}",
+                 "\"firmware_built_target\":\"esp32-wroom-camera\",\"firmware_elf_sha256\":\"%s\","
+                 "\"servos_calibrated\":%s}",
                  USE_CAMERA ? "true" : "false", robot.imuPresent() ? "true" : "false",
                  robot.magnetometerPresent() ? "true" : "false", USE_MDNS ? "true" : "false", APP_VERSION, APP_NAME,
-                 sha);
+                 sha, servosCalibrated ? "true" : "false");
         httpd_resp_set_type(r, "application/json");
         return httpd_resp_sendstr(r, buf);
     });
