@@ -10,12 +10,15 @@
 #include <message_types.h>
 #include <peripherals/peripherals.h>
 #include <policy/hexapod_policy.h>
+#include <policy/policy_layout.h>
 #include <utils/timing.h>
 
-// Runs the learned residual policy (simulation/export_policy.py output) on top of the
-// analytic gait: gait params + phase come from hexapod_policy::analytic_gait, the network
-// adds bounded per-foot residuals. Mirrors HexapodMjEnv control_mode=residual_pure — any
-// change here must stay in lockstep with simulation/src/envs/hexapod_mj_env.py.
+// Runs the learned policy (simulation/export_policy.py output) on top of the analytic gait. The deployed
+// header is residual_gait: of its 24 outputs, 5 are deltas on the analytic gait's step_x, step_y, step_height,
+// tripod<->bipod blend and cadence, 1 is a body-height delta, and 18 are per-foot residuals. A residual_pure
+// header (18 foot residuals only) is decoded too; policy_layout.h rejects every other shape at compile time.
+// Mirrors HexapodMjEnv control_mode=residual_gait -- any change here must stay in lockstep with
+// simulation/src/envs/hexapod_mj_env.py.
 class PolicyRunner {
   public:
     // Verify the baked-in network reproduces its golden test vector (call once at boot).
@@ -71,9 +74,9 @@ class PolicyRunner {
         // residual_gait spends its first 6 channels on the gait itself and the remaining 18 on the
         // foot residuals. The deltas are added to the analytic map's NORMALIZED params and
         // re-clipped, exactly as the env does.
-        constexpr int RESIDUAL_BASE = hp::ACT_DIM >= 24 ? 6 : 0;
+        constexpr int RESIDUAL_BASE = hp::ACT_DIM - policy_layout::FOOT_CHANNELS;
         float zmDelta = 0.0f;
-        if (hp::ACT_DIM >= 24) {
+        if (RESIDUAL_BASE == policy_layout::GAIT_CHANNELS) {
             const float *d = action;
             gaitAction[0] = clip1(gaitAction[0] + hp::GAIT_DELTA_GAIN[0] * d[0]);  // step_x
             gaitAction[1] = clip1(gaitAction[1] + hp::GAIT_DELTA_GAIN[1] * d[1]);  // step_y
@@ -93,7 +96,7 @@ class PolicyRunner {
 
   private:
     static constexpr int TICKS_PER_INFERENCE = 4;  // 200 Hz control loop -> 50 Hz policy
-    static constexpr int FRAME = 6;                // gravity(3) + gyro(3) per sensor frame
+    static constexpr int FRAME = policy_layout::SENSOR_FRAME;
     static constexpr int HIST_SPAN = (hexapod_policy::OBS_HISTORY - 1) * hexapod_policy::HIST_STRIDE + 1;
 
     static float clip1(float v) { return v < -1.0f ? -1.0f : (v > 1.0f ? 1.0f : v); }
