@@ -51,11 +51,10 @@ export class PoseSender {
 
   send(pose: Pose) {
     const [roll, pitch, yaw, x, y, z] = pose.body
-    const legs = pose.legs.map(
-      (leg): LegTarget =>
-        leg.joints ?
-          { joints: { coxa: leg.v[0], femur: leg.v[1], tibia: leg.v[2] } }
-        : { foot: { x: leg.v[0], y: leg.v[1], z: leg.v[2] } }
+    const legs = pose.legs.map((leg): LegTarget =>
+      leg.joints ?
+        { joints: { coxa: leg.v[0], femur: leg.v[1], tibia: leg.v[2] } }
+      : { foot: { x: leg.v[0], y: leg.v[1], z: leg.v[2] } }
     )
     this.last = { body: { roll, pitch, yaw, x, y, z }, legs }
     this.emitLast()

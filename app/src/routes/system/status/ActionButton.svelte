@@ -1,4 +1,6 @@
 <script>
+  // eslint-plugin-svelte 2 lints every component as a custom element; this is not one.
+  // svelte-ignore custom_element_props_identifier
   const { icon, type, label, ...rest } = $props()
 
   const Icon = $derived(icon)

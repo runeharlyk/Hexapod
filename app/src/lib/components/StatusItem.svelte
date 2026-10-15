@@ -30,8 +30,9 @@
     warning: ['bg-warning', 'text-warning-content']
   }
 
-  const variantKey: Variant = (variant as Variant) in variants ? (variant as Variant) : 'primary'
-  const [bgColor, textColor] = variants[variantKey]
+  const [bgColor, textColor] = $derived(
+    variants[variant in variants ? (variant as Variant) : 'primary']
+  )
 </script>
 
 <div class="rounded-box bg-base-100 flex items-center space-x-3 px-4 py-2 {klass}">

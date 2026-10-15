@@ -104,15 +104,13 @@
       return true
     }
 
-    listOfNetworks = networks.map(
-      (n): NetworkItem => ({
-        rssi: n.rssi,
-        ssid: n.ssid,
-        bssid: n.bssid,
-        channel: n.channel,
-        encryption_type: n.encryptionType
-      })
-    )
+    listOfNetworks = networks.map((n): NetworkItem => ({
+      rssi: n.rssi,
+      ssid: n.ssid,
+      bssid: n.bssid,
+      channel: n.channel,
+      encryption_type: n.encryptionType
+    }))
     stopPolling()
     scanActive = false
     return true
