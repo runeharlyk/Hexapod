@@ -19,6 +19,7 @@ All notable changes to this project are documented in this file, following [Keep
 - Adds the release's ELF as a release asset, for decoding core dumps.
 - Adds I2C NACK and timeout counts per device and the number of bus recoveries to the system analytics, listed on the metrics page.
 - Adds a status LED on the board's WS2812: a colour per motion mode, steady with a client connected and blinking without one.
+- Shows each saved robot's firmware version, build and servo calibration state on the start page; a robot that cannot be asked shows its last report, labelled with its age, and `/api/features` now reports `servos_calibrated`.
 
 ### Changed
 

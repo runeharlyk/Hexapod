@@ -43,14 +43,15 @@ const firmwareConfig = (): HexapodConfig => {
   }
 }
 
-// servo_settings.h's factory calibration: centre 306, two PWM counts per degree, no centre angle.
+// servo_factory.h's factory calibration: centre 306, two PWM counts per degree, no centre angle.
 const factoryServos = (): Servo[] => {
-  const settings = firmware('settings/servo_settings.h')
-  const match = settings.match(/direction\[18\]\s*=\s*\{([^}]*)\}/)
-  if (!match) throw new Error('factory directions not found in servo_settings.h')
-  expect(settings).toContain('center_pwm = 306;')
-  expect(settings).toContain('conversion = 2;')
-  expect(settings).toContain('center_angle = 0;')
+  const settings = firmware('settings/servo_factory.h')
+  const match = settings.match(/FACTORY_DIRECTION\[FACTORY_SERVO_COUNT\]\s*=\s*\{([^}]*)\}/)
+  if (!match) throw new Error('factory directions not found in servo_factory.h')
+  expect(settings).toContain('FACTORY_SERVO_COUNT = 18;')
+  expect(settings).toContain('FACTORY_CENTER_PWM = 306;')
+  expect(settings).toContain('FACTORY_CONVERSION = 2;')
+  expect(settings).toContain('FACTORY_CENTER_ANGLE = 0;')
   return numbers(match[1]).map((direction, i) => ({
     centerPwm: 306,
     direction,
