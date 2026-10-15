@@ -21,6 +21,7 @@
     const res = await dataBroker
       .request({
         peripheralSettingsUpdate: {
+          ...settings,
           sda: Number(settings.sda),
           scl: Number(settings.scl),
           frequency: Number(settings.frequency),

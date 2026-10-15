@@ -7,7 +7,7 @@ Mass budget (total ~0.68 kg, measured on the real robot):
   - base/body (chassis + battery + ESP32): ~0.35 kg
   - per leg: coxa 0.010 + femur 0.030 + tibia 0.015 = 0.055 kg  -> 6 * 0.055 = 0.33 kg
 
-MG92B servo model (@6V): ~0.08 s/60deg -> w_max ~ 13 rad/s; stall ~3.4 kg.cm ~ 0.33 N.m.
+MG92B servo model (@6V): ~0.08 s/60deg -> w_max ~ 13 rad/s; stall ~3.5 kg.cm ~ 0.34 N.m.
 
 Run:  python src/resources/build_model.py             ->  writes src/resources/model.xml (flat plane)
       python src/resources/build_model.py --terrain   ->  also writes model_terrain.xml (heightfield
@@ -41,9 +41,8 @@ M_TIBIA = 0.025  # tibia link + servo; foot tip passive
 # --- actuator (MG92B) ---
 # Motor (torque) actuators; the servo PD + torque-speed clamp lives in mj_runtime (incl. position gain
 # SERVO_KP), so the values here are only backstops for the XML.
-FORCE = 0.50          # N.m torque envelope (see mj_runtime SERVO_STALL; real limit is the clamp)
-CTRL_LIMIT = 0.9      # N.m motor ctrlrange -- loose backstop; real per-step limit is the torque-speed
-                      # clamp in mj_runtime._apply_servo, not this cap
+CTRL_LIMIT = 1.5      # N.m motor ctrlrange -- loose backstop above the randomized motor torque
+                      # (mj_runtime motor_torque_cap); the real limit is the clamp in mj_runtime._apply_servo
 NOLOAD_SPEED = 13.0   # rad/s, no-load speed (~0.08 s/60deg for MG92B @6V)
 ARMATURE = 0.003      # kg.m^2, reflected rotor+gearbox inertia (estimate; DR-scaled)
 DAMPING = 0.02

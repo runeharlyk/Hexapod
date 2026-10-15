@@ -215,6 +215,7 @@ def test_gait_h_constants_match_the_port(gait_h):
     assert fg.DEFAULT_STAND_FRAC == pytest.approx(_constexpr(gait_h, "default_stand_frac"))
     assert fg.STRIDE_DEADBAND_MM == _constexpr(gait_h, "GAIT_STRIDE_DEADBAND_MM")
     assert fg.YAW_DEADBAND_RAD == _constexpr(gait_h, "GAIT_YAW_DEADBAND_RAD")
+    assert fg.FEET_EASE_S == _constexpr(gait_h, "FEET_EASE_S")
     for name in ("GAIT_SNAP_MM", "GAIT_SNAP_RAD", "GAIT_SNAP_RATE", "GAIT_SNAP_DEPTH"):
         assert getattr(fg, name) == pytest.approx(_constexpr(gait_h, name)), name
     for name, value in _tuned_stick_constants(gait_h).items():

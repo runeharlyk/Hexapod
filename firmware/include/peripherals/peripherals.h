@@ -2,6 +2,7 @@
 
 #include <esp_log.h>
 #include <platform_shared/message.pb.h>
+#include <algorithm>
 #include <atomic>
 #include <vector>
 
@@ -115,6 +116,9 @@ class Peripherals {
     bool readMagnetometer() {
 #if FT_ENABLED(USE_MAG)
         if (!_magReady) return false;
+        // Read from the stored settings each time so a new offset applies without a restart.
+        PeripheralSettings cfg;
+        if (PeripheralSettingsBus::peek(cfg)) _mag.setOffset({cfg.mag_offset_x, cfg.mag_offset_y, cfg.mag_offset_z});
         return _mag.update();
 #else
         return false;
@@ -173,6 +177,9 @@ class Peripherals {
 
     // The IMU's half of a telemetry tick, as the motion sees it.
     void fillTelemetry(socket_message_TickSample &tick) {
+#if FT_ENABLED(USE_MAG)
+        if (_magReady) std::copy_n(_mag.raw(), 3, tick.mag);
+#endif
         tick.rpy[0] = angleX();
         tick.rpy[1] = angleY();
         tick.rpy[2] = angleZ();

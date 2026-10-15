@@ -49,6 +49,11 @@ static constexpr float TUNED_CMD_YAW_MAX = 1.0f;   // rad/s
 // setting, while the top stop exceeds femur travel at every stride.
 static constexpr float TUNED_LIFT_TRIM_MM = 15.0f;
 
+// Leaving a walk, the feet are eased home from wherever the cycle left them, lifted feet included,
+// along 10s^3 - 15s^4 + 6s^5 over this long: a minimum-jerk path, at rest at both ends. Leika's
+// easeFeet uses the same law and time.
+static constexpr float FEET_EASE_S = 0.5f;
+
 static constexpr float GAIT_SNAP_MM = 0.01f;
 static constexpr float GAIT_SNAP_RAD = 1e-5f;
 static constexpr float GAIT_SNAP_RATE = 1e-4f;
@@ -96,6 +101,25 @@ class GaitController {
     float swingStartPosition[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
                                       {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
     bool footWasSwinging[6] = {false, false, false, false, false, false};
+    // A cycle started from a standstill finds some legs mid-swing, since at phase 0 every offset past
+    // stand_frac is already swinging; taken as is, the foot left the floor at that swing's height in
+    // one tick. Such a swing is instead replayed whole, from the floor, over the time left to it, with
+    // its lift scaled to that time so the foot rises no faster than in a full swing. swingEntry holds
+    // the swing progress the cycle started at, 0 for a swing begun inside the cycle.
+    float swingEntry[6] = {0, 0, 0, 0, 0, 0};
+    bool cycleRunning = false;
+    // The ease home runs from easeFrom to easeTo. It starts over whenever the feet are not where it
+    // last put them or the stance changed: the walk, the policy or an animation moved them meanwhile.
+    float easeFrom[6][4] = {};
+    float easeTo[6][4] = {};
+    float easedFeet[6][4] = {};
+    float easedS = 0.0f;
+    // A cycle started while the feet are away from its targets, mid-ease or left lifted by a stopped
+    // walk, carries that offset and lets it go along the same curve over the time the ease had left,
+    // instead of snapping the feet onto the cycle in one tick.
+    float carry[6][3] = {};
+    float carriedS = 0.0f;
+    float carryS = 0.0f;
     static constexpr uint8_t BEZIER_POINTS = 12;
     static constexpr std::array<float, BEZIER_POINTS> COMBINATORIAL_VALUES = {
         combinatorial_constexpr(11, 0),  // 1
@@ -155,6 +179,16 @@ class GaitController {
 
     void advancePhase(float dt, float velocity) { phase = std::fmod(phase + dt * velocity, 1.0f); }
 
+    static float swingProgress(float ph, float standFrac) { return (ph - standFrac) / (1.0f - standFrac); }
+
+    void startCycle(const gait_state_t& gait) {
+        for (int i = 0; i < 6; i++) {
+            const float ph = std::fmod(phase + gait.offset[i], 1.0f);
+            swingEntry[i] = ph >= gait.stand_frac ? swingProgress(ph, gait.stand_frac) : 0.0f;
+        }
+        cycleRunning = true;
+    }
+
     std::tuple<float, std::function<void(const float, const float, const float*, const float, float*)>, float>
     phaseParams(float phase, float standFrac, float depth, float height) {
         if (phase < standFrac) {
@@ -164,7 +198,7 @@ class GaitController {
                     },
                     -depth};
         }
-        return {(phase - standFrac) / (1 - standFrac),
+        return {swingProgress(phase, standFrac),
                 [this](const float l, const float a, const float* h, const float p, float* pt) {
                     this->bezierCurve(l, a, h, p, pt);
                 },
@@ -187,6 +221,43 @@ class GaitController {
         return true;
     }
 
+    static float minimumJerk(float s) { return s * s * s * (10.0f - 15.0f * s + 6.0f * s * s); }
+
+    float easeTimeLeft(const BodyStateMsg& body) const {
+        return positionsMatch(body.feet, easedFeet, 0.0f) ? FEET_EASE_S - easedS : FEET_EASE_S;
+    }
+
+    void startCarry(const float feetLeft[6][4], const BodyStateMsg& body, float duration) {
+        for (int i = 0; i < 6; ++i) {
+            for (int j = 0; j < 3; ++j) carry[i][j] = feetLeft[i][j] - body.feet[i][j];
+        }
+        carryS = duration;
+        carriedS = 0.0f;
+    }
+
+    void applyCarry(BodyStateMsg& body, float dt) {
+        if (carriedS >= carryS) return;
+        carriedS = std::min(carriedS + dt, carryS);
+        const float remaining = 1.0f - minimumJerk(carriedS / carryS);
+        for (int i = 0; i < 6; ++i) {
+            for (int j = 0; j < 3; ++j) body.feet[i][j] += carry[i][j] * remaining;
+        }
+    }
+
+    void easeFeetHome(BodyStateMsg& body, float dt) {
+        if (!positionsMatch(body.feet, easedFeet, 0.0f) || !positionsMatch(defaultPosition, easeTo, 0.0f)) {
+            COPY_2D_ARRAY_6x4(easeFrom, body.feet);
+            COPY_2D_ARRAY_6x4(easeTo, defaultPosition);
+            easedS = 0.0f;
+        }
+        easedS = std::min(easedS + dt, FEET_EASE_S);
+        const float blend = minimumJerk(easedS / FEET_EASE_S);
+        for (int i = 0; i < 6; ++i) {
+            for (int j = 0; j < 4; ++j) easedFeet[i][j] = easeFrom[i][j] + (easeTo[i][j] - easeFrom[i][j]) * blend;
+        }
+        body.updateFeet(easedFeet);
+    }
+
     void updateDefaultPositionTarget(int footIndex, float swingProgress) {
         for (int j = 0; j < 4; ++j) {
             defaultPosition[footIndex][j] =
@@ -204,7 +275,9 @@ class GaitController {
         COPY_2D_ARRAY_6x4(targetDefaultPosition, target);
         COPY_2D_ARRAY_6x4(swingStartPosition, target);
         for (bool &footSwinging : footWasSwinging) footSwinging = false;
+        for (float& entry : swingEntry) entry = 0.0f;
         phase = 0.0f;
+        cycleRunning = false;
     }
 
     bool hasPendingStanceChange() const { return !positionsMatch(defaultPosition, targetDefaultPosition); }
@@ -278,11 +351,11 @@ class GaitController {
                 }
             }
             footWasSwinging[i] = isSwinging;
+            if (!isSwinging) swingEntry[i] = 0.0f;
+            const float entry = swingEntry[i];
+            const float progress = isSwinging ? (swingProgress(ph, gait.stand_frac) - entry) / (1.0f - entry) : 0.0f;
 
-            if (isSwinging && !holdStation) {
-                const float swingProgress = (ph - gait.stand_frac) / (1.0f - gait.stand_frac);
-                updateDefaultPositionTarget(i, swingProgress);
-            }
+            if (isSwinging && !holdStation) updateDefaultPositionTarget(i, progress);
 
             const float rx = defaultPosition[i][0];
             const float ry = defaultPosition[i][1];
@@ -294,6 +367,10 @@ class GaitController {
             float delta[3] = {0, 0, 0};
             if (!holdStation) {
                 auto [phNorm, curveFn, amp] = phaseParams(ph, gait.stand_frac, gait.step_depth, gait.step_height);
+                if (isSwinging) {
+                    phNorm = progress;
+                    amp *= 1.0f - entry;
+                }
                 curveFn(stroke / 2, direction, &amp, phNorm, delta);
             }
 
@@ -314,12 +391,9 @@ class GaitController {
         const bool isRepositioning = !isMoving && hasPendingStanceChange();
 
         if (!isMoving && !isRepositioning) {
-            for (int i = 0; i < 6; i++) {
-                for (int j = 0; j < 4; j++) {
-                    body.feet[i][j] += (defaultPosition[i][j] - body.feet[i][j]) * dt * 10.0f;
-                }
-            }
+            easeFeetHome(body, dt);
             phase = 0;
+            cycleRunning = false;
             return;
         }
 
@@ -331,6 +405,16 @@ class GaitController {
                                     : gait.step_speed * CLIP(speed_factor, 0.75, 1.5f);
 
         advancePhase(dt, speed);
-        generateFeet(gait, body, isRepositioning);
+        if (cycleRunning) {
+            generateFeet(gait, body, isRepositioning);
+        } else {
+            const float carryTime = easeTimeLeft(body);
+            float feetLeft[6][4];
+            COPY_2D_ARRAY_6x4(feetLeft, body.feet);
+            startCycle(gait);
+            generateFeet(gait, body, isRepositioning);
+            startCarry(feetLeft, body, carryTime);
+        }
+        applyCarry(body, dt);
     }
 };

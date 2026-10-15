@@ -7,8 +7,10 @@
   import { Player, State } from '$lib/animation/player'
   import {
     LEG_NAMES,
+    commitNumber,
     editor,
     kinematics,
+    previewClip,
     rideBase,
     shown,
     stanceFor
@@ -47,7 +49,7 @@
     // height slider and a fixed ride height during Entry and Exit.
     baseZ = rideBase(doc, controller[4], s.showOnRobot)
     player = new Player(kinematics, stanceFor(controller[7]))
-    player.play(doc, s.values, stancePose(), baseZ)
+    player.play(previewClip(doc, loop), s.values, stancePose(), baseZ)
   }
 
   const step = (now: number) => {
@@ -62,8 +64,7 @@
     last = now
     const pose = player.update(dt, baseZ)
     if (player.state === State.PLAYING) editor.setScrub(player.t)
-    if (player.state === State.IDLE && loop && !stopping) start()
-    else if (player.state === State.IDLE) return finish()
+    if (player.state === State.IDLE) return finish()
     editor.setPlayback(clonePose(pose))
     frameId = requestAnimationFrame(step)
   }
@@ -139,11 +140,6 @@
       : { bodyAxis: undefined, footChannel: n }
     )
   }
-
-  const setNumber = (apply: (v: number) => void) => (e: Event) => {
-    const v = (e.currentTarget as HTMLInputElement).valueAsNumber
-    if (Number.isFinite(v)) apply(v)
-  }
 </script>
 
 <section class="card bg-base-200">
@@ -203,7 +199,12 @@
         >
       {/if}
       <label class="flex items-center gap-1 text-sm">
-        <input type="checkbox" class="toggle toggle-sm" bind:checked={loop} /> Loop
+        <input
+          type="checkbox"
+          class="toggle toggle-sm"
+          disabled={$editor.playing}
+          bind:checked={loop}
+        /> Loop
       </label>
       <label class="flex items-center gap-2 text-sm">
         Speed
@@ -230,7 +231,10 @@
           min="0"
           value={shown(keyframes[selected].time)}
           disabled={selected === 0}
-          onchange={setNumber(v => editor.setKeyframeTime(selected, v))}
+          onchange={e =>
+            commitNumber(e.currentTarget, keyframes[selected].time, v =>
+              editor.setKeyframeTime(selected, v)
+            )}
         />
       </label>
       <label class="flex items-center gap-1">
@@ -289,7 +293,10 @@
                 class="input input-xs input-bordered w-16"
                 step="0.01"
                 value={shown(o[field])}
-                onchange={setNumber(v => editor.updateOverlay(i, { [field]: v }))}
+                onchange={e =>
+                  commitNumber(e.currentTarget, o[field], v =>
+                    editor.updateOverlay(i, { [field]: v })
+                  )}
               />
             </label>
           {/each}

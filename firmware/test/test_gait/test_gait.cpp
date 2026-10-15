@@ -9,6 +9,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <gait.h>
 
 namespace {
@@ -868,6 +870,326 @@ void test_collapsed_ramp_takes_the_command_outright() {
     TEST_ASSERT_EQUAL_FLOAT(0.0f, cur.step_angle);
 }
 
+// --- Starting a walk ----------------------------------------------------------------------------
+// Entering WALK from a settled STAND, or swapping the gait while standing, must not move any joint
+// faster than the walk itself does. Leika eae7c8fe found the same engine lifting a foot in one tick
+// at up to 3,700 deg/s: the cycle restarted with feet whose offset puts them mid-swing.
+
+namespace {
+constexpr GaitType CLASSICAL_GAITS[4] = {GaitType::TRI_GATE, GaitType::BI_GATE, GaitType::WAVE, GaitType::RIPPLE};
+constexpr int ENTRY_TICKS = 200;  // 1 s: the ramp's rise and the first cycle at least
+constexpr int SETTLE_TICKS = 600; // 3 s: the ramp is within 0.1 mm of the command
+constexpr int STEADY_TICKS = 400; // 2 s: at least one full cycle at every classical cadence
+// The entry may move a joint somewhat faster than steady walking does, not by an order of magnitude.
+constexpr float ENTRY_STEP_BOUND = 1.5f;
+
+// MotionService's STAND command and its classical WALK command for full forward stick at s = s1 = 0.
+gait_state_t standCommand(GaitType type) {
+    gait_state_t gait {15.0f, 0, 0, 0, 1.0f, 0.002f, default_stand_frac, type, {}, 0};
+    GaitController {}.setGait(gait);
+    return gait;
+}
+
+gait_state_t fullForwardCommand(const gait_state_t& stand) {
+    gait_state_t walk = stand;
+    walk.step_y = 100.0f;
+    walk.step_height = 20.0f;
+    return walk;
+}
+
+// MotionService::updateAutoGait's swap: only while not stepping, onto both the live and the target state.
+void swapGait(GaitController& controller, gait_state_t& live, gait_state_t& target, GaitType next) {
+    live.gait_type = next;
+    controller.setGait(live);
+    target.gait_type = next;
+    target.stand_frac = live.stand_frac;
+    for (int i = 0; i < 6; ++i) target.offset[i] = live.offset[i];
+}
+
+struct JointTracker {
+    Kinematics kin;
+    float previous[18];
+
+    explicit JointTracker(BodyStateMsg& body) { kin.inverseKinematics(body, previous); }
+
+    // Largest per-tick joint change in degrees over `ticks` control ticks.
+    float run(GaitController& controller, gait_state_t& live, const gait_state_t& target, BodyStateMsg& body,
+              int ticks) {
+        float worst = 0.0f;
+        for (int t = 0; t < ticks; ++t) {
+            approachGaitCommand(live, target, DT, 0.15f);
+            controller.step(live, body, DT);
+            float angles[18];
+            kin.inverseKinematics(body, angles);
+            for (int i = 0; i < 18; ++i) {
+                worst = std::fmax(worst, std::fabs(angles[i] - previous[i]));
+                previous[i] = angles[i];
+            }
+        }
+        return worst;
+    }
+};
+
+void assertEntryWithinSteadyBound(const char* how, GaitType type, float entry, float steady) {
+    char msg[160];
+    std::snprintf(msg, sizeof(msg), "%s gait %d: entry %.2f deg/tick (%.0f deg/s), steady %.2f deg/tick", how,
+                  (int)type, entry, entry / DT, steady);
+    TEST_MESSAGE(msg);
+    TEST_ASSERT_TRUE_MESSAGE(entry <= ENTRY_STEP_BOUND * steady, msg);
+}
+} // namespace
+
+void test_walk_entered_from_stand_moves_no_joint_faster_than_walking() {
+    for (const GaitType type : CLASSICAL_GAITS) {
+        GaitController controller;
+        controller.snapDefaultFootTarget(STAND);
+        BodyStateMsg body = makeBody();
+        gait_state_t live = standCommand(type);
+        gait_state_t target = live;
+        JointTracker joints(body);
+
+        joints.run(controller, live, target, body, SETTLE_TICKS);
+        target = fullForwardCommand(target);
+        const float entry = joints.run(controller, live, target, body, ENTRY_TICKS);
+        joints.run(controller, live, target, body, SETTLE_TICKS);
+        const float steady = joints.run(controller, live, target, body, STEADY_TICKS);
+
+        assertEntryWithinSteadyBound("stand -> walk", type, entry, steady);
+    }
+}
+
+void test_gait_swapped_at_a_standstill_moves_no_joint_faster_than_walking() {
+    for (const GaitType from : CLASSICAL_GAITS) {
+        for (const GaitType to : CLASSICAL_GAITS) {
+            if (from == to) continue;
+            GaitController controller;
+            controller.snapDefaultFootTarget(STAND);
+            BodyStateMsg body = makeBody();
+            gait_state_t live = standCommand(from);
+            const gait_state_t stand = live;
+            gait_state_t target = fullForwardCommand(stand);
+            JointTracker joints(body);
+
+            joints.run(controller, live, target, body, SETTLE_TICKS);
+            target = stand;
+            joints.run(controller, live, target, body, SETTLE_TICKS);
+            swapGait(controller, live, target, to);
+            target = fullForwardCommand(target);
+            const float entry = joints.run(controller, live, target, body, ENTRY_TICKS);
+            joints.run(controller, live, target, body, SETTLE_TICKS);
+            const float steady = joints.run(controller, live, target, body, STEADY_TICKS);
+
+            assertEntryWithinSteadyBound("walk -> stop -> swap -> walk", to, entry, steady);
+        }
+    }
+}
+
+// --- Leaving a walk -----------------------------------------------------------------------------
+// Stopping ramps the command into the deadband, after which step() brings the feet home from
+// wherever the cycle left them, lifted feet included. That move used to be an exponential pull,
+// dt * 10 of the remaining distance per tick, which went from rest to its top speed in one tick.
+
+namespace {
+// Walks on until the ramp is one tick from the deadband, so the next tick is the first one at rest.
+void walkUntilTheCommandIsReleased(JointTracker& joints, GaitController& controller, gait_state_t& live,
+                                   const gait_state_t& target, BodyStateMsg& body) {
+    for (;;) {
+        gait_state_t next = live;
+        approachGaitCommand(next, target, DT, 0.15f);
+        if (!gaitIsCommanded(next)) return;
+        joints.run(controller, live, target, body, 1);
+    }
+}
+} // namespace
+
+void test_feet_come_home_from_a_stopped_walk_without_a_jolt() {
+    // Stopped at eight points of the cycle, so feet are caught at every height of their swing. The
+    // exponential pull moved a joint up to 0.82 deg in a tick (tripod 0.816, bipod 0.806), all of it
+    // on the first tick at rest; the ease peaks mid-move, at 1.875x its mean speed, and measures 0.30.
+    // The feet are blended home together rather than stepped there in tripod order: by the time the
+    // command is inside the deadband the stride is under 2 mm, and a planted foot slides at most 1.03 mm.
+    constexpr float FLOOR_Z = -66.0f;
+    for (const GaitType type : {GaitType::TRI_GATE, GaitType::BI_GATE}) {
+        float worst = 0.0f, lowest = 0.0f, homeError = 0.0f;
+        for (int stopAt = 0; stopAt < 8; ++stopAt) {
+            GaitController controller;
+            controller.snapDefaultFootTarget(STAND);
+            BodyStateMsg body = makeBody();
+            gait_state_t live = standCommand(type);
+            const gait_state_t stand = live;
+            gait_state_t target = fullForwardCommand(stand);
+            JointTracker joints(body);
+
+            joints.run(controller, live, target, body, SETTLE_TICKS + 17 * stopAt);
+            target = stand;
+            walkUntilTheCommandIsReleased(joints, controller, live, target, body);
+            for (int t = 0; t < ENTRY_TICKS; ++t) {
+                worst = std::fmax(worst, joints.run(controller, live, target, body, 1));
+                for (int i = 0; i < 6; ++i) lowest = std::fmin(lowest, body.feet[i][2] - FLOOR_Z);
+            }
+            for (int i = 0; i < 6; ++i)
+                for (int j = 0; j < 3; ++j) homeError = std::fmax(homeError, std::fabs(body.feet[i][j] - STAND[i][j]));
+        }
+        char msg[160];
+        std::snprintf(msg, sizeof(msg),
+                      "gait %d at rest: largest joint step %.3f deg/tick, lowest foot %.4f mm, home error %.5f mm",
+                      (int)type, worst, lowest, homeError);
+        TEST_MESSAGE(msg);
+        TEST_ASSERT_TRUE_MESSAGE(worst <= 0.4f, msg);
+        TEST_ASSERT_TRUE_MESSAGE(lowest >= -0.01f, msg);
+        TEST_ASSERT_TRUE_MESSAGE(homeError <= 1e-3f, msg);
+    }
+}
+
+void test_walk_resumed_while_the_feet_come_home_moves_no_joint_faster_than_walking() {
+    // Resumed on the first tick at rest, a cycle restarted at phase 0 put the feet the stopped walk had
+    // left up to 14.7 mm in the air straight onto its own targets: 14.8 deg in one tick on the tripod,
+    // 16.4 on the bipod. The ease made it worse for longer, holding the feet away from home through
+    // the first 0.3 s at rest. The new cycle now carries that offset and lets it go along the ease.
+    constexpr int REST_TICKS[] = {1, 40}; // the first tick at rest, and 0.2 s into the ease
+    for (const GaitType type : {GaitType::TRI_GATE, GaitType::BI_GATE}) {
+        for (const int restTicks : REST_TICKS) {
+            GaitController controller;
+            controller.snapDefaultFootTarget(STAND);
+            BodyStateMsg body = makeBody();
+            gait_state_t live = standCommand(type);
+            const gait_state_t stand = live;
+            gait_state_t target = fullForwardCommand(stand);
+            JointTracker joints(body);
+
+            joints.run(controller, live, target, body, SETTLE_TICKS);
+            target = stand;
+            walkUntilTheCommandIsReleased(joints, controller, live, target, body);
+            joints.run(controller, live, target, body, restTicks);
+            target = fullForwardCommand(stand);
+            const float entry = joints.run(controller, live, target, body, ENTRY_TICKS);
+            joints.run(controller, live, target, body, SETTLE_TICKS);
+            const float steady = joints.run(controller, live, target, body, STEADY_TICKS);
+
+            char how[64];
+            std::snprintf(how, sizeof(how), "walk -> stop -> resume after %d ticks at rest", restTicks);
+            assertEntryWithinSteadyBound(how, type, entry, steady);
+        }
+    }
+}
+
+void test_feet_moved_while_standing_are_eased_back() {
+    // The policy and the animations write the feet without the gait. Back at rest, the feet must be
+    // eased home from where those left them, not snapped there because an earlier ease had finished.
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 0, 0, 0);
+    GaitController controller;
+    controller.setGait(gait);
+    controller.snapDefaultFootTarget(STAND);
+    BodyStateMsg body = makeBody();
+    for (int t = 0; t < 200; ++t) controller.step(gait, body, DT);
+
+    for (int i = 0; i < 6; ++i) body.feet[i][2] += 30.0f;
+    controller.step(gait, body, DT);
+    for (int i = 0; i < 6; ++i) TEST_ASSERT_GREATER_THAN_FLOAT(STAND[i][2] + 29.0f, body.feet[i][2]);
+
+    for (int t = 0; t < 99; ++t) controller.step(gait, body, DT);
+    for (int i = 0; i < 6; ++i) TEST_ASSERT_EQUAL_FLOAT(STAND[i][2], body.feet[i][2]);
+}
+
+// --- Gait trace parity --------------------------------------------------------------------------
+// The foot targets of a scripted session, which simulation/test_gait_trace_parity.py replays
+// through firmware_gait.py coordinate by coordinate. The first stop is cut short, so the lateral
+// walk starts while the feet are still easing home. From the repository root, regenerate
+// simulation/fixtures/gait_trace.json with
+//   GAIT_TRACE_OUT=simulation/fixtures/gait_trace.json pio test -e native -f test_gait
+// Without GAIT_TRACE_OUT the test writes nothing and only checks that the session ends at rest.
+
+namespace {
+struct TraceSegment {
+    const char* name;
+    float stepX, stepY, stepHeight;
+    int ticks;
+};
+
+// MotionService's STAND command, and its classical WALK command for full forward and full left stick.
+constexpr TraceSegment TRACE_SEGMENTS[] = {{"stand", 0.0f, 0.0f, 15.0f, 5},
+                                           {"forward", 0.0f, 100.0f, 20.0f, 150},
+                                           {"stop", 0.0f, 0.0f, 15.0f, 160},
+                                           {"lateral", -100.0f, 0.0f, 20.0f, 150},
+                                           {"stop", 0.0f, 0.0f, 15.0f, 230}};
+constexpr int TRACE_SEGMENT_COUNT = sizeof(TRACE_SEGMENTS) / sizeof(TRACE_SEGMENTS[0]);
+constexpr float TRACE_TAU_S = 0.15f;
+// Every tick is run, every third one recorded: a law the port gets wrong leaves its mark for many
+// ticks, and the fixture stays under 100 KB.
+constexpr int TRACE_RECORD_EVERY = 3;
+
+void writeTraceHeader(FILE* out) {
+    std::fprintf(out, "{\n  \"source\": \"firmware/test/test_gait/test_gait.cpp\",\n");
+    std::fprintf(out, "  \"dt\": %.9g,\n  \"command_tau_s\": %.9g,\n  \"record_every\": %d,\n  \"segments\": [\n", DT,
+                 TRACE_TAU_S, TRACE_RECORD_EVERY);
+    for (int k = 0; k < TRACE_SEGMENT_COUNT; ++k) {
+        const TraceSegment& seg = TRACE_SEGMENTS[k];
+        std::fprintf(
+            out, "    {\"name\": \"%s\", \"step_x\": %.9g, \"step_y\": %.9g, \"step_height\": %.9g, \"ticks\": %d}%s\n",
+            seg.name, seg.stepX, seg.stepY, seg.stepHeight, seg.ticks, k + 1 < TRACE_SEGMENT_COUNT ? "," : "");
+    }
+    std::fprintf(out, "  ],\n  \"feet_from_stance_mm\": {\n");
+}
+
+// To 1e-4 mm, without trailing zeros.
+void writeCoordinate(FILE* out, float mm) {
+    char text[32];
+    std::snprintf(text, sizeof(text), "%.4f", mm);
+    char* end = text + std::strlen(text);
+    while (end[-1] == '0') *--end = '\0';
+    if (end[-1] == '.') *--end = '\0';
+    std::fputs(std::strcmp(text, "-0") == 0 ? "0" : text, out);
+}
+} // namespace
+
+void test_gait_trace_ends_at_rest_on_the_stance() {
+    const char* outPath = std::getenv("GAIT_TRACE_OUT");
+    FILE* out = outPath ? std::fopen(outPath, "w") : nullptr;
+    if (outPath) TEST_ASSERT_NOT_NULL_MESSAGE(out, outPath);
+    if (out) writeTraceHeader(out);
+
+    const struct {
+        const char* name;
+        GaitType type;
+    } gaits[] = {{"TRI_GATE", GaitType::TRI_GATE}, {"BI_GATE", GaitType::BI_GATE}};
+    for (const auto& gaitCase : gaits) {
+        GaitController controller;
+        controller.snapDefaultFootTarget(STAND);
+        BodyStateMsg body = makeBody();
+        gait_state_t live = standCommand(gaitCase.type);
+        gait_state_t target = live;
+        if (out) std::fprintf(out, "    \"%s\": [\n", gaitCase.name);
+
+        int tick = 0;
+        for (const TraceSegment& seg : TRACE_SEGMENTS) {
+            target.step_x = seg.stepX;
+            target.step_y = seg.stepY;
+            target.step_height = seg.stepHeight;
+            for (int t = 0; t < seg.ticks; ++t) {
+                approachGaitCommand(live, target, DT, TRACE_TAU_S);
+                controller.step(live, body, DT);
+                if (!out || ++tick % TRACE_RECORD_EVERY != 0) continue;
+                std::fprintf(out, "%s      [", tick == TRACE_RECORD_EVERY ? "" : ",\n");
+                for (int i = 0; i < 6; ++i) {
+                    for (int j = 0; j < 3; ++j) {
+                        if (i + j > 0) std::fputc(',', out);
+                        writeCoordinate(out, body.feet[i][j] - STAND[i][j]);
+                    }
+                }
+                std::fprintf(out, "]");
+            }
+        }
+        TEST_ASSERT_EQUAL_FLOAT(0.0f, controller.getPhase());
+        for (int i = 0; i < 6; ++i)
+            for (int j = 0; j < 3; ++j) TEST_ASSERT_FLOAT_WITHIN(1e-3f, STAND[i][j], body.feet[i][j]);
+        if (out) std::fprintf(out, "\n    ]%s\n", gaitCase.type == GaitType::BI_GATE ? "" : ",");
+    }
+    if (out) {
+        std::fprintf(out, "  }\n}\n");
+        std::fclose(out);
+    }
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_tripod_keeps_three_feet_loaded);
@@ -903,5 +1225,11 @@ int main(int, char **) {
     RUN_TEST(test_tuned_default_lift_trim_still_exceeds_femur_travel);
     RUN_TEST(test_auto_gait_picks_by_speed_and_resists_flapping);
     RUN_TEST(test_auto_gait_switch_adds_no_discontinuity);
+    RUN_TEST(test_walk_entered_from_stand_moves_no_joint_faster_than_walking);
+    RUN_TEST(test_gait_swapped_at_a_standstill_moves_no_joint_faster_than_walking);
+    RUN_TEST(test_feet_come_home_from_a_stopped_walk_without_a_jolt);
+    RUN_TEST(test_walk_resumed_while_the_feet_come_home_moves_no_joint_faster_than_walking);
+    RUN_TEST(test_feet_moved_while_standing_are_eased_back);
+    RUN_TEST(test_gait_trace_ends_at_rest_on_the_stance);
     return UNITY_END();
 }

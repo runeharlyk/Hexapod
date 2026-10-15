@@ -33,6 +33,7 @@ import {
   type Stance
 } from '$lib/animation/evaluator'
 import type { AnimationPreview } from './animation'
+import type { DraftRef } from '$lib/animation/library'
 
 export const kinematics = new Kinematics(config)
 
@@ -71,8 +72,14 @@ export interface EditorState {
   values: Map<ParamId, number>
   showOnRobot: boolean
   dirty: boolean
+  // The draft this document was opened from or last saved as.
+  draft: DraftRef | null
   error: string | null
 }
+
+type Autosaved = Pick<EditorState, 'document' | 'dirty' | 'draft'>
+
+export const AUTOSAVE_KEY = 'animation_editor_autosave'
 
 export interface Frame {
   pose: Pose
@@ -179,20 +186,83 @@ const keyframeFeet = (k: Keyframe, stance: Stance, baseZ: number): number[][] =>
 const evaluable = (a: Animation) =>
   a.keyframes.length > 0 && a.keyframes.every(k => k.legs.length === 0 || k.legs.length === 6)
 
-export const createEditor = (initial: Animation = blankAnimation()) => {
+// Edits never remove the first keyframe, so a stored document without one is not the editor's.
+const restore = (key: string): Autosaved | null => {
+  try {
+    const text = localStorage.getItem(key)
+    if (text === null) return null
+    const saved = JSON.parse(text)
+    const document = Animation.fromJSON(saved.document)
+    if (document.keyframes.length === 0) return null
+    return {
+      document,
+      dirty: saved.dirty === true,
+      draft:
+        typeof saved.draft?.name === 'string' && typeof saved.draft?.fingerprint === 'string' ?
+          { name: saved.draft.name, fingerprint: saved.draft.fingerprint }
+        : null
+    }
+  } catch {
+    return null
+  }
+}
+
+const store = (key: string, s: Autosaved): boolean => {
+  try {
+    const { document, dirty, draft } = s
+    localStorage.setItem(
+      key,
+      JSON.stringify({ document: Animation.toJSON(document), dirty, draft })
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+// The preview's Loop wraps the playing clock, as a looping file does on the robot: a cycle skips
+// Exit and Entry, a hold_end animation loops instead of holding, and Stop still runs Exit.
+export const previewClip = (doc: Animation, loop: boolean): Animation =>
+  loop ? { ...doc, loop: true, holdEnd: false } : doc
+
+// A number input shows the document through a one-way value, which Svelte rewrites only when that
+// value changes; a refused or non-numeric entry therefore puts the input back by hand.
+export const commitNumber = (
+  input: HTMLInputElement,
+  current: number,
+  apply: (v: number) => string | null
+) => {
+  const v = input.valueAsNumber
+  if (!Number.isFinite(v) || apply(v) !== null) input.value = String(shown(current))
+}
+
+// With an autosave key the editor starts from the document stored under it and stores the
+// document on every change, so unsaved edits survive a reload or a closed tab.
+export const createEditor = (initial: Animation = blankAnimation(), autosaveKey?: string) => {
   const state = writable<EditorState>({
     document: initial,
+    dirty: false,
+    draft: null,
+    ...(autosaveKey && restore(autosaveKey)),
     selected: 0,
     scrub: 0,
     playing: false,
     values: new Map(),
     showOnRobot: false,
-    dirty: false,
     error: null
   })
+  const autosaved = writable(true)
   const playback = writable<Pose | null>(null)
   let current!: EditorState
   state.subscribe(s => (current = s))
+  if (autosaveKey) {
+    let last: Autosaved = current
+    state.subscribe(s => {
+      if (s.document === last.document && s.dirty === last.dirty && s.draft === last.draft) return
+      last = s
+      autosaved.set(store(autosaveKey, s))
+    })
+  }
   let controller = [0, 0, 0, 0, 0, 0, 0, 0]
   outControllerData.subscribe(d => (controller = d))
 
@@ -226,11 +296,12 @@ export const createEditor = (initial: Animation = blankAnimation()) => {
   }
 
   // A new document also ends the preview playback of the old one; the Timeline reacts to playing.
-  const reset = (document: Animation) => {
+  const reset = (document: Animation, draft: DraftRef | null = null) => {
     playback.set(null)
     state.update(s => ({
       ...s,
       document,
+      draft,
       selected: 0,
       scrub: 0,
       playing: false,
@@ -261,6 +332,7 @@ export const createEditor = (initial: Animation = blankAnimation()) => {
 
   return {
     subscribe: state.subscribe,
+    autosaved: { subscribe: autosaved.subscribe },
     validation,
     frame,
     pose: derived(frame, f => f.pose),
@@ -268,14 +340,15 @@ export const createEditor = (initial: Animation = blankAnimation()) => {
 
     newDocument: () => reset(blankAnimation()),
 
-    open: (a: Animation): string | null => {
+    open: (a: Animation, draft?: DraftRef): string | null => {
       const error = validate(froundAnimation(a))
       if (error) return fail(error)
-      reset(structuredClone(a))
+      reset(structuredClone(a), draft)
       return null
     },
 
-    markSaved: () => state.update(s => ({ ...s, dirty: false })),
+    markSaved: (draft?: DraftRef) =>
+      state.update(s => ({ ...s, dirty: false, draft: draft ?? s.draft })),
 
     selectKeyframe: (i: number) =>
       state.update(s => ({ ...s, selected: i, scrub: s.document.keyframes[i]?.time ?? s.scrub })),
@@ -428,4 +501,4 @@ export const createEditor = (initial: Animation = blankAnimation()) => {
 
 export type Editor = ReturnType<typeof createEditor>
 
-export const editor = createEditor()
+export const editor = createEditor(blankAnimation(), AUTOSAVE_KEY)

@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
   import { get } from 'svelte/store'
+  import { modals } from 'svelte-modals'
+  import ConfirmDialog from '$lib/components/ConfirmDialog.svelte'
+  import { Cancel, Check } from '$lib/components/icons'
   import Visualization from '$lib/components/Visualization.svelte'
   import { notifications } from '$lib/components/toasts/notifications'
   import { Animation } from '$lib/platform_shared/animation'
@@ -30,6 +33,8 @@
     builtIn,
     draftAnimations,
     loadDraft,
+    type DraftRef,
+    overwritesDraft,
     refreshRobotList,
     robotAnimations,
     saveDraft
@@ -39,12 +44,12 @@
   import AnimationPanel from './AnimationPanel.svelte'
 
   interface Props {
-    onOpen: (a: Animation | null) => void
+    onOpen: (a: Animation | null, draft?: DraftRef) => void
   }
 
   let { onOpen }: Props = $props()
 
-  const { validation, frame, pose } = editor
+  const { autosaved, validation, frame, pose } = editor
 
   let sender: PoseSender | null = null
   let unsubscribers: (() => void)[] = []
@@ -118,7 +123,7 @@
     } else if (source === 'draft') {
       const loaded = loadDraft(name)
       if ('error' in loaded) notifications.error(loaded.error, 5000)
-      else onOpen(loaded.animation)
+      else onOpen(loaded.animation, loaded.draft)
     } else if (source === 'robot') {
       try {
         onOpen(await downloadAnimation(name))
@@ -139,11 +144,28 @@
     editor.markSaved()
   }
 
+  const storeDraft = (doc: Animation) => {
+    const draft = saveDraft(doc)
+    if (!draft) return notifications.error('This browser refused to store the draft', 5000)
+    editor.markSaved(draft)
+    notifications.success(`Saved draft ${doc.name}`, 3000)
+  }
+
   const saveToDraft = () => {
     const doc = rounded()
-    if (!saveDraft(doc)) return notifications.error('This browser refused to store the draft', 5000)
-    editor.markSaved()
-    notifications.success(`Saved draft ${doc.name}`, 3000)
+    if (!overwritesDraft(doc.name, get(editor).draft)) return storeDraft(doc)
+    modals.open(ConfirmDialog, {
+      title: 'Replace draft',
+      message: `A draft named ${doc.name} already exists. Replace it?`,
+      labels: {
+        cancel: { label: 'Keep', icon: Cancel },
+        confirm: { label: 'Replace', icon: Check }
+      },
+      onConfirm: () => {
+        modals.close()
+        storeDraft(doc)
+      }
+    })
   }
 
   const upload = async (): Promise<boolean> => {
@@ -250,7 +272,11 @@
     Show on robot
   </label>
   {#if mirrorHint}<span class="text-xs opacity-70">{mirrorHint}</span>{/if}
-  {#if $editor.dirty}<span class="text-xs opacity-60">unsaved</span>{/if}
+  {#if $editor.dirty}
+    <span class="text-xs opacity-60">
+      {$autosaved ? 'unsaved' : 'unsaved, and this browser refused the autosave'}
+    </span>
+  {/if}
 </div>
 
 {#if $editor.error}

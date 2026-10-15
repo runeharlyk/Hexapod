@@ -35,7 +35,7 @@ import gymnasium as gym
 import mujoco
 
 from src.sim.mj_runtime import HexapodSim, TERRAIN_MODEL_PATH
-from src.sim.domain_rand import DomainRandomizer
+from src.sim.domain_rand import DomainRandomizer, Ranges
 from src.sim.terrain import randomize_hfield, KINDS as TERRAIN_KINDS
 from src.sim.rollout_weights import SCORE_W_STUCK, SCORE_W_KNOCK
 from src.robot.gait_schedule import GaitSchedule
@@ -229,7 +229,7 @@ class HexapodMjEnv(gym.Env):
                  gait_schedule: "GaitSchedule | None" = None,
                  terrain_speed_floor: float = TERRAIN_SPEED_FLOOR,
                  reward_weights: dict | None = None, reward_mode: str = "shaped", self_level: bool = True,
-                 arc_stance: bool = False):
+                 arc_stance: bool = False, dr_ranges: Ranges = Ranges()):
         super().__init__()
         assert control_mode in ACT_DIM, control_mode
         assert terrain_kind in TERRAIN_KINDS + ("mixed",), terrain_kind
@@ -276,7 +276,7 @@ class HexapodMjEnv(gym.Env):
                                  arc_stance=self.arc_stance)
         self.body = BodyState()
         self.np_random_, _ = gym.utils.seeding.np_random(seed)
-        self.dr = DomainRandomizer(self.sim.model) if randomize else None
+        self.dr = DomainRandomizer(self.sim.model, dr_ranges) if randomize else None
         self._cmd_buffer: deque = deque(maxlen=8)
 
         self.act_dim = ACT_DIM[control_mode]
@@ -319,12 +319,11 @@ class HexapodMjEnv(gym.Env):
             self._contact_rng = np.random.default_rng(seed ^ 0xC0FFEE)
         if self.randomize:
             self.dr.reset_episode(self.sim.model, self.np_random_)
-            r = self.np_random_
+            r, ranges = self.np_random_, self.dr.ranges
             # servo-strength/stiffness DR (avoids overfitting one servo model):
-            self.sim.set_servo_scale(kp=float(r.uniform(0.65, 1.35)),      # stiffness spread
-                                     stall=float(r.uniform(0.80, 1.20)),   # torque spread
-                                     noload=float(r.uniform(0.85, 1.15)))  # speed spread
-            self.sim.deadband = float(r.uniform(0.005, 0.026))  # ~0.3-1.5 deg gear lash / PWM deadband
+            self.sim.set_servo_scale(kp=float(r.uniform(*ranges.kp)), stall=float(r.uniform(*ranges.stall)),
+                                     noload=float(r.uniform(*ranges.noload)), hold=float(r.uniform(*ranges.hold)))
+            self.sim.deadband = float(r.uniform(*ranges.deadband))
             cr = self._contact_rng
             self._contact_drop = float(cr.uniform(0.0, CONTACT_DROP_MAX))
             self._contact_false = float(cr.uniform(0.0, CONTACT_FALSE_MAX))
@@ -725,9 +724,11 @@ class HexapodMjEnv(gym.Env):
 def make_env(control_mode="phase_gait", randomize=False, seed=0, resample_steps=0, terrain=0.0,
              terrain_kind="bumps", terrain_feature=1.0, obs_contact=False, obs_history=1,
              gait_schedule=None, terrain_speed_floor=TERRAIN_SPEED_FLOOR, reward_weights=None,
-             reward_mode="shaped", reflex=False, self_level=True, arc_stance=False):
-    """Factory for SubprocVecEnv (must be picklable / module-level)."""
+             reward_mode="shaped", reflex=False, self_level=True, arc_stance=False, dr_centre=None):
+    """Factory for SubprocVecEnv (must be picklable / module-level). `dr_centre`: identify.py's JSON file, which
+    re-centres the randomization ranges."""
     def _thunk():
+        ranges = Ranges.identified(dr_centre) if dr_centre else Ranges()
         return HexapodMjEnv(control_mode=control_mode, randomize=randomize, seed=seed,
                             resample_steps=resample_steps, terrain=terrain, terrain_kind=terrain_kind,
                             terrain_feature=terrain_feature,
@@ -735,7 +736,7 @@ def make_env(control_mode="phase_gait", randomize=False, seed=0, resample_steps=
                             gait_schedule=gait_schedule,
                             terrain_speed_floor=terrain_speed_floor,
                             reward_weights=reward_weights, reward_mode=reward_mode,
-                            reflex=reflex, self_level=self_level, arc_stance=arc_stance)
+                            reflex=reflex, self_level=self_level, arc_stance=arc_stance, dr_ranges=ranges)
     return _thunk
 
 

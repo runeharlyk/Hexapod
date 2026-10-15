@@ -403,9 +403,10 @@ static void registerHandlers(CommAdapterBase &c) {
                 break;
             }
             case socket_message_CorrelationRequest_servo_settings_update_tag: {
-                servoSettingsService.update(
+                StateUpdateResult r = servoSettingsService.update(
                     [&req](ServoSettings &s) { return ServoSettings_update(req.request.servo_settings_update, s); },
                     "correlation");
+                if (r == StateUpdateResult::ERROR) res.status_code = 400;
                 res.which_response = socket_message_CorrelationResponse_servo_settings_tag;
                 snapshot(servoSettingsService, res.response.servo_settings);
                 break;

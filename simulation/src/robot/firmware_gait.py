@@ -79,6 +79,9 @@ DEFAULT_STEP_HEIGHT_MM = 15.0
 DEFAULT_STEP_DEPTH = 0.002
 GAIT_COMMAND_TAU_S = 0.15
 
+# Duration of the minimum-jerk ease that brings the feet home when the gait comes to rest (gait.h)
+FEET_EASE_S = 0.5
+
 # Snap epsilons of approachGaitCommand (firmware/include/gait.h)
 GAIT_SNAP_MM = 0.01
 GAIT_SNAP_RAD = 1e-5
@@ -287,6 +290,10 @@ def command_to_walk_gait(lx, ly, rx, s, s1, gait: GaitState, h: float = 0.0) -> 
     return h * 50.0
 
 
+def _swing_progress(phase: float, stand_frac: float) -> float:
+    return (phase - stand_frac) / (1.0 - stand_frac)
+
+
 def _lerp(start: float, end: float, t: float) -> float:
     """Same operation order as lerpf (firmware/include/utils/math_utils.h)."""
     return (1.0 - t) * start + t * end
@@ -439,6 +446,22 @@ class GaitController:
         self.target_default_position = DEFAULT_FEET.copy()
         self.swing_start_position = DEFAULT_FEET.copy()
         self.foot_was_swinging = [False] * 6
+        # Swing progress each leg stood at when step() started the cycle from a standstill, 0 for a
+        # swing begun inside the cycle; such a swing is replayed whole, from the floor, over the time
+        # left to it, with its lift scaled to that time (gait.h swingEntry).
+        self.swing_entry = np.zeros(6)
+        self.cycle_running = False
+        # The ease home runs from ease_from to ease_to and starts over whenever the feet are not where
+        # it last put them or the stance changed (gait.h easeFeetHome).
+        self.ease_from = np.zeros((6, 4))
+        self.ease_to = np.zeros((6, 4))
+        self.eased_feet = np.zeros((6, 4))
+        self.eased_s = 0.0
+        # A cycle started while the feet are away from its targets carries that offset and lets it go
+        # along the same curve over the time the ease had left (gait.h carry).
+        self.carry = np.zeros((6, 3))
+        self.carried_s = 0.0
+        self.carry_s = 0.0
 
         # contact-reflex state (unused while reflex is None)
         self.reflex = reflex
@@ -479,7 +502,13 @@ class GaitController:
     def _phase_params(self, phase, stand_frac, depth, height):
         if phase < stand_frac:
             return phase / stand_frac, self._stance_curve, -depth
-        return (phase - stand_frac) / (1 - stand_frac), self._bezier_curve, height
+        return _swing_progress(phase, stand_frac), self._bezier_curve, height
+
+    def _start_cycle(self, gait: GaitState) -> None:
+        for i in range(6):
+            phase = math.fmod(self.phase + gait.offset[i], 1.0)
+            self.swing_entry[i] = _swing_progress(phase, gait.stand_frac) if phase >= gait.stand_frac else 0.0
+        self.cycle_running = True
 
     @staticmethod
     def _signed_stride(gait: GaitState) -> float:
@@ -494,6 +523,30 @@ class GaitController:
 
     def foot_at_target(self, i: int, epsilon: float = 0.5) -> bool:
         return bool(np.all(np.abs(self.default_position[i] - self.target_default_position[i]) <= epsilon))
+
+    @staticmethod
+    def _minimum_jerk(s: float) -> float:
+        return s * s * s * (10.0 - 15.0 * s + 6.0 * s * s)
+
+    def _ease_time_left(self, body: BodyState) -> float:
+        return FEET_EASE_S - self.eased_s if np.array_equal(body.feet, self.eased_feet) else FEET_EASE_S
+
+    def _apply_carry(self, body: BodyState, dt: float) -> None:
+        if self.carried_s >= self.carry_s:
+            return
+        self.carried_s = min(self.carried_s + dt, self.carry_s)
+        body.feet[:, :3] += self.carry * (1.0 - self._minimum_jerk(self.carried_s / self.carry_s))
+
+    def _ease_feet_home(self, body: BodyState, dt: float) -> None:
+        """Port of easeFeetHome: 10s^3 - 15s^4 + 6s^5 from where the feet were left to the stance."""
+        if not np.array_equal(body.feet, self.eased_feet) or not np.array_equal(self.default_position, self.ease_to):
+            self.ease_from = np.array(body.feet, dtype=float)
+            self.ease_to = self.default_position.copy()
+            self.eased_s = 0.0
+        self.eased_s = min(self.eased_s + dt, FEET_EASE_S)
+        blend = self._minimum_jerk(self.eased_s / FEET_EASE_S)
+        self.eased_feet = self.ease_from + (self.ease_to - self.ease_from) * blend
+        body.feet = self.eased_feet.copy()
 
     def generate_feet(self, gait: GaitState, body: BodyState,
                       contacts=None, dt: float = 0.0, repositioning: bool = False) -> None:
@@ -524,12 +577,15 @@ class GaitController:
             if reflexive and self.foot_was_swinging[i] and not is_swinging:
                 self._on_touchdown(i)
             self.foot_was_swinging[i] = is_swinging
+            if not is_swinging:
+                self.swing_entry[i] = 0.0
+            entry = self.swing_entry[i]
+            progress = (_swing_progress(phase, gait.stand_frac) - entry) / (1.0 - entry) if is_swinging else 0.0
             if is_swinging and not hold_station:
                 # A swinging foot carries its resting position from where the swing began to the
                 # target, so a stance change lands one foot at a time.
-                swing_progress = (phase - gait.stand_frac) / (1.0 - gait.stand_frac)
                 self.default_position[i] = _lerp(self.swing_start_position[i],
-                                                 self.target_default_position[i], swing_progress)
+                                                 self.target_default_position[i], progress)
 
             rx, ry = self.default_position[i][0], self.default_position[i][1]
             stroke_x = gait.step_x + gait.step_angle * (-ry)   # translation + (omega x r): radius-scaled turn
@@ -541,6 +597,9 @@ class GaitController:
             ph_norm, curve_fn, amp = self._phase_params(
                 phase, gait.stand_frac, gait.step_depth, height
             )
+            if is_swinging:
+                ph_norm = progress
+                amp *= 1.0 - entry
             delta = [0.0, 0.0, 0.0]
             if not hold_station:
                 curve_fn(stroke / 2.0, direction, amp, ph_norm, delta)
@@ -654,18 +713,26 @@ class GaitController:
         self.phase = math.fmod(phase, 1.0)
 
     def step(self, gait: GaitState, body: BodyState, dt: float) -> None:
-        """Faithful firmware step: ease to default when idle, reposition feet whose resting position
+        """Faithful firmware step: ease the feet home when idle, reposition feet whose resting position
         changed, else advance + generate."""
         is_moving = gait_is_commanded(gait)
         repositioning = not is_moving and self.has_pending_stance_change()
         if not is_moving and not repositioning:
-            for i in range(6):
-                for j in range(4):
-                    body.feet[i][j] += (self.default_position[i][j] - body.feet[i][j]) * dt * 10.0
+            self._ease_feet_home(body, dt)
             self.phase = 0.0
+            self.cycle_running = False
             return
         self.advance_phase(gait, dt, repositioning)
-        self.generate_feet(gait, body, repositioning=repositioning)
+        if self.cycle_running:
+            self.generate_feet(gait, body, repositioning=repositioning)
+        else:
+            carry_time = self._ease_time_left(body)
+            feet_left = np.array(body.feet, dtype=float)
+            self._start_cycle(gait)
+            self.generate_feet(gait, body, repositioning=repositioning)
+            self.carry = feet_left[:, :3] - body.feet[:, :3]
+            self.carry_s, self.carried_s = carry_time, 0.0
+        self._apply_carry(body, dt)
 
 
 if __name__ == "__main__":

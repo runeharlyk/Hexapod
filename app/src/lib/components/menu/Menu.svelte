@@ -22,6 +22,7 @@
     AP,
     Copyright,
     Metrics,
+    Save,
     DNS,
     Bluetooth,
     AnimationPlay
@@ -147,6 +148,12 @@
             title: 'File System',
             icon: Folder,
             href: withBase('system/filesystem'),
+            feature: true
+          },
+          {
+            title: 'Configuration',
+            icon: Save,
+            href: withBase('system/configuration'),
             feature: true
           },
           {

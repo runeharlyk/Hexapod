@@ -1,6 +1,7 @@
-"""The real hexapod over its WebSocket (ws://<host>/api/ws), in platform_shared/message.proto frames.
+"""The real hexapod over its WebSocket (ws://<host>/api/ws) or its native USB serial port (COMx, /dev/tty*), in
+platform_shared/message.proto frames; both links carry the same messages, so only the transport differs.
 
-One thread runs an asyncio loop that owns the socket; the public methods are synchronous. Once subscribed, the robot
+One thread runs an asyncio loop that owns the link; the public methods are synchronous. Once subscribed, the robot
 pushes its mode and gait on every change and its IMU angles at up to 40 Hz. It has no request for its current mode,
 so the mode is unknown until the first push or set_mode.
 
@@ -18,24 +19,16 @@ The bound is conservative: a slow but unbroken link can count a drop that did no
 import asyncio
 import collections
 import math
-import subprocess
-import sys
 import threading
 import time
-from pathlib import Path
 
 import websockets
 from google.protobuf.message import DecodeError
 
 from .. import speed_model
 from .base import Gait, Mode, RobotDisconnected, RobotError, RobotState, RobotTimeout, Velocity
-
-COMPILE_PROTOS = Path(__file__).resolve().parents[3] / "scripts" / "compile_protos.py"
-try:
-    from ...platform_shared import message_pb2 as pb
-except ImportError:  # gitignored and generated on first use, as src/robot/animation_files.py does
-    subprocess.run([sys.executable, str(COMPILE_PROTOS)], check=True)
-    from ...platform_shared import message_pb2 as pb
+from .messages import pb
+from .serial_link import READY_TIMEOUT_S, SerialLink, is_serial_port
 
 KEEPALIVE_S = 0.2  # the app's COMMAND_HEARTBEAT_MS
 STEERING_TIMEOUT_S = 0.6
@@ -52,12 +45,72 @@ def _tag(name: str) -> int:
     return pb.Message.DESCRIPTOR.fields_by_name[name].number
 
 
-class RealBackend:
+class WebSocketTransport:
     def __init__(self, host: str):
         self._url = f"ws://{host}/api/ws"
+        self.name = f"the robot at {self._url}"
+        self._socket = None
+
+    async def open(self) -> None:
+        self._socket = await websockets.connect(self._url, open_timeout=REPLY_TIMEOUT_S, close_timeout=1,
+                                                ping_interval=None)
+
+    async def send(self, message: pb.Message) -> None:
+        try:
+            await self._socket.send(message.SerializeToString())
+        except websockets.ConnectionClosed as error:
+            raise RobotDisconnected(f"{self.name} closed the connection") from error
+
+    async def recv(self) -> pb.Message:
+        try:
+            frame = await self._socket.recv()
+        except websockets.ConnectionClosed as error:
+            raise RobotDisconnected(f"{self.name} closed the connection") from error
+        return pb.Message.FromString(frame)
+
+    async def close(self) -> None:
+        if self._socket is not None:
+            await self._socket.close()
+
+
+class SerialTransport:
+    """SerialLink's reader thread hands each message, and the link's failure, to the loop."""
+
+    def __init__(self, port: str):
+        self._port = port
+        self.name = f"the robot on {port}"
+        self._link: SerialLink | None = None
+        self._messages: asyncio.Queue[pb.Message | RobotDisconnected] | None = None
+
+    async def open(self) -> None:
+        loop = asyncio.get_running_loop()
+        self._messages = asyncio.Queue()
+
+        def deliver(item: pb.Message | RobotDisconnected) -> None:
+            loop.call_soon_threadsafe(self._messages.put_nowait, item)
+
+        self._link = await asyncio.to_thread(SerialLink, self._port, deliver, deliver)
+        await asyncio.to_thread(self._link.wait_ready)
+
+    async def send(self, message: pb.Message) -> None:
+        self._link.send(message)
+
+    async def recv(self) -> pb.Message:
+        item = await self._messages.get()
+        if isinstance(item, RobotDisconnected):
+            raise item
+        return item
+
+    async def close(self) -> None:
+        if self._link is not None:
+            self._link.close()
+
+
+class RealBackend:
+    def __init__(self, target: str):
+        self._transport = SerialTransport(target) if is_serial_port(target) else WebSocketTransport(target)
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
-        self._socket = None
         self._tasks: list[asyncio.Task] = []
         self._changed = threading.Condition()
         self._error: RobotError | None = None
@@ -79,7 +132,7 @@ class RealBackend:
     def connect(self) -> None:
         self._thread.start()
         try:
-            self._run(self._open())
+            self._run(self._open(), READY_TIMEOUT_S + 1)
             features = self._run(self._ask(pb.CorrelationRequest(features_data_request=pb.FeaturesDataRequest())))
             self._imu = features.features_data_response.imu
             if self._imu:
@@ -93,7 +146,7 @@ class RealBackend:
             return
         try:
             asyncio.run_coroutine_threadsafe(self._shutdown(), self._loop).result(2.0)
-        except (TimeoutError, OSError, websockets.ConnectionClosed):
+        except (TimeoutError, OSError, RobotError):
             pass  # already gone
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(2.0)
@@ -102,27 +155,24 @@ class RealBackend:
         for task in self._tasks:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
-        if self._socket is not None:
-            await self._socket.close()
+        await self._transport.close()
 
     async def _open(self) -> None:
-        self._socket = await websockets.connect(self._url, open_timeout=REPLY_TIMEOUT_S, close_timeout=1)
+        await self._transport.open()
         for name in ("mode", "gait", "imu"):
             await self._send(pb.Message(sub_notif=pb.SubscribeNotification(tag=_tag(name))))
         self._tasks = [self._loop.create_task(self._read()), self._loop.create_task(self._keep_alive())]
 
     async def _read(self) -> None:
-        reason = f"the robot at {self._url} closed the connection"
         try:
             while True:
-                message = pb.Message.FromString(await asyncio.wait_for(self._socket.recv(), SILENCE_S))
-                self._receive(message, time.monotonic())
+                self._receive(await asyncio.wait_for(self._transport.recv(), SILENCE_S), time.monotonic())
         except TimeoutError:
-            reason = f"nothing from the robot at {self._url} for {SILENCE_S:g} s"
-        except websockets.ConnectionClosed:
-            pass
+            reason = f"nothing from {self._transport.name} for {SILENCE_S:g} s"
+        except RobotDisconnected as error:
+            reason = str(error)
         except (DecodeError, ValueError) as error:  # a frame or enum value from a firmware this client predates
-            reason = f"the robot at {self._url} sent a frame this client cannot read: {error}"
+            reason = f"{self._transport.name} sent a frame this client cannot read: {error}"
         with self._changed:
             self._error = RobotDisconnected(reason)
             self._changed.notify_all()
@@ -171,11 +221,11 @@ class RealBackend:
                 self._last_input = None  # the robot left the heartbeat modes: its walk ended by a mode, not the link
             await self._send(pb.Message(pingmsg=pb.PingMsg()))
             self._pings.append(previous)
-        except websockets.ConnectionClosed:
-            pass  # the reader reports it
+        except RobotError:
+            pass  # the reader reports a link that is gone, or one that stays silent past SILENCE_S
 
     async def _send(self, message: pb.Message) -> None:
-        await self._socket.send(message.SerializeToString())
+        await self._transport.send(message)
 
     async def _ask(self, request: pb.CorrelationRequest) -> pb.CorrelationResponse:
         request.correlation_id = self._next_id
@@ -189,16 +239,14 @@ class RealBackend:
         return reply
 
     # --- synchronous helpers -----------------------------------------------------------------------------------
-    def _run(self, coroutine):
+    def _run(self, coroutine, timeout: float | None = None):
         if self._error is not None:
             coroutine.close()
             raise self._error
         try:
-            return asyncio.run_coroutine_threadsafe(coroutine, self._loop).result(REPLY_TIMEOUT_S + 1)
-        except websockets.ConnectionClosed as error:
-            raise RobotDisconnected(f"the robot at {self._url} closed the connection") from error
+            return asyncio.run_coroutine_threadsafe(coroutine, self._loop).result(timeout or REPLY_TIMEOUT_S + 1)
         except (TimeoutError, OSError) as error:
-            raise RobotTimeout(f"no answer from the robot at {self._url}") from error
+            raise RobotTimeout(f"no answer from {self._transport.name}") from error
 
     def _wait(self, done, what: str) -> None:
         deadline = time.monotonic() + REPLY_TIMEOUT_S

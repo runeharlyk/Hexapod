@@ -160,6 +160,8 @@ message TickSample {
   uint32 command_age_ms = 11;    // since that command arrived; 0 before any
   uint32 mode = 12;              // MOTION_STATE position
   uint32 gait = 13;              // GaitType position
+  repeated float mag = 14;       // uT, the compass as the chip read it, before the hard-iron offset; the last reading
+  bool mag_fresh = 15;           // the compass was polled on this tick; the chip outputs 15 Hz, so a polled reading can repeat
 }
 
 message TelemetryBatch {

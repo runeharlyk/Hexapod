@@ -21,8 +21,8 @@ MAGIC = b"HEXAREC1"
 _LENGTH = struct.Struct("<I")
 _RECORD = struct.Struct("<QI")
 
-_SCALARS = ("seq", "t_us", "period_us", "compute_us", "imu_fresh", "command_age_ms", "mode", "gait")
-_VECTORS = ("rpy", "gyro", "gravity", "angles", "command")
+_SCALARS = ("seq", "t_us", "period_us", "compute_us", "imu_fresh", "command_age_ms", "mode", "gait", "mag_fresh")
+_VECTORS = ("rpy", "gyro", "gravity", "angles", "command", "mag")
 
 
 @dataclass

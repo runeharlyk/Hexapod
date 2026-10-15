@@ -6,7 +6,8 @@ in -- the gaits were optimized through this servo model -- so lag by itself is n
 
 What decides portability is MARGIN: a real MG92B is weaker than nominal when it is hot, when the
 battery sags, or when the gears are worn. A gait that only works at 100% of the modelled envelope
-will not survive the robot. So sweep the stall-torque scale downward and watch the score.
+will not survive the robot. So sweep the stall-torque scale downward and watch the score; the holding
+torque is a multiple of stall, so it weakens with it.
 
 Reported as the fraction of nominal score retained, so gaits at different absolute scores are
 comparable, plus the scale at which each drops below 80% of its own nominal.

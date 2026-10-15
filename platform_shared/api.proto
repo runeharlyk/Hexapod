@@ -225,6 +225,11 @@ message PeripheralSettings {
     int32 scl = 2;
     int32 frequency = 3;
     repeated PinConfig pins = 4;
+    // Hard-iron offset of the compass in uT, in the chip frame: subtracted from every reading before the
+    // heading is taken. Fitted by simulation/calibrate_compass.py; zero means uncalibrated.
+    float mag_offset_x = 5;
+    float mag_offset_y = 6;
+    float mag_offset_z = 7;
 }
 
 message PeripheralSettingsRequest {}

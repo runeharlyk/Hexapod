@@ -185,24 +185,24 @@
   </worldbody>
 
   <actuator>
-    <motor name="coxa_0" joint="coxa_0" ctrlrange="-0.9 0.9" gear="1"/>
-    <motor name="femur_0" joint="femur_0" ctrlrange="-0.9 0.9" gear="1"/>
-    <motor name="tibia_0" joint="tibia_0" ctrlrange="-0.9 0.9" gear="1"/>
-    <motor name="coxa_1" joint="coxa_1" ctrlrange="-0.9 0.9" gear="1"/>
-    <motor name="femur_1" joint="femur_1" ctrlrange="-0.9 0.9" gear="1"/>
-    <motor name="tibia_1" joint="tibia_1" ctrlrange="-0.9 0.9" gear="1"/>
-    <motor name="coxa_2" joint="coxa_2" ctrlrange="-0.9 0.9" gear="1"/>
-    <motor name="femur_2" joint="femur_2" ctrlrange="-0.9 0.9" gear="1"/>
-    <motor name="tibia_2" joint="tibia_2" ctrlrange="-0.9 0.9" gear="1"/>
-    <motor name="coxa_3" joint="coxa_3" ctrlrange="-0.9 0.9" gear="1"/>
-    <motor name="femur_3" joint="femur_3" ctrlrange="-0.9 0.9" gear="1"/>
-    <motor name="tibia_3" joint="tibia_3" ctrlrange="-0.9 0.9" gear="1"/>
-    <motor name="coxa_4" joint="coxa_4" ctrlrange="-0.9 0.9" gear="1"/>
-    <motor name="femur_4" joint="femur_4" ctrlrange="-0.9 0.9" gear="1"/>
-    <motor name="tibia_4" joint="tibia_4" ctrlrange="-0.9 0.9" gear="1"/>
-    <motor name="coxa_5" joint="coxa_5" ctrlrange="-0.9 0.9" gear="1"/>
-    <motor name="femur_5" joint="femur_5" ctrlrange="-0.9 0.9" gear="1"/>
-    <motor name="tibia_5" joint="tibia_5" ctrlrange="-0.9 0.9" gear="1"/>
+    <motor name="coxa_0" joint="coxa_0" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="femur_0" joint="femur_0" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="tibia_0" joint="tibia_0" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="coxa_1" joint="coxa_1" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="femur_1" joint="femur_1" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="tibia_1" joint="tibia_1" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="coxa_2" joint="coxa_2" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="femur_2" joint="femur_2" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="tibia_2" joint="tibia_2" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="coxa_3" joint="coxa_3" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="femur_3" joint="femur_3" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="tibia_3" joint="tibia_3" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="coxa_4" joint="coxa_4" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="femur_4" joint="femur_4" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="tibia_4" joint="tibia_4" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="coxa_5" joint="coxa_5" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="femur_5" joint="femur_5" ctrlrange="-1.5 1.5" gear="1"/>
+    <motor name="tibia_5" joint="tibia_5" ctrlrange="-1.5 1.5" gear="1"/>
   </actuator>
 
   <sensor>

@@ -17,3 +17,6 @@ scripts/ts-proto-plugin.sh
 # Playwright output
 /test-results
 /playwright-report
+
+# Type declarations written by @niku/vite-env-caster on every dev and build run
+env.d.ts

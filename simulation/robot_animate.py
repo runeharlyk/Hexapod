@@ -1,6 +1,6 @@
 """Drives the robot's animation system over the native USB serial link, for bench tests before the web
-app exists. The framing is SerialAdapter's (src/robot/serial_frame.py): COBS with a CRC around one
-socket_message.Message.
+app exists. The link is src/hexapod/backends/serial_link.py, which Robot("COMx") uses too: COBS with a CRC
+around one socket_message.Message.
 
     uv run python robot_animate.py --port COM5 list
     uv run python robot_animate.py --port COM5 upload wave        # ../animations/wave.json -> /animations/wave.pb
@@ -18,114 +18,49 @@ import argparse
 import queue
 import shlex
 import sys
-import threading
 import time
 from pathlib import Path
 
-import serial
-
+from src.hexapod import RobotError, RobotTimeout
+from src.hexapod.backends.serial_link import SerialLink
 from src.platform_shared import message_pb2
-from src.robot import serial_frame
 from src.robot.animation_files import load_json, to_proto
 
 ROOT = Path(__file__).resolve().parents[1]
 CHUNK = 512
-REQUEST_TIMEOUT_S = 5.0
 QUIET_S = 2.0
 ANIMATION_STATUS_TAG = message_pb2.Message.DESCRIPTOR.fields_by_name["animation_status"].number
 MODE_TAG = message_pb2.Message.DESCRIPTOR.fields_by_name["mode"].number
 
 
-class Link:
-    def __init__(self, port: str):
-        # DTR and RTS are set low before the port opens, so the lines never pass through the
-        # RTS-high, DTR-low state that resets the ESP32-S3 over USB Serial/JTAG.
-        self.ser = serial.Serial(baudrate=115200, timeout=0.05, dsrdtr=False, rtscts=False)
-        self.ser.port = port
-        self.ser.dtr = False
-        self.ser.rts = False
-        self.ser.open()
-        self.decoder = serial_frame.Decoder(self._handle)
-        self.responses: dict[int, message_pb2.CorrelationResponse] = {}
-        self.next_id = 1
-        self.subscribed: set[int] = set()
-        self.on_status = None
-        self.on_mode = None
-        threading.Thread(target=self._reader, daemon=True).start()
-
-    def send(self, msg: message_pb2.Message) -> None:
-        payload = msg.SerializeToString()
-        self.ser.write(serial_frame.encode(payload))
-
-    def request(self, fill) -> message_pb2.CorrelationResponse:
-        msg = message_pb2.Message()
-        msg.correlation_request.correlation_id = self.next_id
-        self.next_id += 1
-        fill(msg.correlation_request)
-        self.send(msg)
-        deadline = time.time() + REQUEST_TIMEOUT_S
-        while time.time() < deadline:
-            res = self.responses.pop(msg.correlation_request.correlation_id, None)
-            if res is not None:
-                return res
-            time.sleep(0.01)
-        raise SystemExit("no response from the robot (is the native USB port the one you opened?)")
-
-    def subscribe(self, tag: int) -> None:
-        """Once per tag: the robot records every subscription, so a repeat would double each frame."""
-        if tag in self.subscribed:
-            return
-        self.subscribed.add(tag)
-        msg = message_pb2.Message()
-        msg.sub_notif.tag = tag
-        self.send(msg)
-
-    def _reader(self) -> None:
-        while True:
-            self.decoder.feed(self.ser.read(4096))
-
-    def _handle(self, payload: bytes) -> None:
-        msg = message_pb2.Message()
-        try:
-            msg.ParseFromString(payload)
-        except Exception:
-            return
-        kind = msg.WhichOneof("message")
-        if kind == "correlation_response":
-            self.responses[msg.correlation_response.correlation_id] = msg.correlation_response
-        elif kind == "animation_status" and self.on_status:
-            self.on_status(msg.animation_status)
-        elif kind == "mode" and self.on_mode:
-            self.on_mode(msg.mode)
-
-
-def upload(link: Link, name: str) -> None:
+def upload(link: SerialLink, name: str) -> None:
     data = to_proto(load_json(ROOT / "animations" / f"{name}.json")).SerializeToString()
     path = f"/animations/{name}.pb"
     for offset in range(0, len(data), CHUNK):
-        chunk = data[offset:offset + CHUNK]
-
-        def fill(req, offset=offset, chunk=chunk):
-            req.file_write_chunk.path = path
-            req.file_write_chunk.offset = offset
-            req.file_write_chunk.total_size = len(data)
-            req.file_write_chunk.content = chunk
-
-        res = link.request(fill)
+        req = message_pb2.CorrelationRequest()
+        req.file_write_chunk.path = path
+        req.file_write_chunk.offset = offset
+        req.file_write_chunk.total_size = len(data)
+        req.file_write_chunk.content = data[offset:offset + CHUNK]
+        res = link.request(req)
         if res.status_code != 200:
             raise SystemExit(f"chunk at {offset} refused with {res.status_code}")
     print(f"uploaded {len(data)} bytes to {path}")
     validate(link, name)
 
 
-def validate(link: Link, name: str) -> None:
-    res = link.request(lambda req: setattr(req.animation_validate, "name", name))
+def validate(link: SerialLink, name: str) -> None:
+    req = message_pb2.CorrelationRequest()
+    req.animation_validate.name = name
+    res = link.request(req)
     r = res.animation_report
     print(f"{name}: {'ok' if r.ok else 'INVALID ' + r.error}  clamped {r.clamped_mask:018b}")
 
 
-def list_animations(link: Link) -> None:
-    res = link.request(lambda req: req.animation_list_request.SetInParent())
+def list_animations(link: SerialLink) -> None:
+    req = message_pb2.CorrelationRequest()
+    req.animation_list_request.SetInParent()
+    res = link.request(req)
     for e in res.animation_list.entries:
         print(f"{e.name:16s} {e.size} bytes")
 
@@ -139,15 +74,20 @@ def show_mode(m) -> None:
     print(f"mode {message_pb2.ModesEnum.Name(m.mode)}")
 
 
-def follow(link: Link, send) -> None:
+def follow(link: SerialLink, send) -> None:
     """Sends a request and prints status and mode traffic until the run settles: a mode change after an idle
     status (the hand-back), or QUIET_S without traffic (a sticky ANIMATE never hands back, and a refused
     play or a stop with nothing playing sends nothing). A running player reports at 5 Hz, so it is never
     quiet that long. A hold, or QUIET_S of PLAYING whose clock has wrapped, never settles on its own, so
     following ends there with the reason; Ctrl-C ends it too."""
     events = queue.Queue()
-    link.on_status = lambda s: events.put(("status", s))
-    link.on_mode = lambda m: events.put(("mode", m))
+
+    def route(msg):
+        kind = msg.WhichOneof("message")
+        if kind in ("animation_status", "mode"):
+            events.put((kind, getattr(msg, kind)))
+
+    link.on_message = route
     link.subscribe(ANIMATION_STATUS_TAG)
     link.subscribe(MODE_TAG)
     send()
@@ -180,11 +120,10 @@ def follow(link: Link, send) -> None:
     except KeyboardInterrupt:
         print("stopped following")
     finally:
-        link.on_status = None
-        link.on_mode = None
+        link.on_message = None
 
 
-def play(link: Link, name: str, params: list[str]) -> None:
+def play(link: SerialLink, name: str, params: list[str]) -> None:
     msg = message_pb2.Message()
     msg.animation_play.name = name
     for item in params:
@@ -195,20 +134,20 @@ def play(link: Link, name: str, params: list[str]) -> None:
     follow(link, lambda: link.send(msg))
 
 
-def stop(link: Link) -> None:
+def stop(link: SerialLink) -> None:
     msg = message_pb2.Message()
     msg.animation_stop.SetInParent()
     follow(link, lambda: link.send(msg))
 
 
-def mode(link: Link, name: str) -> None:
+def mode(link: SerialLink, name: str) -> None:
     msg = message_pb2.Message()
     msg.mode.mode = message_pb2.ModesEnum.Value(name)
     link.send(msg)
 
 
-def watch(link: Link) -> None:
-    link.on_status = show_status
+def watch(link: SerialLink) -> None:
+    link.on_message = lambda msg: show_status(msg.animation_status) if msg.HasField("animation_status") else None
     link.subscribe(ANIMATION_STATUS_TAG)
     print("watching AnimationStatus, Ctrl-C to stop")
     try:
@@ -217,7 +156,7 @@ def watch(link: Link) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        link.on_status = None
+        link.on_message = None
 
 
 def add_commands(sub) -> None:
@@ -241,7 +180,7 @@ def parser() -> argparse.ArgumentParser:
     return ap
 
 
-def shell(link: Link) -> None:
+def shell(link: SerialLink) -> None:
     """Reads the commands, without --port, from stdin until quit or the end of input."""
     ap = argparse.ArgumentParser(prog="", add_help=False, exit_on_error=False)
     add_commands(ap.add_subparsers(dest="command", required=True))
@@ -260,23 +199,29 @@ def shell(link: Link) -> None:
             run(link, ap.parse_args(shlex.split(line)))
         except KeyboardInterrupt:
             print("interrupted")
-        except (argparse.ArgumentError, SystemExit, KeyError, ValueError) as e:
-            # SystemExit is argparse rejecting the line or a request the robot left unanswered; the port stays open.
+        except (argparse.ArgumentError, SystemExit, KeyError, ValueError, RobotTimeout) as e:
+            # SystemExit is argparse rejecting the line or a refused upload; the port stays open.
             print(f"error: {e}")
 
 
 def main(argv=None) -> int:
     args = parser().parse_args(argv)
-    link = Link(args.port)
-    time.sleep(0.3)
-    if args.command == "shell":
-        shell(link)
-    else:
-        run(link, args)
+    try:
+        link = SerialLink(args.port)
+        try:
+            link.wait_ready()
+            if args.command == "shell":
+                shell(link)
+            else:
+                run(link, args)
+        finally:
+            link.close()
+    except RobotError as e:
+        raise SystemExit(f"error: {e}") from e
     return 0
 
 
-def run(link: Link, args) -> None:
+def run(link: SerialLink, args) -> None:
     if args.command == "list":
         list_animations(link)
     elif args.command == "upload":

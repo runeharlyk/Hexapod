@@ -11,6 +11,7 @@
   import { notifications } from '$lib/components/toasts/notifications'
   import { gamepadAxes, gamepadButtons, hasGamepad } from '$lib/stores/gamepad'
   import { requestGait, requestMode } from '$lib/control'
+  import { shapeStick } from '$lib/utilities/stick'
 
   type SliderKey = 'height' | 'feetDistance' | 'speed' | 's1'
 
@@ -34,9 +35,9 @@
     if ($hasGamepad) notifications.success('🎮 Gamepad connected', 3000)
   })
 
-  const GAMEPAD_DEADZONE = 0.08
-  const readAxis = (value: number | undefined) =>
-    value === undefined || !Number.isFinite(value) || Math.abs(value) < GAMEPAD_DEADZONE ? 0 : value
+  // The standard gamepad mapping reports up as -1; the sticks and the firmware expect up as +1.
+  const gamepadStick = (axes: readonly number[], first: number) =>
+    shapeStick({ x: axes[first] ?? 0, y: -(axes[first + 1] ?? 0) })
 
   let gamepadWasConnected = false
   $effect(() => {
@@ -52,10 +53,9 @@
       return
     }
     gamepadWasConnected = true
-    // The standard gamepad mapping reports up as -1; the sticks and the firmware expect up as +1.
     input.update(i => {
-      i.left = { x: readAxis($gamepadAxes[0]), y: -readAxis($gamepadAxes[1]) }
-      i.right = { x: readAxis($gamepadAxes[2]), y: -readAxis($gamepadAxes[3]) }
+      i.left = gamepadStick($gamepadAxes, 0)
+      i.right = gamepadStick($gamepadAxes, 2)
       syncCommand(i)
       return i
     })
@@ -80,9 +80,9 @@
     left = nipplejs.create({ zone: document.getElementById('left') as HTMLElement, ...options })
     right = nipplejs.create({ zone: document.getElementById('right') as HTMLElement, ...options })
 
-    left.on('move', (_, d) => handleJoyMove('left', d.vector))
+    left.on('move', (_, d) => handleJoyMove('left', shapeStick(d.vector)))
     left.on('end', () => handleJoyMove('left', { x: 0, y: 0 }))
-    right.on('move', (_, d) => handleJoyMove('right', d.vector))
+    right.on('move', (_, d) => handleJoyMove('right', shapeStick(d.vector)))
     right.on('end', () => handleJoyMove('right', { x: 0, y: 0 }))
   })
 

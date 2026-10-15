@@ -67,35 +67,30 @@ See `simulation/README.md` for the full control-mode and training-flag reference
 
 ## Firmware architecture
 
-**Two FreeRTOS tasks** (`firmware/src/main.cpp`):
-- *Control task* (core 1, prio 5, 5 ms loop): `robot->readSensors() → planMotion() → updateActuators()`. See `Hexapod` (`firmware/include/hexapod.h`), which owns `MotionService`, `Peripherals`, and `ServoController`.
-- *Service task* (prio 2, 100 ms loop): brings up WiFi, AP, mDNS, the `esp_http_server` webserver, BLE (NimBLE NUS), and the WebSocket adapter; then services WiFi/AP.
+`docs/firmware.md` is the firmware architecture: tasks, EventBus, motion pipeline, transports, persistence, OTA, RAM budget and core-dump decoding, with the file for each component.
+Read it before changing the firmware; what follows is only what an agent needs on top of it.
 
-**EventBus** (`firmware/include/event_bus.h`) is the central decoupling mechanism — a typed, lock-protected pub/sub built on a static FreeRTOS queue + an `evtbus` worker task per message type. Each message type (`CommandMsg`, `ModeMsg`, `GaitMsg`, `ServoAnglesMsg`, etc. from `firmware/include/message_types.h`) gets its own `EventBus<Msg>` specialization, with its own queue and worker, exposing `publish`/`subscribe`/`peek`. Subscriptions can be rate-limited and batched (`EmitMode::Latest`/`Batch`). This is how communication adapters, `MotionService`, and the control loop talk without direct coupling.
-
-**Motion pipeline** (`firmware/include/motion.h`): `MotionService` subscribes to `CommandMsg`/`ModeMsg`/`GaitMsg`/`ServoAnglesMsg`. `MOTION_STATE` (DEACTIVATED/IDLE/POSE/STAND/WALK/WALK_NN) selects behavior. Per tick it lerps `body_state` toward `target_body_state`, runs `GaitController::step`, then `Kinematics::inverseKinematics` to produce 18 servo angles. A 2 s command timeout (`COMMAND_TIMEOUT_MS`) zeroes motion if commands stop arriving.
-
-**Communication adapters** (`firmware/include/communication/`, `comm_base.hpp`): `CommAdapterBase` is the shared base for the `Websocket`, `BLE` (NimBLE NUS) and `SerialAdapter` (native USB Serial/JTAG, `USE_SERIAL_LINK`) transports — all carry the same protobuf `socket_message_Message` frames. Its `ProtoDecoder` dispatches decoded messages to handlers registered per type (`registerHandlers` in `main.cpp`), which republish onto the EventBus; `emitAll` fans EventBus events back out to every adapter. Tag subscriptions are tracked per client so `emit` skips encoding when nobody is listening, and ping/pong is handled in the decoder. Request/response calls (`SystemInformationRequest`, `I2CScanDataRequest`, `FeaturesDataRequest`) are correlated by id, with a 15 s timeout on the app side.
-
-**Serialization**: protobuf everywhere. `platform_shared/*.proto` is the single source of truth, compiled to nanopb C for the firmware (`firmware/scripts/compile_protos.py`, output in `firmware/src/platform_shared/`, gitignored) and to TypeScript for the app (`app/scripts/compile_protos.js` via ts-proto, output in `app/src/lib/platform_shared/`, gitignored). Both run automatically as build pre-steps. `MOTION_STATE`/`GaitType` cross the wire as enum positions, so firmware and app must be deployed together when those enums change.
-
-**Build configuration**: `platformio.ini` defines one board env, `esp32-wroom-camera` (the ESP32-S3 WROOM cam), plus a host `native` env for unit tests. The Arduino-only classic-ESP32 envs were removed with the IDF port — recover them from the `main` branch if a classic ESP32 is needed again. Hardware feature flags (`USE_CAMERA`, `USE_MPU6050`, pin assignments) live in env `build_flags` and `firmware/features.ini`; factory defaults (app name/version, WiFi, `NUM_SERVO`) live in `firmware/factory_settings.ini`; IDF sdkconfig overrides (PSRAM, 1 kHz tick, BLE/WiFi memory placement) live in `sdkconfig.defaults`. The learned policy runs as a hand-rolled float MLP header from `simulation/export_policy.py`; no TensorFlow Lite or ESP-DL component is part of the build (a local `firmware/components/esp-dl/` clone is gitignored and unreferenced). Every `pio run` also merges `firmware.factory.bin` (bootloader + partitions + OTA data + app at offset 0) via `firmware/scripts/merge_factory.py`; the release workflow publishes it and the Pages workflow serves it through the ESP Web Tools page in `flasher/`.
-
-**Peripherals** (`firmware/include/peripherals/`): `Peripherals` owns the drivers behind the `USE_*` flags — MPU6050 DMP (`drivers/mpu6050.h`) and HMC5883 magnetometer (`drivers/hmc5883.h`), both over the shared `I2CBus` (`esp_driver_i2c`). Roll/pitch/yaw plus the compass heading are published together as `IMUAnglesMsg` every 25 ms. The bus pins and frequency come from `PeripheralSettingsService` (persisted, applied at boot — re-opening a live bus would invalidate every device handle).
-
-**ESP-NOW controller** (`firmware/src/communication/espnow_adapter.cpp`): receives broadcasts from the handheld controller and republishes them as `CommandMsg`/`ModeMsg`/`GaitMsg`, so it drives `MotionService` exactly like the app does. Input-only. The radio must sit on `ESPNOW_WIFI_CHANNEL` (a STA join forces the router's channel instead — `begin()` logs this). The wire format in `communication/controller_packet.h` is shared with the separate controller firmware and with `simulation/controller_bridge.py`; keep the three in sync.
-
-**OTA** (`firmware/include/ota_service.h`): `POST /api/firmware` streams a raw `.bin` request body into the inactive OTA slot; `POST /api/firmware/download` takes `{"download_url"}` (https only) and runs `esp_https_ota` against it using the mbedTLS root-CA bundle. Both publish `OtaStatusData` progress, which the app's update page feeds into the existing telemetry store. Rollback is enabled, and the service task calls `confirmRunningImage()` only after networking is up and the control loop has run 200 ticks (1 s), so a firmware that crashes before then reverts to the previous slot on the next reset.
+- Discarding the `Handle` that `EventBus<T>::subscribe()` returns unsubscribes on that line, silently; store it in a member, or use `consume()` for a program-lifetime subscription.
+- EventBus workers run on PSRAM stacks, so a subscriber must never touch flash (no LittleFS or NVS read or write); hand such work to another task.
+- New dynamic state for the app follows the observable-state pattern: the producer publishes on change, `observeStatus<T>()` in `main.cpp` bridges it, the app requests the current value once and then follows pushes.
+  Never a timer push; settings stay request/response only.
+- `MOTION_STATE`/`GaitType` cross the wire as enum positions, so firmware and app must be deployed together when those enums change.
+- Never hand-edit `firmware/include/gait_tuned.h` (from `simulation/export_gait.py`) or `firmware/include/policy/hexapod_policy.h` (from `simulation/export_policy.py`); regenerate them.
+- Internal DMA RAM is the binding limit: measure with `logHeap()`, not `esp_get_free_heap_size()`, and delete the generated `sdkconfig.esp32-wroom-camera` after editing `sdkconfig.defaults`, or the change is silently ignored.
+- The Arduino-only classic-ESP32 envs were removed with the IDF port; recover them from the `main` branch if a classic ESP32 is needed again.
+  No TensorFlow Lite or ESP-DL component is part of the build (a local `firmware/components/esp-dl/` clone is gitignored and unreferenced).
 
 ## Web app architecture
 
 SvelteKit (Svelte 5) + Tailwind/daisyUI, static-adapter SPA. Routes under `app/src/routes/` map to controller, `animations` (library and editor), connection, bluetooth, per-peripheral settings (servo/imu/camera/i2c), `wifi/*` (sta/ap/mdns) and `system/*` (status/filesystem/metrics/update) pages. `app/src/lib/` holds the shared logic: `transport/` (BLE, WebSocket and Web Serial byte-pipe implementations of `ITransport`, plus `databroker.ts` for tag-based pub/sub over the one active transport (serial > websocket > ble), `request()` correlation RPC and ping/pong), `proto-api.ts` (`resolveUrl` and IP helpers for the HTTP endpoints), `kinematic.ts`/`gait.ts`/`motion.ts` (a TS mirror of the robot math for the 3D visualization), `sceneBuilder.ts` + `Visualization.svelte` (three.js URDF rendering), and `stores/` for app state. The controller sends `Command` messages and subscribes to telemetry by message tag.
+The app's protobuf types are generated by ts-proto (`app/scripts/compile_protos.js`, output in `app/src/lib/platform_shared/`, gitignored) as a build pre-step; `request()` correlation calls time out after 15 s.
 `app/src/lib/animation/` is the TS mirror of the animation reference (`simulation/src/robot/animation.py`), tested against the shared fixtures in `animations/fixtures/`, and backs the `/animations` route's library and editor.
 
 ## Further documentation
 
 - `docs/connectivity.md` — how the app reaches the robot: the browser origin constraints that gate every transport, provisioning options, the `NET_STATUS`/`NET_COMMAND` topics, and the ranked plan. **Read before proposing any connection flow.**
 - `docs/animation.md` — the animation system as implemented (file format, evaluator rules, firmware mode, messages); kept current.
+- `docs/conventions.md` - the body frame, leg numbering and command signs, asserted on all three platforms through `platform_shared/sign_convention.json`.
 
 ## Connection constraint (summary)
 

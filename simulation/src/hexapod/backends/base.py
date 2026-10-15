@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Protocol
 
+from ..servos import ServoCalibration
+
 
 class Mode(IntEnum):
     """firmware MOTION_STATE, by wire value (platform_shared/message.proto ModesEnum)."""
@@ -49,6 +51,7 @@ class RobotState:
     gait: Gait | None
     yaw: float | None  # degrees counter-clockwise, None without an IMU
     link_drops: int  # times the robot's dead-man stop may have fired since connecting
+    roll: float | None = None  # degrees, left side up (REP-103), None without an IMU
 
 
 class RobotError(Exception):
@@ -74,3 +77,5 @@ class Backend(Protocol):
     def state(self) -> RobotState: ...
     def now(self) -> float: ...
     def sleep(self, seconds: float) -> None: ...
+    def servo_calibration(self) -> ServoCalibration: ...
+    def set_servo_pwm(self, servo: int, pwm: int) -> None: ...  # ServoPWMData: one servo's raw PCA9685 counts

@@ -1,0 +1,14 @@
+{
+  "name": "Hexapod controller",
+  "short_name": "Hexapod",
+  "description": "Drive and configure the hexapod robot over Bluetooth, WebSocket or USB.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#1d232a",
+  "theme_color": "#1d232a",
+  "icons": [
+    { "src": "logo192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "logo512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

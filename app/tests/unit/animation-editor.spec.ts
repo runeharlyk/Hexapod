@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { get } from 'svelte/store'
 
 vi.mock('$lib/stores', async () => {
@@ -11,8 +11,24 @@ vi.mock('$lib/stores', async () => {
 import { Animation, Ease, ParamId } from '$lib/platform_shared/animation'
 import { loadAnimationJson, serializeAnimation, type Vec3 } from '$lib/animation/model'
 import { DEFAULT_FEET } from '$lib/animation/evaluator'
-import { builtIn } from '$lib/animation/library'
-import { createEditor, shown, stanceFor } from '$lib/stores/animation-editor'
+import {
+  builtIn,
+  deleteDraft,
+  draftAnimations,
+  overwritesDraft,
+  reloadDrafts,
+  saveDraft,
+  type DraftRef
+} from '$lib/animation/library'
+import { Player, State } from '$lib/animation/player'
+import {
+  commitNumber,
+  createEditor,
+  kinematics,
+  previewClip,
+  shown,
+  stanceFor
+} from '$lib/stores/animation-editor'
 import { outControllerData } from '$lib/stores'
 
 const crouch = () => {
@@ -332,5 +348,214 @@ describe('serializeAnimation', () => {
       if ('error' in loaded) throw new Error(`${a.name}: ${loaded.error}`)
       expect(loaded.animation).toEqual(a)
     }
+  })
+})
+
+const refuseStorage = () =>
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    throw new DOMException('quota exceeded', 'QuotaExceededError')
+  })
+
+describe('drafts', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    localStorage.clear()
+    reloadDrafts()
+  })
+
+  const named = (name: string) => ({ ...crouch(), name })
+
+  // Another tab writing the same storage; this tab only hears of it through a storage event.
+  const writeFromAnotherTab = (drafts: Record<string, unknown>) =>
+    localStorage.setItem('animation_drafts', JSON.stringify(drafts))
+
+  it('stores a saved draft in the browser', () => {
+    expect(saveDraft(named('stored'))).toEqual({
+      name: 'stored',
+      fingerprint: JSON.stringify(Animation.toJSON(named('stored')))
+    })
+    const stored = JSON.parse(localStorage.getItem('animation_drafts')!)
+    expect(stored.stored.name).toBe('stored')
+    expect(get(draftAnimations).map(a => a.name)).toContain('stored')
+  })
+
+  it('reports a refused save and does not list the draft', () => {
+    refuseStorage()
+    expect(saveDraft(named('refused'))).toBeNull()
+    expect(get(draftAnimations).map(a => a.name)).not.toContain('refused')
+  })
+
+  it('reports a refused delete and keeps listing the draft', () => {
+    expect(saveDraft(named('kept'))).not.toBeNull()
+    refuseStorage()
+    expect(deleteDraft('kept')).toBe(false)
+    expect(get(draftAnimations).map(a => a.name)).toContain('kept')
+  })
+
+  it('asks before saving over another document draft, not over its own', () => {
+    const own = saveDraft(named('taken'))!
+    const other = saveDraft(named('other'))!
+    expect(overwritesDraft('taken', null)).toBe(true)
+    expect(overwritesDraft('taken', other)).toBe(true)
+    expect(overwritesDraft('taken', own)).toBe(false)
+    expect(overwritesDraft('free', null)).toBe(false)
+  })
+
+  it('asks before saving over its own draft once another tab has changed it', () => {
+    const own = saveDraft(named('shared'))!
+    writeFromAnotherTab({
+      shared: Animation.toJSON({ ...named('shared'), description: 'newer, from another tab' })
+    })
+    expect(overwritesDraft('shared', own)).toBe(true)
+  })
+
+  it('asks before saving under a name another tab has taken meanwhile', () => {
+    writeFromAnotherTab({ fresh: Animation.toJSON(named('fresh')) })
+    expect(overwritesDraft('fresh', null)).toBe(true)
+  })
+
+  it('keeps the drafts another tab saved when this tab saves one', () => {
+    saveDraft(named('mine'))
+    writeFromAnotherTab({
+      mine: Animation.toJSON(named('mine')),
+      theirs: Animation.toJSON(named('theirs'))
+    })
+    saveDraft(named('later'))
+    expect(Object.keys(JSON.parse(localStorage.getItem('animation_drafts')!)).sort()).toEqual([
+      'later',
+      'mine',
+      'theirs'
+    ])
+  })
+
+  it('lists a draft another tab saved when the storage event arrives', () => {
+    writeFromAnotherTab({ theirs: Animation.toJSON(named('theirs')) })
+    expect(get(draftAnimations).map(a => a.name)).not.toContain('theirs')
+    window.dispatchEvent(new StorageEvent('storage', { key: 'animation_drafts' }))
+    expect(get(draftAnimations).map(a => a.name)).toEqual(['theirs'])
+  })
+})
+
+describe('the draft a document belongs to', () => {
+  const ref = (name: string): DraftRef => ({ name, fingerprint: `${name} as stored` })
+
+  it('is the draft it was opened from or last saved as, and none for a new document', () => {
+    const ed = createEditor()
+    expect(get(ed).draft).toBeNull()
+    expect(ed.open(crouch(), ref('crouch_copy'))).toBeNull()
+    expect(get(ed).draft).toEqual(ref('crouch_copy'))
+    ed.markSaved()
+    expect(get(ed).draft).toEqual(ref('crouch_copy'))
+    ed.markSaved(ref('renamed'))
+    expect(get(ed).draft).toEqual(ref('renamed'))
+    expect(ed.open(crouch())).toBeNull()
+    expect(get(ed).draft).toBeNull()
+    ed.markSaved(ref('again'))
+    ed.newDocument()
+    expect(get(ed).draft).toBeNull()
+  })
+})
+
+describe('autosave', () => {
+  const KEY = 'animation_editor_test'
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    localStorage.clear()
+  })
+
+  it('restores the unsaved document, its dirty flag and its draft after a reload', () => {
+    const first = createEditor(undefined, KEY)
+    const mine: DraftRef = { name: 'mine', fingerprint: 'as opened' }
+    expect(first.open(crouch(), mine)).toBeNull()
+    first.setMeta({ description: 'edited before the reload' })
+    first.addKeyframe(0)
+    const reloaded = createEditor(undefined, KEY)
+    const s = get(reloaded)
+    expect(Animation.toJSON(s.document)).toEqual(Animation.toJSON(get(first).document))
+    expect(s.dirty).toBe(true)
+    expect(s.draft).toEqual(mine)
+    expect(get(reloaded.autosaved)).toBe(true)
+  })
+
+  it('says so when the browser refuses the autosave', () => {
+    const ed = createEditor(undefined, KEY)
+    refuseStorage()
+    ed.setMeta({ description: 'not stored' })
+    expect(get(ed.autosaved)).toBe(false)
+    vi.restoreAllMocks()
+    ed.setMeta({ description: 'stored' })
+    expect(get(ed.autosaved)).toBe(true)
+  })
+
+  it('starts from the given document when the stored one is unreadable', () => {
+    localStorage.setItem(KEY, '{"document": {"keyframes": []}, "dirty": true}')
+    expect(get(createEditor(undefined, KEY)).document.keyframes).toHaveLength(1)
+    localStorage.setItem(KEY, 'not json')
+    expect(get(createEditor(undefined, KEY)).dirty).toBe(false)
+  })
+
+  it('does not write while only the scrub head moves', () => {
+    const ed = createEditor(crouch(), KEY)
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    ed.setScrub(0.2)
+    ed.selectKeyframe(1)
+    expect(setItem).not.toHaveBeenCalled()
+  })
+})
+
+describe('a refused number entry', () => {
+  it('puts the input back on the document value', () => {
+    const ed = createEditor()
+    ed.addKeyframe(0)
+    ed.addKeyframe(1)
+    const input = document.createElement('input')
+    input.type = 'number'
+    input.value = '0.2'
+    commitNumber(input, get(ed).document.keyframes[2].time, v => ed.setKeyframeTime(2, v))
+    expect(get(ed).error).toMatch(/between/)
+    expect(input.value).toBe('1')
+    input.value = ''
+    commitNumber(input, get(ed).document.keyframes[2].time, v => ed.setKeyframeTime(2, v))
+    expect(input.value).toBe('1')
+    input.value = '1.5'
+    commitNumber(input, get(ed).document.keyframes[2].time, v => ed.setKeyframeTime(2, v))
+    expect(get(ed).document.keyframes[2].time).toBe(1.5)
+    expect(input.value).toBe('1.5')
+  })
+})
+
+describe('the preview Loop', () => {
+  // Runs the preview player for the given seconds and returns every state it passed through.
+  const statesOver = (clip: Animation, seconds: number) => {
+    const player = new Player(kinematics, stanceFor(0))
+    player.play(clip, undefined, undefined)
+    const seen = new Set<State>()
+    for (let t = 0; t < seconds; t += 0.02) {
+      player.update(0.02)
+      seen.add(player.state)
+    }
+    return { player, seen }
+  }
+
+  it('wraps the playing clock without replaying Exit and Entry', () => {
+    const clip = crouch()
+    const { player, seen } = statesOver(previewClip(clip, true), 4)
+    expect(seen).not.toContain(State.EXIT)
+    expect(player.state).toBe(State.PLAYING)
+    player.stop()
+    expect(player.state).toBe(State.EXIT)
+  })
+
+  it('loops a hold_end animation instead of holding it', () => {
+    const clip = { ...crouch(), holdEnd: true }
+    expect(statesOver(clip, 6).player.state).toBe(State.HOLD)
+    const { seen } = statesOver(previewClip(clip, true), 6)
+    expect(seen).not.toContain(State.HOLD)
+  })
+
+  it('plays the document as written when off', () => {
+    const clip = crouch()
+    expect(previewClip(clip, false)).toBe(clip)
   })
 })

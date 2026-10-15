@@ -80,9 +80,9 @@ def test_a_velocity_beyond_the_gait_is_clamped_to_its_peak_that_way(sim):
     assert sim.set_velocity(ZERO) == ZERO
 
 
-# Distances are open-loop on the steady-state speed model, and the start and stop transients cost a roughly constant
-# 1-2 cm (measured while writing this: 0.091/0.1, 0.293/0.3, 0.491/0.5 m forward, 0.186/0.2 m sideways); the turn
-# closes on the yaw.
+# Distances are open-loop on the steady-state speed model, held RAMP_LAG_S longer for the command ramp (measured with
+# it: 0.103/0.1, 0.304/0.3, 0.506/0.5 m forward, 0.100/0.1, 0.210/0.2 m sideways from a fresh stand); the turn closes
+# on the yaw.
 def test_the_facade_walks_distances_and_turns_angles():
     backend = SimBackend()
     with Robot(backend=backend) as robot:
@@ -98,6 +98,19 @@ def test_the_facade_walks_distances_and_turns_angles():
         yaw = robot.state().yaw
         robot.rotate(90)
         assert (robot.state().yaw - yaw + 180) % 360 - 180 == pytest.approx(90, abs=4)
+
+
+# Without the ramp term BI_GATE fell ~10.5 % short sideways (0.179 m of 0.2 either way), the worst axis of any gait.
+@pytest.mark.parametrize("metres", [0.2, -0.2])
+def test_a_timed_move_covers_its_distance_despite_the_command_ramp(metres):
+    backend = SimBackend()
+    with Robot(backend=backend) as robot:
+        robot.stand()
+        robot.set_gait(Gait.BI_GATE)
+        start = _left_forward(backend)
+        robot.move_sideways(metres)
+        left, forward = _left_forward(backend) - start
+    assert left == pytest.approx(metres, rel=0.1) and abs(forward) < 0.03
 
 
 # Leaving sits the robot down before cutting the servos, so it drops a few millimetres instead of from full height.
