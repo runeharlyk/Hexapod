@@ -4,14 +4,15 @@ Action space is selected by --control-mode:
   phase_gait    : 6-D gait settings + phase control (constrained, transfer-safe) [default]
   foot          : 18-D foot-position offsets (expressive, learns the whole gait)
   residual      : 6-D gait settings + 18-D foot residuals
-  residual_pure : 18-D foot residuals on top of the analytic command->gait map (deploy target)
-  residual_gait : analytic base + policy adjusts stride/height/blend/cadence (5) + 18 foot residuals
+  residual_pure : 18-D foot residuals on top of the analytic command->gait map
+  residual_gait : analytic base + policy adjusts stride/height/blend/cadence (5) + 18 foot residuals (deploy target)
                   (zero action = analytic gait)
 
 Examples:
   python train_mj.py --control-mode phase_gait --timesteps 5_000_000 --num-envs 16
   python train_mj.py --control-mode foot --randomize --num-envs 16
   python train_mj.py --control-mode residual_pure --randomize --zero-final --init-std 0.3
+  python train_mj.py --control-mode residual_gait --randomize --dr-centre recording.sysid.json  # identify.py's centre
   python train_mj.py --smoke           # quick end-to-end sanity run
 """
 
@@ -134,12 +135,12 @@ class TermLogger(BaseCallback):
 
 def build_vecenv(mode, n, randomize, seed, subproc, vn_load=None, resample_steps=0, terrain=0.0,
                  terrain_kind="bumps", obs_contact=False, obs_history=1, gait_schedule=None,
-                 terrain_speed_floor=1.0, reward_weights=None, reward_mode="shaped"):
+                 terrain_speed_floor=1.0, reward_weights=None, reward_mode="shaped", dr_centre=None):
     fns = [make_env(control_mode=mode, randomize=randomize, seed=seed + i, resample_steps=resample_steps,
                     terrain=terrain, terrain_kind=terrain_kind, obs_contact=obs_contact,
                     obs_history=obs_history, gait_schedule=gait_schedule,
                     terrain_speed_floor=terrain_speed_floor, reward_weights=reward_weights,
-                    reward_mode=reward_mode)
+                    reward_mode=reward_mode, dr_centre=dr_centre)
            for i in range(n)]
     venv = SubprocVecEnv(fns) if (subproc and n > 1) else DummyVecEnv(fns)
     venv = VecMonitor(venv)
@@ -207,7 +208,11 @@ def main():
     ap.add_argument("--curriculum", action="store_true", help="ramp command difficulty forward->omnidirectional")
     ap.add_argument("--tag", default=None, help="override output run-dir name")
     ap.add_argument("--smoke", action="store_true", help="tiny run to verify the pipeline")
+    ap.add_argument("--dr-centre", default=None,
+                    help="identify.py's JSON file, which re-centres the randomization ranges (needs --randomize)")
     args = ap.parse_args()
+    if args.dr_centre and not args.randomize:
+        ap.error("--dr-centre re-centres the randomization; add --randomize")
 
     if args.smoke:
         args.timesteps, args.num_envs, args.no_subproc = 4000, 2, True
@@ -236,7 +241,7 @@ def main():
     obs_kw = dict(terrain_kind=args.terrain_kind, obs_contact=args.contact_obs,
                   obs_history=args.obs_history, gait_schedule=gait_schedule,
                   terrain_speed_floor=args.terrain_speed_floor,
-                  reward_weights=rw or None, reward_mode=args.reward_mode)
+                  reward_weights=rw or None, reward_mode=args.reward_mode, dr_centre=args.dr_centre)
     vn_load = os.path.join(args.init_from, "vecnormalize.pkl") if args.init_from else None
     train_env = build_vecenv(args.control_mode, args.num_envs, args.randomize, args.seed,
                              not args.no_subproc, vn_load=vn_load, resample_steps=args.resample_steps,
