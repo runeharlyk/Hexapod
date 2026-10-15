@@ -24,6 +24,7 @@ Paths are relative to `firmware/` unless they start at the repository root.
 | Shared I2C bus | `include/peripherals/i2c_bus.h` |
 | I2C error counts and bus recovery | `include/peripherals/i2c_health.h` |
 | Servo board write backoff and restart | `include/peripherals/servo_board.h` |
+| Status LED | `include/peripherals/status_led.h`, `include/peripherals/status_led_pattern.h` |
 | Transport base and protobuf dispatch | `include/communication/comm_base.hpp`, `include/communication/proto_helpers.h` |
 | WebSocket transport | `include/communication/websocket.h`, `src/communication/websocket.cpp`, `include/communication/ws_frame.h`, `include/communication/stall_tracker.h` |
 | BLE transport (Nordic UART Service) | `include/communication/ble.h`, `src/communication/ble.cpp` |
@@ -126,6 +127,29 @@ Each PCA9685 is a `ServoBoard` with its own write backoff, so a board that stops
 After three failed writes in a row a board is tried every 500 ms, and on every tick again once it answers.
 A board that answers again without auto-increment in MODE1 lost power, so it is started again: asleep, prescale set, the current pose written into its channels, and woken only if the servos were active.
 A board that did not answer at boot is started the same way when it first answers.
+
+## Status LED
+
+The board's WS2812 on `WS2812_PIN` (GPIO 48) shows the motion mode and whether a client is connected.
+
+| Mode | Colour |
+| --- | --- |
+| `DEACTIVATED` | dim white |
+| `IDLE` | blue |
+| `POSE` | magenta |
+| `STAND` | green |
+| `WALK` | cyan |
+| `WALK_NN` | yellow |
+| `ANIMATE` | orange |
+
+The colour is steady while a client is connected over WebSocket, BLE or the USB serial link, and blinks once a second, half on and half off, while none is.
+A USB host counts as a client, as it does for stopping an animation when the last client goes; the ESP-NOW controller does not, since it only broadcasts.
+The mode shown is the latest `ModeMsg` REQUEST or APPLIED, the mode the app is shown.
+Red is kept out of the mode colours for the battery warning, which becomes one more input to the pattern in `include/peripherals/status_led_pattern.h` once a battery signal exists (roadmap 2.1).
+
+The service task drives the LED every 100 ms and sends a colour only when it changes, through the IDF's RMT TX driver and its bytes encoder: one RMT channel, no DMA and no LED-strip component.
+The driver's channel, queues and encoder take an estimated few hundred bytes of internal RAM (from the IDF 5.4 sources); `logHeap("status led")` logs the free internal RAM right after they are allocated.
+The LED starts first in the service task: the WS2812 keeps its colour while powered, so a later start would leave the colour from before a reset showing through the bring-up.
 
 ## Transports
 

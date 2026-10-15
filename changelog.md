@@ -18,6 +18,7 @@ All notable changes to this project are documented in this file, following [Keep
 - Adds `docs/firmware.md` (architecture) and `docs/releasing.md`.
 - Adds the release's ELF as a release asset, for decoding core dumps.
 - Adds I2C NACK and timeout counts per device and the number of bus recoveries to the system analytics, listed on the metrics page.
+- Adds a status LED on the board's WS2812: a colour per motion mode, steady with a client connected and blinking without one.
 
 ### Changed
 
