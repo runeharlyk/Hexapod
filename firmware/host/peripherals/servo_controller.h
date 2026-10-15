@@ -2,10 +2,12 @@
 
 // Host stand-in for firmware/include/peripherals/servo_controller.h with the interface Hexapod and the
 // motion code use. It drives no PCA9685; it keeps what the servos would receive, the joint angles last sent
-// and whether the boards are awake, which is what a simulated robot's actuators need. Hexapod owns its
-// ServoController, so the output is shared by every instance and read through output().
+// held within travel as the robot's controller holds them, and whether the boards are awake, which is what a simulated
+// robot's actuators need. Hexapod owns its ServoController, so the output is shared by every instance and read through
+// output().
 
-#include <algorithm>
+#include <cmath>
+#include <kinematics.h>
 #include <message_types.h>
 
 class ServoController {
@@ -24,8 +26,10 @@ class ServoController {
     void deactivate() { state().awake = false; }
     // The centre PWMs are the calibration's, which this stand-in does not hold; the joints keep their angles.
     void setCenterPwm() {}
+    // As the robot's controller does: each joint held within its travel, and a non-finite command ignored.
     void setAngles(float angles[NUM_SERVO]) {
-        std::copy_n(angles, NUM_SERVO, state().angles);
+        for (int i = 0; i < NUM_SERVO; ++i)
+            if (std::isfinite(angles[i])) state().angles[i] = withinTravel(angles[i], i % 3);
         state().writes++;
     }
     void updateServoState() {}

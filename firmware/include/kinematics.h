@@ -49,6 +49,12 @@ constexpr void get_transformation_matrix(const BodyStateMsg &b, float T[4][4]) {
 // simulation/src/resources/build_model.py, which derives them from the servo's real travel.
 static constexpr float JOINT_LIMIT_DEG[3] = {31.5f, 90.0f, 149.0f};
 
+// The angle a servo is driven to for a commanded joint angle (joint 0 coxa, 1 femur, 2 tibia): held within the
+// joint's travel, whichever mode commanded it.
+inline float withinTravel(float angleDeg, int joint) {
+    return CLIP(angleDeg, -JOINT_LIMIT_DEG[joint], JOINT_LIMIT_DEG[joint]);
+}
+
 class Kinematics {
   private:
     float mountX[6], mountY[6], rootJ1, j1J2, j2J3, j3Tip;

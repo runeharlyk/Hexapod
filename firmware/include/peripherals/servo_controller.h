@@ -101,7 +101,6 @@ class ServoController {
                 continue;
             }
             const int joint = i % 3;
-            const float limit = JOINT_LIMIT_DEG[joint];
             const float requested = std::fabs(new_angles[i]);
             // Peak is tracked from the PRE-clamp command on every tick, not only when clamping:
             // a run with zero clamps still needs to say how much travel was left.
@@ -109,7 +108,7 @@ class ServoController {
                 _peakAbs[joint] = requested;
                 _peakLeg[joint] = (uint8_t)(i / 3);
             }
-            const float angle = CLIP(new_angles[i], -limit, limit);
+            const float angle = withinTravel(new_angles[i], joint);
             if (angle != new_angles[i]) _clampedSinceLog[joint]++;
             target_angles[i] = angle + (joint == 2 ? 90.0f : 0.0f);
         }
