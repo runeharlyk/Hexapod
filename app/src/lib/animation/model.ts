@@ -162,8 +162,8 @@ export const validate = (a: Animation): string | null => {
     if (o.end > duration(a)) return `overlay ${i} end is after the last keyframe`
   }
   const seen = new Set<number>()
-  for (const p of a.params) {
-    if (p.id < 0 || p.id >= PARAM_COUNT) return `param id ${p.id} out of range`
+  for (const [i, p] of a.params.entries()) {
+    if (p.id < 0 || p.id >= PARAM_COUNT) return `param ${i} id out of range`
     if (seen.has(p.id)) return `param ${ParamId[p.id]} is not unique`
     seen.add(p.id)
     if (!(p.min <= p.defaultValue && p.defaultValue <= p.max))

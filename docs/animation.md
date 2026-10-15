@@ -179,6 +179,9 @@ Each platform checks itself against it.
   The C++ test reads `expected.txt`, a plain-text dump of the same data written by the same script; `expected.json` is the Python side's file.
 - App: `pnpm test:unit` runs `tests/unit/animation-parity.spec.ts`, which compares the firmware's evaluator and player, as the app runs them compiled to WebAssembly, with the same `expected.json`.
 
+`validation.json` (and `validation.txt` for the C++ test) holds documents that each break one validation rule, plus a few valid edge cases, with the fragments the first error must contain and whether nanopb decodes the document at all.
+The simulation's test keeps it current, and the firmware's and the app's validator tests read it, so the three validators cannot drift apart unnoticed.
+
 `uv run python check_animation.py` runs every bundled animation through the servo model and reports clamped joints, peak joint speed, tilt and falls.
 Regenerate the fixtures after any behaviour change in `animation.py`.
 

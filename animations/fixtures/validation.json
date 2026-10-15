@@ -1,0 +1,1067 @@
+[
+ {
+  "case": "minimal",
+  "fragments": [],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ]
+  }
+ },
+ {
+  "case": "description_of_96_utf8_bytes",
+  "fragments": [],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "description": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ]
+  }
+ },
+ {
+  "case": "ten_params",
+  "fragments": [],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ],
+   "params": [
+    {
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "BODY_X",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "BODY_Y",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "BODY_Z",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "BODY_ROLL",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "BODY_PITCH",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "BODY_YAW",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "FOOT_LIFT",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "OVERLAY_AMPLITUDE",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "REPEAT",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    }
+   ]
+  }
+ },
+ {
+  "case": "schema",
+  "fragments": [
+   "schema",
+   "is not 1"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 2,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ]
+  }
+ },
+ {
+  "case": "name_charset",
+  "fragments": [
+   "name must be 1-32 characters of [a-z0-9_-]"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "Bad Name",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ]
+  }
+ },
+ {
+  "case": "name_length",
+  "fragments": [
+   "name must be 1-32 characters of [a-z0-9_-]"
+  ],
+  "decodes": false,
+  "animation": {
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ]
+  }
+ },
+ {
+  "case": "description_of_97_utf8_bytes",
+  "fragments": [
+   "description longer than 96 bytes"
+  ],
+  "decodes": false,
+  "animation": {
+   "name": "t",
+   "description": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9d",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ]
+  }
+ },
+ {
+  "case": "loop_and_hold_end",
+  "fragments": [
+   "loop and hold_end cannot both be set"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "loop": true,
+   "holdEnd": true,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ]
+  }
+ },
+ {
+  "case": "no_keyframes",
+  "fragments": [
+   "at least one keyframe is required"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1
+  }
+ },
+ {
+  "case": "keyframes_33",
+  "fragments": [
+   "more than 32 keyframes"
+  ],
+  "decodes": false,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    },
+    {
+     "time": 2.0
+    },
+    {
+     "time": 3.0
+    },
+    {
+     "time": 4.0
+    },
+    {
+     "time": 5.0
+    },
+    {
+     "time": 6.0
+    },
+    {
+     "time": 7.0
+    },
+    {
+     "time": 8.0
+    },
+    {
+     "time": 9.0
+    },
+    {
+     "time": 10.0
+    },
+    {
+     "time": 11.0
+    },
+    {
+     "time": 12.0
+    },
+    {
+     "time": 13.0
+    },
+    {
+     "time": 14.0
+    },
+    {
+     "time": 15.0
+    },
+    {
+     "time": 16.0
+    },
+    {
+     "time": 17.0
+    },
+    {
+     "time": 18.0
+    },
+    {
+     "time": 19.0
+    },
+    {
+     "time": 20.0
+    },
+    {
+     "time": 21.0
+    },
+    {
+     "time": 22.0
+    },
+    {
+     "time": 23.0
+    },
+    {
+     "time": 24.0
+    },
+    {
+     "time": 25.0
+    },
+    {
+     "time": 26.0
+    },
+    {
+     "time": 27.0
+    },
+    {
+     "time": 28.0
+    },
+    {
+     "time": 29.0
+    },
+    {
+     "time": 30.0
+    },
+    {
+     "time": 31.0
+    },
+    {
+     "time": 32.0
+    }
+   ]
+  }
+ },
+ {
+  "case": "overlays_9",
+  "fragments": [
+   "more than 8 overlays"
+  ],
+  "decodes": false,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ],
+   "overlays": [
+    {
+     "bodyAxis": 0,
+     "amplitude": 1.0,
+     "frequency": 1.0,
+     "end": 1.0
+    },
+    {
+     "bodyAxis": 0,
+     "amplitude": 1.0,
+     "frequency": 1.0,
+     "end": 1.0
+    },
+    {
+     "bodyAxis": 0,
+     "amplitude": 1.0,
+     "frequency": 1.0,
+     "end": 1.0
+    },
+    {
+     "bodyAxis": 0,
+     "amplitude": 1.0,
+     "frequency": 1.0,
+     "end": 1.0
+    },
+    {
+     "bodyAxis": 0,
+     "amplitude": 1.0,
+     "frequency": 1.0,
+     "end": 1.0
+    },
+    {
+     "bodyAxis": 0,
+     "amplitude": 1.0,
+     "frequency": 1.0,
+     "end": 1.0
+    },
+    {
+     "bodyAxis": 0,
+     "amplitude": 1.0,
+     "frequency": 1.0,
+     "end": 1.0
+    },
+    {
+     "bodyAxis": 0,
+     "amplitude": 1.0,
+     "frequency": 1.0,
+     "end": 1.0
+    },
+    {
+     "bodyAxis": 0,
+     "amplitude": 1.0,
+     "frequency": 1.0,
+     "end": 1.0
+    }
+   ]
+  }
+ },
+ {
+  "case": "params_11",
+  "fragments": [
+   "more than 10 params"
+  ],
+  "decodes": false,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ],
+   "params": [
+    {
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "BODY_X",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "BODY_Y",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "BODY_Z",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "BODY_ROLL",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "BODY_PITCH",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "BODY_YAW",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "FOOT_LIFT",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "OVERLAY_AMPLITUDE",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "id": "REPEAT",
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "min": 1.0,
+     "defaultValue": 1.0,
+     "max": 2.0
+    }
+   ]
+  }
+ },
+ {
+  "case": "legs_3",
+  "fragments": [
+   "must have 0 or 6 legs"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {},
+     "legs": [
+      {
+       "foot": {}
+      },
+      {
+       "foot": {}
+      },
+      {
+       "foot": {}
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "case": "ease_4",
+  "fragments": [
+   "ease out of range"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "ease": 4,
+     "body": {}
+    }
+   ]
+  }
+ },
+ {
+  "case": "entry_time_infinite",
+  "fragments": [
+   "entry_time and exit_time must be finite"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "entryTime": "Infinity",
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ]
+  }
+ },
+ {
+  "case": "ride_height_nan",
+  "fragments": [
+   "ride_height must be finite"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ],
+   "rideHeight": "NaN"
+  }
+ },
+ {
+  "case": "keyframe_time_nan",
+  "fragments": [
+   "keyframe",
+   "has a non-finite value"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": "NaN",
+     "body": {}
+    }
+   ]
+  }
+ },
+ {
+  "case": "keyframe_body_infinite",
+  "fragments": [
+   "keyframe",
+   "has a non-finite value"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {
+      "z": "Infinity"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "case": "keyframe_leg_nan",
+  "fragments": [
+   "keyframe",
+   "has a non-finite value"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {},
+     "legs": [
+      {
+       "foot": {}
+      },
+      {
+       "foot": {}
+      },
+      {
+       "foot": {
+        "y": "NaN"
+       }
+      },
+      {
+       "foot": {}
+      },
+      {
+       "foot": {}
+      },
+      {
+       "foot": {}
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "case": "overlay_nan",
+  "fragments": [
+   "overlay",
+   "has a non-finite value"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ],
+   "overlays": [
+    {
+     "bodyAxis": 0,
+     "amplitude": "NaN",
+     "frequency": 1.0,
+     "end": 1.0
+    }
+   ]
+  }
+ },
+ {
+  "case": "param_infinite",
+  "fragments": [
+   "param",
+   "has a non-finite value"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ],
+   "params": [
+    {
+     "id": "BODY_X",
+     "defaultValue": 1.0,
+     "max": "Infinity"
+    }
+   ]
+  }
+ },
+ {
+  "case": "first_keyframe_late",
+  "fragments": [
+   "first keyframe must be at time 0"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "time": 0.1,
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ]
+  }
+ },
+ {
+  "case": "keyframe_time_repeated",
+  "fragments": [
+   "time must increase"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "body": {}
+    }
+   ]
+  }
+ },
+ {
+  "case": "overlay_without_channel",
+  "fragments": [
+   "needs exactly one channel"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ],
+   "overlays": [
+    {
+     "amplitude": 1.0,
+     "frequency": 1.0,
+     "end": 1.0
+    }
+   ]
+  }
+ },
+ {
+  "case": "overlay_body_axis_6",
+  "fragments": [
+   "body_axis out of range"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ],
+   "overlays": [
+    {
+     "bodyAxis": 6,
+     "amplitude": 1.0,
+     "frequency": 1.0,
+     "end": 1.0
+    }
+   ]
+  }
+ },
+ {
+  "case": "overlay_foot_channel_18",
+  "fragments": [
+   "foot_channel out of range"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ],
+   "overlays": [
+    {
+     "footChannel": 18,
+     "amplitude": 1.0,
+     "frequency": 1.0,
+     "end": 1.0
+    }
+   ]
+  }
+ },
+ {
+  "case": "overlay_empty_window",
+  "fragments": [
+   "window must have 0 <= start < end"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ],
+   "overlays": [
+    {
+     "bodyAxis": 0,
+     "amplitude": 1.0,
+     "frequency": 1.0,
+     "start": 0.5,
+     "end": 0.5
+    }
+   ]
+  }
+ },
+ {
+  "case": "overlay_past_the_end",
+  "fragments": [
+   "end is after the last keyframe"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ],
+   "overlays": [
+    {
+     "bodyAxis": 0,
+     "amplitude": 1.0,
+     "frequency": 1.0,
+     "end": 1.5
+    }
+   ]
+  }
+ },
+ {
+  "case": "param_id_10",
+  "fragments": [
+   "id out of range"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ],
+   "params": [
+    {
+     "id": 10,
+     "min": 0.5,
+     "defaultValue": 1.0,
+     "max": 2.0
+    }
+   ]
+  }
+ },
+ {
+  "case": "param_repeated",
+  "fragments": [
+   "is not unique"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ],
+   "params": [
+    {
+     "min": 0.5,
+     "defaultValue": 1.0,
+     "max": 2.0
+    },
+    {
+     "min": 0.5,
+     "defaultValue": 1.0,
+     "max": 2.0
+    }
+   ]
+  }
+ },
+ {
+  "case": "param_default_above_max",
+  "fragments": [
+   "needs min <= default_value <= max"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ],
+   "params": [
+    {
+     "id": "BODY_Z",
+     "min": 0.5,
+     "defaultValue": 3.0,
+     "max": 2.0
+    }
+   ]
+  }
+ },
+ {
+  "case": "speed_min_zero",
+  "fragments": [
+   "param SPEED needs a positive min"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ],
+   "params": [
+    {
+     "defaultValue": 1.0,
+     "max": 2.0
+    }
+   ]
+  }
+ },
+ {
+  "case": "repeat_min_zero",
+  "fragments": [
+   "param REPEAT needs min >= 1"
+  ],
+  "decodes": true,
+  "animation": {
+   "name": "t",
+   "schema": 1,
+   "keyframes": [
+    {
+     "body": {}
+    },
+    {
+     "time": 1.0,
+     "body": {}
+    }
+   ],
+   "params": [
+    {
+     "id": "REPEAT",
+     "defaultValue": 1.0,
+     "max": 2.0
+    }
+   ]
+  }
+ }
+]

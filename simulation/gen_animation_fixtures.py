@@ -1,4 +1,5 @@
-"""Writes animations/fixtures/expected.json, expected.txt and the fx_*.pb binaries from the reference implementation.
+"""Writes animations/fixtures/expected.json, expected.txt, validation.json, validation.txt and the fx_*.pb binaries from
+the reference implementation.
 
 The firmware and app parity tests read those files; test_animation_fixtures.py fails when they are stale.
     uv run python gen_animation_fixtures.py
@@ -30,6 +31,12 @@ Fixture contract for porters:
 - the fx_*.json values are protobuf float (32-bit): a port that parses the JSON rounds every number
   to float32 before use; dt, params and the live pose are used as written.
 - states and masks must match exactly; angles within "tolerance" (degrees).
+
+validation.json lists documents, each with the fragments that the first error validate() reports must all contain (none
+for a valid document) and whether nanopb decodes it: a document past the schema's counts or string sizes fails to decode
+on the robot, which rejects it before validate() runs. Each platform words its errors its own way, with or without
+indices, so a fragment is the part all of them share. validation.txt carries the same cases for the C++ test, one per line:
+    <case> <decodes 0|1> <hex of the encoded Animation, "-" when empty> <fragment>|<fragment>...   ("-" for none)
 """
 import json
 import math
@@ -38,13 +45,17 @@ from pathlib import Path
 import numpy as np
 
 from src.robot import animation as an
-from src.robot.animation_files import load_json
+from google.protobuf import json_format
+
+from src.robot.animation_files import from_proto, load_json, pb, to_proto
 from src.robot.firmware_gait import BodyState, Kinematics
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_DIR = ROOT / "animations" / "fixtures"
 EXPECTED = FIXTURE_DIR / "expected.json"
 EXPECTED_TXT = FIXTURE_DIR / "expected.txt"
+VALIDATION = FIXTURE_DIR / "validation.json"
+VALIDATION_TXT = FIXTURE_DIR / "validation.txt"
 TOLERANCE = 1e-4
 GRID_MARGIN_S = 1e-4
 
@@ -213,12 +224,108 @@ def write_fixture_binaries() -> None:
         save_binary(load_json(path), path.with_suffix(".pb"))
 
 
+def _base() -> pb.Animation:
+    return to_proto(an.Animation(name="t", keyframes=[an.Keyframe(0.0), an.Keyframe(1.0)]))
+
+
+def _overlay(msg: pb.Animation, **fields) -> None:
+    msg.overlays.add(**({"amplitude": 1, "frequency": 1, "start": 0, "end": 1} | fields))
+
+
+def _param(msg: pb.Animation, id: int, min: float, default_value: float, max: float) -> None:
+    msg.params.add(id=id, min=min, default_value=default_value, max=max)
+
+
+def _legs(msg: pb.Animation, count: int) -> list:
+    legs = [msg.keyframes[1].legs.add() for _ in range(count)]
+    for leg in legs:
+        leg.foot.SetInParent()
+    return legs
+
+
+# (case, change to a valid two-keyframe document, fragments of the first error). The order follows validate().
+VALIDATION_CASES = [
+    ("minimal", lambda m: None, []),
+    ("description_of_96_utf8_bytes", lambda m: setattr(m, "description", "\u00e9" * 48), []),
+    ("ten_params", lambda m: [_param(m, i, 1, 1, 2) for i in range(10)], []),
+    ("schema", lambda m: setattr(m, "schema", 2), ["schema", "is not 1"]),
+    ("name_charset", lambda m: setattr(m, "name", "Bad Name"), ["name must be 1-32 characters of [a-z0-9_-]"]),
+    ("name_length", lambda m: setattr(m, "name", "x" * 33), ["name must be 1-32 characters of [a-z0-9_-]"]),
+    ("description_of_97_utf8_bytes", lambda m: setattr(m, "description", "\u00e9" * 48 + "d"),
+     ["description longer than 96 bytes"]),
+    ("loop_and_hold_end", lambda m: (setattr(m, "loop", True), setattr(m, "hold_end", True)),
+     ["loop and hold_end cannot both be set"]),
+    ("no_keyframes", lambda m: m.ClearField("keyframes"), ["at least one keyframe is required"]),
+    ("keyframes_33", lambda m: [m.keyframes.add(time=float(t)) for t in range(2, 33)], ["more than 32 keyframes"]),
+    ("overlays_9", lambda m: [_overlay(m, body_axis=0) for _ in range(9)], ["more than 8 overlays"]),
+    ("params_11", lambda m: [_param(m, i % 10, 1, 1, 2) for i in range(11)], ["more than 10 params"]),
+    ("legs_3", lambda m: _legs(m, 3), ["must have 0 or 6 legs"]),
+    ("ease_4", lambda m: setattr(m.keyframes[1], "ease", 4), ["ease out of range"]),
+    ("entry_time_infinite", lambda m: setattr(m, "entry_time", math.inf), ["entry_time and exit_time must be finite"]),
+    ("ride_height_nan", lambda m: setattr(m, "ride_height", math.nan), ["ride_height must be finite"]),
+    ("keyframe_time_nan", lambda m: setattr(m.keyframes[1], "time", math.nan), ["keyframe", "has a non-finite value"]),
+    ("keyframe_body_infinite", lambda m: setattr(m.keyframes[1].body, "z", math.inf),
+     ["keyframe", "has a non-finite value"]),
+    ("keyframe_leg_nan", lambda m: setattr(_legs(m, 6)[2].foot, "y", math.nan), ["keyframe", "has a non-finite value"]),
+    ("overlay_nan", lambda m: _overlay(m, body_axis=0, amplitude=math.nan), ["overlay", "has a non-finite value"]),
+    ("param_infinite", lambda m: _param(m, 1, 0, 1, math.inf), ["param", "has a non-finite value"]),
+    ("first_keyframe_late", lambda m: setattr(m.keyframes[0], "time", 0.1), ["first keyframe must be at time 0"]),
+    ("keyframe_time_repeated", lambda m: setattr(m.keyframes[1], "time", 0.0), ["time must increase"]),
+    ("overlay_without_channel", lambda m: _overlay(m), ["needs exactly one channel"]),
+    ("overlay_body_axis_6", lambda m: _overlay(m, body_axis=6), ["body_axis out of range"]),
+    ("overlay_foot_channel_18", lambda m: _overlay(m, foot_channel=18), ["foot_channel out of range"]),
+    ("overlay_empty_window", lambda m: _overlay(m, body_axis=0, start=0.5, end=0.5),
+     ["window must have 0 <= start < end"]),
+    ("overlay_past_the_end", lambda m: _overlay(m, body_axis=0, end=1.5), ["end is after the last keyframe"]),
+    ("param_id_10", lambda m: _param(m, 10, 0.5, 1, 2), ["id out of range"]),
+    ("param_repeated", lambda m: [_param(m, 0, 0.5, 1, 2) for _ in range(2)], ["is not unique"]),
+    ("param_default_above_max", lambda m: _param(m, 3, 0.5, 3, 2), ["needs min <= default_value <= max"]),
+    ("speed_min_zero", lambda m: _param(m, 0, 0, 1, 2), ["param SPEED needs a positive min"]),
+    ("repeat_min_zero", lambda m: _param(m, 9, 0, 1, 2), ["param REPEAT needs min >= 1"]),
+]
+
+# platform_shared/animation.options: nanopb's string buffers hold a terminator, and its arrays have a fixed capacity.
+NAME_BYTES, DESCRIPTION_BYTES, KEYFRAMES, OVERLAYS, PARAMS, LEGS = 32, 96, 32, 8, 10, 6
+
+
+def _decodes(msg: pb.Animation) -> bool:
+    return (len(msg.name.encode()) <= NAME_BYTES and len(msg.description.encode()) <= DESCRIPTION_BYTES
+            and len(msg.keyframes) <= KEYFRAMES and len(msg.overlays) <= OVERLAYS and len(msg.params) <= PARAMS
+            and all(len(k.legs) <= LEGS for k in msg.keyframes))
+
+
+def generate_validation() -> list[dict]:
+    """Every case through the reference validate(), whose error must contain the case's fragments."""
+    cases = []
+    for name, change, fragments in VALIDATION_CASES:
+        msg = _base()
+        change(msg)
+        err = an.validate(from_proto(msg))
+        if (err is None) != (not fragments) or any(f not in (err or "") for f in fragments):
+            raise SystemExit(f"validation case {name}: the reference reports {err!r}, not {fragments}")
+        cases.append({"case": name, "fragments": fragments, "decodes": _decodes(msg),
+                      "animation": json_format.MessageToDict(msg)})
+    return cases
+
+
+def validation_dump(cases: list[dict]) -> str:
+    """The same content as validation.json in the line format firmware/test/test_animation parses."""
+    lines = []
+    for c in cases:
+        encoded = json_format.ParseDict(c["animation"], pb.Animation()).SerializeToString().hex() or "-"
+        lines.append(f"{c['case']} {int(c['decodes'])} {encoded} {'|'.join(c['fragments']) or '-'}")
+    return "\n".join(lines) + "\n"
+
+
 def main() -> None:
     expected = generate()
     EXPECTED.write_text(json.dumps(expected, indent=1) + "\n", newline="\n")
     EXPECTED_TXT.write_text(text_dump(expected), newline="\n")
     write_fixture_binaries()
-    print(f"wrote {EXPECTED}, {EXPECTED_TXT} and the fixture .pb files")
+    validation = generate_validation()
+    VALIDATION.write_text(json.dumps(validation, indent=1) + "\n", newline="\n")
+    VALIDATION_TXT.write_text(validation_dump(validation), newline="\n")
+    print(f"wrote {EXPECTED}, {EXPECTED_TXT}, {VALIDATION}, {VALIDATION_TXT} and the fixture .pb files")
 
 
 if __name__ == "__main__":

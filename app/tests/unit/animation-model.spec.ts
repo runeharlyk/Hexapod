@@ -1,13 +1,18 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { Animation, Ease, ParamId } from '$lib/platform_shared/animation'
+import { Animation, Ease } from '$lib/platform_shared/animation'
 import {
   froundAnimation,
   legOf,
   legTarget,
   loadAnimationJson,
-  stanceLeg,
-  validate
+  stanceLeg
 } from '$lib/animation/model'
+
+const validation: { case: string; fragments: string[]; animation: unknown }[] = JSON.parse(
+  readFileSync(resolve(__dirname, '../../../animations/fixtures/validation.json'), 'utf8')
+)
 
 const two = (extra: Parameters<typeof Animation.fromPartial>[0] = {}): Animation =>
   Animation.fromPartial({
@@ -17,131 +22,15 @@ const two = (extra: Parameters<typeof Animation.fromPartial>[0] = {}): Animation
     ...extra
   })
 
+// The cases, and the fragments each first error must contain, come from the Python reference
+// (simulation/gen_animation_fixtures.py); the firmware's test reads the same cases.
 describe('validate', () => {
-  it('accepts a minimal animation', () => {
-    expect(validate(two())).toBeNull()
-  })
-  it.each<[string, (a: Animation) => void, string]>([
-    ['schema', a => void (a.schema = 2), 'schema'],
-    ['name charset', a => void (a.name = 'Bad Name'), 'name'],
-    ['name length', a => void (a.name = 'x'.repeat(33)), 'name'],
-    ['description bytes', a => void (a.description = 'e'.repeat(97)), 'description'],
-    ['no keyframes', a => void (a.keyframes = []), 'keyframe'],
-    ['first time', a => void (a.keyframes[0].time = 0.1), 'time 0'],
-    ['increasing', a => void (a.keyframes[1].time = 0), 'increase'],
-    ['legs count', a => void (a.keyframes[1].legs = [{}, {}, {}]), '0 or 6'],
-    ['ease range', a => void (a.keyframes[1].ease = 4 as Ease), 'ease'],
-    ['nan time', a => void (a.keyframes[1].time = NaN), 'finite'],
-    ['loop and hold', a => void ((a.loop = true), (a.holdEnd = true)), 'loop'],
-    [
-      'overlay channel',
-      a => a.overlays.push({ amplitude: 1, frequency: 1, phase: 0, start: 0, end: 1 }),
-      'channel'
-    ],
-    [
-      'overlay body axis',
-      a =>
-        a.overlays.push({
-          bodyAxis: 6,
-          amplitude: 1,
-          frequency: 1,
-          phase: 0,
-          start: 0,
-          end: 1
-        }),
-      'body_axis'
-    ],
-    [
-      'overlay window',
-      a =>
-        a.overlays.push({
-          bodyAxis: 0,
-          amplitude: 1,
-          frequency: 1,
-          phase: 0,
-          start: 0.5,
-          end: 0.5
-        }),
-      'start'
-    ],
-    [
-      'overlay end',
-      a =>
-        a.overlays.push({
-          bodyAxis: 0,
-          amplitude: 1,
-          frequency: 1,
-          phase: 0,
-          start: 0,
-          end: 1.5
-        }),
-      'end'
-    ],
-    [
-      'param unique',
-      a =>
-        a.params.push(
-          { id: ParamId.SPEED, min: 0.5, defaultValue: 1, max: 2 },
-          { id: ParamId.SPEED, min: 0.5, defaultValue: 1, max: 2 }
-        ),
-      'unique'
-    ],
-    [
-      'param order',
-      a => a.params.push({ id: ParamId.BODY_Z, min: 0.5, defaultValue: 3, max: 2 }),
-      'min <= default_value <= max'
-    ],
-    [
-      'speed min',
-      a => a.params.push({ id: ParamId.SPEED, min: 0, defaultValue: 1, max: 2 }),
-      'SPEED'
-    ],
-    [
-      'repeat min',
-      a => a.params.push({ id: ParamId.REPEAT, min: 0, defaultValue: 1, max: 2 }),
-      'REPEAT'
-    ],
-    [
-      'param id',
-      a => a.params.push({ id: 10 as ParamId, min: 0.5, defaultValue: 1, max: 2 }),
-      'param id'
-    ],
-    ['ride height', a => void (a.rideHeight = Infinity), 'ride_height']
-  ])('reports %s', (_, mutate, fragment) => {
-    const a = two()
-    mutate(a)
-    expect(validate(a)).toContain(fragment)
-  })
-  it('bounds the counts', () => {
-    expect(
-      validate(two({ keyframes: Array.from({ length: 33 }, (_, i) => ({ time: i })) }))
-    ).toContain('32')
-    expect(
-      validate(
-        two({
-          overlays: Array(9).fill({
-            bodyAxis: 0,
-            amplitude: 1,
-            frequency: 1,
-            phase: 0,
-            start: 0,
-            end: 1
-          })
-        })
-      )
-    ).toContain('8')
-    expect(
-      validate(
-        two({
-          params: Array.from({ length: 11 }, (_, i) => ({
-            id: i % 10,
-            min: 1,
-            defaultValue: 1,
-            max: 1
-          }))
-        })
-      )
-    ).toContain('10')
+  it.each(validation.map(c => [c.case, c] as const))('%s', (_, c) => {
+    const loaded = loadAnimationJson(JSON.stringify(c.animation))
+    if (c.fragments.length === 0) expect(loaded).toHaveProperty('animation')
+    else
+      for (const fragment of c.fragments)
+        expect(loaded).toHaveProperty('error', expect.stringContaining(fragment))
   })
 })
 

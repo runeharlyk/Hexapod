@@ -141,27 +141,27 @@ inline const char *validate(const Clip &c) {
         if (k.legCount != 0 && k.legCount != 6) return "keyframe must have 0 or 6 legs";
         if (k.ease < LINEAR || k.ease > EASE_IN_OUT) return "keyframe ease out of range";
     }
-    if (!std::isfinite(c.entryTime) || !std::isfinite(c.exitTime)) return "entry/exit time must be finite";
+    if (!std::isfinite(c.entryTime) || !std::isfinite(c.exitTime)) return "entry_time and exit_time must be finite";
     if (c.hasRideHeight && !std::isfinite(c.rideHeight)) return "ride_height must be finite";
     for (int i = 0; i < c.keyframeCount; ++i) {
         const Keyframe &k = c.keyframes[i];
-        if (!std::isfinite(k.time)) return "keyframe time must be finite";
+        if (!std::isfinite(k.time)) return "keyframe has a non-finite value";
         for (float v : k.body)
-            if (!std::isfinite(v)) return "keyframe body must be finite";
+            if (!std::isfinite(v)) return "keyframe has a non-finite value";
         for (int l = 0; l < k.legCount; ++l)
             for (float v : k.legs[l].v)
-                if (!std::isfinite(v)) return "keyframe leg must be finite";
+                if (!std::isfinite(v)) return "keyframe has a non-finite value";
     }
     for (int i = 0; i < c.overlayCount; ++i) {
         const Overlay &o = c.overlays[i];
         if (!std::isfinite(o.amplitude) || !std::isfinite(o.frequency) || !std::isfinite(o.phase) ||
             !std::isfinite(o.start) || !std::isfinite(o.end))
-            return "overlay must be finite";
+            return "overlay has a non-finite value";
     }
     for (int i = 0; i < c.paramCount; ++i) {
         const ParamSpec &p = c.params[i];
         if (!std::isfinite(p.min) || !std::isfinite(p.defaultValue) || !std::isfinite(p.max))
-            return "param must be finite";
+            return "param has a non-finite value";
     }
     if (c.keyframes[0].time != 0.0f) return "first keyframe must be at time 0";
     for (int i = 1; i < c.keyframeCount; ++i)

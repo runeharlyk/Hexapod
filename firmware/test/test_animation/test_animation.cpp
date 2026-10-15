@@ -102,46 +102,46 @@ anim::Clip twoKeyframes() {
     return c;
 }
 
-void expectError(anim::Clip &c, const char *fragment) {
-    const char *err = anim::validate(c);
-    TEST_ASSERT_NOT_NULL_MESSAGE(err, fragment);
-    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(err, fragment), err);
+// The cases, and the fragments each first error must contain, come from the Python reference
+// (simulation/gen_animation_fixtures.py); the app's test reads the same cases. A case nanopb cannot decode is one the
+// robot rejects before validate() runs.
+void test_validate_reports_each_fixture_case() {
+    std::ifstream in(std::string(FIXTURE_DIR) + "validation.txt");
+    TEST_ASSERT_TRUE_MESSAGE(in.good(), "animations/fixtures/validation.txt (run from the repo root)");
+    int cases = 0;
+    std::string name, hex, fragments;
+    int decodes;
+    while (in >> name >> decodes >> hex) {
+        std::getline(in >> std::ws, fragments);
+        std::vector<uint8_t> bytes;
+        for (size_t i = 0; hex != "-" && i < hex.size(); i += 2)
+            bytes.push_back(std::stoi(hex.substr(i, 2), nullptr, 16));
+        animation_Animation decoded = animation_Animation_init_zero;
+        pb_istream_t stream = pb_istream_from_buffer(bytes.data(), bytes.size());
+        const bool ok = pb_decode(&stream, animation_Animation_fields, &decoded);
+        TEST_ASSERT_EQUAL_MESSAGE(decodes == 1, ok, name.c_str());
+        ++cases;
+        if (!ok) continue;
+        anim::Clip clip;
+        anim::fromProto(decoded, clip);
+        const char *err = anim::validate(clip);
+        if (fragments == "-") {
+            TEST_ASSERT_NULL_MESSAGE(err, name.c_str());
+            continue;
+        }
+        TEST_ASSERT_NOT_NULL_MESSAGE(err, name.c_str());
+        std::stringstream parts(fragments);
+        std::string fragment;
+        while (std::getline(parts, fragment, '|'))
+            TEST_ASSERT_NOT_NULL_MESSAGE(strstr(err, fragment.c_str()), (name + ": " + err).c_str());
+    }
+    TEST_ASSERT_EQUAL(33, cases);
 }
 
-void test_validate_reports_each_structural_rule() {
+void test_a_ride_height_the_file_does_not_set_is_not_validated() {
     anim::Clip c = twoKeyframes();
-    TEST_ASSERT_NULL(anim::validate(c));
-    c = twoKeyframes(); c.schema = 2; expectError(c, "schema");
-    c = twoKeyframes(); strcpy(c.name, "Bad Name"); expectError(c, "name");
-    c = twoKeyframes(); c.keyframeCount = 0; expectError(c, "keyframe");
-    c = twoKeyframes(); c.keyframes[0].time = 0.1f; expectError(c, "time 0");
-    c = twoKeyframes(); c.keyframes[1].time = 0.0f; expectError(c, "increase");
-    c = twoKeyframes(); c.keyframes[1].time = NAN; expectError(c, "finite");
-    c = twoKeyframes(); c.keyframes[1].legCount = 3; expectError(c, "0 or 6");
-    c = twoKeyframes(); c.keyframes[1].ease = 4; expectError(c, "ease");
-    c = twoKeyframes(); c.loop = true; c.holdEnd = true; expectError(c, "loop");
-    c = twoKeyframes(); c.entryTime = INFINITY; expectError(c, "finite");
-    c = twoKeyframes();
-    c.hasRideHeight = true;
-    c.rideHeight = NAN;
-    expectError(c, "ride_height");
-    c = twoKeyframes();
     c.rideHeight = NAN;
     TEST_ASSERT_NULL(anim::validate(c));
-    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0].end = 1; expectError(c, "channel");
-    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {anim::CHANNEL_BODY, 6, 1, 1, 0, 0, 1}; expectError(c, "body_axis");
-    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {anim::CHANNEL_FOOT, 18, 1, 1, 0, 0, 1}; expectError(c, "foot_channel");
-    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {anim::CHANNEL_BODY, 0, 1, 1, 0, 0.5f, 0.5f}; expectError(c, "start");
-    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {anim::CHANNEL_BODY, 0, 1, 1, 0, 0, 1.5f}; expectError(c, "end");
-    c = twoKeyframes(); c.overlayCount = 1; c.overlays[0] = {anim::CHANNEL_BODY, 0, NAN, 1, 0, 0, 1}; expectError(c, "finite");
-    c = twoKeyframes(); c.paramCount = 2; c.params[0] = {anim::SPEED, 0.5f, 1, 2}; c.params[1] = {anim::SPEED, 0.5f, 1, 2}; expectError(c, "unique");
-    c = twoKeyframes(); c.paramCount = 1; c.params[0] = {anim::BODY_Z, 0.5f, 3, 2}; expectError(c, "min <= default_value <= max");
-    c = twoKeyframes(); c.paramCount = 1; c.params[0] = {anim::SPEED, 0.0f, 1, 2}; expectError(c, "SPEED");
-    c = twoKeyframes(); c.paramCount = 1; c.params[0] = {anim::REPEAT, 0.0f, 1, 2}; expectError(c, "REPEAT");
-    c = twoKeyframes(); c.paramCount = 1; c.params[0] = {10, 0.5f, 1, 2}; expectError(c, "param id");
-    c = twoKeyframes(); c.keyframeCount = 33; expectError(c, "32");
-    c = twoKeyframes(); c.overlayCount = 9; expectError(c, "8");
-    c = twoKeyframes(); c.paramCount = 11; expectError(c, "10");
 }
 
 constexpr float STANCE[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
@@ -153,8 +153,9 @@ struct ParamList {
 };
 
 int paramIdByName(const std::string &name) {
-    static const char *NAMES[] = {"SPEED",      "BODY_X",    "BODY_Y",            "BODY_Z", "BODY_ROLL",
-                                  "BODY_PITCH", "BODY_YAW",  "FOOT_LIFT",         "OVERLAY_AMPLITUDE", "REPEAT"};
+    static const char *NAMES[] = {
+        "SPEED", "BODY_X", "BODY_Y", "BODY_Z", "BODY_ROLL", "BODY_PITCH", "BODY_YAW", "FOOT_LIFT", "OVERLAY_AMPLITUDE",
+        "REPEAT"};
     for (int i = 0; i < anim::PARAM_COUNT; ++i)
         if (name == NAMES[i]) return i;
     TEST_FAIL_MESSAGE(name.c_str());
@@ -599,7 +600,8 @@ int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_fixture_binaries_decode_with_nanopb);
     RUN_TEST(test_from_proto_copies_every_fixture_and_validates);
-    RUN_TEST(test_validate_reports_each_structural_rule);
+    RUN_TEST(test_validate_reports_each_fixture_case);
+    RUN_TEST(test_a_ride_height_the_file_does_not_set_is_not_validated);
     RUN_TEST(test_evaluate_matches_every_fixture_sample);
     RUN_TEST(test_ease_curves_match_the_reference);
     RUN_TEST(test_resolve_params_defaults_clamps_and_ignores_undeclared);

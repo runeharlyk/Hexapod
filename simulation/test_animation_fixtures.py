@@ -39,6 +39,12 @@ def test_expected_json_is_current():
             assert np.allclose(sc["angles"], sf["angles"], atol=fresh["tolerance"])
 
 
+def test_validation_fixture_is_current():
+    fresh = gen.generate_validation()
+    assert json.loads(gen.VALIDATION.read_text()) == fresh
+    assert gen.VALIDATION_TXT.read_text() == gen.validation_dump(fresh)
+
+
 def test_player_traces_visit_every_state():
     expected = json.loads(gen.EXPECTED.read_text())
     states = {s["state"] for case in expected["player"] for s in case["trace"]}
