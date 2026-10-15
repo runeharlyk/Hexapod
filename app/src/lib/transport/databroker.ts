@@ -17,7 +17,8 @@ const REQUEST_TIMEOUT_MS = 15000
 
 export class DataBroker {
   private transports: ITransport[] = []
-  private listeners = new Map<number, Set<(data: unknown) => void>>()
+  // Listeners also get the frame as it arrived, for a recorder that keeps the robot's bytes.
+  private listeners = new Map<number, Set<(data: unknown, frame: Uint8Array) => void>>()
 
   readonly latencyMs = writable<number | null>(null)
   private lastPingAt = 0
@@ -119,7 +120,7 @@ export class DataBroker {
     })
   }
 
-  on<T>(fns: MessageFns<T>, callback: (data: T) => void): () => void {
+  on<T>(fns: MessageFns<T>, callback: (data: T, frame: Uint8Array) => void): () => void {
     const tag = tagOf(fns)
     let set = this.listeners.get(tag)
     if (!set) {
@@ -127,11 +128,11 @@ export class DataBroker {
       this.listeners.set(tag, set)
       this.sendSubscribe(tag)
     }
-    set.add(callback as (data: unknown) => void)
-    return () => this.off(tag, callback as (data: unknown) => void)
+    set.add(callback as (data: unknown, frame: Uint8Array) => void)
+    return () => this.off(tag, callback as (data: unknown, frame: Uint8Array) => void)
   }
 
-  private off(tag: number, callback: (data: unknown) => void) {
+  private off(tag: number, callback: (data: unknown, frame: Uint8Array) => void) {
     const set = this.listeners.get(tag)
     if (!set) return
     set.delete(callback)
@@ -162,7 +163,7 @@ export class DataBroker {
     // One throwing handler must neither starve the others nor unwind into a transport's read loop.
     this.listeners.get(decoded.tag)?.forEach(listener => {
       try {
-        listener(decoded.value)
+        listener(decoded.value, bytes)
       } catch (error) {
         console.error(`Handler for message ${decoded.key} failed:`, error)
       }
