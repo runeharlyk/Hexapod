@@ -1,9 +1,12 @@
 # Changelog
 
 All notable changes to this project are documented in this file, following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-No version has been tagged yet; everything so far is unreleased.
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-10-15
+
+The first tagged release: the animation system and the ports from the SpotMicro firmware.
 
 ### Added
 
@@ -50,3 +53,6 @@ No version has been tagged yet; everything so far is unreleased.
 - Fixes WebSocket pings going unanswered and close frames going unechoed, which made clients disable their keep-alive and wait out their close timeout.
 - Fixes the I2C transfer timeout being given in ticks where the driver takes milliseconds.
 - Fixes a stance foot on a diagonal stride jumping by the whole stance depth at lift-off, as its press was measured along x + y instead of along the stroke.
+
+[Unreleased]: https://github.com/runeharlyk/Hexapod/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/runeharlyk/Hexapod/releases/tag/v0.1.0
