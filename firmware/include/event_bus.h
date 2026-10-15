@@ -9,6 +9,7 @@
 #include <array>
 #include <optional>
 #include <atomic>
+#include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
@@ -137,7 +138,12 @@ class EventBus {
         if (!taskStarted.load(std::memory_order_acquire)) {
             bool expected = false;
             if (taskStarted.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-                xTaskCreatePinnedToCore(worker, "evtbus", 4096, nullptr, 6, nullptr, 1);
+                // A bus first used late (OTA progress during an update) may find no internal RAM for the
+                // stack; say so and let the next use try again rather than never deliver.
+                if (xTaskCreatePinnedToCore(worker, "evtbus", 4096, nullptr, 6, nullptr, 1) != pdPASS) {
+                    ESP_LOGE("EventBus", "No memory for a bus worker; messages wait for the next try");
+                    taskStarted.store(false, std::memory_order_release);
+                }
             }
         }
     }
