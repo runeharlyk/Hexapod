@@ -14,6 +14,7 @@
 #include <event_bus.h>
 #include <message_types.h>
 #include <policy_runner.h>
+#include <self_level.h>
 #include <animation/animation_runner.h>
 #include <animation/mode_arbiter.h>
 
@@ -276,12 +277,8 @@ class MotionService {
                 body_state.xm = lerpf(body_state.xm, target_body_state.xm, smoothing_factor);
                 body_state.ym = lerpf(body_state.ym, target_body_state.ym, smoothing_factor);
                 body_state.zm = lerpf(body_state.zm, target_body_state.zm, smoothing_factor);
-                body_state.phi =
-                    lerpf(body_state.phi, levelled(target_body_state.phi, _peripherals->angleY()), smoothing_factor);
-                body_state.omega = lerpf(body_state.omega, levelled(target_body_state.omega, _peripherals->angleX()),
-                                         smoothing_factor);
-                // Only ANIMATE sets yaw; ease back what a mode change mid-animation left behind.
-                body_state.psi = lerpf(body_state.psi, 0.f, smoothing_factor);
+                levelAttitude(body_state, target_body_state.phi, target_body_state.omega, _peripherals->angleX(),
+                              _peripherals->angleY());
                 // STAND is not stepping, so this is where a gait selection deferred by
                 // handleInputGait gets honoured -- otherwise leaving WALK would strand it.
                 updateAutoGait();
@@ -294,9 +291,7 @@ class MotionService {
             case MOTION_STATE::WALK_NN: {
                 // The policy owns stride, lift, cadence and ride height; it was trained with the
                 // firmware's self-levelling active, so that term stays on here too.
-                body_state.phi = lerpf(body_state.phi, levelled(0.f, _peripherals->angleY()), smoothing_factor);
-                body_state.omega = lerpf(body_state.omega, levelled(0.f, _peripherals->angleX()), smoothing_factor);
-                body_state.psi = lerpf(body_state.psi, 0.f, smoothing_factor);
+                levelAttitude(body_state, 0.f, 0.f, _peripherals->angleX(), _peripherals->angleY());
                 if (!_policy.update(_peripherals, gait, body_state, msgAngles.angles)) return false;
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
@@ -317,12 +312,8 @@ class MotionService {
                 body_state.xm = lerpf(body_state.xm, target_body_state.xm, smoothing_factor);
                 body_state.ym = lerpf(body_state.ym, target_body_state.ym, smoothing_factor);
                 body_state.zm = lerpf(body_state.zm, target_body_state.zm, smoothing_factor);
-                body_state.phi =
-                    lerpf(body_state.phi, levelled(target_body_state.phi, _peripherals->angleY()), smoothing_factor);
-                body_state.omega = lerpf(body_state.omega, levelled(target_body_state.omega, _peripherals->angleX()),
-                                         smoothing_factor);
-                // Only ANIMATE sets yaw; ease back what a mode change mid-animation left behind.
-                body_state.psi = lerpf(body_state.psi, 0.f, smoothing_factor);
+                levelAttitude(body_state, target_body_state.phi, target_body_state.omega, _peripherals->angleX(),
+                              _peripherals->angleY());
                 // Before the ramp: it clears the 2 mm deadband in one tick, closing the window.
                 updateAutoGait();
                 approachGaitCommand(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
@@ -378,7 +369,7 @@ class MotionService {
     // Commands land here; gait_state eases toward it every tick (issue #7).
     gait_state_t target_gait_state = gait_state;
 
-    const float smoothing_factor = 0.06f;
+    static constexpr float smoothing_factor = BODY_SMOOTHING;
     // Ramp time constant for the locomotion command: ~0.45 s to settle. Slow enough that a slammed
     // stick does not jerk the stride, fast enough that the robot still feels directly driven.
     static constexpr float GAIT_COMMAND_TAU_S = 0.15f;
@@ -408,14 +399,6 @@ class MotionService {
     CommandMsg lastCommand{};
 
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
-
-    // Self-levelling adds the measured tilt to the commanded attitude. On a slope steeper than the
-    // body can lean, or with a tumbling IMU, the sum would ask the legs for a pose past the joint
-    // limits; it is held to the stick's own range instead.
-    static constexpr float BODY_TILT_LIMIT_RAD = 0.254f;
-    static float levelled(float commanded, float measured) {
-        return CLIP(commanded + measured, -BODY_TILT_LIMIT_RAD, BODY_TILT_LIMIT_RAD);
-    }
 
   public:
     // Lying on its belly with the legs limp or folded: still enough to calibrate the IMU against.

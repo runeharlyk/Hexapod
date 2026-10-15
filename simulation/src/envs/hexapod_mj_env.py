@@ -11,6 +11,10 @@ Control modes (action space):
   - "residual":   24-D = phase_gait (6) + per-leg foot XYZ residuals (18) added on top of the
                   gait before IK (spot_mini_mini "D2" style). Keeps the gait structure but adds
                   corrective freedom for balance / disturbance rejection / terrain. BC-init at 0 residual.
+  - "residual_pure" and "residual_gait" are the modes the robot runs (WALK_NN): they train through the
+                  firmware's own WALK_NN path (src/sim/firmware_policy.py), which builds the observation,
+                  filters and decodes the action, runs the gait and solves the joints, so what the policy
+                  learns on is the code it deploys onto.
 
 Observation (hardware-available ONLY -- open-loop servos have no encoders):
   a HISTORY of the fast sensor frame -- gravity vector in body frame (3) + gyro (3)
@@ -35,6 +39,7 @@ import gymnasium as gym
 import mujoco
 
 from src.sim.mj_runtime import HexapodSim, TERRAIN_MODEL_PATH
+from src.sim.firmware_policy import FirmwarePolicy, PolicyParams
 from src.sim.domain_rand import DomainRandomizer, Ranges
 from src.sim.terrain import randomize_hfield, KINDS as TERRAIN_KINDS
 from src.sim.rollout_weights import SCORE_W_STUCK, SCORE_W_KNOCK
@@ -60,6 +65,8 @@ from src.robot.firmware_gait import (
 # so it can make the duty LOWER and never higher.
 ACT_DIM = {"foot": 18, "phase_gait": 6, "residual": 24, "residual_pure": 18, "residual_gait": 24,
            "residual_sched": 27}
+# The modes the robot's PolicyRunner decodes; they run the firmware's WALK_NN path.
+FIRMWARE_MODES = ("residual_pure", "residual_gait")
 
 # --- action scaling (m unless noted) ---
 FOOT_XY_RANGE = 0.060
@@ -202,6 +209,44 @@ def analytic_gait_action(cmd):
                      step_angle, c["step_height"], b * 2 - 1, phase_rate], dtype=np.float32)
 
 
+class BaseGait:
+    """The open-loop gait the residual policies sit on top of, as the firmware takes it.
+
+    A run trained with `--gait-from <library>` sits on a searched `GaitSchedule`, not on the legacy
+    analytic map. Both produce the same six normalized gait actions from the same coefficient names.
+    A schedule pins the coordination pattern instead of blending tripod->bipod, which is expressed by
+    making both blend endpoints the schedule's own offsets and duty.
+    """
+
+    def __init__(self, schedule: "GaitSchedule | None"):
+        self.schedule = schedule
+        if schedule is None:
+            self.coef = GAIT_COEF
+            self.tri_offset, self.bi_offset = TRI_OFFSET, BI_OFFSET
+            self.tri_stand_frac, self.bi_stand_frac = TRI_STAND_FRAC, BI_STAND_FRAC
+            self.ride_mm = 0.0
+        else:
+            offsets = schedule.offsets()
+            self.coef = schedule.to_dict()
+            self.tri_offset = self.bi_offset = offsets
+            self.tri_stand_frac = self.bi_stand_frac = float(schedule.duty)
+            self.ride_mm = float(schedule.ride_mm)
+
+    @property
+    def name(self):
+        return "legacy analytic map (resources/gait_coef.json)" if self.schedule is None \
+            else "searched gait schedule from the run config"
+
+
+def firmware_policy_params(control_mode: str, obs_history: int, base: BaseGait) -> PolicyParams:
+    """The constants the robot's WALK_NN path runs this mode under; export_policy.py writes them into the header."""
+    floats = lambda values: tuple(float(v) for v in values)  # noqa: E731
+    return PolicyParams(ACT_DIM[control_mode], obs_history, HIST_STRIDE, ACTION_TAU, FOOT_RESIDUAL * 1000.0,
+                        PG_STEP_XY, PG_STEP_ANGLE, *PG_HEIGHT, *PG_PHASE_RATE, float(base.coef["step_depth"]),
+                        BODY_ZM_MM, base.ride_mm, floats(GAIT_DELTA_GAIN), floats(base.tri_offset),
+                        floats(base.bi_offset), float(base.tri_stand_frac), float(base.bi_stand_frac))
+
+
 def _quat_to_rpy(q):
     w, x, y, z = q
     roll = np.arctan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
@@ -280,6 +325,13 @@ class HexapodMjEnv(gym.Env):
         self._cmd_buffer: deque = deque(maxlen=8)
 
         self.act_dim = ACT_DIM[control_mode]
+        self.firmware = None
+        if control_mode in FIRMWARE_MODES:
+            if self.obs_contact or self.reflex or self.arc_stance or not self.self_level:
+                raise ValueError(f"{control_mode} trains on the robot's WALK_NN path, which has no foot contacts, "
+                                 "reflexes or arc stance, and always self-levels")
+            self.firmware = FirmwarePolicy(firmware_policy_params(control_mode, self.obs_history,
+                                                                  BaseGait(gait_schedule)))
         self.action_space = gym.spaces.Box(-1.0, 1.0, shape=(self.act_dim,), dtype=np.float32)
 
         self.prev_action = np.zeros(self.act_dim, dtype=np.float32)
@@ -365,6 +417,9 @@ class HexapodMjEnv(gym.Env):
         self._contact_buffer.clear()
         self._update_contact_sensor()
         self._hist.clear()
+        if self.firmware is not None:
+            self.firmware.reset()
+            self.firmware.set_command(*self.cmd)
         return self._get_obs(), {}
 
     def set_curriculum(self, level):
@@ -396,16 +451,23 @@ class HexapodMjEnv(gym.Env):
             self.cmd[0] = r.uniform(CMD_VX[0] * L * v, CMD_VX[1] * v)
             self.cmd[1] = r.uniform(CMD_VY[0] * L * v, CMD_VY[1] * L * v)
             self.cmd[2] = r.uniform(CMD_YAW[0] * L, CMD_YAW[1] * L)
+        if self.firmware is not None:
+            self.firmware.set_command(*self.cmd)
 
     # ------------------------------------------------------------------ step
     def step(self, action):
-        raw = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
-        # exponential output filter: raw NN chatter doesn't transfer to hardware
-        self.filt_action = (self.action_alpha * self.filt_action
-                            + (1.0 - self.action_alpha) * raw).astype(np.float32)
-        action = self.filt_action
-        self._cur_action = action
-        joint_cmd = self._action_to_joints(action)
+        if self.firmware is not None:
+            # The robot's path clips and filters the action itself.
+            joint_cmd = self._firmware_joints(action)
+            action = self._cur_action = self.firmware.applied_action()
+        else:
+            raw = np.clip(np.asarray(action, dtype=np.float32), -1.0, 1.0)
+            # exponential output filter: raw NN chatter doesn't transfer to hardware
+            self.filt_action = (self.action_alpha * self.filt_action
+                                + (1.0 - self.action_alpha) * raw).astype(np.float32)
+            action = self.filt_action
+            self._cur_action = action
+            joint_cmd = self._action_to_joints(action)
 
         # action latency (DR): apply a delayed command to the servos
         self._cmd_buffer.append(joint_cmd)
@@ -448,21 +510,6 @@ class HexapodMjEnv(gym.Env):
             self.body.feet = feet
             # advance a clock for the observation (periodicity prior)
             self.gait_phase = (self.gait_phase + self.dt * 1.0) % 1.0
-        elif self.control_mode == "residual_pure":
-            # analytic gait params from the command (like the firmware); policy is PURE residuals.
-            self._apply_gait_params(self._base_gait_action())
-            self._add_foot_residual(action)
-        elif self.control_mode == "residual_gait":
-            a = self._base_gait_action().copy()
-            g = GAIT_DELTA_GAIN
-            a[0] = np.clip(a[0] + g[0] * action[0], -1.0, 1.0)  # step_x = body-X = LATERAL stride
-            a[1] = np.clip(a[1] + g[1] * action[1], -1.0, 1.0)  # step_y = body-Y = FORWARD stride
-            a[3] = np.clip(a[3] + g[2] * action[2], -1.0, 1.0)  # step_height
-            a[4] = np.clip(a[4] + g[3] * action[3], -1.0, 1.0)  # tripod(0)<->bipod(1) blend
-            a[5] = np.clip(a[5] + g[4] * action[4], -1.0, 1.0)  # phase_rate
-            self._zm_delta = float(action[5]) * BODY_ZM_MM  # + = taller / more clearance
-            self._apply_gait_params(a)
-            self._add_foot_residual(action[6:24])
         elif self.control_mode == "residual_sched":
             a = self._base_gait_action().copy()
             g = GAIT_DELTA_GAIN
@@ -482,6 +529,17 @@ class HexapodMjEnv(gym.Env):
             if self.control_mode == "residual":
                 self._add_foot_residual(action[6:24])
         return self.sim.body_targets_from_feet(self.body)
+
+    def _firmware_joints(self, action):
+        joints = self.firmware.act(action, self._base_gait_action())
+        state = self.firmware.state()
+        self.gait_blend = state["blend"]
+        self.applied_step_height = state["step_height_mm"]
+        self.applied_cadence = state["cadence"]
+        self.applied_duty = state["duty"]
+        self.gait_phase = state["phase"]
+        self.body.zm = state["body_zm"]
+        return joints
 
     def _residual_part(self, action):
         """Foot-residual slice of the action (empty for modes without residuals)."""
@@ -606,6 +664,10 @@ class HexapodMjEnv(gym.Env):
         rpy = _quat_to_rpy(q)
         if self.randomize:
             grav, gyro, rpy = self.dr.noisy_imu(grav, gyro, rpy, self.np_random_)
+        if self.firmware is not None:
+            # The IMU as the virtual robot models it (firmware_loop.imu_reading): MuJoCo's roll, pitch and yaw, and
+            # world up in the body frame.
+            return self.firmware.observe(-np.asarray(grav), gyro, rpy, self.dt)
         frame = np.concatenate([grav, gyro, self._contact_sensed]) if self.obs_contact \
             else np.concatenate([grav, gyro])
         if not self._hist:

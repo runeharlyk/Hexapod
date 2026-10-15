@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from src.envs.hexapod_mj_env import HexapodMjEnv
+from src.envs.hexapod_mj_env import ACT_DIM, HexapodMjEnv
 from src.sim.mj_runtime import CONTROL_DT
 
 # (label, (vx, vy, yaw)); forward dominates -- that is where terrain actually bites
@@ -174,9 +174,11 @@ def episode(predict, cfg, kind, height, cmd, seed, randomize, steps, reflex=Fals
     return m
 
 
-ZERO_CFG = {"control_mode": "residual_gait", "obs_contact": False, "obs_history": 1}
+# The open-loop base gait: residual_sched's zero action, on the simulation's gait engine, which also carries the
+# research features (contact reflexes, arc stance) the robot's WALK_NN path does not have.
+ZERO_CFG = {"control_mode": "residual_sched", "obs_contact": False, "obs_history": 1}
 
 
-def zero_predict(act_dim=24):
+def zero_predict(act_dim=ACT_DIM[ZERO_CFG["control_mode"]]):
     z = np.zeros(act_dim, dtype=np.float32)
     return lambda _o: z
