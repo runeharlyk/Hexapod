@@ -66,7 +66,16 @@ The fixture records the mapping as it stands, so right strafe is the stick `lx =
 
 Floor confirmation: not yet performed.
 The convention above is derived from the code, and the MuJoCo model agrees by construction: `simulation/src/resources/build_model.py` places leg 0 at +x +y in MuJoCo's right-handed, z-up world.
-Nothing yet shows that the physical robot's leg 0 is its right front leg, that `step_x > 0` strafes it right, or that `step_angle > 0` turns it counter-clockwise.
+A bench check on 2026-10-16 found the robot built as the mirror image of that convention: lifting its left side made legs 0-2 tuck, and lifting its front made legs 0 and 3 tuck.
+Its servos 0-8 were wired to the board at 0x40, the left side.
+Servos 0-8 now drive the board at 0x41, the right side, with every coxa direction reversed (`servo_controller.h`, `servo_factory.h`; `firmware/test/test_servo_map`).
+Nothing yet shows on the floor that `step_x > 0` strafes the robot right or that `step_angle > 0` turns it counter-clockwise.
+
+## IMU angles
+
+The MPU6050 DMP's roll agrees with the body frame, while its pitch and yaw are mirrored (`firmware/include/imu_frame.h`); its gravity vector and gyro agree.
+Measured on the robot on 2026-10-16: right side down 17.7 deg read pitch -17.7 deg and world up (-0.30, 0, 0.95), nose down 12 deg read roll -12.0 deg, and a counter-clockwise turn read a falling yaw with a positive gyro z.
+Self-levelling and the policy's observation turn the DMP's angles into the body frame with those signs, and the simulations feed the firmware the DMP's angles, not their own.
 
 ## Compass heading
 

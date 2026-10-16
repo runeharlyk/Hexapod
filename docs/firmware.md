@@ -104,7 +104,7 @@ The mode is a `MOTION_STATE`: `DEACTIVATED`, `IDLE`, `POSE`, `STAND`, `WALK`, `W
 - `ANIMATE` plays a clip or a streamed puppeteer pose through `AnimationRunner`.
 
 Each tick in a stepping mode follows the same order: the body state eases toward its target, the gait command ramps toward the commanded one (`approachGaitCommand`), `GaitController::step` advances the phase and writes the six foot targets (Bezier swing, sinusoidal stance), and `Kinematics::inverseKinematics` turns body pose and feet into 18 joint angles.
-The IMU's roll and pitch are added to the commanded tilt (self-levelling), clamped to the stick's own tilt range.
+The IMU's roll and pitch, turned into the body frame (`include/imu_frame.h`), are added to the commanded tilt (self-levelling), clamped to the stick's own tilt range.
 `ServoController::setAngles` converts angles to PWM with the per-servo calibration, holds a servo on a non-finite command, clamps to joint travel and logs saturation per joint type.
 
 Commands arrive asynchronously and only set targets.
@@ -128,7 +128,7 @@ The gait and kinematics math has two mirrors outside the firmware.
 The control task reads the IMU every 25 ms and publishes roll, pitch, yaw and compass heading together as one `IMUAnglesMsg`.
 The bus takes its lock with a bounded wait, so a busy bus fails a transfer instead of stalling the 5 ms loop, and an I2C scan from the service side locks per address for the same reason.
 Bus pins and frequency come from the persisted peripheral settings and are applied at boot only: re-opening a live bus would invalidate every device handle.
-The two PCA9685 servo boards (addresses 0x40 and 0x41) sit on the same bus.
+The two PCA9685 servo boards sit on the same bus: 0x41 drives the right legs (servos 0-8) and 0x40 the left (servos 9-17).
 IMU calibration offsets are measured on request while the robot rests, persisted by `ImuCalibrationService`, and written to the chip at boot because it forgets them at power-off.
 
 ### I2C errors and recovery
