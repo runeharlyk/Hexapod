@@ -1,5 +1,4 @@
-"""The Robot facade and its motions on a scripted backend: a virtual clock that integrates the commanded velocity
-through the firmware's command ramp."""
+"""The Robot facade and its motions on a scripted backend: a virtual clock that integrates the commanded velocity."""
 import math
 from collections import deque
 
@@ -8,17 +7,12 @@ import pytest
 from src.hexapod import Gait, Mode, Robot, RobotError, RobotTimeout, Velocity
 from src.hexapod import motions
 from src.hexapod.backends.base import ZERO, RobotState
-from src.robot.firmware_gait import GAIT_COMMAND_TAU_S
 
 DT = 0.01
 
 
 class ScriptedBackend:
-    """Integrates the commanded REP-103 velocity into a pose while walking, ramped like the firmware's gait command
-    (GaitCommandRamp: a start eases the stride first order with GAIT_COMMAND_TAU_S at the commanded cadence, so the body
-    moves at the last non-zero command times the ramp; a stop eases the stride out through two such stages and slows
-    the cadence with it, so the body moves at the square of the ramp over its value at the stop), optionally with a yaw
-    that arrives late,
+    """Integrates the commanded REP-103 velocity into a pose while walking, optionally with a yaw that arrives late,
     a gait that turns slower than commanded, a yaw that drifts by `stop_drifts` (degrees, in the turn's direction, one
     per stop of a turn) while the feet settle, a dead-man stop at `drop_at`, a mode switched from elsewhere and no IMU;
     records every command."""
@@ -34,10 +28,6 @@ class ScriptedBackend:
         self.gait = Gait.TRI_GATE
         self.velocity = ZERO
         self._turning = 0.0  # the yaw rate of the turn a stop would end, until a stop takes its drift
-        self._heading = ZERO  # the last non-zero command, which the ramp scales up and, after a stop, back down
-        self._ramp = 0.0
-        self._stage = None  # the stop's first stage, and the ramp the stop started from
-        self._stopped_from = 0.0
         self.log = []  # (t, what, value) for every command, in order
         self.closed = False
         self._seen = deque([yaw] * (round(yaw_lag_s / DT) + 1))
@@ -66,15 +56,15 @@ class ScriptedBackend:
 
     def set_velocity(self, v):
         clamp = lambda value, limit: max(-limit, min(limit, value))
-        self.velocity = Velocity(clamp(v.vx, self.top.vx), clamp(v.vy, self.top.vy), clamp(v.yaw_rate, self.top.yaw_rate))
+        self.velocity = Velocity(
+            clamp(v.vx, self.top.vx), clamp(v.vy, self.top.vy), clamp(v.yaw_rate, self.top.yaw_rate)
+        )
         self.log.append((self.t, "velocity", self.velocity))
         if self.velocity.yaw_rate:
             self._turning = self.velocity.yaw_rate
         elif self.velocity == ZERO and self._turning and self.stop_drifts and self.mode is Mode.WALK:
             self.yaw += math.copysign(self.stop_drifts.pop(0), self._turning)
             self._turning = 0.0
-        if self.velocity != ZERO:
-            self._heading = self.velocity
         return self.velocity
 
     def state(self):
@@ -91,29 +81,11 @@ class ScriptedBackend:
             self._advance(dt)
 
     def _advance(self, dt):
-        walking = self.mode is Mode.WALK
-        tau, decay = GAIT_COMMAND_TAU_S, math.exp(-dt / GAIT_COMMAND_TAU_S)
-        if walking and self.velocity != ZERO:
-            # r(t) = 1 + (r0 - 1) e^(-t/tau); travel is the exact integral of r.
-            travel_s = dt + (self._ramp - 1) * tau * (1 - decay)
-            self._ramp = 1 + (self._ramp - 1) * decay
-            self._stage = None
-        else:
-            if self._stage is None:
-                self._stage, self._stopped_from = self._ramp, self._ramp
-            # The stage q = b e^(-x) and the ramp r = (a + b x) e^(-x), x = t / tau; travel is the exact integral of
-            # r^2 / r(stop), from the antiderivative -e^(-2x) ((a + bx)^2 / 2 + b (a + bx) / 2 + b^2 / 4).
-            a, b, x = self._ramp, self._stage, dt / tau
-            antiderivative = lambda r: r * r / 2 + b * r / 2 + b * b / 4
-            travel_s = 0.0
-            if self._stopped_from > 0.0:
-                travel_s = tau * (antiderivative(a) - decay * decay * antiderivative(a + b * x)) / self._stopped_from
-            self._ramp, self._stage = (a + b * x) * decay, b * decay
-        v = self._heading if walking else ZERO
+        v = self.velocity if self.mode is Mode.WALK else ZERO
         heading = math.radians(self.yaw)
-        self.x += (v.vx * math.cos(heading) - v.vy * math.sin(heading)) * travel_s
-        self.y += (v.vx * math.sin(heading) + v.vy * math.cos(heading)) * travel_s
-        self.yaw += math.degrees(v.yaw_rate * self.turn_scale) * travel_s
+        self.x += (v.vx * math.cos(heading) - v.vy * math.sin(heading)) * dt
+        self.y += (v.vx * math.sin(heading) + v.vy * math.cos(heading)) * dt
+        self.yaw += math.degrees(v.yaw_rate * self.turn_scale) * dt
         if self.drop_at is not None and self.t < self.drop_at <= self.t + dt:
             self.link_drops += 1
         if self.switch_at is not None and self.t < self.switch_at[0] <= self.t + dt:
@@ -182,7 +154,7 @@ def test_a_move_runs_half_the_top_speed_for_its_distance():
     robot.move_forward(0.6)
     (start, _, v), (end, _, stop) = [entry for entry in backend.log if entry[1] == "velocity"][-2:]
     assert v == Velocity(0.15, 0, 0) and stop == ZERO
-    assert end - start == pytest.approx(4.0 + motions.RAMP_LAG_S)
+    assert end - start == pytest.approx(0.6 / 0.15)
     assert (backend.x, backend.y) == pytest.approx((0.6, 0.0), abs=1e-3)
 
 
@@ -210,6 +182,13 @@ def test_a_lagging_turn_slows_down_and_lands_on_target():
     start = backend.yaw
     robot.rotate(-90)
     assert backend.yaw - start == pytest.approx(-90, abs=3)
+
+
+# A pass that stopped at the edge of the tolerance would leave the settle drift free to push the yaw out of it.
+def test_a_turn_pass_runs_on_to_the_target_not_to_the_edge_of_the_tolerance():
+    robot, backend = _robot(mode=Mode.STAND)
+    robot.rotate(90)
+    assert backend.yaw == pytest.approx(90, abs=1.0)
 
 
 def test_a_turn_whose_stop_lands_off_target_is_corrected_once_settled():

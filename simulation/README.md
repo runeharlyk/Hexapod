@@ -281,6 +281,10 @@ The API speaks REP-103 (x forward, y left, yaw counter-clockwise); the backends 
 `Robot("simulation", viewer=True)` opens the MuJoCo viewer and runs in real time; the simulation backend runs `src/sim/firmware_loop.py`, the firmware's STAND/WALK tick that `replay_gait.py` also uses.
 The firmware takes sticks, not velocities, so `src/resources/speed_model.json` holds the body velocity each stick produces, measured per gait in the simulation, at stride 0, by `uv run python measure_speed_model.py`; `test_speed_model.py` fails when it no longer matches the simulation.
 It is the simulated robot's speed: check a distance on the floor before trusting it on the real one.
+A timed move holds its command for distance / speed and the gait phase its stop lands on scatters it by about 1 cm, so from a settled stand a move of 0.3 m or more lands within 4 % of the request, except TUNED forward (8 % short at 0.3 m, 5.5 % at 0.5 m).
+A move of 0.1 m lands between 19 % short (TUNED forward) and 13 % long (RIPPLE sideways), measured per gait forward and to both sides.
+The first move sent the moment `stand()` returns starts about 0.3 s late while the walk takes its posture, so it ends 0.02 to 0.045 m short at any distance.
+A per-gait distance offset is future work.
 On the real robot the input is re-sent every 200 ms inside the firmware's 600 ms dead-man, and a timed move raises if the link may have stalled past that or someone switched the robot out of WALK.
 Leaving the `with` block, also on an exception or Ctrl-C, stops the robot, lowers it onto its belly and switches the servos off.
 
