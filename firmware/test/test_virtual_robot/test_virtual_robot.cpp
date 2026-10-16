@@ -739,7 +739,7 @@ const char *stopName(Stop stop) {
 struct StopRun {
     float walkPeak = 0.0f; // the largest joint step in a tick of the steady walk
     HeldRun stop;          // the stop, from its first tick until the feet are home
-    bool cadenceHeld = true;
+    bool onSpeedLaw = true;   // the cadence kept in proportion to the stroke, as a slower command's
     bool cadenceLeft = false; // the gait stopped stepping with an explicit cadence still set
 };
 
@@ -767,7 +767,14 @@ StopRun walkThenStop(GaitType gait, const CommandMsg &stick, Stop stop, int phas
         robot.command(after);
         robot.setMode(MOTION_STATE::STAND);
     }
-    const float walkedCadence = robot.gaitState().phase_rate;
+    const gait_state_t walked = robot.gaitState();
+    // The stroke along the axis the walk drove furthest past its deadband.
+    const auto stroke = [&walked](const gait_state_t &g) {
+        const float x = std::fabs(walked.step_x) / GAIT_STRIDE_DEADBAND_MM;
+        const float y = std::fabs(walked.step_y) / GAIT_STRIDE_DEADBAND_MM;
+        const float yaw = std::fabs(walked.step_angle) / GAIT_YAW_DEADBAND_RAD;
+        return std::fabs(x >= y && x >= yaw ? g.step_x : y >= yaw ? g.step_y : g.step_angle);
+    };
     const float zm = robot.bodyCommand().zm;
     float previous[18];
     std::copy_n(robot.angles(), 18, previous);
@@ -784,7 +791,8 @@ StopRun walkThenStop(GaitType gait, const CommandMsg &stick, Stop stop, int phas
         }
         const gait_state_t &live = robot.gaitState();
         if (gaitIsCommanded(live)) {
-            run.cadenceHeld &= live.phase_rate == walkedCadence;
+            run.onSpeedLaw &= std::fabs(live.phase_rate * stroke(walked) - walked.phase_rate * stroke(live)) <=
+                              1e-4f * walked.phase_rate * stroke(walked);
         } else {
             run.cadenceLeft |= still == 0 && live.phase_rate != 0.0f;
             ++still;
@@ -797,17 +805,18 @@ StopRun walkThenStop(GaitType gait, const CommandMsg &stick, Stop stop, int phas
 
 // A stop ramps the stroke out over several cycles. Stepped at the stride law's cadence, up to 1.5 cycles/s, that stroke
 // moved a joint up to 10.4 deg in a tick, where WAVE and RIPPLE walk theirs below 1 cycle/s. At the walk's own cadence
-// a stroke shrinking at its fastest from the first tick still moved a foot at the edge of its reach up to 6.7 deg in a
-// tick, depending on where in the cycle the stop came; eased out from rest it moves the joints no faster than the walk.
-// Every way a classic walk stops is checked, at a slow and a fast stick, in postures from neutral to the envelope's
-// edges, a release at twelve points of the cycle, and no stop may move a joint faster than STOP_STEP_BOUND_DEG, leave
-// travel, or leave a cadence set once the gait has stopped.
-void test_every_stop_ramps_down_at_the_walks_cadence() {
-    // The steady walks below peak at 3.91 deg in a tick (measured), just past the servo's 3.75 deg (13.1 rad/s over 5
-    // ms), and their stops at 3.95 deg.
+// a stroke shrinking at its fastest from the first tick moved a foot at the edge of its reach up to 6.7 deg in a tick,
+// depending on where in the cycle the stop came, and a stroke near zero lifted the feet as fast as the walk did, up to
+// 4.5 deg. Eased out from rest, with the cadence shrinking alongside, a stop passes only through walks a slower command
+// would take. Every way a classic walk stops is checked, at a slow and a fast stick, in postures from neutral to the
+// envelope's edges, a release at eight points of the cycle, and no stop may move a joint faster than
+// STOP_STEP_BOUND_DEG, leave travel, leave the speed law, or leave a cadence set once the gait has stopped.
+void test_every_stop_ramps_down_on_the_speed_law() {
+    // The steady walks below peak at 3.95 deg in a tick (measured), just past the servo's 3.75 deg (13.1 rad/s over 5
+    // ms), and their stops at 3.96 deg.
     constexpr float STOP_STEP_BOUND_DEG = 4.0f;
-    constexpr int PHASES = 12, PHASE_STEP_TICKS = 7; // 0.42 s, most of a fast gait's cycle
-    const Posture3 postures[] = {{0, 0, 0}, {1, -1, 0}, {1, -1, -1}, {-1, -1, 0}};
+    constexpr int PHASES = 8, PHASE_STEP_TICKS = 7; // 0.28 s, half a fast gait's cycle
+    const Posture3 postures[] = {{0, 0, 0}, {1, -1, 0}, {1, -1, -1}, {-1, -1, 0}, {1, 0.5f, 0.5f}, {1, 1, 1}};
     float walkPeak = 0.0f, stopPeak = 0.0f;
     for (const GaitType gait : CLASSIC_GAITS) {
         for (Posture3 posture : postures) {
@@ -831,7 +840,7 @@ void test_every_stop_ramps_down_at_the_walks_cadence() {
                                       posture.h, posture.fd, run.walkPeak, run.stop.largestStep, run.stop.clamped);
                         TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(STOP_STEP_BOUND_DEG, run.stop.largestStep, msg);
                         TEST_ASSERT_EQUAL_INT_MESSAGE(0, run.stop.clamped, msg);
-                        TEST_ASSERT_TRUE_MESSAGE(run.cadenceHeld, msg);
+                        TEST_ASSERT_TRUE_MESSAGE(run.onSpeedLaw, msg);
                         TEST_ASSERT_FALSE_MESSAGE(run.cadenceLeft, msg);
                     }
                 }
@@ -964,7 +973,7 @@ int main(int, char **) {
     RUN_TEST(test_a_walk_from_a_stand_at_rest_steps_at_once);
     RUN_TEST(test_a_walk_from_a_stand_at_rest_settles_a_new_posture_first);
     RUN_TEST(test_a_tuned_walk_after_the_stand_spends_its_rest_posture);
-    RUN_TEST(test_every_stop_ramps_down_at_the_walks_cadence);
+    RUN_TEST(test_every_stop_ramps_down_on_the_speed_law);
     RUN_TEST(test_a_dead_man_stop_takes_the_neutral_posture_once_stopped);
     RUN_TEST(test_a_dead_man_stop_in_a_stand_waits_for_the_feet);
     return UNITY_END();

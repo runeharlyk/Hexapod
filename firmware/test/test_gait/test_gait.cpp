@@ -874,9 +874,9 @@ void test_released_command_stops_the_cycle() {
     }
 }
 
-// A stop leaves the walk's stroke at rest and eases it out at the walk's cadence: a first-order ramp left it at its
-// fastest rate on the stop's first tick. Any other change, a walk starting, still eases first order.
-void test_a_stop_leaves_the_stroke_at_rest_at_the_walks_cadence() {
+// A stop starts the walk's stroke from rest, where a first-order ramp moved it at its fastest on the first tick, and
+// shrinks the cadence with the stroke, as a slower command would. Any other change, a walk starting, eases first order.
+void test_a_stop_eases_the_stroke_out_on_the_speed_law() {
     const float a = 1.0f - std::exp(-DT / 0.15f);
     gait_state_t walking = makeGait(GaitType::TRI_GATE, 0, 60.0f, 0);
     walking.phase_rate = 0.8f;
@@ -899,7 +899,7 @@ void test_a_stop_leaves_the_stroke_at_rest_at_the_walks_cadence() {
         ++ticks;
         fastest = std::max(fastest, previous - live.step_y);
         previous = live.step_y;
-        TEST_ASSERT_EQUAL_FLOAT(gaitIsCommanded(live) ? 0.8f : 0.0f, live.phase_rate);
+        TEST_ASSERT_FLOAT_WITHIN(1e-6f, gaitIsCommanded(live) ? 0.8f * live.step_y / 60.0f : 0.0f, live.phase_rate);
     }
     // Two stages in a row peak at 1/e of a single stage's first step.
     TEST_ASSERT_FLOAT_WITHIN(0.02f * 60.0f * a, 60.0f * a / std::exp(1.0f), fastest);
@@ -1309,7 +1309,7 @@ int main(int, char **) {
     RUN_TEST(test_command_ramp_lands_exactly_on_a_released_command);
     RUN_TEST(test_collapsed_ramp_takes_the_command_outright);
     RUN_TEST(test_released_command_stops_the_cycle);
-    RUN_TEST(test_a_stop_leaves_the_stroke_at_rest_at_the_walks_cadence);
+    RUN_TEST(test_a_stop_eases_the_stroke_out_on_the_speed_law);
     RUN_TEST(test_yaw_below_deadband_does_not_start_the_cycle);
     RUN_TEST(test_yaw_above_deadband_still_steps);
     RUN_TEST(test_stance_change_walks_the_feet_to_the_new_target);

@@ -85,37 +85,61 @@ inline void approachGaitCommand(gait_state_t& current, const gait_state_t& targe
     current.step_depth = approachf(current.step_depth, target.step_depth, a, GAIT_SNAP_DEPTH);
     // phase_rate 0 means "derive cadence from stride", not "stand still", so ramping across that
     // boundary would spend the whole transition at cadences neither law asks for. Ease only between
-    // two explicit rates; otherwise switch outright. A stop is the exception: its stroke ramps out over
-    // cycles, and the stride law steps it at up to 1.5 cycles/s, faster than a slow gait walked it, so the
-    // walk's own cadence holds until the stroke has left the deadband.
-    const bool stopping = target.phase_rate <= 0.0f && !gaitIsCommanded(target) && gaitIsCommanded(current);
-    if (current.phase_rate > 0.0f && target.phase_rate > 0.0f)
-        current.phase_rate = approachf(current.phase_rate, target.phase_rate, a, GAIT_SNAP_RATE);
-    else if (!stopping)
-        current.phase_rate = target.phase_rate;
+    // two explicit rates; otherwise switch outright.
+    current.phase_rate = (current.phase_rate > 0.0f && target.phase_rate > 0.0f)
+                             ? approachf(current.phase_rate, target.phase_rate, a, GAIT_SNAP_RATE)
+                             : target.phase_rate;
 }
 
-// The command ramp the walk eases through. A change eases first order over tau, except a stop, whose stroke eases out
-// through two such stages in a row. A single stage leaves the walk's stroke at its fastest rate, and a foot at the edge
-// of its reach, where the joints turn furthest per millimetre, then moved up to 1.8 times as fast as in the walk; two
-// stages leave it at rest. The stop steps at the walk's cadence throughout (approachGaitCommand).
+// The command ramp the walk eases through. A change eases first order over tau, except a stop, which starts from the
+// walk as it is and leaves it the way the speed law (gait_speed.h) would slow it:
+// - Its stroke eases out through two first-order stages in a row. A single stage moves the stroke at its fastest from
+//   the first tick, and a foot at the edge of its reach, where the joints turn furthest per millimetre, then moved up
+//   to 1.8 times as fast as in the walk; two stages start it from rest.
+// - Its cadence shrinks in proportion to the stroke, as the speed law's does. The stride law (phase_rate 0) stepped the
+//   shrinking stroke at up to 1.5 cycles/s, faster than a slow gait walked it, and the walk's own cadence lifts the
+//   feet as fast over a stroke near zero, a pace the envelope never measured.
+// A walk on the stride law keeps it through the stop.
 class GaitCommandRamp {
   public:
     void step(gait_state_t& live, const gait_state_t& target, float dt, float tau) {
-        const gait_state_t previous = stage;
-        stage = target;
-        if (target.phase_rate <= 0.0f && !gaitIsCommanded(target) && gaitIsCommanded(live)) {
-            const float a = (tau <= 0.0f || dt <= 0.0f) ? 1.0f : 1.0f - expf(-dt / tau);
-            stage.step_x = approachf(previous.step_x, target.step_x, a, GAIT_SNAP_MM);
-            stage.step_y = approachf(previous.step_y, target.step_y, a, GAIT_SNAP_MM);
-            stage.step_angle = approachf(previous.step_angle, target.step_angle, a, GAIT_SNAP_RAD);
-            if (gaitIsCommanded(stage)) stage.phase_rate = live.phase_rate;
+        if (target.phase_rate > 0.0f || gaitIsCommanded(target) || !gaitIsCommanded(live)) {
+            stopping = false;
+            approachGaitCommand(live, target, dt, tau);
+            return;
         }
-        approachGaitCommand(live, stage, dt, tau);
+        if (!stopping) {
+            stopping = true;
+            from = live;
+            stage = live;
+        }
+        const float a = (tau <= 0.0f || dt <= 0.0f) ? 1.0f : 1.0f - expf(-dt / tau);
+        stage.step_x = approachf(stage.step_x, target.step_x, a, GAIT_SNAP_MM);
+        stage.step_y = approachf(stage.step_y, target.step_y, a, GAIT_SNAP_MM);
+        stage.step_angle = approachf(stage.step_angle, target.step_angle, a, GAIT_SNAP_RAD);
+        gait_state_t eased = target;
+        eased.step_x = stage.step_x;
+        eased.step_y = stage.step_y;
+        eased.step_angle = stage.step_angle;
+        approachGaitCommand(live, eased, dt, tau);
+        live.phase_rate = gaitIsCommanded(live) ? from.phase_rate * strokeLeft(live) : 0.0f;
     }
 
   private:
-    gait_state_t stage {};
+    // The share of the stop's starting stroke left, along the axis that started furthest past its deadband: both stages
+    // ease every axis alike.
+    float strokeLeft(const gait_state_t& g) const {
+        const float x = std::fabs(from.step_x) / GAIT_STRIDE_DEADBAND_MM,
+                    y = std::fabs(from.step_y) / GAIT_STRIDE_DEADBAND_MM,
+                    yaw = std::fabs(from.step_angle) / GAIT_YAW_DEADBAND_RAD;
+        if (x >= y && x >= yaw) return std::fabs(g.step_x / from.step_x);
+        if (y >= yaw) return std::fabs(g.step_y / from.step_y);
+        return std::fabs(g.step_angle / from.step_angle);
+    }
+
+    bool stopping = false;
+    gait_state_t from {};  // the walk the stop started from
+    gait_state_t stage {}; // the first of the stroke's two stages
 };
 
 class GaitController {

@@ -452,33 +452,51 @@ def approach_gait_command(current: GaitState, target: GaitState, dt: float,
     current.step_speed = _approach(current.step_speed, target.step_speed, a, GAIT_SNAP_RATE)
     current.step_height = _approach(current.step_height, target.step_height, a, GAIT_SNAP_MM)
     current.step_depth = _approach(current.step_depth, target.step_depth, a, GAIT_SNAP_DEPTH)
-    # 0 means "derive cadence from stride", so only two explicit rates are eased between. A stop ramps its stroke out
-    # at the walk's own cadence instead, until the stroke has left the deadband.
-    stopping = target.phase_rate <= 0.0 and not gait_is_commanded(target) and gait_is_commanded(current)
+    # 0 means "derive cadence from stride", so only two explicit rates are eased between.
     if current.phase_rate > 0.0 and target.phase_rate > 0.0:
         current.phase_rate = _approach(current.phase_rate, target.phase_rate, a, GAIT_SNAP_RATE)
-    elif not stopping:
+    else:
         current.phase_rate = target.phase_rate
 
 
 class GaitCommandRamp:
-    """Port of GaitCommandRamp (gait.h): every change eases first order, except a stop, whose stroke eases out through
-    two stages in a row so that it leaves the walk's stroke at rest, at the walk's cadence."""
+    """Port of GaitCommandRamp (gait.h): every change eases first order, except a stop, which starts from the walk as
+    it is, eases the stroke out through two first-order stages and shrinks the cadence in proportion to the stroke, as
+    the speed law slows a walk. A walk on the stride law (phase_rate 0) keeps it."""
 
     def __init__(self):
+        self._stopping = False
+        self._from = GaitState()
         self._stage = GaitState()
 
     def step(self, live: GaitState, target: GaitState, dt: float, tau: float = GAIT_COMMAND_TAU_S) -> None:
-        previous = self._stage
-        self._stage = copy.deepcopy(target)
-        if target.phase_rate <= 0.0 and not gait_is_commanded(target) and gait_is_commanded(live):
-            a = 1.0 if tau <= 0.0 or dt <= 0.0 else 1.0 - math.exp(-dt / tau)
-            self._stage.step_x = _approach(previous.step_x, target.step_x, a, GAIT_SNAP_MM)
-            self._stage.step_y = _approach(previous.step_y, target.step_y, a, GAIT_SNAP_MM)
-            self._stage.step_angle = _approach(previous.step_angle, target.step_angle, a, GAIT_SNAP_RAD)
-            if gait_is_commanded(self._stage):
-                self._stage.phase_rate = live.phase_rate
-        approach_gait_command(live, self._stage, dt, tau)
+        if target.phase_rate > 0.0 or gait_is_commanded(target) or not gait_is_commanded(live):
+            self._stopping = False
+            approach_gait_command(live, target, dt, tau)
+            return
+        if not self._stopping:
+            self._stopping = True
+            self._from = copy.deepcopy(live)
+            self._stage = copy.deepcopy(live)
+        a = 1.0 if tau <= 0.0 or dt <= 0.0 else 1.0 - math.exp(-dt / tau)
+        self._stage.step_x = _approach(self._stage.step_x, target.step_x, a, GAIT_SNAP_MM)
+        self._stage.step_y = _approach(self._stage.step_y, target.step_y, a, GAIT_SNAP_MM)
+        self._stage.step_angle = _approach(self._stage.step_angle, target.step_angle, a, GAIT_SNAP_RAD)
+        eased = copy.deepcopy(target)
+        eased.step_x, eased.step_y, eased.step_angle = self._stage.step_x, self._stage.step_y, self._stage.step_angle
+        approach_gait_command(live, eased, dt, tau)
+        live.phase_rate = self._from.phase_rate * self._stroke_left(live) if gait_is_commanded(live) else 0.0
+
+    def _stroke_left(self, g: GaitState) -> float:
+        """The share of the stop's starting stroke left, along the axis that started furthest past its deadband."""
+        f = self._from
+        x, y = abs(f.step_x) / STRIDE_DEADBAND_MM, abs(f.step_y) / STRIDE_DEADBAND_MM
+        yaw = abs(f.step_angle) / YAW_DEADBAND_RAD
+        if x >= y and x >= yaw:
+            return abs(g.step_x / f.step_x)
+        if y >= yaw:
+            return abs(g.step_y / f.step_y)
+        return abs(g.step_angle / f.step_angle)
 
 
 def select_auto_gait(speed01: float, current: int) -> int:

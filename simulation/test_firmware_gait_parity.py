@@ -500,24 +500,10 @@ def test_command_ramp_switches_cadence_mode_outright():
     assert 1.0 < between.phase_rate < 1.2, "between two explicit rates the cadence should ease"
 
 
-def test_a_stop_ramps_out_at_the_walks_cadence():
-    """approachGaitCommand: a stop's stroke ramps out at the cadence the walk had, never at the stride law's, and the
-    cadence goes to zero on the tick the stroke leaves the deadband."""
-    cur = _tripod()
-    cur.step_y, cur.phase_rate = 60.0, 0.8
-    target = fg.GaitState(**{**cur.__dict__, "offset": cur.offset.copy()})
-    target.step_y, target.phase_rate = 0.0, 0.0
-    ticks = 0
-    while fg.gait_is_commanded(cur):
-        fg.approach_gait_command(cur, target, FIRMWARE_DT)
-        ticks += 1
-        assert cur.phase_rate == (0.8 if fg.gait_is_commanded(cur) else 0.0)
-    assert ticks > 50, "the stroke ramps out over cycles, not at once"
-
-
-def test_a_stop_leaves_the_stroke_at_rest():
-    """GaitCommandRamp: a walk starts first order, a stop eases its stroke out through two stages, so its first tick
-    barely moves the stroke and its fastest step is 1/e of a single stage's first."""
+def test_a_stop_eases_the_stroke_out_on_the_speed_law():
+    """GaitCommandRamp: a walk starts first order; a stop eases its stroke out through two stages, so its first tick
+    barely moves the stroke and its fastest step is 1/e of a single stage's first, and its cadence shrinks with the
+    stroke until the stroke leaves the deadband."""
     a = 1.0 - math.exp(-FIRMWARE_DT / fg.GAIT_COMMAND_TAU_S)
     walking = _tripod()
     walking.step_y, walking.phase_rate = 60.0, 0.8
@@ -534,7 +520,7 @@ def test_a_stop_leaves_the_stroke_at_rest():
     while fg.gait_is_commanded(live):
         ramp.step(live, stop, FIRMWARE_DT)
         fastest, previous = max(fastest, previous - live.step_y), live.step_y
-        assert live.phase_rate == (0.8 if fg.gait_is_commanded(live) else 0.0)
+        assert live.phase_rate == pytest.approx(0.8 * live.step_y / 60.0 if fg.gait_is_commanded(live) else 0.0)
     assert fastest == pytest.approx(60.0 * a / math.e, rel=0.02)
 
 
