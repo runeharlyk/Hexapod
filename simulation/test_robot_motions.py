@@ -19,12 +19,14 @@ class ScriptedBackend:
     moves at the last non-zero command times the ramp; a stop eases the stride out through two such stages and slows
     the cadence with it, so the body moves at the square of the ramp over its value at the stop), optionally with a yaw
     that arrives late,
-    a gait that turns slower than commanded, a dead-man stop at `drop_at`, a mode switched from elsewhere and no IMU;
+    a gait that turns slower than commanded, a yaw that drifts by `stop_drifts` (degrees, in the turn's direction, one
+    per stop) while the feet settle, a dead-man stop at `drop_at`, a mode switched from elsewhere and no IMU;
     records every command."""
 
     def __init__(self, top=Velocity(0.3, 0.29, 1.5), yaw=0.0, yaw_lag_s=0.0, turn_scale=1.0, drop_at=None,
-                 imu=True, mode=Mode.DEACTIVATED, refuse=(), switch_at=None):
+                 imu=True, mode=Mode.DEACTIVATED, refuse=(), switch_at=None, stop_drifts=()):
         self.top, self.turn_scale, self.drop_at, self.imu, self.refuse = top, turn_scale, drop_at, imu, refuse
+        self.stop_drifts = list(stop_drifts)
         self.switch_at = switch_at  # (time, mode): someone else changes the mode, as the app's stop button does
         self.link_drops = 0
         self.t, self.x, self.y, self.yaw = 0.0, 0.0, 0.0, yaw
@@ -65,6 +67,8 @@ class ScriptedBackend:
         clamp = lambda value, limit: max(-limit, min(limit, value))
         self.velocity = Velocity(clamp(v.vx, self.top.vx), clamp(v.vy, self.top.vy), clamp(v.yaw_rate, self.top.yaw_rate))
         self.log.append((self.t, "velocity", self.velocity))
+        if self.velocity == ZERO and self._heading.yaw_rate and self.stop_drifts and self.mode is Mode.WALK:
+            self.yaw += math.copysign(self.stop_drifts.pop(0), self._heading.yaw_rate)
         if self.velocity != ZERO:
             self._heading = self.velocity
         return self.velocity
@@ -202,6 +206,19 @@ def test_a_lagging_turn_slows_down_and_lands_on_target():
     start = backend.yaw
     robot.rotate(-90)
     assert backend.yaw - start == pytest.approx(-90, abs=3)
+
+
+def test_a_turn_whose_stop_lands_off_target_is_corrected_once_settled():
+    robot, backend = _robot(mode=Mode.WALK, stop_drifts=[8.0, 0.0, 0.0])
+    robot.rotate(90)
+    assert backend.yaw == pytest.approx(90, abs=motions.TOLERANCE_DEG)
+    assert backend.stop_drifts == [0.0]  # two stops: the second pass corrected the first's overshoot
+
+
+def test_a_turn_that_keeps_landing_off_target_gives_up_after_its_passes():
+    robot, backend = _robot(mode=Mode.WALK, stop_drifts=[8.0] * 10)
+    robot.rotate(90)
+    assert len(backend.stop_drifts) == 10 - motions.MAX_TURN_PASSES
 
 
 def test_a_turn_across_the_wrap_and_a_full_circle():

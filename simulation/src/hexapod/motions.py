@@ -32,6 +32,7 @@ POLL_S = 0.05
 SLOW_DOWN_DEG = 30.0
 MIN_RATE_FRACTION = 0.2
 TOLERANCE_DEG = 3.0
+MAX_TURN_PASSES = 3
 
 
 def _open_loop(robot, vx: float, vy: float, yaw_rate: float, amount: float) -> None:
@@ -74,8 +75,13 @@ def move(robot, forward: float, sideways: float, speed: float | None) -> None:
 def rotate(robot, degrees: float, rate: float | None) -> None:
     """Turns `degrees` counter-clockwise at `rate` rad/s (by default half the gait's top).
 
-    With an IMU the turn closes on the measured yaw, slowing over the last SLOW_DOWN_DEG and stopping within
-    TOLERANCE_DEG; without one it is timed like a move.
+    With an IMU the turn closes on the measured yaw: each pass slows over the last SLOW_DOWN_DEG and stops within
+    TOLERANCE_DEG, then the yaw is read again once the gait has settled and another pass turns the rest, up to
+    MAX_TURN_PASSES. The gait holds its stroke at any rate, and after the stop its feet return to stance, which turns
+    the body by an amount that depends on the gait phase: about 4 degrees either way, against a mean coast of only
+    1.25 tau at the commanded rate. A lead on the stop would correct the mean, not that, so the turn is closed on the
+    settled yaw instead; over 24 angles from 20 to 180 degrees this leaves 12 % of turns beyond TOLERANCE_DEG (4 %
+    beyond 4 degrees), where a single pass left 54 % (42 %). Without an IMU the turn is timed like a move.
     """
     if degrees == 0:
         return
@@ -85,22 +91,27 @@ def rotate(robot, degrees: float, rate: float | None) -> None:
     if robot.state().yaw is None:
         _open_loop(robot, 0.0, 0.0, math.copysign(top, degrees), math.radians(abs(degrees)))
         return
-    expected = math.radians(abs(degrees)) / top + math.radians(SLOW_DOWN_DEG) / (MIN_RATE_FRACTION * top)
-    start = robot.time()
     last = robot.state().yaw
     turned = 0.0
-    while True:
+    for _ in range(MAX_TURN_PASSES):
+        remaining = degrees - turned
+        if abs(remaining) <= TOLERANCE_DEG:
+            return
+        expected = math.radians(abs(remaining)) / top + math.radians(SLOW_DOWN_DEG) / (MIN_RATE_FRACTION * top)
+        start = robot.time()
+        while abs(remaining) > TOLERANCE_DEG:
+            if robot.time() - start > 2 * expected:
+                robot.stop()
+                raise RobotTimeout(f"turned {turned:.0f} of {degrees:.0f} degrees in {2 * expected:.1f} s")
+            fraction = min(1.0, max(MIN_RATE_FRACTION, abs(remaining) / SLOW_DOWN_DEG))
+            robot.set_velocity(0.0, 0.0, math.copysign(top * fraction, remaining))
+            robot.sleep(POLL_S)
+            yaw = robot.state().yaw
+            turned += (yaw - last + 180) % 360 - 180
+            last = yaw
+            remaining = degrees - turned
+        robot.stop()
+        robot.sleep(SETTLE_S)
         yaw = robot.state().yaw
         turned += (yaw - last + 180) % 360 - 180
         last = yaw
-        remaining = degrees - turned
-        if abs(remaining) <= TOLERANCE_DEG:
-            break
-        if robot.time() - start > 2 * expected:
-            robot.stop()
-            raise RobotTimeout(f"turned {turned:.0f} of {degrees:.0f} degrees in {2 * expected:.1f} s")
-        fraction = min(1.0, max(MIN_RATE_FRACTION, abs(remaining) / SLOW_DOWN_DEG))
-        robot.set_velocity(0.0, 0.0, math.copysign(top * fraction, remaining))
-        robot.sleep(POLL_S)
-    robot.stop()
-    robot.sleep(SETTLE_S)

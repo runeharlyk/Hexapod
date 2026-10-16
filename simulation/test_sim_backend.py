@@ -102,10 +102,10 @@ def test_a_velocity_beyond_the_gait_is_clamped_to_its_peak_that_way(sim):
     assert sim.set_velocity(ZERO) == ZERO
 
 
-# Distances are open-loop on the steady-state speed model, held RAMP_LAG_S longer for the command ramp; on the
-# firmware's code, TRI_GATE and BI_GATE moves of 0.1-0.5 m forward and sideways from a fresh stand land within 15 %
-# (measured for TRI_GATE: 0.100/0.1, 0.300/0.3, 0.497/0.5 m forward, 0.095/0.1, 0.197/0.2 m sideways); the turn closes
-# on the yaw.
+# Distances are open-loop on the steady-state speed model, held RAMP_LAG_S longer for the command ramp. The stroke is
+# held at any speed, so a forward move ends about 0.035 m short of that for TRI_GATE, which a lead cannot correct as
+# it depends on where the stop catches the gait: from a fresh stand TRI_GATE walks 0.066/0.1, 0.264/0.3 and 0.461/0.5 m forward and 0.099/0.1
+# and 0.200/0.2 m sideways, so a forward move shorter than 0.3 m misses by more than 15 %. The turn closes on the settled yaw.
 def test_the_facade_walks_distances_and_turns_angles():
     backend = SimBackend()
     with Robot(backend=backend) as robot:
