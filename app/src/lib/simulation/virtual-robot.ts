@@ -4,6 +4,9 @@
 /** One pass of the firmware's control loop. */
 export const TICK_SECONDS = 0.005
 
+/** firmware/include/imu_frame.h: the MPU6050 DMP's roll, pitch and yaw against the body frame. */
+export const DMP_ANGLE_SIGNS = [1, -1, -1] as const
+
 /** The IMU as Peripherals reports it: roll, pitch and yaw in radians, gravity up and rates in the body frame. */
 export interface SimImu {
   rpyRad: [number, number, number]

@@ -5,6 +5,7 @@ as the app's heartbeat does, so a held command outlasts the firmware's dead-man 
 """
 import numpy as np
 
+from src.sim.firmware_policy import dmp_angles
 from src.sim.mj_runtime import HexapodSim
 from src.sim.virtual_robot import DEACTIVATED, STAND, WALK, VirtualRobot
 
@@ -13,14 +14,14 @@ HEARTBEAT_TICKS = 4  # the app's 20 ms stick period
 
 
 def imu_reading(quat: np.ndarray, gyro: np.ndarray):
-    """The MPU6050 as the training environment derives it from the base: roll, pitch and yaw of the base quaternion in
-    radians, world up in the body frame, and the gyro sensor."""
+    """The MPU6050 as the robot reports it: the base quaternion's roll, pitch and yaw in radians, with the DMP's signs,
+    world up in the body frame, and the gyro sensor."""
     w, x, y, z = quat
     roll = np.arctan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
     pitch = np.arcsin(np.clip(2 * (w * y - z * x), -1, 1))
     yaw = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
     up = (2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y))
-    return (roll, pitch, yaw), up, gyro
+    return dmp_angles((roll, pitch, yaw)), up, gyro
 
 
 class FirmwareLoop:

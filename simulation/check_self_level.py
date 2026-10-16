@@ -1,6 +1,6 @@
 """Does the firmware's self-levelling term reduce body tilt, or amplify it?
 
-motion.h adds the measured pitch/roll to the commanded body attitude (`target.phi + angleY()`).
+motion.h adds the measured pitch/roll, in the body frame (imu_frame.h), to the commanded body attitude.
 Whether that levels the robot or tips it further depends on the IMU mounting, the DMP's angle
 convention and this robot's X-lateral body frame -- three sign choices that cannot be resolved by
 reading the code. The robot behaves correctly on hardware, so the composite is right; this measures

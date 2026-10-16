@@ -1,5 +1,6 @@
 #pragma once
 
+#include <imu_frame.h>
 #include <message_types.h>
 #include <utils/math_utils.h>
 
@@ -16,9 +17,9 @@ inline float levelled(float commanded, float measured) {
 }
 
 // One control tick of the body attitude's approach to the commanded pitch and roll plus the measured tilt (radians,
-// as Peripherals reports it); yaw eases back to 0, since only ANIMATE sets it.
+// as Peripherals reports it, so turned into the body frame first); yaw eases back to 0, since only ANIMATE sets it.
 inline void levelAttitude(BodyStateMsg &body, float phi, float omega, float measuredRoll, float measuredPitch) {
-    body.phi = lerpf(body.phi, levelled(phi, measuredPitch), BODY_SMOOTHING);
-    body.omega = lerpf(body.omega, levelled(omega, measuredRoll), BODY_SMOOTHING);
+    body.phi = lerpf(body.phi, levelled(phi, imu_frame::PITCH_SIGN * measuredPitch), BODY_SMOOTHING);
+    body.omega = lerpf(body.omega, levelled(omega, imu_frame::ROLL_SIGN * measuredRoll), BODY_SMOOTHING);
     body.psi = lerpf(body.psi, 0.f, BODY_SMOOTHING);
 }
