@@ -23,9 +23,9 @@ hands the servos back to the motion. Nothing here walks; the largest step turns 
 body about 3. Keep a hand near it all the same. It exits 0 with a fit, 1 when the fit does not explain the measurement,
 and 2 when it refuses or loses the robot.
 
-The roll is the IMU's, left side up positive. On the robot that is the DMP's angle about the body's forward axis, with
-the sign taken from the firmware's self-levelling (backends/real.py IMU_ROLL_SIGN), which no floor test has confirmed
-yet (docs/conventions.md, Floor confirmation); a roll of the opposite sign to every prediction is reported as such.
+The roll is the IMU's, left side up positive. On the robot that is the DMP's angle about the body's forward axis, whose
+sign against the body frame was measured on the bench (firmware/include/imu_frame.h, docs/conventions.md, IMU angles);
+a roll of the opposite sign to every prediction is reported as such.
 The fit takes the firmware's leg geometry for the robot's, so a femur or tibia off by x % scales the predicted roll,
 and the fit, by about x %; friction under the feet, which slide sideways as the femurs turn, a loose horn and the
 servos' deadband add to it, and a residual well above the IMU's noise says the body did not roll as the geometry

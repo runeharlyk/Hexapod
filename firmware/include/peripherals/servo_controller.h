@@ -224,11 +224,15 @@ class ServoController {
     // (docs/conventions.md). The femur and tibia servos are mounted mirrored across the body, so their
     // directions differ by side; the coxa servos are not, and a positive coxa angle turns every leg
     // counter-clockwise seen from above.
-    ServoCfg cfg[NUM_SERVO] = {{8, 306, 2, 1, 0},  {9, 306, 2, 1, 0},  {10, 306, 2, -1, 0}, {2, 306, 2, 1, 0},
-                               {3, 306, 2, 1, 0},  {4, 306, 2, -1, 0}, {5, 306, 2, 1, 0},   {6, 306, 2, 1, 0},
-                               {7, 306, 2, -1, 0}, {8, 306, 2, 1, 0},  {9, 306, 2, -1, 0},  {10, 306, 2, 1, 0},
-                               {2, 306, 2, 1, 0},  {3, 306, 2, -1, 0}, {4, 306, 2, 1, 0},   {5, 306, 2, 1, 0},
-                               {6, 306, 2, -1, 0}, {7, 306, 2, 1, 0}};
+    // One leg per row: coxa, femur, tibia.
+    // clang-format off
+    ServoCfg cfg[NUM_SERVO] = {{8, 306, 2, 1, 0}, {9, 306, 2, 1, 0},  {10, 306, 2, -1, 0},
+                               {2, 306, 2, 1, 0}, {3, 306, 2, 1, 0},  {4, 306, 2, -1, 0},
+                               {5, 306, 2, 1, 0}, {6, 306, 2, 1, 0},  {7, 306, 2, -1, 0},
+                               {8, 306, 2, 1, 0}, {9, 306, 2, -1, 0}, {10, 306, 2, 1, 0},
+                               {2, 306, 2, 1, 0}, {3, 306, 2, -1, 0}, {4, 306, 2, 1, 0},
+                               {5, 306, 2, 1, 0}, {6, 306, 2, -1, 0}, {7, 306, 2, 1, 0}};
+    // clang-format on
 
     ServoBoard _left;
     ServoBoard _right;

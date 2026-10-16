@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from src.envs.hexapod_mj_env import BaseGait, firmware_policy_params
+from src.envs.hexapod_mj_env import BaseGait, HexapodMjEnv, firmware_policy_params
 from src.sim.firmware_loop import imu_reading
 from src.sim.firmware_policy import DMP_ANGLE_SIGNS, FirmwarePolicy, dmp_angles
 
@@ -49,3 +49,11 @@ def test_the_policy_sees_the_simulations_own_angles():
     rpy = (0.1, 0.05, -0.2)
     obs = policy.observe([0.0, 0.0, 1.0], [0.0, 0.0, 0.0], dmp_angles(rpy), 0.02)
     np.testing.assert_allclose(obs[6:9], rpy, atol=1e-6)
+
+
+def test_the_training_environment_feeds_the_policy_the_body_frame_angles():
+    env = HexapodMjEnv(control_mode="residual_gait", randomize=False, seed=0)
+    env.reset(seed=0)
+    tilt = rotation("y", 0.1)  # right side down
+    env.sim.data.qpos[3:7] = tilt
+    np.testing.assert_allclose(env._get_obs()[6:9], (0.0, 0.1, 0.0), atol=1e-6)

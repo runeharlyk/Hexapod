@@ -45,7 +45,8 @@ const CommandMsg FORWARD{0, 1, 0, 0, 0, 0, 0, 0};
 }  // namespace
 
 void setUp() {}
-void tearDown() {}
+// The IMU stand-in is process-wide, so a test that tilts it must not hand the tilt on, even when it fails.
+void tearDown() { Peripherals::setImu({}); }
 
 void test_a_new_robot_is_deactivated() {
     VirtualRobot robot;
@@ -1019,7 +1020,6 @@ void test_self_levelling_reaches_down_with_the_low_side() {
         for (int side = 0; side < 6; side += 3)
             TEST_ASSERT_LESS_THAN_FLOAT(femur(robot, side + 2) - 5.0f, femur(robot, side));
     }
-    Peripherals::setImu({});
 }
 
 int main(int, char **) {

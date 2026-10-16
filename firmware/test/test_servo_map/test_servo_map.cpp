@@ -32,10 +32,15 @@ int offCount(uint8_t addr, int channel) {
     return chip[LED0_ON_L + 4 * channel + 2] | (chip[LED0_ON_L + 4 * channel + 3] << 8);
 }
 
-// The robot standing with every joint at zero except `servo` at `angle` degrees, as the control loop sends it.
-void drive(int servo, float angle) {
+ServoController& started() {
     static ServoController controller;
     controller.begin();
+    return controller;
+}
+
+// The robot standing with every joint at zero except `servo` at `angle` degrees, as the control loop sends it.
+void drive(int servo, float angle) {
+    ServoController& controller = started();
     controller.activate();
     float angles[NUM_SERVO] = {};
     for (int leg = 0; leg < 6; leg++) angles[leg * 3 + 2] = -90.0f; // tibia at its servo centre
@@ -94,11 +99,36 @@ void test_each_side_runs_front_to_rear_on_channels_8_2_and_5() {
     }
 }
 
+// The calibration page writes one servo's raw pulse, and POSE sends every servo to its calibrated centre; both reach
+// the same physical servo as the gait does.
+void test_a_raw_pulse_reaches_the_servo_the_gait_drives() {
+    ServoController& controller = started();
+    controller.servoEvent({0, 400});
+    controller.servoEvent({9, 410});
+    TEST_ASSERT_EQUAL_INT(400, offCount(RIGHT_BOARD, 8));
+    TEST_ASSERT_EQUAL_INT(410, offCount(LEFT_BOARD, 8));
+}
+
+void test_the_calibrated_centres_reach_their_own_servos() {
+    ServoController& controller = started();
+    api_ServoSettings settings = ServoSettings_defaults();
+    settings.servos[0].center_pwm = 317;
+    settings.servos[9].center_pwm = 321;
+    controller.applyCalibration(settings);
+    controller.activate();
+    controller.setCenterPwm();
+    TEST_ASSERT_EQUAL_INT(317, offCount(RIGHT_BOARD, 8));
+    TEST_ASSERT_EQUAL_INT(321, offCount(LEFT_BOARD, 8));
+    controller.applyCalibration(ServoSettings_defaults());
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_leg_0_coxa_is_the_right_boards_channel_8_and_turns_counter_clockwise);
     RUN_TEST(test_leg_3_coxa_is_the_left_boards_channel_8_and_turns_the_same_way);
     RUN_TEST(test_femur_and_tibia_run_opposite_ways_on_the_two_sides);
     RUN_TEST(test_each_side_runs_front_to_rear_on_channels_8_2_and_5);
+    RUN_TEST(test_a_raw_pulse_reaches_the_servo_the_gait_drives);
+    RUN_TEST(test_the_calibrated_centres_reach_their_own_servos);
     return UNITY_END();
 }

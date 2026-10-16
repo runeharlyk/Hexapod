@@ -9,7 +9,10 @@ constexpr pb_size_t FACTORY_SERVO_COUNT = 18;
 constexpr float FACTORY_CENTER_PWM = 306;
 constexpr float FACTORY_CONVERSION = 2;
 constexpr float FACTORY_CENTER_ANGLE = 0;
-constexpr float FACTORY_DIRECTION[FACTORY_SERVO_COUNT] = {1, 1, -1, 1, 1, -1, 1, 1, -1, 1, -1, 1, 1, -1, 1, 1, -1, 1};
+// clang-format off
+constexpr float FACTORY_DIRECTION[FACTORY_SERVO_COUNT] = {1, 1, -1,  1, 1, -1,  1, 1, -1,
+                                                          1, -1, 1,  1, -1, 1,  1, -1, 1};
+// clang-format on
 
 inline ServoSettings ServoSettings_defaults() {
     ServoSettings settings = api_ServoSettings_init_zero;
