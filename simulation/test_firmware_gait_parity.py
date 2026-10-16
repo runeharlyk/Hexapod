@@ -35,6 +35,7 @@ HDR = os.path.join(FIRMWARE_INCLUDE, "gait_tuned.h")
 GAIT_H = os.path.join(FIRMWARE_INCLUDE, "gait.h")
 MOTION_H = os.path.join(FIRMWARE_INCLUDE, "motion.h")
 KINEMATICS_H = os.path.join(FIRMWARE_INCLUDE, "kinematics.h")
+GAIT_SPEED_H = os.path.join(FIRMWARE_INCLUDE, "gait_speed.h")
 LIB = os.path.join(os.path.dirname(__file__), "src", "resources", "gait_library.json")
 TOL = 1e-4
 
@@ -244,7 +245,7 @@ def test_motion_h_constants_match_the_port():
     assert fg.GAIT_COMMAND_TAU_S == _constexpr(motion_h, "GAIT_COMMAND_TAU_S")
     assert fg.DEFAULT_STEP_HEIGHT_MM == _constexpr(motion_h, "DEFAULT_STEP_HEIGHT_MM")
     assert fg.DEFAULT_STEP_DEPTH == _constexpr(motion_h, "DEFAULT_STEP_DEPTH")
-    np.testing.assert_allclose(fg.DEFAULT_FEET, _nested_array(motion_h, "base_feet_pos"))
+    np.testing.assert_allclose(fg.DEFAULT_FEET, _nested_array(_read(GAIT_SPEED_H), "DEFAULT_STANCE"))
 
 
 def test_kinematics_h_geometry_matches_the_port():
@@ -330,6 +331,53 @@ def test_settled_legs_hold_station_while_others_reposition():
     assert not gc.has_pending_stance_change(), "stance change never converged"
     assert max_lift[0] > 1.0, "the foot that had to move never stepped"
     assert np.all(max_lift[1:] < 1.0), "a leg already on target took an empty step"
+
+
+def test_a_repositioning_swing_once_begun_is_finished():
+    """Mirrors the firmware host test: a foot 0.8 mm off its target swings for it and is never dropped, while foot 2,
+    whose swing overlaps it, is still stepping."""
+    gc, gait, body = fg.GaitController(), _tripod(), fg.BodyState()
+    gait.step_height = 15.0
+    target = fg.DEFAULT_FEET.copy()
+    target[0, 0] += 0.8
+    target[2, 0] += 30.0
+    gc.set_default_foot_target(target)
+    max_lift = max_drop = 0.0
+    previous = body.feet[0, 2]
+    for _ in range(4000):
+        gc.step(gait, body, FIRMWARE_DT)
+        max_lift = max(max_lift, body.feet[0, 2] - fg.DEFAULT_FEET[0, 2])
+        max_drop = max(max_drop, previous - body.feet[0, 2])
+        previous = body.feet[0, 2]
+    assert not gc.has_pending_stance_change(), "stance change never converged"
+    assert max_lift > 1.0, "the foot that had to move never stepped"
+    assert max_drop < 2.0
+
+
+def test_a_walk_after_a_stance_change_starts_its_swings_from_the_new_stance():
+    """Mirrors the firmware host test: a walk started after a stance change never pulls a foot back to the old one."""
+    gc, gait, body = fg.GaitController(), _tripod(), fg.BodyState()
+    gait.step_height = 15.0
+    target = fg.DEFAULT_FEET.copy()
+    target[1, 0] += 30.0
+    gc.set_default_foot_target(target)
+    for _ in range(4000):
+        if not gc.has_pending_stance_change():
+            break
+        gc.step(gait, body, FIRMWARE_DT)
+    assert not gc.has_pending_stance_change()
+    for _ in range(200):
+        gc.step(gait, body, FIRMWARE_DT)
+    target = fg.GaitState(**{**gait.__dict__, "offset": gait.offset.copy()})
+    target.step_y = 60.0  # eased in as MotionService does, so a swing starting at rest starts at no stroke
+    largest = 0.0
+    previous = body.feet[1, :3].copy()
+    for _ in range(400):
+        fg.approach_gait_command(gait, target, FIRMWARE_DT)
+        gc.step(gait, body, FIRMWARE_DT)
+        largest = max(largest, float(np.linalg.norm(body.feet[1, :3] - previous)))
+        previous = body.feet[1, :3].copy()
+    assert largest < 5.0
 
 
 def test_released_command_stops_the_cycle():

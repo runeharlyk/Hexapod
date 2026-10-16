@@ -250,6 +250,19 @@ CommandMsg withPosture(CommandMsg c, const Posture3 &p) {
     return c;
 }
 
+// The walk is driving a stroke at a cadence, not only stepping a stance change in.
+bool walkResumed(VirtualRobot &robot) {
+    const gait_state_t &target = robot.gaitCommand();
+    return target.phase_rate > 0.0f && std::hypot(target.step_x, target.step_y) + std::fabs(target.step_angle) > 0.0f;
+}
+
+// The steady full-stick walk moves a joint up to about 3.9 deg in a tick, just past the servo's 3.75 deg (13.1 rad/s
+// over 5 ms); a gait swapped under a swinging foot jumped 22-29 deg. 6 deg tells the two apart.
+constexpr float SWAP_STEP_BOUND_DEG = 6.0f;
+
+// The lift a stand steps its stance at (motion.h DEFAULT_STEP_HEIGHT_MM), which a posture settle starts by taking.
+constexpr float DEFAULT_LIFT_MM = 15.0f;
+
 // Joint angles per tick of `ticks` with `command` held from a stand, in `mode`.
 std::vector<std::array<float, 18>> traceHeld(MOTION_STATE mode, const CommandMsg &command, int ticks) {
     VirtualRobot robot;
@@ -316,8 +329,8 @@ void test_an_auto_gait_switch_retargets_the_held_stick() {
     }
 }
 
-// Narrowing the stance at full stick retargets the stroke to the narrow stance at once, while the feet only reach it
-// swing by swing; the walk through that transition stays within travel.
+// Narrowing the stance at full stick stops the walk, steps the stance in at rest and walks on: no joint leaves its
+// travel on the way, and the walk is back on its own, with a stroke, by the end.
 void test_feet_distance_change_while_walking_stays_in_travel() {
     for (const GaitType gait : CLASSIC_GAITS) {
         for (const CommandMsg &stick : {fullStick(0, 1, 0), fullStick(1, 1, 1)}) {
@@ -326,13 +339,13 @@ void test_feet_distance_change_while_walking_stays_in_travel() {
             CommandMsg c = stick;
             HeldRun run = hold(robot, c, ticksFor(1.0f));
             c.fd = -1.0f;
-            const HeldRun narrowed = hold(robot, c, ticksFor(2.0f));
+            const HeldRun narrowed = hold(robot, c, ticksFor(5.0f));
             run.clamped += narrowed.clamped;
             run.largestStep = narrowed.largestStep;
             char msg[160];
             describe(msg, sizeof(msg), gait, c, run);
             TEST_ASSERT_EQUAL_INT_MESSAGE(0, run.clamped, msg);
-            TEST_ASSERT_GREATER_THAN_FLOAT_MESSAGE(STEPPING_DEG_PER_TICK, run.largestStep, msg);
+            TEST_ASSERT_TRUE_MESSAGE(walkResumed(robot), msg);
         }
     }
 }
@@ -407,7 +420,8 @@ void test_a_posture_change_while_walking_stays_in_travel() {
                 HeldRun run = hold(robot, withPosture(CommandMsg {}, change[0]), ticksFor(2.0f));
                 robot.setMode(MOTION_STATE::WALK);
                 run.clamped += hold(robot, withPosture(stick, change[0]), ticksFor(2.0f)).clamped;
-                run.clamped += hold(robot, withPosture(stick, change[1]), ticksFor(3.0f)).clamped;
+                // The slowest pause, WAVE stepping a wide stance under a body that then rises, takes about 4 s.
+                run.clamped += hold(robot, withPosture(stick, change[1]), ticksFor(5.0f)).clamped;
                 const HeldRun walking = hold(robot, withPosture(stick, change[1]), ticksFor(1.0f));
                 run.clamped += walking.clamped;
                 run.largestStep = walking.largestStep;
@@ -419,6 +433,7 @@ void test_a_posture_change_while_walking_stays_in_travel() {
                               change[1].s1, change[1].h, change[1].fd, run.clamped, run.largestStep);
                 TEST_ASSERT_EQUAL_INT_MESSAGE(0, run.clamped, msg);
                 TEST_ASSERT_GREATER_THAN_FLOAT_MESSAGE(STEPPING_DEG_PER_TICK, run.largestStep, msg);
+                TEST_ASSERT_TRUE_MESSAGE(walkResumed(robot), msg);
             }
         }
     }
@@ -505,6 +520,133 @@ void test_an_infeasible_stand_posture_is_pulled_in() {
     for (int j = 0; j < 18; ++j) TEST_ASSERT_EQUAL_FLOAT(withinTravel(asked.back()[j], j % 3), asked.back()[j]);
 }
 
+// A gait change during a posture settle waits for it: the settle steps the stance with a zero stroke, so the gait is
+// not commanded while a foot swings, and a swap there reassigns that foot's phase. The swap comes once the settle is
+// done, manual or AUTO.
+void test_a_gait_change_during_a_settle_waits_for_it() {
+    const Posture3 moved {0.0f, -0.5f, -1.0f};
+    for (const float delay : {0.5f, 1.0f, 1.3f, 1.6f}) {
+        VirtualRobot robot;
+        walkIn(robot, GaitType::WAVE);
+        const CommandMsg stick = fullStick(0, 1, 0);
+        hold(robot, stick, ticksFor(3.0f));
+        hold(robot, withPosture(stick, moved), ticksFor(delay));
+        robot.setGait(GaitType::TRI_GATE);
+        const HeldRun run = hold(robot, withPosture(stick, moved), ticksFor(4.0f));
+        char msg[96];
+        std::snprintf(msg, sizeof(msg), "manual, %.1f s into the settle: largest step %.2f deg", delay,
+                      run.largestStep);
+        TEST_ASSERT_LESS_THAN_FLOAT_MESSAGE(SWAP_STEP_BOUND_DEG, run.largestStep, msg);
+        TEST_ASSERT_EQUAL_MESSAGE(GaitType::TRI_GATE, robot.gait(), msg);
+        TEST_ASSERT_TRUE_MESSAGE(walkResumed(robot), msg);
+    }
+    for (const float delay : {0.3f, 0.9f}) {
+        VirtualRobot robot;
+        standUp(robot);
+        robot.setGait(GaitType::AUTO);
+        robot.tick();
+        robot.setMode(MOTION_STATE::WALK);
+        const CommandMsg slow {0, 0.3f, 0, 0, 0, 0, 0, 0};
+        hold(robot, slow, ticksFor(3.0f));
+        TEST_ASSERT_EQUAL(GaitType::RIPPLE, robot.gait());
+        hold(robot, withPosture(slow, moved), ticksFor(delay));
+        const HeldRun run = hold(robot, withPosture(fullStick(0, 1, 0), moved), ticksFor(4.0f));
+        char msg[96];
+        std::snprintf(msg, sizeof(msg), "AUTO, pushed %.1f s into the settle: largest step %.2f deg", delay,
+                      run.largestStep);
+        TEST_ASSERT_LESS_THAN_FLOAT_MESSAGE(SWAP_STEP_BOUND_DEG, run.largestStep, msg);
+        TEST_ASSERT_EQUAL_MESSAGE(GaitType::BI_GATE, robot.gait(), msg);
+        TEST_ASSERT_TRUE_MESSAGE(walkResumed(robot), msg);
+    }
+}
+
+// Leaving a full-stick walk for STAND on the tick the stick is released: the stand's posture (h = 1, which the walk
+// clamped) waits until the walk has stopped and its feet are down, so the body never rises over a stepping gait.
+void test_leaving_a_walk_for_stand_mid_stride_stays_in_travel() {
+    for (const GaitType gait : {GaitType::TRI_GATE, GaitType::BI_GATE, GaitType::WAVE}) {
+        VirtualRobot robot;
+        standUp(robot);
+        robot.setGait(gait);
+        robot.tick();
+        const CommandMsg raised {0, 0, 0, 0, 1.0f, 1, 0, 0};
+        hold(robot, raised, ticksFor(2.0f));
+        robot.setMode(MOTION_STATE::WALK);
+        CommandMsg walking = raised;
+        walking.ly = 1.0f;
+        HeldRun run = hold(robot, walking, ticksFor(4.0f));
+        robot.command(raised);
+        robot.setMode(MOTION_STATE::STAND);
+        run.clamped += hold(robot, raised, ticksFor(3.0f)).clamped;
+        char msg[48];
+        std::snprintf(msg, sizeof(msg), "gait %d", (int)gait);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, run.clamped, msg);
+        TEST_ASSERT_EQUAL_MESSAGE(MOTION_STATE::STAND, robot.mode(), msg);
+    }
+}
+
+// WALK_NN moves the ride height and the feet without a command the walk hears, so a walk entered from it starts from
+// a zero stroke and takes its posture again before it steps, even within the dead-man's 600 ms.
+void test_a_walk_after_walk_nn_takes_its_posture_again() {
+    VirtualRobot robot;
+    walkIn(robot, GaitType::TRI_GATE);
+    const CommandMsg stick = fullStick(0, 1, 0);
+    hold(robot, stick, ticksFor(2.0f));
+    TEST_ASSERT_TRUE(walkResumed(robot));
+
+    robot.setMode(MOTION_STATE::WALK_NN);
+    largestStep(robot, ticksFor(0.4f));
+    robot.setMode(MOTION_STATE::WALK);
+    robot.tick();
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, robot.gaitCommand().step_y);
+    robot.command(stick);
+    robot.tick();
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, robot.gaitCommand().step_y);
+    const HeldRun run = hold(robot, stick, ticksFor(3.0f));
+    TEST_ASSERT_EQUAL_INT(0, run.clamped);
+    TEST_ASSERT_TRUE(walkResumed(robot));
+}
+
+// A settle cut short by WALK_NN starts over on the way back. Cut in its last stage, raising the lift, which checks
+// nothing else, a stale settle would release the walk as soon as the lift arrived, over whatever height and stance the
+// policy left; a fresh one first takes the stand's lift and the posture again.
+void test_an_interrupted_settle_starts_over() {
+    VirtualRobot robot;
+    walkIn(robot, GaitType::TRI_GATE);
+    const CommandMsg stick = fullStick(0, 1, 0);
+    hold(robot, stick, ticksFor(2.0f));
+    const CommandMsg moved = withPosture(stick, {1.0f, -0.5f, -1.0f});
+    float s1 = moved.s1, h = moved.h, fd = moved.fd;
+    clampPosture(s1, h, fd);
+    const float walkLift = (s1 + 1.0f) * 20.0f;
+    TEST_ASSERT_TRUE(walkLift > DEFAULT_LIFT_MM + 1.0f);
+    bool lowered = false;
+    int t = 0;
+    for (; t < ticksFor(5.0f); ++t) {
+        if (t % COMMAND_PERIOD_TICKS == 0) robot.command(moved);
+        robot.tick();
+        lowered |= robot.gaitCommand().step_height == DEFAULT_LIFT_MM;
+        if (lowered && robot.gaitCommand().step_height == walkLift && robot.gaitCommand().step_y == 0.0f) break;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(t < ticksFor(5.0f), "the settle never reached its last stage");
+
+    robot.setMode(MOTION_STATE::WALK_NN);
+    largestStep(robot, ticksFor(0.4f));
+    robot.setMode(MOTION_STATE::WALK);
+    bool liftTakenAgain = false;
+    HeldRun run;
+    for (t = 0; t < ticksFor(5.0f) && !walkResumed(robot); ++t) {
+        if (t % COMMAND_PERIOD_TICKS == 0) robot.command(moved);
+        robot.tick();
+        liftTakenAgain |= robot.gaitCommand().step_height == DEFAULT_LIFT_MM;
+        for (int j = 0; j < 18; ++j) run.clamped += withinTravel(robot.angles()[j], j % 3) != robot.angles()[j];
+    }
+    TEST_ASSERT_TRUE(liftTakenAgain);
+    TEST_ASSERT_EQUAL_INT(0, run.clamped);
+    const WalkTarget expected = classicWalkTarget(GaitType::TRI_GATE, 0, 1, 0, 1, s1, h, fd);
+    TEST_ASSERT_EQUAL_FLOAT(expected.stepY, robot.gaitCommand().step_y);
+    TEST_ASSERT_EQUAL_FLOAT(expected.phaseRate, robot.gaitCommand().phase_rate);
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_new_robot_is_deactivated);
@@ -531,5 +673,9 @@ int main(int, char **) {
     RUN_TEST(test_a_posture_change_below_the_deadband_does_not_pause);
     RUN_TEST(test_a_stand_accepts_a_posture_the_walk_would_clamp);
     RUN_TEST(test_an_infeasible_stand_posture_is_pulled_in);
+    RUN_TEST(test_a_gait_change_during_a_settle_waits_for_it);
+    RUN_TEST(test_leaving_a_walk_for_stand_mid_stride_stays_in_travel);
+    RUN_TEST(test_a_walk_after_walk_nn_takes_its_posture_again);
+    RUN_TEST(test_an_interrupted_settle_starts_over);
     return UNITY_END();
 }

@@ -540,6 +540,71 @@ void test_settled_legs_hold_station_while_others_reposition() {
     }
 }
 
+// A foot that begins a repositioning swing finishes it. Holding station used to be decided every tick, so a foot left
+// a little off its target swung for it and, once its anchor came within 0.5 mm mid-swing while another foot was still
+// stepping (foot 2 here, whose swing overlaps foot 0's), dropped to the floor in one tick. A swing descends about
+// 0.5 mm a tick at this cadence; 2 mm tells that from a drop.
+void test_a_repositioning_swing_once_begun_is_finished() {
+    GaitController controller;
+    controller.snapDefaultFootTarget(STAND);
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 0, 0, 0);
+    gait.step_height = 15.0f;
+    controller.setGait(gait);
+    BodyStateMsg body = makeBody();
+
+    float tgt[6][4];
+    for (int i = 0; i < 6; i++)
+        for (int j = 0; j < 4; j++) tgt[i][j] = STAND[i][j];
+    tgt[0][0] += 0.8f;
+    tgt[2][0] += 30.0f;
+    controller.setDefaultFootTarget(tgt);
+
+    float maxLift = 0.0f, maxDrop = 0.0f, previous = body.feet[0][2];
+    for (int t = 0; t < 4000; t++) {
+        controller.step(gait, body, DT);
+        maxLift = std::fmax(maxLift, body.feet[0][2] - STAND[0][2]);
+        maxDrop = std::fmax(maxDrop, previous - body.feet[0][2]);
+        previous = body.feet[0][2];
+    }
+    TEST_ASSERT_FALSE_MESSAGE(controller.hasPendingStanceChange(), "stance change never converged");
+    TEST_ASSERT_TRUE_MESSAGE(maxLift > 1.0f, "the foot that had to move never stepped");
+    TEST_ASSERT_LESS_THAN_FLOAT(2.0f, maxDrop);
+}
+
+// A cycle starts every swing from where the feet stand. A stance change ends as the last foot's anchor comes within
+// 0.5 mm, mid-swing, and that foot was left flagged as swinging; a walk started next with it in swing did not take a
+// new swing start and pulled its anchor back toward the old stance, 30 mm here, in one tick. A walking foot moves
+// 1-2 mm a tick; 5 mm tells that from a jump.
+void test_a_walk_after_a_stance_change_starts_its_swings_from_the_new_stance() {
+    GaitController controller;
+    controller.snapDefaultFootTarget(STAND);
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 0, 0, 0);
+    gait.step_height = 15.0f;
+    controller.setGait(gait);
+    BodyStateMsg body = makeBody();
+
+    float tgt[6][4];
+    for (int i = 0; i < 6; i++)
+        for (int j = 0; j < 4; j++) tgt[i][j] = STAND[i][j];
+    tgt[1][0] += 30.0f; // foot 1 swings at phase 0, where the walk below starts
+    controller.setDefaultFootTarget(tgt);
+    for (int t = 0; t < 4000 && controller.hasPendingStanceChange(); t++) controller.step(gait, body, DT);
+    TEST_ASSERT_FALSE(controller.hasPendingStanceChange());
+    for (int t = 0; t < 200; t++) controller.step(gait, body, DT);
+
+    gait_state_t target = gait;
+    target.step_y = 60.0f; // eased in as MotionService does, so a swing starting at rest starts at no stroke
+    float largest = 0.0f, previous[3] = {body.feet[1][0], body.feet[1][1], body.feet[1][2]};
+    for (int t = 0; t < 400; t++) {
+        approachGaitCommand(gait, target, DT, 0.15f);
+        controller.step(gait, body, DT);
+        largest = std::fmax(largest, std::hypot(body.feet[1][0] - previous[0], body.feet[1][1] - previous[1],
+                                                body.feet[1][2] - previous[2]));
+        for (int j = 0; j < 3; j++) previous[j] = body.feet[1][j];
+    }
+    TEST_ASSERT_LESS_THAN_FLOAT(5.0f, largest);
+}
+
 void test_walking_still_swings_every_foot() {
     // The hold-station rule must not leak into normal walking, where every foot sits at its default
     // position and would otherwise qualify as "settled" and stop lifting entirely.
@@ -1216,6 +1281,8 @@ int main(int, char **) {
     RUN_TEST(test_yaw_above_deadband_still_steps);
     RUN_TEST(test_stance_change_walks_the_feet_to_the_new_target);
     RUN_TEST(test_settled_legs_hold_station_while_others_reposition);
+    RUN_TEST(test_a_repositioning_swing_once_begun_is_finished);
+    RUN_TEST(test_a_walk_after_a_stance_change_starts_its_swings_from_the_new_stance);
     RUN_TEST(test_walking_still_swings_every_foot);
     RUN_TEST(test_nominal_stance_is_inside_joint_travel);
     RUN_TEST(test_walking_stays_inside_joint_travel);

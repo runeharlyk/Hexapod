@@ -101,6 +101,8 @@ class GaitController {
     float swingStartPosition[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
                                       {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
     bool footWasSwinging[6] = {false, false, false, false, false, false};
+    // Whether a foot holds station through its current swing, decided as the swing begins.
+    bool swingHeld[6] = {false, false, false, false, false, false};
     // A cycle started from a standstill finds some legs mid-swing, since at phase 0 every offset past
     // stand_frac is already swinging; taken as is, the foot left the floor at that swing's height in
     // one tick. Such a swing is instead replayed whole, from the floor, over the time left to it, with
@@ -185,6 +187,10 @@ class GaitController {
         for (int i = 0; i < 6; i++) {
             const float ph = std::fmod(phase + gait.offset[i], 1.0f);
             swingEntry[i] = ph >= gait.stand_frac ? swingProgress(ph, gait.stand_frac) : 0.0f;
+            // Every swing starts from where its foot stands now. A foot the last cycle left flagged as
+            // swinging, as a stance change does with its last foot, would otherwise keep that swing's
+            // start and pull its anchor back toward the stance it left.
+            footWasSwinging[i] = false;
         }
         cycleRunning = true;
     }
@@ -343,13 +349,15 @@ class GaitController {
             // A foot already standing where it belongs has nothing to fetch, so it holds station
             // rather than taking an empty step while the others catch up. Repositioning only: in
             // normal walking every foot sits at its default position and must still swing.
-            const bool holdStation = repositioning && footAtTarget(i);
-
             if (isSwinging && !footWasSwinging[i]) {
                 for (int j = 0; j < 4; ++j) {
                     swingStartPosition[i][j] = defaultPosition[i][j];
                 }
+                swingHeld[i] = repositioning && footAtTarget(i);
             }
+            // A swing once begun is finished: decided anew each tick, a foot swinging for a small
+            // offset came within reach of its target mid-swing and dropped to the floor in one tick.
+            const bool holdStation = repositioning && (isSwinging ? swingHeld[i] : footAtTarget(i));
             footWasSwinging[i] = isSwinging;
             if (!isSwinging) swingEntry[i] = 0.0f;
             const float entry = swingEntry[i];

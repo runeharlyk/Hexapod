@@ -446,6 +446,8 @@ class GaitController:
         self.target_default_position = DEFAULT_FEET.copy()
         self.swing_start_position = DEFAULT_FEET.copy()
         self.foot_was_swinging = [False] * 6
+        # Whether a foot holds station through its current swing, decided as the swing begins (gait.h swingHeld).
+        self.swing_held = [False] * 6
         # Swing progress each leg stood at when step() started the cycle from a standstill, 0 for a
         # swing begun inside the cycle; such a swing is replayed whole, from the floor, over the time
         # left to it, with its lift scaled to that time (gait.h swingEntry).
@@ -508,6 +510,8 @@ class GaitController:
         for i in range(6):
             phase = math.fmod(self.phase + gait.offset[i], 1.0)
             self.swing_entry[i] = _swing_progress(phase, gait.stand_frac) if phase >= gait.stand_frac else 0.0
+            # Every swing starts from where its foot stands now (gait.h startCycle).
+            self.foot_was_swinging[i] = False
         self.cycle_running = True
 
     @staticmethod
@@ -571,9 +575,12 @@ class GaitController:
             # at a negative parameter. The firmware has no phase_adj, so the two agree without it.
             phase = (self.phase + gait.offset[i] + self.phase_adj[i]) % 1.0
             is_swinging = phase >= gait.stand_frac
-            hold_station = repositioning and self.foot_at_target(i)
             if is_swinging and not self.foot_was_swinging[i]:
                 self.swing_start_position[i] = self.default_position[i].copy()
+                self.swing_held[i] = repositioning and self.foot_at_target(i)
+            # A swing once begun is finished: decided anew each tick, a foot swinging for a small offset came
+            # within reach of its target mid-swing and dropped to the floor in one tick.
+            hold_station = repositioning and (self.swing_held[i] if is_swinging else self.foot_at_target(i))
             if reflexive and self.foot_was_swinging[i] and not is_swinging:
                 self._on_touchdown(i)
             self.foot_was_swinging[i] = is_swinging
