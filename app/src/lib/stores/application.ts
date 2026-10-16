@@ -29,7 +29,7 @@ const defaultViews: View[] = [
     content: {
       id: 'root',
       layout: 'column',
-      widgets: [{ id: 2, component: 'Stream' }]
+      widgets: [{ id: 2, component: 'StreamWithRobot' }]
     }
   },
   {
@@ -38,14 +38,6 @@ const defaultViews: View[] = [
       id: 'root',
       layout: 'column',
       widgets: [{ id: 2, component: 'Visualization' }]
-    }
-  },
-  {
-    name: 'Stream with robot',
-    content: {
-      id: 'root',
-      layout: 'column',
-      widgets: [{ id: 2, component: 'StreamWithRobot' }]
     }
   },
   {
