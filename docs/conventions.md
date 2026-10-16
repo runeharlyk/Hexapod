@@ -64,13 +64,14 @@ The fixture records the mapping as it stands, so right strafe is the stick `lx =
 
 ## Floor confirmation
 
-Floor confirmation: not yet performed.
+Floor confirmation: performed on 2026-10-16, after the wiring fix below.
 The convention above is derived from the code, and the MuJoCo model agrees by construction: `simulation/src/resources/build_model.py` places leg 0 at +x +y in MuJoCo's right-handed, z-up world.
-A bench check on 2026-10-16 found the robot built as the mirror image of that convention: lifting its left side made legs 0-2 tuck, and lifting its front made legs 0 and 3 tuck.
+A bench check on 2026-10-16 found the robot built as the mirror image of that convention: with its left side lifted, its right legs reached down while the self-levelling extended legs 3-5.
 Its servos 0-8 were wired to the board at 0x40, the left side: on the servo page, servo 0 moved the left front coxa.
 Raising servo 0's pulse swung that foot toward the rear, a counter-clockwise turn seen from above, so a rising pulse turns a coxa counter-clockwise on either side.
 Servos 0-8 now drive the board at 0x41, the right side, with every coxa direction reversed (`servo_controller.h`, `servo_factory.h`; `firmware/test/test_servo_map`).
-Nothing yet shows on the floor that `step_x > 0` strafes the robot right or that `step_angle > 0` turns it counter-clockwise.
+With the fix flashed and the calibration moved with its servos, servo 0 moves the right front coxa, raising its pulse swings that foot forward, and the self-levelling reaches down with whichever side is low.
+On the floor a forward stick walks the robot toward its front, a turn command with `step_angle > 0` turns it counter-clockwise, `step_x > 0` strafes it right, and the app's 3D view moves the same way.
 
 ## IMU angles
 
