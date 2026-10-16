@@ -30,7 +30,7 @@ def tick(seq: int) -> message_pb2.TickSample:
     return message_pb2.TickSample(
         seq=seq, t_us=1_000_000 + seq * 5000, period_us=PERIODS[seq], compute_us=1200 + seq * 10,
         imu_fresh=seq % 2 == 0, rpy=[0.5, -0.25, 1.0], gyro=[0.0, 0.125, -0.5], gravity=[0.0, 0.0, 1.0],
-        angles=[float(i) for i in range(18)], command=[0.0, 0.5, 0.0, 0.0, 0.25, 0.0, 0.0, 0.75],
+        angles=[float(i) for i in range(18)], command=[0.0, 0.5, 0.0, 0.0, 0.25, 0.0, 0.0, 0.75, -0.5],
         command_age_ms=seq * 3, mode=4, gait=1, mag=[21.5, -4.25, 40.0], mag_fresh=seq % 3 == 0)
 
 
