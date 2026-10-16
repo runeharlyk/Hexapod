@@ -306,6 +306,9 @@ class MotionService {
                 body_state.zm = lerpf(body_state.zm, target_body_state.zm, smoothing_factor);
                 levelAttitude(body_state, target_body_state.phi, target_body_state.omega, _peripherals->angleX(),
                               _peripherals->angleY());
+                // A walk left for the stand ramps out at its own lift: another lift, a falling one above all, can leave
+                // travel under the stroke still being stepped. The stand steps a stance change at its own lift.
+                if (!gaitIsCommanded(gait_state)) target_gait_state.step_height = DEFAULT_STEP_HEIGHT_MM;
                 takeStandPosture();
                 // STAND is not stepping, so this is where a gait selection deferred by
                 // handleInputGait gets honoured -- otherwise leaving WALK would strand it.
@@ -359,9 +362,10 @@ class MotionService {
 
     float *getAngles() { return msgAngles.angles; }
 
-    // The locomotion command the gait eases toward, and the body pose the motion eases toward, for the virtual robot's
-    // tests.
+    // The locomotion command the gait eases toward, the command it walks now, and the body pose the motion eases
+    // toward, for the virtual robot's tests.
     const gait_state_t &gaitCommand() const { return target_gait_state; }
+    const gait_state_t &gaitState() const { return gait_state; }
     const BodyStateMsg &bodyCommand() const { return target_body_state; }
 
     // The motion's half of a telemetry tick: what it produced and from which command and mode.
@@ -598,7 +602,7 @@ class MotionService {
 
     // Control task, STAND.
     void takeStandPosture() {
-        if (!_standPosturePending || gaitIsCommanded(gait_state) || !feetAtRest()) return;
+        if (!_standPosturePending || gaitIsCommanded(gait_state) || !feetAtRest() || !liftArrived()) return;
         _standPosturePending = false;
         const Posture p = _standPosture;
         updateFeetDistanceTarget(p.fd);
@@ -635,7 +639,6 @@ class MotionService {
         target_gait_state.step_y = 0;
         target_gait_state.step_angle = 0;
         target_gait_state.step_speed = 1.f;
-        target_gait_state.step_height = DEFAULT_STEP_HEIGHT_MM;
         target_gait_state.step_depth = DEFAULT_STEP_DEPTH;
         target_gait_state.phase_rate = 0.f;
         // Else a gait loaded later, AUTO's included, would walk the stick the dead-man stopped.

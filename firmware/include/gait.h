@@ -85,10 +85,14 @@ inline void approachGaitCommand(gait_state_t& current, const gait_state_t& targe
     current.step_depth = approachf(current.step_depth, target.step_depth, a, GAIT_SNAP_DEPTH);
     // phase_rate 0 means "derive cadence from stride", not "stand still", so ramping across that
     // boundary would spend the whole transition at cadences neither law asks for. Ease only between
-    // two explicit rates; otherwise switch outright.
-    current.phase_rate = (current.phase_rate > 0.0f && target.phase_rate > 0.0f)
-                             ? approachf(current.phase_rate, target.phase_rate, a, GAIT_SNAP_RATE)
-                             : target.phase_rate;
+    // two explicit rates; otherwise switch outright. A stop is the exception: its stroke ramps out over
+    // cycles, and the stride law steps it at up to 1.5 cycles/s, faster than a slow gait walked it, so the
+    // walk's own cadence holds until the stroke has left the deadband.
+    const bool stopping = target.phase_rate <= 0.0f && !gaitIsCommanded(target) && gaitIsCommanded(current);
+    if (current.phase_rate > 0.0f && target.phase_rate > 0.0f)
+        current.phase_rate = approachf(current.phase_rate, target.phase_rate, a, GAIT_SNAP_RATE);
+    else if (!stopping)
+        current.phase_rate = target.phase_rate;
 }
 
 class GaitController {

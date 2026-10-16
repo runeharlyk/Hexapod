@@ -717,6 +717,121 @@ void test_a_tuned_walk_after_the_stand_spends_its_rest_posture() {
     TEST_ASSERT_EQUAL_INT(0, run.clamped + hold(robot, stick, ticksFor(2.0f)).clamped);
 }
 
+namespace {
+
+enum class Stop { RELEASE, POSTURE_PAUSE, STAND, DEAD_MAN };
+
+const char *stopName(Stop stop) {
+    switch (stop) {
+        case Stop::RELEASE: return "release";
+        case Stop::POSTURE_PAUSE: return "posture pause";
+        case Stop::STAND: return "stand";
+        case Stop::DEAD_MAN: return "dead-man";
+    }
+    return "";
+}
+
+struct StopRun {
+    float walkPeak = 0.0f; // the largest joint step in a tick of the steady walk
+    HeldRun stop;          // the stop, from its first tick until the feet are home
+    bool cadenceHeld = true;
+    bool cadenceLeft = false; // the gait stopped stepping with an explicit cadence still set
+};
+
+// Walks `stick` at its posture from a stand in that posture, then stops it the way `stop` does. The stop is followed
+// until the feet have eased home after the gait stopped stepping, or until the motion moves the body to another
+// posture, which a posture pause and the dead-man do once the gait is still.
+StopRun walkThenStop(GaitType gait, const CommandMsg &stick, Stop stop) {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setGait(gait);
+    robot.tick();
+    hold(robot, withPosture(CommandMsg {}, {0, stick.h, stick.fd}), ticksFor(2.0f));
+    robot.setMode(MOTION_STATE::WALK);
+    hold(robot, stick, ticksFor(2.5f));
+    StopRun run;
+    run.walkPeak = hold(robot, stick, ticksFor(1.5f)).largestStep;
+
+    CommandMsg after = stick;
+    after.lx = after.ly = after.rx = 0;
+    if (stop == Stop::POSTURE_PAUSE) {
+        after = stick;
+        after.s1 = stick.s1 > 0.0f ? stick.s1 - 0.5f : stick.s1 + 0.5f;
+    }
+    if (stop == Stop::STAND) {
+        robot.command(after);
+        robot.setMode(MOTION_STATE::STAND);
+    }
+    const float walkedCadence = robot.gaitState().phase_rate;
+    const float zm = robot.bodyCommand().zm;
+    float previous[18];
+    std::copy_n(robot.angles(), 18, previous);
+    int still = 0;
+    for (int t = 0; t < ticksFor(5.0f) && still < ticksFor(FEET_EASE_S); ++t) {
+        if (stop != Stop::DEAD_MAN && t % COMMAND_PERIOD_TICKS == 0) robot.command(after);
+        robot.tick();
+        if (robot.bodyCommand().zm != zm) break;
+        for (int j = 0; j < 18; ++j) {
+            const float angle = robot.angles()[j];
+            if (withinTravel(angle, j % 3) != angle) run.stop.clamped++;
+            run.stop.largestStep = std::max(run.stop.largestStep, std::fabs(angle - previous[j]));
+            previous[j] = angle;
+        }
+        const gait_state_t &live = robot.gaitState();
+        if (gaitIsCommanded(live)) {
+            run.cadenceHeld &= live.phase_rate == walkedCadence;
+        } else {
+            run.cadenceLeft |= still == 0 && live.phase_rate != 0.0f;
+            ++still;
+        }
+    }
+    return run;
+}
+
+} // namespace
+
+// A stop ramps the stroke out over several cycles. Stepped at the stride law's cadence, up to 1.5 cycles/s, that stroke
+// moved a joint up to 10.4 deg in a tick, where WAVE and RIPPLE walk theirs below 1 cycle/s; held at the walk's own
+// cadence, a shrinking stroke moves the joints no faster than the walk did. Every way a classic walk stops is checked,
+// at a slow and a fast stick, in postures from neutral to the envelope's edges, and no stop may move a joint faster
+// than STOP_STEP_BOUND_DEG, leave travel, or leave a cadence set once the gait has stopped.
+void test_every_stop_ramps_down_at_the_walks_cadence() {
+    // The steady walks below peak at 3.91 deg in a tick (measured), just past the servo's 3.75 deg (13.1 rad/s over 5
+    // ms). A shrinking stroke adds its own rate to the feet's, which took the stops here to 3.96 deg.
+    constexpr float STOP_STEP_BOUND_DEG = 4.0f;
+    const Posture3 postures[] = {{0, 0, 0}, {1, -1, 0}, {1, -1, -1}, {-1, -1, 0}};
+    float walkPeak = 0.0f, stopPeak = 0.0f;
+    for (const GaitType gait : CLASSIC_GAITS) {
+        for (Posture3 posture : postures) {
+            clampPosture(posture.s1, posture.h, posture.fd);
+            for (const float s : {0.0f, 1.0f}) {
+                for (CommandMsg stick : FULL_STICKS) {
+                    stick.s = s;
+                    stick = withPosture(stick, posture);
+                    for (const Stop stop : {Stop::RELEASE, Stop::POSTURE_PAUSE, Stop::STAND, Stop::DEAD_MAN}) {
+                        const StopRun run = walkThenStop(gait, stick, stop);
+                        walkPeak = std::max(walkPeak, run.walkPeak);
+                        stopPeak = std::max(stopPeak, run.stop.largestStep);
+                        char msg[200];
+                        std::snprintf(msg, sizeof(msg),
+                                      "%s, gait %d stick (%.0f %.0f %.0f) s %.0f posture (%.2f %.2f %.2f): walk peak "
+                                      "%.2f, stop peak %.2f deg, %d clamped",
+                                      stopName(stop), (int)gait, stick.lx, stick.ly, stick.rx, s, posture.s1, posture.h,
+                                      posture.fd, run.walkPeak, run.stop.largestStep, run.stop.clamped);
+                        TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(STOP_STEP_BOUND_DEG, run.stop.largestStep, msg);
+                        TEST_ASSERT_EQUAL_INT_MESSAGE(0, run.stop.clamped, msg);
+                        TEST_ASSERT_TRUE_MESSAGE(run.cadenceHeld, msg);
+                        TEST_ASSERT_FALSE_MESSAGE(run.cadenceLeft, msg);
+                    }
+                }
+            }
+        }
+    }
+    char summary[96];
+    std::snprintf(summary, sizeof(summary), "walk peak %.2f, stop peak %.2f deg per tick", walkPeak, stopPeak);
+    TEST_MESSAGE(summary);
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_new_robot_is_deactivated);
@@ -750,5 +865,6 @@ int main(int, char **) {
     RUN_TEST(test_a_walk_from_a_stand_at_rest_steps_at_once);
     RUN_TEST(test_a_walk_from_a_stand_at_rest_settles_a_new_posture_first);
     RUN_TEST(test_a_tuned_walk_after_the_stand_spends_its_rest_posture);
+    RUN_TEST(test_every_stop_ramps_down_at_the_walks_cadence);
     return UNITY_END();
 }

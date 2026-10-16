@@ -451,10 +451,12 @@ def approach_gait_command(current: GaitState, target: GaitState, dt: float,
     current.step_speed = _approach(current.step_speed, target.step_speed, a, GAIT_SNAP_RATE)
     current.step_height = _approach(current.step_height, target.step_height, a, GAIT_SNAP_MM)
     current.step_depth = _approach(current.step_depth, target.step_depth, a, GAIT_SNAP_DEPTH)
-    # 0 means "derive cadence from stride", so only two explicit rates are eased between.
+    # 0 means "derive cadence from stride", so only two explicit rates are eased between. A stop ramps its stroke out
+    # at the walk's own cadence instead, until the stroke has left the deadband.
+    stopping = target.phase_rate <= 0.0 and not gait_is_commanded(target) and gait_is_commanded(current)
     if current.phase_rate > 0.0 and target.phase_rate > 0.0:
         current.phase_rate = _approach(current.phase_rate, target.phase_rate, a, GAIT_SNAP_RATE)
-    else:
+    elif not stopping:
         current.phase_rate = target.phase_rate
 
 

@@ -500,6 +500,21 @@ def test_command_ramp_switches_cadence_mode_outright():
     assert 1.0 < between.phase_rate < 1.2, "between two explicit rates the cadence should ease"
 
 
+def test_a_stop_ramps_out_at_the_walks_cadence():
+    """approachGaitCommand: a stop's stroke ramps out at the cadence the walk had, never at the stride law's, and the
+    cadence goes to zero on the tick the stroke leaves the deadband."""
+    cur = _tripod()
+    cur.step_y, cur.phase_rate = 60.0, 0.8
+    target = fg.GaitState(**{**cur.__dict__, "offset": cur.offset.copy()})
+    target.step_y, target.phase_rate = 0.0, 0.0
+    ticks = 0
+    while fg.gait_is_commanded(cur):
+        fg.approach_gait_command(cur, target, FIRMWARE_DT)
+        ticks += 1
+        assert cur.phase_rate == (0.8 if fg.gait_is_commanded(cur) else 0.0)
+    assert ticks > 50, "the stroke ramps out over cycles, not at once"
+
+
 def test_explicit_phase_rate_overrides_the_stride_law():
     gait = _tripod()
     gait.step_y, gait.phase_rate = 100.0, 1.35
