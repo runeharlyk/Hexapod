@@ -70,13 +70,19 @@ inline float strokeMaxAt(int axis, float s1, float h, float fd) {
     return trilinear(cs1, ch, cfd, [axis](int i, int j, int k) { return gait_envelope::STROKE_MAX[axis][i][j][k]; });
 }
 
-// Kappa at a stroke, as a fraction of the longest, from its samples at (k + 1) / SAMPLES: linear between them, and the
-// first sample's below it, which overstates it there, since kappa rises with the stroke.
+// Kappa at a stroke, as a fraction of the longest, from its samples at (k + 1) / SAMPLES: the running maximum of the
+// samples up to the stroke, linear between them, and the first sample below it. Kappa mostly rises with the stroke but
+// dips in places (a later swing sample falls below the first at some walkable postures, by up to 1.7 %), and a stroke
+// inside a dip or short of the first sample is not taken to turn the joints any slower than a shorter one.
 inline float kappaAtStroke(const float (&samples)[SAMPLES], float fraction) {
     const float position = fraction * SAMPLES - 1.0f;
-    if (position <= 0.0f) return samples[0];
-    const int below = std::min((int)position, SAMPLES - 2);
-    return samples[below] + (samples[below + 1] - samples[below]) * (position - (float)below);
+    float below = samples[0];
+    // Written so that a NaN stroke reads the first sample rather than an index far outside the samples.
+    if (!(position > 0.0f)) return below;
+    const int index = std::min((int)position, SAMPLES - 2);
+    for (int k = 1; k <= index; ++k) below = std::max(below, samples[k]);
+    const float above = std::max(below, samples[index + 1]);
+    return below + (above - below) * (position - (float)index);
 }
 
 // The fastest cadence at which no joint passes the servo's speed: a stroke's peak joint rate per unit of swing and of
@@ -113,8 +119,12 @@ inline AxisEnvelope envelopeAt(GaitType gait, int axis, float s1, float h, float
             trilinear(cs1, ch, cfd, [&](int i, int j, int k) { return gait_envelope::KAPPA_SWING[axis][i][j][k][n]; });
         stance[n] =
             trilinear(cs1, ch, cfd, [&](int i, int j, int k) { return gait_envelope::KAPPA_STANCE[axis][i][j][k][n]; });
+    }
+    for (int n = 0; n < SAMPLES; ++n) {
+        const float fraction = (float)(n + 1) / SAMPLES;
         // The top speed is stroke * cadence / d, and d is the gait's alone.
-        const float speed = (float)(n + 1) * topCadence(gait, swing[n], stance[n]);
+        const float speed =
+            (float)(n + 1) * topCadence(gait, kappaAtStroke(swing, fraction), kappaAtStroke(stance, fraction));
         if (speed > fastest) {
             fastest = speed;
             optimal = n;
@@ -228,7 +238,7 @@ inline WalkTarget walkAtShares(GaitType gait, const float (&share)[3], float lx,
     for (int axis = 0; axis < 3; ++axis) {
         if (share[axis] <= 0.0f) continue;
         const AxisEnvelope e = envelopeAt(gait, axis, s1, h, fd, stride);
-        // Walkable guarantees only the forward axis, so lateral or yaw can be empty in a walkable cell.
+        // Defensive: walkable promises only the forward axis, though no walkable cell of the table has an empty one.
         if (e.stroke <= 0.0f) continue;
         used[axis] = share[axis];
         stroke[axis] = e.stroke;

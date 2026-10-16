@@ -405,7 +405,6 @@ class MotionService {
     std::atomic<bool> _handbackSent {false}; // a hand-back is queued; cleared by the worker on any mode
     bool _animating = false;                 // control task only: whether the last tick ran ANIMATE
 
-    CommandMsg command = {0, 0, 0, 0, 0, 0, 0, 0};
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
     BodyStateMsg target_body_state = {0, 0, 0, 0, 0, 0};
     static constexpr float DEFAULT_STEP_HEIGHT_MM = 15.f;

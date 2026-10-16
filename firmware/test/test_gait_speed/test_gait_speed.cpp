@@ -37,12 +37,15 @@ float topCadence(GaitType gait, float kappaSwing, float kappaStance) {
                     gait_envelope::CADENCE_MAX);
 }
 
-// Kappa at a stroke fraction from its samples at (k + 1) / SAMPLES: linear between them, the first one below them.
+// Kappa at a stroke fraction from its samples at (k + 1) / SAMPLES: their running maximum, linear between them, and the
+// first one below them.
 float kappaAt(const float (&samples)[SAMPLES], float fraction) {
+    float peak[SAMPLES];
+    for (int n = 0; n < SAMPLES; ++n) peak[n] = n == 0 ? samples[0] : std::max(peak[n - 1], samples[n]);
     const float position = fraction * SAMPLES - 1.0f;
-    if (position <= 0.0f) return samples[0];
+    if (position <= 0.0f) return peak[0];
     const int below = std::min((int)position, SAMPLES - 2);
-    return samples[below] + (samples[below + 1] - samples[below]) * (position - (float)below);
+    return peak[below] + (peak[below + 1] - peak[below]) * (position - (float)below);
 }
 
 // The table's values at grid point (i, j, k).
@@ -55,8 +58,8 @@ struct GridPoint {
         return topCadence(gait, kappaAt(swing(), fraction), kappaAt(stance(), fraction));
     }
     float sampleSpeed(GaitType gait, int n) const {
-        const float stroke = (float)(n + 1) / SAMPLES * strokeMax();
-        return stroke * topCadence(gait, swing()[n], stance()[n]) / standFrac(gait);
+        const float fraction = (float)(n + 1) / SAMPLES;
+        return fraction * strokeMax() * cadenceAt(gait, fraction) / standFrac(gait);
     }
     float fastestSampleSpeed(GaitType gait) const {
         float fastest = 0.0f;
@@ -163,6 +166,51 @@ void test_kappa_is_linear_between_samples_and_flat_below_them() {
     TEST_ASSERT_FLOAT_WITHIN(1e-4f, 3.0f, kappaAtStroke(samples, 0.25f));
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 128.0f + 0.25f * 128.0f, kappaAtStroke(samples, 0.825f));
     TEST_ASSERT_FLOAT_WITHIN(1e-3f, 512.0f, kappaAtStroke(samples, 1.0f));
+
+    // A dip reads as the higher sample before it, and a rise after it from there.
+    const float dipping[SAMPLES] = {4, 3, 2, 5, 5, 5, 5, 5, 5, 5};
+    TEST_ASSERT_EQUAL_FLOAT(4.0f, kappaAtStroke(dipping, 0.2f));
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 4.0f, kappaAtStroke(dipping, 0.3f));
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 4.5f, kappaAtStroke(dipping, 0.35f));
+    TEST_ASSERT_EQUAL_FLOAT(4.0f, kappaAtStroke(dipping, NAN));
+}
+
+// The table's own dips: where a sample falls below an earlier one, the envelope at that sample's stroke takes the
+// running maximum, which the raw sample would understate.
+void test_a_dip_in_the_table_reads_as_the_running_maximum() {
+    int dips = 0, understated = 0;
+    for (GaitType gait : WALKING_GAITS)
+        for (int axis = 0; axis < 3; ++axis)
+            for (int i = 0; i < gait_envelope::GRID_N - 1; ++i)
+                for (int j = 0; j < gait_envelope::GRID_N - 1; ++j)
+                    for (int k = 0; k < gait_envelope::GRID_N - 1; ++k) {
+                        const GridPoint point {axis, i, j, k};
+                        if (!postureWalkable(gridValue(i), gridValue(j), gridValue(k)) || point.strokeMax() <= 0.0f)
+                            continue;
+                        const float optimal = point.envelope(gait, 0).stroke;
+                        float peak = point.swing()[0];
+                        for (int n = 1; n < SAMPLES; ++n) {
+                            const float raw = point.swing()[n];
+                            const bool dip = raw < peak;
+                            peak = std::max(peak, raw);
+                            if (!dip) continue;
+                            // The stride whose stroke is sample n's.
+                            const float stroke = (float)(n + 1) / SAMPLES * point.strokeMax();
+                            const float stride =
+                                stroke < optimal              ? (stroke / optimal - 1.0f) / (1.0f - MIN_STRIDE_SHARE)
+                                : optimal < point.strokeMax() ? (stroke - optimal) / (point.strokeMax() - optimal)
+                                                              : 1.0f;
+                            if (stride < -1.0f || stride > 1.0f) continue;
+                            const AxisEnvelope e = point.envelope(gait, stride);
+                            const float fraction = (float)(n + 1) / SAMPLES;
+                            TEST_ASSERT_FLOAT_WITHIN(1e-4f, point.cadenceAt(gait, fraction), e.cadence);
+                            ++dips;
+                            const float rawCadence = topCadence(gait, raw, kappaAt(point.stance(), fraction));
+                            understated += rawCadence > e.cadence + 1e-4f;
+                        }
+                    }
+    TEST_ASSERT_TRUE(dips > 0);
+    TEST_ASSERT_TRUE(understated > 0);
 }
 
 void test_full_stick_reaches_the_top_speed() {
@@ -424,19 +472,22 @@ void test_interpolation_between_grid_points_is_trilinear() {
     TEST_ASSERT_TRUE(postureWalkable(s1, h, fd));
     for (GaitType gait : WALKING_GAITS)
         for (int axis = 0; axis < 3; ++axis) {
-            float strokeMax = 0.0f, swing = 0.0f, stance = 0.0f;
+            float strokeMax = 0.0f, swing[SAMPLES] = {}, stance[SAMPLES] = {};
             for (int di = 0; di < 2; ++di)
                 for (int dj = 0; dj < 2; ++dj)
                     for (int dk = 0; dk < 2; ++dk) {
                         const GridPoint corner {axis, i + di, j + dj, k + dk};
                         strokeMax += corner.strokeMax() / 8.0f;
-                        swing += corner.swing()[SAMPLES - 1] / 8.0f;
-                        stance += corner.stance()[SAMPLES - 1] / 8.0f;
+                        for (int n = 0; n < SAMPLES; ++n) {
+                            swing[n] += corner.swing()[n] / 8.0f;
+                            stance[n] += corner.stance()[n] / 8.0f;
+                        }
                     }
             TEST_ASSERT_FLOAT_WITHIN(1e-4f * strokeMax, strokeMax, gait_speed_detail::strokeMaxAt(axis, s1, h, fd));
             const AxisEnvelope longest = envelopeAt(gait, axis, s1, h, fd, 1);
             TEST_ASSERT_FLOAT_WITHIN(1e-4f * strokeMax, strokeMax, longest.stroke);
-            TEST_ASSERT_FLOAT_WITHIN(1e-4f, topCadence(gait, swing, stance), longest.cadence);
+            TEST_ASSERT_FLOAT_WITHIN(1e-4f, topCadence(gait, kappaAt(swing, 1.0f), kappaAt(stance, 1.0f)),
+                                     longest.cadence);
         }
 
     // A quarter of the way along one axis weighs the two corners 3:1.
@@ -654,6 +705,7 @@ int main(int, char**) {
     RUN_TEST(test_the_stride_anchors_the_stroke);
     RUN_TEST(test_the_envelope_follows_the_tables_on_the_grid);
     RUN_TEST(test_kappa_is_linear_between_samples_and_flat_below_them);
+    RUN_TEST(test_a_dip_in_the_table_reads_as_the_running_maximum);
     RUN_TEST(test_full_stick_reaches_the_top_speed);
     RUN_TEST(test_default_speed_is_sixty_percent);
     RUN_TEST(test_a_slower_stick_keeps_the_stroke_and_slows_the_cadence);
