@@ -647,6 +647,44 @@ void test_an_interrupted_settle_starts_over() {
     TEST_ASSERT_EQUAL_FLOAT(expected.phaseRate, robot.gaitCommand().phase_rate);
 }
 
+// A walk entered from a stand at rest steps on its first command when the command keeps the stand's height and stance:
+// nothing has to settle, and the lift rises to the walk's alongside the stroke.
+void test_a_walk_from_a_stand_at_rest_steps_at_once() {
+    for (const Posture3 posture : {Posture3 {0, 0, 0}, Posture3 {0.5f, 0.25f, 0.25f}}) {
+        TEST_ASSERT_TRUE(postureWalkable(posture.s1, posture.h, posture.fd));
+        VirtualRobot robot;
+        standUp(robot);
+        hold(robot, withPosture(CommandMsg {}, {0, posture.h, posture.fd}), ticksFor(2.0f));
+        robot.setMode(MOTION_STATE::WALK);
+        const CommandMsg stick = withPosture(fullStick(0, 1, 0), posture);
+        robot.command(stick);
+        robot.tick();
+        const WalkTarget expected =
+            classicWalkTarget(GaitType::TRI_GATE, 0, 1, 0, 1, posture.s1, posture.h, posture.fd);
+        TEST_ASSERT_EQUAL_FLOAT(expected.stepY, robot.gaitCommand().step_y);
+        TEST_ASSERT_EQUAL_FLOAT(expected.phaseRate, robot.gaitCommand().phase_rate);
+        TEST_ASSERT_EQUAL_FLOAT((posture.s1 + 1.0f) * 20.0f, robot.gaitCommand().step_height);
+        TEST_ASSERT_GREATER_THAN_FLOAT(STEPPING_DEG_PER_TICK, largestStep(robot, ticksFor(0.1f), &stick));
+        TEST_ASSERT_EQUAL_INT(0, hold(robot, stick, ticksFor(3.0f)).clamped);
+    }
+}
+
+// From the same stand, a command at another height, or one that lowers the lift below the stand's, settles first.
+void test_a_walk_from_a_stand_at_rest_settles_a_new_posture_first() {
+    for (const Posture3 posture : {Posture3 {0, 0.25f, 0}, Posture3 {-1, 0, 0}}) {
+        VirtualRobot robot;
+        standUp(robot);
+        robot.setMode(MOTION_STATE::WALK);
+        const CommandMsg stick = withPosture(fullStick(0, 1, 0), posture);
+        robot.command(stick);
+        robot.tick();
+        TEST_ASSERT_EQUAL_FLOAT(0.0f, robot.gaitCommand().step_y);
+        const HeldRun run = hold(robot, stick, ticksFor(3.0f));
+        TEST_ASSERT_EQUAL_INT(0, run.clamped);
+        TEST_ASSERT_TRUE(walkResumed(robot));
+    }
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_new_robot_is_deactivated);
@@ -677,5 +715,7 @@ int main(int, char **) {
     RUN_TEST(test_leaving_a_walk_for_stand_mid_stride_stays_in_travel);
     RUN_TEST(test_a_walk_after_walk_nn_takes_its_posture_again);
     RUN_TEST(test_an_interrupted_settle_starts_over);
+    RUN_TEST(test_a_walk_from_a_stand_at_rest_steps_at_once);
+    RUN_TEST(test_a_walk_from_a_stand_at_rest_settles_a_new_posture_first);
     return UNITY_END();
 }

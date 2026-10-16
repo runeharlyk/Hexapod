@@ -224,6 +224,7 @@ class MotionService {
                     target_gait_state.step_depth = 0.002f;
                     // The envelope sets the cadence; step_speed is left to pace a stance change.
                     target_gait_state.step_speed = 1.f;
+                    takeRestPosture(clamped);
                     applyWalkTarget();
                 }
                 break;
@@ -283,6 +284,7 @@ class MotionService {
         resetCommandIfTimedOut();
         const float dt = getMotionDeltaSeconds();
         const MOTION_STATE state = motionState;
+        if (state != MOTION_STATE::STAND && state != MOTION_STATE::WALK) _atRest = false;
         // Entering and leaving ANIMATE are handled here rather than in handleInputMode so the runner
         // is only ever touched by the control task.
         if ((state == MOTION_STATE::ANIMATE) != _animating) {
@@ -309,6 +311,7 @@ class MotionService {
                 approachGaitCommand(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
                 gait.step(gait_state, body_state, dt);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
+                noteRestPosture();
                 break;
             }
 #if FT_ENABLED(USE_POLICY)
@@ -417,9 +420,14 @@ class MotionService {
     struct Posture {
         float s1, h, fd;
     };
-    // The posture the classic walk stands in, valid once it was taken between steps (settleWalkPosture).
+    // The posture the classic walk stands in, valid once it was taken between steps (settleWalkPosture) or from the
+    // stand the walk was entered from (takeRestPosture).
     Posture _walkPosture {};
     bool _walkPostureValid = false;
+    // The posture of a stand at rest, its lift as an s1, for a walk entered next. The control task rewrites it every
+    // STAND tick while _atRest holds, with the same values, so the command worker's read cannot tear into another.
+    Posture _restPosture {};
+    std::atomic<bool> _atRest {false};
     // A posture is waiting for the gait to stop, then for the robot to settle; the walk is held at zero meanwhile.
     std::atomic<bool> _posturePending {false};
     std::atomic<bool> _postureSettling {false};
@@ -550,6 +558,33 @@ class MotionService {
         }
     }
 
+    // Control task, at the end of a STAND tick. A stand that has taken its posture and holds still is one a walk can
+    // start from. A stand posture still pending has not moved anything, and entering WALK drops it.
+    void noteRestPosture() {
+        const bool atRest = !gaitIsCommanded(gait_state) && feetAtRest() &&
+                            std::fabs(body_state.zm - target_body_state.zm) < POSTURE_SETTLED_MM && liftArrived();
+        if (atRest)
+            _restPosture = {gait_state.step_height / 20.f - 1.f, target_body_state.zm / bodyHeightMm(1.f),
+                            _feetDistance};
+        _atRest = atRest;
+    }
+
+    // Command worker, the first classic walk command after a stand at rest. A command that keeps the stand's height
+    // and stance walks at once in it: only the lift differs, and a lift that rises eases in alongside the stroke,
+    // which keeps every state between inside the envelope (checked over its walkable grid). One that falls does not:
+    // the stand's lift over the posture's stroke can leave travel, so that walk, like any other, settles first.
+    void takeRestPosture(const CommandMsg &c) {
+        if (_walkPostureValid || _postureSettling || !_atRest.exchange(false)) return;
+        const Posture rest = _restPosture;
+        if (std::fabs(c.h - rest.h) > POSTURE_DEADBAND || std::fabs(c.fd - rest.fd) > POSTURE_DEADBAND ||
+            c.s1 < rest.s1 - POSTURE_DEADBAND || !postureWalkable(c.s1, rest.h, rest.fd))
+            return;
+        _walkPosture = {c.s1, rest.h, rest.fd};
+        _walkPostureValid = true;
+        _posturePending = false;
+        target_gait_state.step_height = (c.s1 + 1.f) * 20.f;
+    }
+
     // Control task, STAND.
     void takeStandPosture() {
         if (!_standPosturePending || gaitIsCommanded(gait_state) || !feetAtRest()) return;
@@ -577,7 +612,7 @@ class MotionService {
     // that drive nothing: there is no output to jerk, and a half-stride left frozen in gait_state
     // would otherwise resume the moment the robot is put back into STAND. STAND itself only gets the
     // target, so the existing ramp walks the legs down instead of dropping them in one tick.
-    // The next classic walk starts by taking its posture, whatever the body was left in.
+    // The next classic walk takes its posture again, unless it starts from a stand at rest in it (takeRestPosture).
     void forgetWalkPosture() {
         _walkPostureValid = false;
         _posturePending = false;
