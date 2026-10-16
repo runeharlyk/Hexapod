@@ -78,10 +78,9 @@ def rotate(robot, degrees: float, rate: float | None) -> None:
     With an IMU the turn closes on the measured yaw: each pass slows over the last SLOW_DOWN_DEG and stops within
     TOLERANCE_DEG, then the yaw is read again once the gait has settled and another pass turns the rest, up to
     MAX_TURN_PASSES. The gait holds its stroke at any rate, and after the stop its feet return to stance, which turns
-    the body by an amount that depends on the gait phase: about 4 degrees either way, against a mean coast of only
-    1.25 tau at the commanded rate. A lead on the stop would correct the mean, not that, so the turn is closed on the
-    settled yaw instead; over 24 angles from 20 to 180 degrees this leaves 12 % of turns beyond TOLERANCE_DEG (4 %
-    beyond 4 degrees), where a single pass left 54 % (42 %). Without an IMU the turn is timed like a move.
+    the body by an amount that depends on the gait phase, well beyond the mean coast of 1.25 tau at the commanded
+    rate. A lead on the stop would correct only that mean, so the turn is closed on the settled yaw instead. Without
+    an IMU the turn is timed like a move.
     """
     if degrees == 0:
         return

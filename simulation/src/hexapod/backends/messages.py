@@ -12,7 +12,7 @@ BINDING = SIMULATION / "src" / "platform_shared" / "message_pb2.py"
 def regenerate_if_stale(binding: Path = BINDING, proto_dir: Path = PROTO_DIR, compile_protos: Path = COMPILE_PROTOS):
     """Generate the gitignored protobuf bindings when they are missing or older than any schema, as the native
     library is rebuilt for a newer firmware source. A binding from before a field was added drops it on every send."""
-    newest_proto = max(p.stat().st_mtime for p in proto_dir.glob("*.proto"))
+    newest_proto = max((p.stat().st_mtime for p in proto_dir.glob("*.proto")), default=0.0)
     if not binding.exists() or newest_proto > binding.stat().st_mtime:
         subprocess.run([sys.executable, str(compile_protos)], check=True)
 

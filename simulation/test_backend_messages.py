@@ -45,6 +45,14 @@ def test_a_missing_binding_is_generated(layout):
     assert _runs(ran) == 1
 
 
+def test_a_binding_is_kept_when_there_is_no_schema_to_compare(layout):
+    binding, proto_dir, compiler, ran = layout
+    for proto in proto_dir.glob("*.proto"):
+        proto.unlink()
+    regenerate_if_stale(binding, proto_dir, compiler)
+    assert _runs(ran) == 0
+
+
 def test_a_binding_newer_than_every_schema_is_kept(layout):
     binding, proto_dir, compiler, ran = layout
     for proto in proto_dir.glob("*.proto"):
@@ -53,7 +61,7 @@ def test_a_binding_newer_than_every_schema_is_kept(layout):
     assert _runs(ran) == 0
 
 
-def test_the_checked_in_schemas_are_what_the_loaded_bindings_were_built_from():
+def test_the_loaded_bindings_are_current_and_carry_the_stride_field():
     from src.platform_shared import message_pb2
 
     newest = max(p.stat().st_mtime for p in PROTO_DIR.glob("*.proto"))

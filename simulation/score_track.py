@@ -39,7 +39,8 @@ from src.robot.firmware_gait import GAIT_COMMAND_TAU_S
 from src.sim import recording
 
 ODOMETRY_COLUMNS = ("odometry_x", "odometry_y", "odometry_yaw")
-STRIDE = 8  # the stride's place in a tick's command (lx, ly, rx, ry, h, s, s1, fd, stride); older recordings end before it
+# The stride's place in a tick's command (lx, ly, rx, ry, h, s, s1, fd, stride); older recordings end before it.
+STRIDE = 8
 GRID_S = 0.01
 SMOOTH_S = 0.2
 SYNC_S = 10.0
@@ -90,7 +91,7 @@ def commanded_path(ticks: dict[str, np.ndarray]) -> np.ndarray:
     +y: the speed model's velocity in WALK, nothing otherwise, through the firmware's first-order command ramp."""
     t = ticks["t_us"] / 1e6
     command = ticks["command"]
-    if command.shape[1] > STRIDE and np.any(command[ticks["mode"] == Mode.WALK, STRIDE] != 0.0):
+    if command.ndim == 2 and command.shape[1] > STRIDE and np.any(command[ticks["mode"] == Mode.WALK, STRIDE] != 0.0):
         raise ValueError("the recording walked at a nonzero stride, which the stride-0 speed model does not describe")
     velocities = {}
     velocity = np.zeros(3)  # forward, left, counter-clockwise

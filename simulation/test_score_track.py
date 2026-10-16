@@ -158,3 +158,18 @@ def test_a_stride_set_only_while_standing_does_not_change_the_walk(tmp_path):
     modes, sticks = course_ticks()
     walked = walk(modes, sticks, 1.0, 1.0, (0.0, 0.0, 0.0))
     assert telemetry.estimates["commanded"] == pytest.approx(walked, abs=1e-6)  # the sticks cross the wire as float32
+
+
+def _ticks(command):
+    return {"t_us": np.arange(4) * 5000, "mode": np.full(4, int(Mode.WALK)), "gait": np.zeros(4, dtype=int),
+            "command": command}
+
+
+def test_a_recording_without_a_stride_entry_is_scored():
+    older = np.tile([0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], (4, 1))
+    assert score_track.commanded_path(_ticks(older)).shape == (4, 3)
+
+
+def test_a_recording_without_ticks_has_an_empty_path():
+    assert score_track.commanded_path({"t_us": np.array([]), "mode": np.array([]), "gait": np.array([]),
+                                       "command": np.array([])}).shape == (0, 3)

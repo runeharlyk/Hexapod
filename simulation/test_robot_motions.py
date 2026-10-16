@@ -20,7 +20,7 @@ class ScriptedBackend:
     the cadence with it, so the body moves at the square of the ramp over its value at the stop), optionally with a yaw
     that arrives late,
     a gait that turns slower than commanded, a yaw that drifts by `stop_drifts` (degrees, in the turn's direction, one
-    per stop) while the feet settle, a dead-man stop at `drop_at`, a mode switched from elsewhere and no IMU;
+    per stop of a turn) while the feet settle, a dead-man stop at `drop_at`, a mode switched from elsewhere and no IMU;
     records every command."""
 
     def __init__(self, top=Velocity(0.3, 0.29, 1.5), yaw=0.0, yaw_lag_s=0.0, turn_scale=1.0, drop_at=None,
@@ -33,6 +33,7 @@ class ScriptedBackend:
         self.mode = mode
         self.gait = Gait.TRI_GATE
         self.velocity = ZERO
+        self._turning = 0.0  # the yaw rate of the turn a stop would end, until a stop takes its drift
         self._heading = ZERO  # the last non-zero command, which the ramp scales up and, after a stop, back down
         self._ramp = 0.0
         self._stage = None  # the stop's first stage, and the ramp the stop started from
@@ -67,8 +68,11 @@ class ScriptedBackend:
         clamp = lambda value, limit: max(-limit, min(limit, value))
         self.velocity = Velocity(clamp(v.vx, self.top.vx), clamp(v.vy, self.top.vy), clamp(v.yaw_rate, self.top.yaw_rate))
         self.log.append((self.t, "velocity", self.velocity))
-        if self.velocity == ZERO and self._heading.yaw_rate and self.stop_drifts and self.mode is Mode.WALK:
-            self.yaw += math.copysign(self.stop_drifts.pop(0), self._heading.yaw_rate)
+        if self.velocity.yaw_rate:
+            self._turning = self.velocity.yaw_rate
+        elif self.velocity == ZERO and self._turning and self.stop_drifts and self.mode is Mode.WALK:
+            self.yaw += math.copysign(self.stop_drifts.pop(0), self._turning)
+            self._turning = 0.0
         if self.velocity != ZERO:
             self._heading = self.velocity
         return self.velocity
@@ -219,6 +223,16 @@ def test_a_turn_that_keeps_landing_off_target_gives_up_after_its_passes():
     robot, backend = _robot(mode=Mode.WALK, stop_drifts=[8.0] * 10)
     robot.rotate(90)
     assert len(backend.stop_drifts) == 10 - motions.MAX_TURN_PASSES
+
+
+def test_a_stop_drift_is_taken_by_the_stop_of_a_turn_only():
+    robot, backend = _robot(mode=Mode.WALK, stop_drifts=[5.0, 7.0])
+    backend.set_velocity(Velocity(0.0, 0.0, 1.0))
+    backend.set_velocity(ZERO)
+    backend.set_velocity(ZERO)
+    backend.set_velocity(Velocity(0.1, 0.0, 0.0))
+    backend.set_velocity(ZERO)
+    assert backend.stop_drifts == [7.0]
 
 
 def test_a_turn_across_the_wrap_and_a_full_circle():
