@@ -155,8 +155,8 @@ void test_the_envelope_follows_the_tables_on_the_grid() {
     TEST_ASSERT_TRUE(shortOfTheFirstSample > 0);
 }
 
-// Kappa between two samples is their linear blend, and below the first sample it is the first sample's: kappa rises
-// with the stroke, so that overstates it.
+// Kappa is the running maximum of the samples up to the stroke: between two samples their linear blend where kappa
+// rises, and below the first sample the first sample's.
 void test_kappa_is_linear_between_samples_and_flat_below_them() {
     const float samples[SAMPLES] = {1, 2, 4, 8, 16, 32, 64, 128, 256, 512};
     using gait_speed_detail::kappaAtStroke;

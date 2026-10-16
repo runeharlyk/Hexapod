@@ -72,8 +72,8 @@ inline float strokeMaxAt(int axis, float s1, float h, float fd) {
 
 // Kappa at a stroke, as a fraction of the longest, from its samples at (k + 1) / SAMPLES: the running maximum of the
 // samples up to the stroke, linear between them, and the first sample below it. Kappa mostly rises with the stroke but
-// dips in places (a later swing sample falls below the first at some walkable postures, by up to 1.7 %), and a stroke
-// inside a dip or short of the first sample is not taken to turn the joints any slower than a shorter one.
+// the swing samples dip in places, below the highest before them by up to 2.2 % forward and lateral and 15 % in yaw,
+// and a stroke inside a dip or short of the first sample is not taken to turn the joints any slower than a shorter one.
 inline float kappaAtStroke(const float (&samples)[SAMPLES], float fraction) {
     const float position = fraction * SAMPLES - 1.0f;
     float below = samples[0];
