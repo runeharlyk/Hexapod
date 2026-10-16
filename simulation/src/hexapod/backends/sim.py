@@ -97,7 +97,7 @@ class SimBackend:
     def _command(self) -> None:
         if self._mode is Mode.WALK:
             s = self._sticks
-            self._loop.walk(lx=s.lx, ly=s.ly, rx=s.rx, h=self._height)
+            self._loop.walk(lx=s.lx, ly=s.ly, rx=s.rx, h=self._height, stride=speed_model.STRIDE)
         elif self._mode is Mode.STAND:
             self._loop.hold(self._height)
 

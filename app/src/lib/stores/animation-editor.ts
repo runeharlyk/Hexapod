@@ -266,7 +266,7 @@ export const createEditor = (initial: Animation = blankAnimation(), autosaveKey?
       autosaved.set(store(autosaveKey, s))
     })
   }
-  let controller = [0, 0, 0, 0, 0, 0, 0, 0]
+  let controller = [0, 0, 0, 0, 0, 0, 0, 0, 0]
   outControllerData.subscribe(d => (controller = d))
 
   const fail = (error: string) => {

@@ -64,13 +64,13 @@ def _library() -> ctypes.CDLL:
     lib = ctypes.CDLL(str(LIBRARY))
     floats = lambda n: [ctypes.c_float] * n  # noqa: E731
     lib.setMode.argtypes = lib.setGait.argtypes = [ctypes.c_int]
-    lib.command.argtypes = floats(8)
+    lib.command.argtypes = floats(9)
     lib.setImu.argtypes = floats(9)
     lib.servosDriven.restype = ctypes.c_bool
     lib.servoAngles.restype = ctypes.POINTER(ctypes.c_float)
     lib.servoWrites.restype = ctypes.c_uint
-    lib.classicWalkTarget.argtypes = [ctypes.c_int, *floats(7), ctypes.POINTER(ctypes.c_float)]
-    lib.autoWalk.argtypes = [ctypes.c_int, *floats(7), ctypes.POINTER(ctypes.c_float)]
+    lib.classicWalkTarget.argtypes = [ctypes.c_int, *floats(8), ctypes.POINTER(ctypes.c_float)]
+    lib.autoWalk.argtypes = [ctypes.c_int, *floats(8), ctypes.POINTER(ctypes.c_float)]
     lib.autoWalk.restype = ctypes.c_int
     lib.clampPosture.argtypes = [ctypes.POINTER(ctypes.c_float)]
     return lib
@@ -100,9 +100,9 @@ class VirtualRobot:
     def set_gait(self, gait: int) -> None:
         self._lib.setGait(gait)
 
-    def command(self, lx=0.0, ly=0.0, rx=0.0, ry=0.0, h=0.0, s=0.0, s1=0.0, fd=0.0) -> None:
+    def command(self, lx=0.0, ly=0.0, rx=0.0, ry=0.0, h=0.0, s=0.0, s1=0.0, fd=0.0, stride=0.0) -> None:
         """A ControllerInputData message, as main.cpp's handler turns it into a CommandMsg."""
-        self._lib.command(lx, ly, rx, ry, h, s, s1, fd)
+        self._lib.command(lx, ly, rx, ry, h, s, s1, fd, stride)
 
     def set_imu(self, rpy_rad, gravity_up, gyro_rad) -> None:
         """The IMU as Peripherals reports it: roll, pitch and yaw in radians, world up in the body frame, and

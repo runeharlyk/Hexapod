@@ -7,6 +7,7 @@ export interface ControllerInput {
   speed: number
   s1: number
   feetDistance: number
+  stride: number
 }
 
 export type GithubAsset = {

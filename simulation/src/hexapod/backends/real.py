@@ -212,7 +212,7 @@ class RealBackend:
         try:
             if not heartbeat or mode in HEARTBEAT_MODES:
                 data = pb.ControllerInputData(left=pb.Vector(x=s.lx, y=s.ly), right=pb.Vector(x=s.rx, y=0.0),
-                                              height=height)
+                                              height=height, stride=speed_model.STRIDE)
                 await self._send(pb.Message(input=data))
                 previous = self._last_input
                 self._last_input = time.monotonic(), mode in WALKING_MODES and s != speed_model.CENTRED

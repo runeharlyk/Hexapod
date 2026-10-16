@@ -49,7 +49,7 @@ static void handlePacket(const uint8_t* data, int len) {
         cmd.ry = 0.0f;
     }
     cmd.h = s_height;
-    cmd.s = cmd.s1 = cmd.fd = 0.0f;
+    cmd.s = cmd.s1 = cmd.fd = cmd.stride = 0.0f;
     if (cmd.sanitize()) EventBus<CommandMsg>::publish(cmd);
 
     static uint8_t prev = 0;

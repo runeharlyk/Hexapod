@@ -19,7 +19,7 @@ const sceneXml = readFileSync(
 )
 const STAND = 3
 const WALK = 4
-const FORWARD: Command = [0, 1, 0, 0, 0, 0, 0, 0]
+const FORWARD: Command = [0, 1, 0, 0, 0, 0, 0, 0, 0]
 
 let mujoco: MainModule
 let robot: VirtualRobot

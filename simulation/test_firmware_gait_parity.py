@@ -227,6 +227,7 @@ def test_gait_h_constants_match_the_port(gait_h):
     for name, value in _tuned_stick_constants(gait_h).items():
         assert getattr(fg, name) == pytest.approx(value), name
     assert fg.AUTO_HYSTERESIS == pytest.approx(_constexpr(_read(GAIT_SPEED_H), "AUTO_HYSTERESIS"))
+    assert fg.MIN_STRIDE_SHARE == pytest.approx(_constexpr(_read(GAIT_SPEED_H), "MIN_STRIDE_SHARE"))
     np.testing.assert_allclose(fg.BEZIER_STEPS, _array(gait_h, "BEZIER_STEPS"))
     np.testing.assert_allclose(fg.BEZIER_HEIGHTS, _array(gait_h, "BEZIER_HEIGHTS"))
     for name in ("defaultPosition", "targetDefaultPosition", "swingStartPosition"):
@@ -287,6 +288,12 @@ def _random_stick(rng):
     return [0.0 if rng.random() < 1 / 3 else rng.uniform(-1.0, 1.0) for _ in range(3)]
 
 
+def _random_stride(rng):
+    """Half at the slider's ends and centre, where the stroke is a table sample or the longest, half anywhere, past
+    the ends included."""
+    return float(rng.choice([-1.0, 0.0, 1.0])) if rng.random() < 0.5 else rng.uniform(-1.1, 1.1)
+
+
 def _random_posture(rng):
     """Half beyond the grid or anywhere in it, half pulled onto the walkable boundary, where most clamped commands
     land and where the corner gate decides."""
@@ -294,9 +301,9 @@ def _random_posture(rng):
     return fg.clamp_posture(*posture) if rng.random() < 0.5 else tuple(posture)
 
 
-def _native_walk_target(gait, lx, ly, rx, s, s1, h, fd):
+def _native_walk_target(gait, lx, ly, rx, s, s1, h, fd, stride):
     out = (ctypes.c_float * 4)()
-    native_library().classicWalkTarget(gait, lx, ly, rx, s, s1, h, fd, out)
+    native_library().classicWalkTarget(gait, lx, ly, rx, s, s1, h, fd, stride, out)
     return np.array(out[:])
 
 
@@ -307,18 +314,20 @@ def test_classic_walk_target_matches_the_firmware(gait):
     for _ in range(500):
         lx, ly, rx = _random_stick(rng)
         s = rng.uniform(-1.1, 1.1)
+        stride = _random_stride(rng)
         posture = _random_posture(rng)
-        native = _native_walk_target(gait, lx, ly, rx, s, *posture)
-        port = np.array(fg.classic_walk_target(gait, lx, ly, rx, s, *posture))
-        np.testing.assert_allclose(port, native, rtol=0, atol=TOL, err_msg=f"stick {lx, ly, rx} s {s} at {posture}")
+        native = _native_walk_target(gait, lx, ly, rx, s, *posture, stride)
+        port = np.array(fg.classic_walk_target(gait, lx, ly, rx, s, *posture, stride))
+        np.testing.assert_allclose(port, native, rtol=0, atol=TOL,
+                                   err_msg=f"stick {lx, ly, rx} s {s} stride {stride} at {posture}")
         walking += native[3] > 0.0
     assert walking > 150, "too few samples walk to compare the stroke and cadence"
 
 
-def _native_auto(current, lx, ly, rx, s, s1, h, fd):
+def _native_auto(current, lx, ly, rx, s, s1, h, fd, stride):
     """AUTO's choice from `current` and the walk the chosen gait takes, as the native library computes them."""
     out = (ctypes.c_float * 4)()
-    gait = native_library().autoWalk(current, lx, ly, rx, s, s1, h, fd, out)
+    gait = native_library().autoWalk(current, lx, ly, rx, s, s1, h, fd, stride, out)
     return gait, np.array(out[:])
 
 
@@ -329,12 +338,13 @@ def test_auto_matches_the_firmware(current):
     for _ in range(500):
         lx, ly, rx = _random_stick(rng)
         s = rng.uniform(-1.1, 1.1)
+        stride = _random_stride(rng)
         posture = _random_posture(rng)
-        native_gait, native = _native_auto(current, lx, ly, rx, s, *posture)
-        demand = fg.auto_demand(lx, ly, rx, s, *posture)
-        gait = fg.select_auto_gait(demand, current, *posture)
-        port = np.array(fg.auto_walk_target(gait, demand, lx, ly, rx, *posture))
-        message = f"stick {lx, ly, rx} s {s} at {posture}"
+        native_gait, native = _native_auto(current, lx, ly, rx, s, *posture, stride)
+        demand = fg.auto_demand(lx, ly, rx, s, *posture, stride)
+        gait = fg.select_auto_gait(demand, current, *posture, stride)
+        port = np.array(fg.auto_walk_target(gait, demand, lx, ly, rx, *posture, stride))
+        message = f"stick {lx, ly, rx} s {s} stride {stride} at {posture}"
         assert gait == native_gait, message
         np.testing.assert_allclose(port, native, rtol=0, atol=TOL, err_msg=message)
         chosen.add(gait)
@@ -354,13 +364,14 @@ def test_clamp_posture_matches_the_firmware():
     assert moved > 100, "too few postures needed clamping to compare the ray search"
 
 
-def test_classic_command_walks_the_clamped_posture():
+def test_classic_command_walks_the_clamped_posture_at_its_stride():
     """The posture is clamped before the envelope is read, and the lift and height are the clamped posture's."""
     s1, h, fd = fg.clamp_posture(0.5, 1.0, -1.0)
     assert (s1, h, fd) != (0.5, 1.0, -1.0), "the test posture must lie outside the walkable region"
     gait = fg.GaitState(gait_type=fg.TRI_GATE)
-    zm = fg.command_to_walk_gait(0.2, 0.8, -0.3, 0.4, 0.5, gait, 1.0, -1.0)
-    expected = fg.classic_walk_target(fg.TRI_GATE, 0.2, 0.8, -0.3, 0.4, s1, h, fd)
+    zm = fg.command_to_walk_gait(0.2, 0.8, -0.3, 0.4, 0.5, gait, 1.0, -1.0, stride=-0.5)
+    expected = fg.classic_walk_target(fg.TRI_GATE, 0.2, 0.8, -0.3, 0.4, s1, h, fd, -0.5)
+    assert expected != pytest.approx(fg.classic_walk_target(fg.TRI_GATE, 0.2, 0.8, -0.3, 0.4, s1, h, fd, 0.0))
     assert (gait.step_x, gait.step_y, gait.step_angle, gait.phase_rate) == pytest.approx(expected)
     assert gait.phase_rate > 0.0
     assert gait.step_height == pytest.approx((s1 + 1.0) * 20.0)

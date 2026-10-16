@@ -377,8 +377,8 @@ class MotionService {
     // The motion's half of a telemetry tick: what it produced and from which command and mode.
     void fillTelemetry(socket_message_TickSample &tick) const {
         std::copy(std::begin(msgAngles.angles), std::end(msgAngles.angles), tick.angles);
-        const float command[8] = {lastCommand.lx, lastCommand.ly, lastCommand.rx, lastCommand.ry,
-                                  lastCommand.h,  lastCommand.s,  lastCommand.s1, lastCommand.fd};
+        const CommandMsg &c = lastCommand;
+        const float command[9] = {c.lx, c.ly, c.rx, c.ry, c.h, c.s, c.s1, c.fd, c.stride};
         std::copy(std::begin(command), std::end(command), tick.command);
         tick.command_age_ms = lastCommandMillis == 0 ? 0 : millis() - lastCommandMillis;
         tick.mode = static_cast<uint32_t>(motionState);

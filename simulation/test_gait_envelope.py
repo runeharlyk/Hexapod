@@ -3,8 +3,8 @@
 The sampled joint-rate factors replace a rollout per posture, so the first test pins them to one.
 The remaining tests pin the table's reference values, its walkable region, the servo scaling of the
 speed, the per-stroke geometry samples the firmware interpolates, and the agreement of the generated header with the
-generated JSON, and walk the port at full stick in random walkable postures, between the grid points the table was
-measured at.
+generated JSON, and walk the port at full stick and at the shortest, the speed-optimal and the longest stride in random
+walkable postures, between the grid points the table was measured at.
 """
 
 import json
@@ -24,10 +24,11 @@ TABLE_JSON = os.path.join(os.path.dirname(__file__), "src", "resources", "gait_e
 TOL = 1e-4
 GRID_N = 9
 MID = GRID_N // 2
-STROKE_SAMPLES = 10
-# The reference sweeps strokes in steps of 4 mm and 0.02 rad, the latter 5% of the optimal yaw stroke, and the table
-# samples the refined longest stroke, so only yaw can run noticeably faster than the sweep found.
-SPEED_OPTIMAL_TOL = {"forward": 0.03, "lateral": 0.03, "yaw": 0.05}
+# The largest fall of a swing kappa sample below the highest before it, measured over the walkable cells: 2.2% forward
+# and lateral, 15.3% in yaw. A dip lets the reference sweep, which reads kappa as it is, run a stroke faster than the
+# firmware, which reads the running maximum.
+KAPPA_DIP = {"forward": 0.025, "lateral": 0.025, "yaw": 0.16}
+SPEED_ROUNDING = 1e-3  # the table's kappas are rounded to 4 decimals
 MONOTONE_SHARE = 0.95
 KAPPA_FALL_TOL = 0.01  # a fall below the running peak of this share of it is the curve sampling's noise
 BELOW_SAMPLE_TOL = 0.02
@@ -40,16 +41,16 @@ def table():
 
 
 def _sample_strokes(stroke_max):
-    return stroke_max * np.arange(1, STROKE_SAMPLES + 1) / STROKE_SAMPLES
+    return stroke_max * np.arange(1, ge.STROKE_SAMPLES + 1) / ge.STROKE_SAMPLES
 
 
 def _best_sample(table, gait_type, axis, cell):
     """The fastest sampled stroke of the gait on the axis at a grid cell, (speed, stroke), from the table's kappas
-    alone by the cadence law the firmware applies."""
+    alone by the cadence law the firmware applies, which reads the running maximum of the samples."""
     d = ge.STAND_FRAC[gait_type]
     stroke_max = table["stroke_max"][axis][cell[0]][cell[1]][cell[2]]
-    kappa_swing = np.array(table["kappa_swing"][axis][cell[0]][cell[1]][cell[2]])
-    kappa_stance = np.array(table["kappa_stance"][axis][cell[0]][cell[1]][cell[2]])
+    kappa_swing = np.maximum.accumulate(table["kappa_swing"][axis][cell[0]][cell[1]][cell[2]])
+    kappa_stance = np.maximum.accumulate(table["kappa_stance"][axis][cell[0]][cell[1]][cell[2]])
     cadence = np.minimum(table["servo_rad_s"] / np.maximum(kappa_swing / (1 - d), kappa_stance / d), ge.CADENCE_MAX)
     strokes = _sample_strokes(stroke_max)
     speed = strokes * cadence / d
@@ -143,13 +144,13 @@ def _walkable_postures(count, seed):
     return postures
 
 
-def _worst_excursion(gait_type, stick, s1, h, fd):
+def _worst_excursion(gait_type, stick, s1, h, fd, stride):
     """The port's gait at the firmware's tick from a stand in the posture, the command eased in as MotionService does
     and then held at the top speed for two cycles: the largest |joint| / JOINT_LIMIT_DEG and whether every foot
     stayed in reach. None when the posture cannot walk the axis."""
     target = fg.GaitState(gait_type=gait_type)
     fg.set_gait(target)
-    zm = fg.command_to_walk_gait(*stick, 1.0, s1, target, h, fd)
+    zm = fg.command_to_walk_gait(*stick, 1.0, s1, target, h, fd, stride)
     if target.phase_rate <= 0.0:
         return None
     gait = fg.GaitState(**{**target.__dict__, "offset": target.offset.copy()})
@@ -174,19 +175,20 @@ def _worst_excursion(gait_type, stick, s1, h, fd):
 
 @pytest.fixture(scope="module")
 def full_stick_walks():
-    """{(gait, axis, posture): (worst, reachable)} over 40 walkable postures. Between the grid points the envelope is
-    interpolated, so a stroke read inside a walkable cell has to hold for the posture actually walked, not only at the
-    corners it was measured at."""
+    """{(gait, axis, stride, posture): (worst, reachable)} over 40 walkable postures, at the shortest, the speed-optimal
+    and the longest stride. Between the grid points the envelope is interpolated, so a stroke read inside a walkable
+    cell has to hold for the posture actually walked, not only at the corners it was measured at."""
     walks = {}
     for posture in _walkable_postures(40, seed=4):
         for gait_type, name in enumerate(ge.GAIT_NAMES):
             for axis, stick in FULL_STICKS.items():
-                excursion = _worst_excursion(gait_type, stick, *posture)
-                assert excursion is not None or axis != "forward", f"walkable posture {posture} cannot walk forward"
-                if excursion is not None:
-                    walks[name, axis, tuple(round(v, 3) for v in posture)] = excursion
+                for stride in (-1.0, 0.0, 1.0):
+                    excursion = _worst_excursion(gait_type, stick, *posture, stride)
+                    assert excursion is not None or axis != "forward", f"walkable posture {posture} cannot walk forward"
+                    if excursion is not None:
+                        walks[name, axis, stride, tuple(round(v, 3) for v in posture)] = excursion
     walked = {axis: sum(key[1] == axis for key in walks) for axis in FULL_STICKS}
-    assert walked["lateral"] >= 40 and walked["yaw"] >= 40, walked
+    assert walked["lateral"] >= 120 and walked["yaw"] >= 120, walked
     return walks
 
 
@@ -201,6 +203,8 @@ def test_walkable_postures_walk_full_stick_in_travel(full_stick_walks):
 
 def test_table_holds_the_geometry_per_axis(table):
     walkable = np.array(table["walkable"], dtype=bool)
+    assert "gaits" not in table, "the per-gait speeds are derived from the geometry, not tabulated"
+    assert table["stand_frac"] == pytest.approx(ge.STAND_FRAC)
     for key in ("stroke_max", "kappa_swing", "kappa_stance"):
         assert set(table[key]) == set(ge.AXES)
     for axis in ge.AXES:
@@ -208,19 +212,49 @@ def test_table_holds_the_geometry_per_axis(table):
         assert stroke_max.shape == (GRID_N,) * 3
         for key in ("kappa_swing", "kappa_stance"):
             kappa = np.array(table[key][axis])
-            assert kappa.shape == (GRID_N,) * 3 + (STROKE_SAMPLES,)
+            assert kappa.shape == (GRID_N,) * 3 + (ge.STROKE_SAMPLES,)
             assert (kappa[walkable] > 0).all()
         assert (stroke_max[walkable] > 0).all()
     assert (np.array(table["stroke_max"]["forward"])[walkable] >= ge.WALKABLE_STROKE_MM).all()
 
 
 @pytest.mark.parametrize("axis", ge.AXES)
-@pytest.mark.parametrize("gait_type", [fg.TRI_GATE, fg.BI_GATE, fg.WAVE, fg.RIPPLE])
-def test_speed_optimal_stroke_matches_the_reference_sweep(table, gait_type, axis):
-    reference, _ = ge.top_speed(gait_type, axis, 0.0, 0.0, 0.0, table["servo_rad_s"])
-    sampled, stroke = _best_sample(table, gait_type, axis, (MID, MID, MID))
-    assert stroke > 0
-    assert sampled == pytest.approx(reference, rel=SPEED_OPTIMAL_TOL[axis])
+def test_a_cell_with_no_feasible_stroke_holds_no_kappa(table, axis):
+    stroke_max = np.array(table["stroke_max"][axis])
+    infeasible = stroke_max == 0
+    assert infeasible.any(), "the grid must reach postures that cannot stride the axis"
+    for key in ("kappa_swing", "kappa_stance"):
+        kappa = np.array(table[key][axis])
+        assert (kappa[infeasible] == 0).all()
+        assert (kappa[~infeasible] > 0).all()
+
+
+def _speed_optimal_cells(table, count, seed):
+    """The default posture and `count` walkable grid cells drawn at random."""
+    cells = np.argwhere(np.array(table["walkable"], dtype=bool))
+    picked = cells[np.random.default_rng(seed).choice(len(cells), count, replace=False)]
+    return [(MID, MID, MID)] + [tuple(int(i) for i in cell) for cell in picked]
+
+
+@pytest.mark.parametrize("axis", ge.AXES)
+def test_speed_optimal_stroke_matches_the_reference_sweep(table, axis):
+    """The table samples the refined longest stroke at tenths and the reference sweeps fixed steps, so neither finds
+    the other's optimum exactly. Kappa rises with the stroke, so a shorter stroke steps at least as fast: the best
+    sample is at least the reference's speed scaled down to the sample just short of the reference's stroke, less what
+    a dip in kappa costs, and at most the reference's speed scaled up from the swept stroke just short of its own."""
+    sweep_step = ge.STROKES[axis][0]
+    for cell in _speed_optimal_cells(table, 30, seed=11):
+        posture = tuple(float(ge.GRID[i]) for i in cell)
+        strokes = _sample_strokes(table["stroke_max"][axis][cell[0]][cell[1]][cell[2]])
+        for gait_type in range(len(ge.GAIT_NAMES)):
+            reference, reference_stroke = ge.top_speed(gait_type, axis, *posture, table["servo_rad_s"])
+            sampled, stroke = _best_sample(table, gait_type, axis, cell)
+            shorter = strokes[strokes <= reference_stroke]
+            swept = np.floor(stroke / sweep_step) * sweep_step
+            where = (axis, gait_type, cell, sampled, reference, stroke, reference_stroke)
+            assert len(shorter) > 0 and swept > 0, where
+            assert sampled >= reference * shorter[-1] / reference_stroke * (1 - KAPPA_DIP[axis]), where
+            assert sampled <= reference * stroke / swept * (1 + SPEED_ROUNDING), where
 
 
 @pytest.mark.parametrize("axis", ["forward", "lateral"])
@@ -277,19 +311,16 @@ def test_header_and_json_carry_the_same_table(table):
         text = f.read()
 
     assert _cpp_array(text, "GRID_N") == GRID_N == len(table["grid"])
-    assert _cpp_array(text, "STROKE_SAMPLES") == STROKE_SAMPLES
+    assert _cpp_array(text, "STROKE_SAMPLES") == ge.STROKE_SAMPLES
     assert _cpp_array(text, "SERVO_RAD_S") == pytest.approx(table["servo_rad_s"], abs=TOL)
     assert _cpp_array(text, "CADENCE_MAX") == pytest.approx(table["cadence_max"], abs=TOL)
     assert _cpp_array(text, "TRAVEL_MARGIN_DEG") == pytest.approx(table["travel_margin_deg"], abs=TOL)
     assert _cpp_array(text, "DEFAULT_SPEED_FRACTION") == pytest.approx(table["default_speed_fraction"], abs=TOL)
     assert np.array_equal(_cpp_array(text, "WALKABLE"), np.array(table["walkable"], dtype=float))
 
-    gaits = [table["gaits"][name] for name in ge.GAIT_NAMES]
-    assert _cpp_array(text, "STAND_FRAC") == pytest.approx([g["stand_frac"] for g in gaits], abs=TOL)
-    for header_name, key in (("V_MAX", "v_max"), ("STROKE", "stroke")):
-        expected = np.array([[g[axis][key] for axis in ge.AXES] for g in gaits])
-        assert expected.shape == (4, 3, GRID_N, GRID_N, GRID_N)
-        assert np.abs(_cpp_array(text, header_name) - expected).max() <= TOL
+    assert _cpp_array(text, "STAND_FRAC") == pytest.approx(table["stand_frac"], abs=TOL)
+    for retired in ("V_MAX", "STROKE"):
+        assert not re.search(rf"\b{retired}\[", text), f"{retired} is no longer part of the table"
     for header_name, key in (("STROKE_MAX", "stroke_max"), ("KAPPA_SWING", "kappa_swing"),
                              ("KAPPA_STANCE", "kappa_stance")):
         expected = np.array([table[key][axis] for axis in ge.AXES])
@@ -301,12 +332,6 @@ def test_header_and_json_carry_the_same_table(table):
 def test_committed_table_agrees_with_the_generator(table, cell):
     s1, h, fd = (float(ge.GRID[i]) for i in cell)
     i, j, k = cell
-    for gait, name in enumerate(ge.GAIT_NAMES):
-        for axis in ge.AXES:
-            v_max, stroke = ge.top_speed(gait, axis, s1, h, fd, table["servo_rad_s"])
-            entry = table["gaits"][name][axis]
-            assert entry["v_max"][i][j][k] == pytest.approx(v_max, abs=TOL)
-            assert entry["stroke"][i][j][k] == pytest.approx(stroke, abs=TOL)
     assert table["walkable"][i][j][k] == ge.is_walkable(s1, h, fd)
     lift, zm, feet_scale = ge.posture(s1, h, fd)
     for axis in ge.AXES:

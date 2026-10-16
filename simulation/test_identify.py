@@ -102,7 +102,7 @@ def write(path, *, stall, hold, kp, noload, deadband, lag_ms, gyro_bias, gyro_no
             tick.gyro.extend(gyro[held[k]])
             tick.gravity.extend(up[held[k]])
             tick.angles.extend(angles[k])
-            tick.command.extend([0.0] * 8)
+            tick.command.extend([0.0] * 9)
         writer.write(message.SerializeToString(), host_rx_us=batch_seq)
     writer.close()
 

@@ -60,7 +60,7 @@ def write_recording(path, modes, sticks) -> None:
     writer = RecordingWriter(path, {"version": "synthetic"})
     for first in range(0, len(modes), 10):
         ticks = [pb.TickSample(seq=k, t_us=int(robot_us[k]), mode=int(modes[k]), gait=int(Gait.TRI_GATE),
-                               command=[*sticks[k], 0.0, 0.0, 0.0, 0.0, 0.0])
+                               command=[*sticks[k], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
                  for k in range(first, min(first + 10, len(modes)))]
         batch = pb.Message(telemetry_batch=pb.TelemetryBatch(batch_seq=first // 10 + 1, ticks=ticks))
         writer.write(batch.SerializeToString(), int(robot_us[ticks[-1].seq]) + 25_000)

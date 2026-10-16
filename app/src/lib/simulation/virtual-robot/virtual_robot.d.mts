@@ -16,7 +16,8 @@ export interface VirtualRobotModule {
     h: number,
     s: number,
     s1: number,
-    fd: number
+    fd: number,
+    stride: number
   ): void
   _setImu(...values: number[]): void
   _tick(): void

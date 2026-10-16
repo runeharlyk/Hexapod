@@ -1,4 +1,4 @@
-"""Top body speed per gait as a function of posture (step height, body height, feet distance).
+"""The stroke geometry the gait speeds derive from, as a function of posture (step height, body height, feet distance).
 
 The stance and swing curves depend only on their normalized progress, so the peak joint rate splits into two
 gait-independent geometry factors, kappa_swing and kappa_stance (rad per unit of phase progress). A gait with stance
@@ -6,8 +6,9 @@ fraction d at cadence f then peaks at f * max(kappa_swing / (1 - d), kappa_stanc
 The cadence is capped by the servo speed through that peak and by CADENCE_MAX; the stroke by joint travel, less
 TRAVEL_MARGIN_DEG, and reach.
 The factors are read off the port's own curves at sampled progress, so one posture costs two short sweeps, not a rollout.
-Besides the per-gait speeds the table keeps the factors themselves, sampled along each axis's stroke up to the longest
-feasible one, so a consumer can derive the top cadence of any gait at any stroke.
+The table keeps the factors themselves, sampled along each axis's stroke up to the longest feasible one, so a consumer
+derives the top cadence of any gait at any stroke; top_speed is the reference sweep its speed-optimal stroke is checked
+against.
 """
 
 from functools import lru_cache
@@ -183,18 +184,7 @@ def _round_cells(cells: list, field: int) -> list:
 
 def build_table(servo_rad_s: float) -> dict:
     """The envelope over the posture grid, indexed [s1][h][fd]; the geometry samples add [k] for the stroke."""
-    n = len(GRID)
     walkable = [[[is_walkable(s1, h, fd) for fd in GRID] for h in GRID] for s1 in GRID]
-    gaits = {}
-    for gait_type, name in enumerate(GAIT_NAMES):
-        gaits[name] = {"stand_frac": STAND_FRAC[gait_type]}
-        for axis in AXES:
-            cells = [[[top_speed(gait_type, axis, s1, h, fd, servo_rad_s) for fd in GRID] for h in GRID]
-                     for s1 in GRID]
-            gaits[name][axis] = {
-                "v_max": [[[round(cells[i][j][k][0], 4) for k in range(n)] for j in range(n)] for i in range(n)],
-                "stroke": [[[round(cells[i][j][k][1], 4) for k in range(n)] for j in range(n)] for i in range(n)],
-            }
     geometry = {axis: [[[_geometry_samples(axis, s1, h, fd) for fd in GRID] for h in GRID] for s1 in GRID]
                 for axis in AXES}
     return {
@@ -203,8 +193,8 @@ def build_table(servo_rad_s: float) -> dict:
         "cadence_max": CADENCE_MAX,
         "travel_margin_deg": TRAVEL_MARGIN_DEG,
         "default_speed_fraction": DEFAULT_SPEED_FRACTION,
+        "stand_frac": list(STAND_FRAC),
         "walkable": walkable,
-        "gaits": gaits,
         "stroke_max": {axis: _round_cells(cells, 0) for axis, cells in geometry.items()},
         "kappa_swing": {axis: _round_cells(cells, 1) for axis, cells in geometry.items()},
         "kappa_stance": {axis: _round_cells(cells, 2) for axis, cells in geometry.items()},

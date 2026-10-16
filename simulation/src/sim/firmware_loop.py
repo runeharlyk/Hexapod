@@ -40,10 +40,11 @@ class FirmwareLoop:
             self._mode = mode
             self.robot.set_mode(mode)
 
-    def walk(self, lx: float, ly: float, rx: float, s: float = 0.0, s1: float = 0.0, h: float = 0.0) -> None:
+    def walk(self, lx: float, ly: float, rx: float, s: float = 0.0, s1: float = 0.0, h: float = 0.0,
+             stride: float = 0.0) -> None:
         """WALK with these sticks."""
         self.set_mode(WALK)
-        self._send(dict(lx=lx, ly=ly, rx=rx, s=s, s1=s1, h=h))
+        self._send(dict(lx=lx, ly=ly, rx=rx, s=s, s1=s1, h=h, stride=stride))
 
     def hold(self, h: float = 0.0) -> None:
         """STAND with centred sticks: no stride, only the height."""

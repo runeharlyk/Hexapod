@@ -11,6 +11,8 @@
 #include <cstdio>
 #include <vector>
 #include <gait_speed.h>
+#include <pb_decode.h>
+#include <pb_encode.h>
 #include <virtual_robot.h>
 
 namespace {
@@ -1043,6 +1045,63 @@ void test_a_stride_change_while_walking_eases_through_without_a_pause() {
 
 namespace {
 
+// A ControllerInputData as the firmware gets it: encoded by the client, decoded by the transport.
+socket_message_ControllerInputData overTheWire(const socket_message_ControllerInputData &sent) {
+    uint8_t wire[socket_message_ControllerInputData_size];
+    pb_ostream_t out = pb_ostream_from_buffer(wire, sizeof wire);
+    TEST_ASSERT_TRUE(pb_encode(&out, socket_message_ControllerInputData_fields, &sent));
+    socket_message_ControllerInputData received = socket_message_ControllerInputData_init_zero;
+    pb_istream_t in = pb_istream_from_buffer(wire, out.bytes_written);
+    TEST_ASSERT_TRUE(pb_decode(&in, socket_message_ControllerInputData_fields, &received));
+    return received;
+}
+
+} // namespace
+
+// Every field of the message reaches the command in its place, and the telemetry reports the command in that order.
+void test_a_controller_input_reaches_the_command_field_by_field() {
+    socket_message_ControllerInputData sent = socket_message_ControllerInputData_init_zero;
+    sent.has_left = sent.has_right = true;
+    sent.left = {0.1f, 0.2f};
+    sent.right = {0.3f, 0.4f};
+    sent.height = 0.5f;
+    sent.speed = 0.6f;
+    sent.s1 = 0.7f;
+    sent.feet_distance = 0.8f;
+    sent.stride = 0.9f;
+    VirtualRobot robot;
+    robot.input(overTheWire(sent));
+    robot.tick();
+    const float expected[9] = {0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f};
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected, robot.telemetryCommand(), 9);
+}
+
+// A client that never sends the stride, such as an older app, walks the speed-optimal stride: proto3 leaves a zero
+// float off the wire, so the message with stride 0 is the one such a client sends. Strides -1 and +1 show the field is
+// read at all.
+void test_a_client_that_never_sends_the_stride_walks_the_speed_optimal_one() {
+    for (const GaitType gait : CLASSIC_GAITS) {
+        for (const float stride : STRIDE_ANCHORS) {
+            VirtualRobot robot;
+            walkIn(robot, gait);
+            settleWalk(robot);
+            socket_message_ControllerInputData sent = socket_message_ControllerInputData_init_zero;
+            sent.has_left = true;
+            sent.left.y = 1.0f;
+            sent.speed = 1.0f;
+            sent.stride = stride;
+            robot.input(overTheWire(sent));
+            robot.tick();
+            const WalkTarget expected = classicWalkTarget(gait, 0, 1, 0, 1, 0, 0, 0, stride);
+            TEST_ASSERT_TRUE(expected.phaseRate > 0.0f);
+            TEST_ASSERT_EQUAL_FLOAT(expected.stepY, robot.gaitCommand().step_y);
+            TEST_ASSERT_EQUAL_FLOAT(expected.phaseRate, robot.gaitCommand().phase_rate);
+        }
+    }
+}
+
+namespace {
+
 // Whether the robot stands still in the neutral posture, h = fd = 0 and the body level and centred, as a stand there
 // would. A stance stepped there ends within 0.5 mm of it (GaitController::hasPendingStanceChange), up to half a degree
 // (measured); a quarter of the feet distance away is 9 deg.
@@ -1248,6 +1307,8 @@ int main(int, char **) {
     RUN_TEST(test_a_small_stick_at_the_longest_stride_steps_slowly_with_the_full_stroke);
     RUN_TEST(test_a_release_at_any_stride_stops_with_no_cadence_left);
     RUN_TEST(test_a_stride_change_while_walking_eases_through_without_a_pause);
+    RUN_TEST(test_a_controller_input_reaches_the_command_field_by_field);
+    RUN_TEST(test_a_client_that_never_sends_the_stride_walks_the_speed_optimal_one);
     RUN_TEST(test_a_dead_man_stop_takes_the_neutral_posture_once_stopped);
     RUN_TEST(test_a_dead_man_stop_in_a_stand_waits_for_the_feet);
     RUN_TEST(test_a_classic_walk_ignores_the_tilt_stick);

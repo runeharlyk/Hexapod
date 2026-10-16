@@ -413,7 +413,8 @@
    "height": "3 float",
    "speed": "4 float",
    "s1": "5 float",
-   "feet_distance": "6 float"
+   "feet_distance": "6 float",
+   "stride": "7 float"
   },
   "socket_message.CorrelationRequest": {
    "correlation_id": "1 uint32",

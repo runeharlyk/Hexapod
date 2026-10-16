@@ -5,7 +5,7 @@ import { get } from 'svelte/store'
 
 vi.mock('$lib/stores', async () => {
   const { writable } = await import('svelte/store')
-  return { outControllerData: writable([0, 0, 0, 0, 0, 0, 0, 0]) }
+  return { outControllerData: writable([0, 0, 0, 0, 0, 0, 0, 0, 0]) }
 })
 
 import { Animation, Ease, ParamId } from '$lib/platform_shared/animation'
@@ -178,7 +178,7 @@ describe('editor store', () => {
   it('mirrors on the robot at the slider height, else at the file ride height', () => {
     ed.setMeta({ rideHeight: 0 })
     ed.setBody(0, 5, 10)
-    outControllerData.set([0, 0, 0, 0, 0.6, 0, 0, 0])
+    outControllerData.set([0, 0, 0, 0, 0.6, 0, 0, 0, 0])
     try {
       expect(get(ed.frame).preview.body.zm).toBeCloseTo(10, 6)
       ed.setShowOnRobot(true)
@@ -187,7 +187,7 @@ describe('editor store', () => {
       ed.setShowOnRobot(false)
       expect(get(ed.frame).preview.body.zm).toBeCloseTo(10, 6)
     } finally {
-      outControllerData.set([0, 0, 0, 0, 0, 0, 0, 0])
+      outControllerData.set([0, 0, 0, 0, 0, 0, 0, 0, 0])
     }
   })
 
