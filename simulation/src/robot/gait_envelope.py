@@ -6,6 +6,8 @@ fraction d at cadence f then peaks at f * max(kappa_swing / (1 - d), kappa_stanc
 The cadence is capped by the servo speed through that peak and by CADENCE_MAX; the stroke by joint travel, less
 TRAVEL_MARGIN_DEG, and reach.
 The factors are read off the port's own curves at sampled progress, so one posture costs two short sweeps, not a rollout.
+Besides the per-gait speeds the table keeps the factors themselves, sampled along each axis's stroke up to the longest
+feasible one, so a consumer can derive the top cadence of any gait at any stroke.
 """
 
 from functools import lru_cache
@@ -32,6 +34,8 @@ STROKES = {
     "lateral": 4.0 * np.arange(1, 26),  # mm
     "yaw": 0.02 * np.arange(1, 41),  # rad
 }
+REFINED_STEP = {"forward": 0.5, "lateral": 0.5, "yaw": 0.005}  # resolution of the longest feasible stroke
+STROKE_SAMPLES = 10  # kappa is sampled at (k + 1) / STROKE_SAMPLES of the longest feasible stroke
 WALKABLE_STROKE_MM = 20.0
 SWING_SAMPLES = 24
 STANCE_SAMPLES = 12
@@ -120,6 +124,28 @@ def _feasible_strokes(axis: str, s1: float, h: float, fd: float) -> tuple[tuple[
     return tuple(feasible)
 
 
+@lru_cache(maxsize=None)
+def longest_stroke(axis: str, s1: float, h: float, fd: float) -> float:
+    """The longest feasible stroke: the sweep's last feasible one, refined to REFINED_STEP by bisection. 0 when no
+    stroke is feasible."""
+    feasible = _feasible_strokes(axis, s1, h, fd)
+    if not feasible:
+        return 0.0
+    step = REFINED_STEP[axis]
+    low = round(feasible[-1][0] / step)
+    if feasible[-1][0] == STROKES[axis][-1]:
+        return low * step
+    high = low + round((STROKES[axis][1] - STROKES[axis][0]) / step)
+    lift, zm, feet_scale = posture(s1, h, fd)
+    while high - low > 1:
+        middle = (low + high) // 2
+        if geometry_factors(axis, middle * step, lift, zm, feet_scale)[2]:
+            low = middle
+        else:
+            high = middle
+    return low * step
+
+
 def is_walkable(s1: float, h: float, fd: float) -> bool:
     """Whether the posture can stride WALKABLE_STROKE_MM forward within joint travel and reach."""
     strokes = _feasible_strokes("forward", float(s1), float(h), float(fd))
@@ -139,8 +165,24 @@ def top_speed(gait_type: int, axis: str, s1: float, h: float, fd: float, servo_r
     return best
 
 
+def _geometry_samples(axis: str, s1: float, h: float, fd: float) -> tuple[float, list[float], list[float]]:
+    """(longest stroke, kappa_swing, kappa_stance) at STROKE_SAMPLES strokes up to it."""
+    stroke_max = longest_stroke(axis, s1, h, fd)
+    if stroke_max == 0.0:
+        return 0.0, [0.0] * STROKE_SAMPLES, [0.0] * STROKE_SAMPLES
+    lift, zm, feet_scale = posture(s1, h, fd)
+    factors = [geometry_factors(axis, stroke_max * (k + 1) / STROKE_SAMPLES, lift, zm, feet_scale)
+               for k in range(STROKE_SAMPLES)]
+    return stroke_max, [f[0] for f in factors], [f[1] for f in factors]
+
+
+def _round_cells(cells: list, field: int) -> list:
+    """One field of the [s1][h][fd] cells of _geometry_samples, rounded to the 4 decimals the header carries."""
+    return [[[np.round(cell[field], 4).tolist() for cell in row] for row in plane] for plane in cells]
+
+
 def build_table(servo_rad_s: float) -> dict:
-    """The envelope over the posture grid, indexed [s1][h][fd]."""
+    """The envelope over the posture grid, indexed [s1][h][fd]; the geometry samples add [k] for the stroke."""
     n = len(GRID)
     walkable = [[[is_walkable(s1, h, fd) for fd in GRID] for h in GRID] for s1 in GRID]
     gaits = {}
@@ -153,6 +195,8 @@ def build_table(servo_rad_s: float) -> dict:
                 "v_max": [[[round(cells[i][j][k][0], 4) for k in range(n)] for j in range(n)] for i in range(n)],
                 "stroke": [[[round(cells[i][j][k][1], 4) for k in range(n)] for j in range(n)] for i in range(n)],
             }
+    geometry = {axis: [[[_geometry_samples(axis, s1, h, fd) for fd in GRID] for h in GRID] for s1 in GRID]
+                for axis in AXES}
     return {
         "grid": [float(g) for g in GRID],
         "servo_rad_s": servo_rad_s,
@@ -161,4 +205,7 @@ def build_table(servo_rad_s: float) -> dict:
         "default_speed_fraction": DEFAULT_SPEED_FRACTION,
         "walkable": walkable,
         "gaits": gaits,
+        "stroke_max": {axis: _round_cells(cells, 0) for axis, cells in geometry.items()},
+        "kappa_swing": {axis: _round_cells(cells, 1) for axis, cells in geometry.items()},
+        "kappa_stance": {axis: _round_cells(cells, 2) for axis, cells in geometry.items()},
     }

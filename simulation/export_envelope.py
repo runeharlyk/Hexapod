@@ -37,6 +37,10 @@ def _per_gait(table, key):
     return [[table["gaits"][name][axis][key] for axis in ge.AXES] for name in ge.GAIT_NAMES]
 
 
+def _per_axis(table, key):
+    return [table[key][axis] for axis in ge.AXES]
+
+
 def emit_header(table, path):
     n = len(table["grid"])
     banner = f"""#pragma once
@@ -47,13 +51,18 @@ def emit_header(table, path):
 // Regenerate: cd simulation && uv run python export_envelope.py --servo-rad-s {table["servo_rad_s"]}
 //
 // Top body speed per gait over the posture grid, the stroke that reaches it, and the postures that can walk at all.
+// Besides, the gait-independent geometry per axis: the longest feasible stroke, and the peak joint rate per unit of swing
+// and stance progress (kappa) at STROKE_SAMPLES strokes, sample k at (k + 1) / STROKE_SAMPLES of the longest.
+// A gait with stand fraction d at stroke s and cadence f peaks at f * max(kappaSwing / (1 - d), kappaStance / d).
 // A grid axis holds a posture command in [-1, 1] at {2 / (n - 1)} steps: s1 (step height), h (body height), fd (feet distance).
 // Tables are indexed [s1][h][fd]; V_MAX and STROKE are indexed [gait][axis][s1][h][fd], gait = GaitType 0-3
 // (TRI_GATE, BI_GATE, WAVE, RIPPLE) and axis 0 forward (mm/s, mm), 1 lateral (mm/s, mm), 2 yaw (rad/s, rad).
+// STROKE_MAX, KAPPA_SWING and KAPPA_STANCE are indexed [axis][s1][h][fd] and [axis][s1][h][fd][k], in mm and rad.
 
 namespace gait_envelope {{
 
 constexpr int GRID_N = {n};
+constexpr int STROKE_SAMPLES = {ge.STROKE_SAMPLES};
 constexpr float SERVO_RAD_S = {table["servo_rad_s"]}f;  // servo speed the speeds were bounded by
 constexpr float CADENCE_MAX = {table["cadence_max"]}f;  // cycles/s
 constexpr float TRAVEL_MARGIN_DEG = {table["travel_margin_deg"]}f;  // joint travel kept in reserve by every stroke
@@ -66,6 +75,12 @@ constexpr uint8_t WALKABLE[{n}][{n}][{n}] = {_nested(np.array(table["walkable"],
 constexpr float V_MAX[4][3][{n}][{n}][{n}] = {_nested(_per_gait(table, "v_max"), _float)};
 
 constexpr float STROKE[4][3][{n}][{n}][{n}] = {_nested(_per_gait(table, "stroke"), _float)};
+
+constexpr float STROKE_MAX[3][{n}][{n}][{n}] = {_nested(_per_axis(table, "stroke_max"), _float)};
+
+constexpr float KAPPA_SWING[3][{n}][{n}][{n}][STROKE_SAMPLES] = {_nested(_per_axis(table, "kappa_swing"), _float)};
+
+constexpr float KAPPA_STANCE[3][{n}][{n}][{n}][STROKE_SAMPLES] = {_nested(_per_axis(table, "kappa_stance"), _float)};
 
 }}  // namespace gait_envelope
 """
