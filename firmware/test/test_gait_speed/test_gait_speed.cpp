@@ -337,6 +337,35 @@ void test_walkable_needs_every_corner_of_the_cell() {
     TEST_ASSERT_TRUE(partial > 0);
 }
 
+// The stand clamp shares clampPosture's ray scan over standFeasible instead: a standable posture is kept as is, and
+// any other lands on a standable one along its own ray with no scan step beyond it standable.
+void test_stand_clamp_keeps_standable_postures_and_pulls_in_the_rest() {
+    Kinematics kin;
+    int kept = 0, pulled = 0;
+    for (int i = 0; i <= 10; ++i)
+        for (int j = 0; j <= 10; ++j) {
+            const float h = -1.0f + 0.2f * (float)i, fd = -1.0f + 0.2f * (float)j;
+            float a = h, b = fd;
+            clampStandPosture(kin, a, b);
+            if (standFeasible(kin, h, fd)) {
+                TEST_ASSERT_EQUAL_FLOAT(h, a);
+                TEST_ASSERT_EQUAL_FLOAT(fd, b);
+                ++kept;
+                continue;
+            }
+            TEST_ASSERT_TRUE(standFeasible(kin, a, b));
+            TEST_ASSERT_TRUE(std::fabs(a) <= std::fabs(h) && std::fabs(b) <= std::fabs(fd));
+            TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.0f, a * fd - b * h);
+            const float scale = std::max(std::fabs(a), std::fabs(b)) / std::max(std::fabs(h), std::fabs(fd));
+            for (int step = 1; step <= 32; ++step) {
+                const float t = (float)step / 32;
+                if (t > scale + 1e-4f) TEST_ASSERT_FALSE(standFeasible(kin, h * t, fd * t));
+            }
+            ++pulled;
+        }
+    TEST_ASSERT_TRUE(kept > 0 && pulled > 0);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_full_stick_forward_reaches_v_max);
@@ -355,6 +384,7 @@ int main(int, char**) {
     RUN_TEST(test_clamp_pulls_in_unwalkable_ones);
     RUN_TEST(test_clamp_reaches_the_boundary_of_a_ray_that_reenters);
     RUN_TEST(test_clamp_clips_commands_outside_the_unit_cube);
+    RUN_TEST(test_stand_clamp_keeps_standable_postures_and_pulls_in_the_rest);
     RUN_TEST(test_interpolation_hits_grid_values);
     RUN_TEST(test_interpolation_between_grid_points_is_trilinear);
     RUN_TEST(test_lookup_clips_inputs_and_is_empty_when_unwalkable);

@@ -236,6 +236,20 @@ void describe(char *msg, size_t size, GaitType gait, const CommandMsg &c, const 
                   (int)gait, c.lx, c.ly, c.rx, c.h, c.fd, run.clamped, run.largestStep);
 }
 
+// A zero stick held in WALK long enough for the walk to take its posture, so the next stick walks at once.
+void settleWalk(VirtualRobot &robot) { hold(robot, CommandMsg {}, ticksFor(1.0f)); }
+
+struct Posture3 {
+    float s1, h, fd;
+};
+
+CommandMsg withPosture(CommandMsg c, const Posture3 &p) {
+    c.s1 = p.s1;
+    c.h = p.h;
+    c.fd = p.fd;
+    return c;
+}
+
 // Joint angles per tick of `ticks` with `command` held from a stand, in `mode`.
 std::vector<std::array<float, 18>> traceHeld(MOTION_STATE mode, const CommandMsg &command, int ticks) {
     VirtualRobot robot;
@@ -285,7 +299,8 @@ void test_an_auto_gait_switch_retargets_the_held_stick() {
         robot.tick();
         TEST_ASSERT_EQUAL(GaitType::RIPPLE, robot.gait());
         robot.setMode(MOTION_STATE::WALK);
-        robot.tick();
+        settleWalk(robot);
+        TEST_ASSERT_EQUAL(GaitType::RIPPLE, robot.gait());
 
         robot.command({0, 1, 0, 0, 0, k.s, 0, 0});
         robot.tick();
@@ -322,8 +337,8 @@ void test_feet_distance_change_while_walking_stays_in_travel() {
     }
 }
 
-// A posture outside the walkable region drives the robot exactly as the walkable posture it clamps to, standing and
-// walking: the body height, the stance and the walk's envelope all come from the clamped one.
+// A posture outside the walkable region walks the robot exactly as the walkable posture it clamps to: the body
+// height, the stance and the walk's envelope all come from the clamped one.
 void test_unwalkable_posture_is_clamped() {
     float s1 = 0.0f, h = 1.0f, fd = -1.0f;
     TEST_ASSERT_FALSE(postureWalkable(s1, h, fd));
@@ -331,12 +346,9 @@ void test_unwalkable_posture_is_clamped() {
     TEST_ASSERT_TRUE(postureWalkable(s1, h, fd));
     TEST_ASSERT_TRUE(h < 1.0f && fd > -1.0f);
 
-    for (const MOTION_STATE mode : {MOTION_STATE::STAND, MOTION_STATE::WALK}) {
-        const float ly = mode == MOTION_STATE::WALK ? 1.0f : 0.0f;
-        const auto asked = traceHeld(mode, {0, ly, 0, 0, 1.0f, 0, 0, -1.0f}, ticksFor(3.0f));
-        const auto clamped = traceHeld(mode, {0, ly, 0, 0, h, 0, s1, fd}, ticksFor(3.0f));
-        TEST_ASSERT_TRUE_MESSAGE(asked == clamped, mode == MOTION_STATE::WALK ? "walking" : "standing");
-    }
+    const auto asked = traceHeld(MOTION_STATE::WALK, {0, 1, 0, 0, 1.0f, 0, 0, -1.0f}, ticksFor(3.0f));
+    const auto clamped = traceHeld(MOTION_STATE::WALK, {0, 1, 0, 0, h, 0, s1, fd}, ticksFor(3.0f));
+    TEST_ASSERT_TRUE(asked == clamped);
 }
 
 // The dead-man zeroes the stick it last heard, not just the stroke: an AUTO walk that sped up while stepping, and so
@@ -361,7 +373,7 @@ void test_a_timed_out_auto_walk_stays_at_rest() {
 void test_a_classic_gait_loaded_after_tuned_walks_no_stale_stick() {
     VirtualRobot robot;
     walkIn(robot, GaitType::TRI_GATE);
-    robot.tick();
+    settleWalk(robot);
     robot.command({0, 0.3f, 0, 0, 0, 0, 0, 0});
     robot.tick();
     robot.setGait(GaitType::TUNED);
@@ -373,7 +385,124 @@ void test_a_classic_gait_loaded_after_tuned_walks_no_stale_stick() {
     robot.setGait(GaitType::TRI_GATE);
     robot.tick();
     TEST_ASSERT_EQUAL(GaitType::TRI_GATE, robot.gait());
-    TEST_ASSERT_LESS_THAN_FLOAT(1e-3f, largestStep(robot, ticksFor(1.0f)));
+    // Long enough to take TRI's posture from TUNED's and settle in it, short of the 2 s link timeout.
+    largestStep(robot, ticksFor(1.5f));
+    TEST_ASSERT_LESS_THAN_FLOAT(1e-3f, largestStep(robot, ticksFor(0.35f)));
+}
+
+// A posture change while walking stops the walk, takes the posture at rest and walks on from there, so the mixed
+// postures its parts pass through on the way, which can leave the joints' travel, are never walked. Entering the walk
+// from a stand posture the walk clamps is such a change too. These are the worst transitions of a 2688-case probe
+// (4 gaits, 8 full sticks, 7 x 12 postures) of the walk that stepped through them.
+void test_a_posture_change_while_walking_stays_in_travel() {
+    const Posture3 changes[][2] = {{{0, 0, 0}, {1, 1, 1}},    {{0, 0, -1}, {1, 1, 1}}, {{0, 0, -1}, {0, 1, 0}},
+                                   {{0, 1, 0}, {-1, -1, -1}}, {{1, 0, 0}, {0, 0, -1}}, {{0, -1, 0}, {1, 1, 1}}};
+    for (const GaitType gait : {GaitType::TRI_GATE, GaitType::WAVE}) {
+        for (const CommandMsg &stick : {fullStick(0, 1, 0), fullStick(1, 1, 1)}) {
+            for (const auto &change : changes) {
+                VirtualRobot robot;
+                standUp(robot);
+                robot.setGait(gait);
+                robot.tick();
+                HeldRun run = hold(robot, withPosture(CommandMsg {}, change[0]), ticksFor(2.0f));
+                robot.setMode(MOTION_STATE::WALK);
+                run.clamped += hold(robot, withPosture(stick, change[0]), ticksFor(2.0f)).clamped;
+                run.clamped += hold(robot, withPosture(stick, change[1]), ticksFor(3.0f)).clamped;
+                const HeldRun walking = hold(robot, withPosture(stick, change[1]), ticksFor(1.0f));
+                run.clamped += walking.clamped;
+                run.largestStep = walking.largestStep;
+                char msg[200];
+                std::snprintf(msg, sizeof(msg),
+                              "gait %d stick (%.0f %.0f %.0f) (%.0f %.0f %.0f) -> (%.0f %.0f %.0f): %d clamped, "
+                              "then largest step %.2f deg",
+                              (int)gait, stick.lx, stick.ly, stick.rx, change[0].s1, change[0].h, change[0].fd,
+                              change[1].s1, change[1].h, change[1].fd, run.clamped, run.largestStep);
+                TEST_ASSERT_EQUAL_INT_MESSAGE(0, run.clamped, msg);
+                TEST_ASSERT_GREATER_THAN_FLOAT_MESSAGE(STEPPING_DEG_PER_TICK, run.largestStep, msg);
+            }
+        }
+    }
+}
+
+// The walk waits out a posture change by itself: with the stick held throughout, the stroke drops to zero at the
+// change and comes back as the new posture's own, without a new stick.
+void test_a_walk_resumes_by_itself_after_a_posture_change() {
+    VirtualRobot robot;
+    walkIn(robot, GaitType::TRI_GATE);
+    const CommandMsg stick = fullStick(0, 1, 0);
+    hold(robot, stick, ticksFor(2.0f));
+    TEST_ASSERT_EQUAL_FLOAT(classicWalkTarget(GaitType::TRI_GATE, 0, 1, 0, 1, 0, 0, 0).stepY,
+                            robot.gaitCommand().step_y);
+
+    CommandMsg raised = stick;
+    raised.h = 1.0f;
+    robot.command(raised);
+    robot.tick();
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, robot.gaitCommand().step_y);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, robot.gaitCommand().phase_rate);
+
+    hold(robot, raised, ticksFor(3.0f));
+    float s1 = raised.s1, h = raised.h, fd = raised.fd;
+    clampPosture(s1, h, fd);
+    const WalkTarget expected = classicWalkTarget(GaitType::TRI_GATE, 0, 1, 0, 1, s1, h, fd);
+    TEST_ASSERT_EQUAL_FLOAT(expected.stepY, robot.gaitCommand().step_y);
+    TEST_ASSERT_EQUAL_FLOAT(expected.phaseRate, robot.gaitCommand().phase_rate);
+    TEST_ASSERT_GREATER_THAN_FLOAT(STEPPING_DEG_PER_TICK, hold(robot, raised, ticksFor(1.0f)).largestStep);
+}
+
+// A posture change within the 1/32 deadband does not stop the walk; one beyond it does.
+void test_a_posture_change_below_the_deadband_does_not_pause() {
+    for (const float dh : {1.0f / 64.0f, 1.0f / 16.0f}) {
+        VirtualRobot robot;
+        walkIn(robot, GaitType::TRI_GATE);
+        const CommandMsg stick = fullStick(0, 1, 0);
+        hold(robot, stick, ticksFor(2.0f));
+        CommandMsg nudged = stick;
+        nudged.h = dh;
+        bool paused = false;
+        for (int t = 0; t < ticksFor(1.0f); ++t) {
+            if (t % COMMAND_PERIOD_TICKS == 0) robot.command(nudged);
+            robot.tick();
+            paused |= robot.gaitCommand().step_y == 0.0f;
+        }
+        TEST_ASSERT_EQUAL_MESSAGE(dh > 1.0f / 32.0f, paused, dh > 1.0f / 32.0f ? "beyond" : "within");
+    }
+}
+
+// A stand takes postures a walk would clamp, as long as the legs can stand there: h = +1 over the neutral stance
+// stands at the full height.
+void test_a_stand_accepts_a_posture_the_walk_would_clamp() {
+    Kinematics kin;
+    TEST_ASSERT_FALSE(postureWalkable(0, 1, 0));
+    TEST_ASSERT_TRUE(standFeasible(kin, 1, 0));
+
+    VirtualRobot robot;
+    standUp(robot);
+    const HeldRun run = hold(robot, {0, 0, 0, 0, 1, 0, 0, 0}, ticksFor(3.0f));
+    BodyStateMsg raised {};
+    raised.zm = bodyHeightMm(1);
+    scaleStance(feetScale(0), raised.feet);
+    float expected[18];
+    kin.inverseKinematics(raised, expected);
+    TEST_ASSERT_EQUAL_INT(0, run.clamped);
+    for (int j = 0; j < 18; ++j) TEST_ASSERT_FLOAT_WITHIN(1e-2f, expected[j], robot.angles()[j]);
+}
+
+// A posture the legs cannot stand in is pulled in to the outermost one they can, and stood in exactly as if that
+// one had been commanded.
+void test_an_infeasible_stand_posture_is_pulled_in() {
+    Kinematics kin;
+    float h = 1.0f, fd = -1.0f;
+    TEST_ASSERT_FALSE(standFeasible(kin, h, fd));
+    clampStandPosture(kin, h, fd);
+    TEST_ASSERT_TRUE(standFeasible(kin, h, fd));
+    TEST_ASSERT_TRUE(h < 1.0f && fd > -1.0f);
+
+    const auto asked = traceHeld(MOTION_STATE::STAND, {0, 0, 0, 0, 1.0f, 0, 0, -1.0f}, ticksFor(4.0f));
+    const auto pulled = traceHeld(MOTION_STATE::STAND, {0, 0, 0, 0, h, 0, 0, fd}, ticksFor(4.0f));
+    TEST_ASSERT_TRUE(asked == pulled);
+    // Settled, the stand is within travel; the stance change on the way may brush it, as any stand's does.
+    for (int j = 0; j < 18; ++j) TEST_ASSERT_EQUAL_FLOAT(withinTravel(asked.back()[j], j % 3), asked.back()[j]);
 }
 
 int main(int, char **) {
@@ -397,5 +526,10 @@ int main(int, char **) {
     RUN_TEST(test_unwalkable_posture_is_clamped);
     RUN_TEST(test_a_timed_out_auto_walk_stays_at_rest);
     RUN_TEST(test_a_classic_gait_loaded_after_tuned_walks_no_stale_stick);
+    RUN_TEST(test_a_posture_change_while_walking_stays_in_travel);
+    RUN_TEST(test_a_walk_resumes_by_itself_after_a_posture_change);
+    RUN_TEST(test_a_posture_change_below_the_deadband_does_not_pause);
+    RUN_TEST(test_a_stand_accepts_a_posture_the_walk_would_clamp);
+    RUN_TEST(test_an_infeasible_stand_posture_is_pulled_in);
     return UNITY_END();
 }

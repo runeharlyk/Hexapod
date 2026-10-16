@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <cmath>
 #include <gait_envelope.h>
+#include <kinematics.h>
 #include <message_types.h>
 
 // Stick -> walk command for the classic gaits, from the speed envelope the generator measured
 // (gait_envelope.h). The stick is a fraction of the top speed the posture allows, and the stroke and
 // cadence that produce it are picked here, so a command can never ask for more than the joints and servos
-// can follow. Posture commands are pulled into the walkable region by clampPosture.
+// can follow. Posture commands are pulled into the walkable region by clampPosture, and stand postures into the
+// standable one by clampStandPosture.
 
 struct AxisEnvelope {
     float vMax;   // mm/s (forward, lateral) or rad/s (yaw)
@@ -73,26 +75,69 @@ inline AxisEnvelope envelopeAt(GaitType gait, int axis, float s1, float h, float
             trilinear(gait_envelope::STROKE[g][axis], cs1, ch, cfd)};
 }
 
-// An unwalkable posture is scaled toward the neutral one along its own direction. The walkable region is
-// not star-shaped about neutral, so a plain bisection can settle on an inner boundary; a coarse scan from
-// the outside finds the outermost walkable step first, and the bisection refines the boundary above it.
-inline void clampPosture(float& s1, float& h, float& fd) {
+// Scales a posture's deviation from the neutral one along its own direction, to the outermost point `feasible`
+// accepts. A feasible region need not be star-shaped about neutral, so a plain bisection can settle on an inner
+// boundary; a coarse scan from the outside finds the outermost feasible step first, and the bisection refines the
+// boundary above it.
+template <typename Feasible>
+void clampAlongRay(float& s1, float& h, float& fd, Feasible feasible) {
     constexpr int SCAN_STEPS = 32;
     constexpr int REFINE_STEPS = 5;
     s1 = std::clamp(s1, -1.0f, 1.0f);
     h = std::clamp(h, -1.0f, 1.0f);
     fd = std::clamp(fd, -1.0f, 1.0f);
-    if (postureWalkable(s1, h, fd)) return;
+    if (feasible(s1, h, fd)) return;
     int step = SCAN_STEPS - 1;
-    while (step > 0 && !postureWalkable(s1 * step / SCAN_STEPS, h * step / SCAN_STEPS, fd * step / SCAN_STEPS)) --step;
-    float walkable = (float)step / SCAN_STEPS, blocked = (float)(step + 1) / SCAN_STEPS;
+    while (step > 0 && !feasible(s1 * step / SCAN_STEPS, h * step / SCAN_STEPS, fd * step / SCAN_STEPS)) --step;
+    float inside = (float)step / SCAN_STEPS, outside = (float)(step + 1) / SCAN_STEPS;
     for (int i = 0; i < REFINE_STEPS; ++i) {
-        const float mid = 0.5f * (walkable + blocked);
-        (postureWalkable(s1 * mid, h * mid, fd * mid) ? walkable : blocked) = mid;
+        const float mid = 0.5f * (inside + outside);
+        (feasible(s1 * mid, h * mid, fd * mid) ? inside : outside) = mid;
     }
-    s1 *= walkable;
-    h *= walkable;
-    fd *= walkable;
+    s1 *= inside;
+    h *= inside;
+    fd *= inside;
+}
+
+// Pulls an unwalkable posture into the walkable region.
+inline void clampPosture(float& s1, float& h, float& fd) { clampAlongRay(s1, h, fd, postureWalkable); }
+
+// What the posture sliders set, as the envelope was measured: the body height and the stance width.
+inline float bodyHeightMm(float h) { return h * 50.0f; }
+inline float feetScale(float fd) { return 0.75f + (std::clamp(fd, -1.0f, 1.0f) + 1.0f) * 0.25f; }
+
+// The neutral stance, the one fd = 0 stands on and the envelope's feet scale multiplies.
+constexpr float DEFAULT_STANCE[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
+                                        {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
+
+inline void scaleStance(float scale, float out[6][4]) {
+    for (int i = 0; i < 6; ++i) {
+        out[i][0] = DEFAULT_STANCE[i][0] * scale;
+        out[i][1] = DEFAULT_STANCE[i][1] * scale;
+        out[i][2] = DEFAULT_STANCE[i][2];
+        out[i][3] = DEFAULT_STANCE[i][3];
+    }
+}
+
+// Whether the body can stand level and unshifted at height h over the stance scaled by fd: every foot within reach
+// and every joint within travel. Standing asks less than walking, so a stand may take postures a walk cannot.
+inline bool standFeasible(Kinematics& kin, float h, float fd) {
+    BodyStateMsg body {};
+    body.zm = bodyHeightMm(h);
+    scaleStance(feetScale(fd), body.feet);
+    for (int i = 0; i < 6; ++i)
+        if (!kin.footReachable(body, i)) return false;
+    float angles[18];
+    kin.inverseKinematics(body, angles);
+    for (int j = 0; j < 18; ++j)
+        if (std::fabs(angles[j]) > JOINT_LIMIT_DEG[j % 3]) return false;
+    return true;
+}
+
+// Pulls a posture the body cannot stand in toward neutral; the lift does not enter a stand.
+inline void clampStandPosture(Kinematics& kin, float& h, float& fd) {
+    float s1 = 0.0f;
+    clampAlongRay(s1, h, fd, [&](float, float height, float feet) { return standFeasible(kin, height, feet); });
 }
 
 // Fraction of the top speed for the speed input s: stop at -1, the default at 0, the top at +1.

@@ -883,7 +883,8 @@ constexpr int STEADY_TICKS = 400; // 2 s: at least one full cycle at every class
 // The entry may move a joint somewhat faster than steady walking does, not by an order of magnitude.
 constexpr float ENTRY_STEP_BOUND = 1.5f;
 
-// MotionService's STAND command and its classical WALK command for full forward stick at s = s1 = 0.
+// MotionService's STAND command, and a full 100 mm forward stride on the legacy stride-derived cadence (phase_rate 0),
+// the law WALK_NN's residual modes and repositioning still run on.
 gait_state_t standCommand(GaitType type) {
     gait_state_t gait {15.0f, 0, 0, 0, 1.0f, 0.002f, default_stand_frac, type, {}, 0};
     GaitController {}.setGait(gait);
@@ -897,7 +898,7 @@ gait_state_t fullForwardCommand(const gait_state_t& stand) {
     return walk;
 }
 
-// MotionService::updateAutoGait's swap: only while not stepping, onto both the live and the target state.
+// MotionService::loadGait's schedule swap: only while not stepping, onto both the live and the target state.
 void swapGait(GaitController& controller, gait_state_t& live, gait_state_t& target, GaitType next) {
     live.gait_type = next;
     controller.setGait(live);
@@ -1106,7 +1107,7 @@ struct TraceSegment {
     int ticks;
 };
 
-// MotionService's STAND command, and its classical WALK command for full forward and full left stick.
+// MotionService's STAND command, and full 100 mm forward and left strides on the legacy stride-derived cadence.
 constexpr TraceSegment TRACE_SEGMENTS[] = {{"stand", 0.0f, 0.0f, 15.0f, 5},
                                            {"forward", 0.0f, 100.0f, 20.0f, 150},
                                            {"stop", 0.0f, 0.0f, 15.0f, 160},

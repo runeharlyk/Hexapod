@@ -146,9 +146,19 @@ class MotionService {
         clampPosture(clamped.s1, clamped.h, clamped.fd);
         // The searched gait rides at its own height, outside the grid the envelope was measured on.
         const bool tuned = mode == MOTION_STATE::WALK && gait_state.gait_type == GaitType::TUNED;
-        const CommandMsg &posture = tuned ? c : clamped;
-        updateFeetDistanceTarget(posture.fd);
-        target_body_state.zm = posture.h * 50;
+        // A classic walk takes its posture between steps only (settleWalkPosture); every other mode takes it now.
+        if (mode != MOTION_STATE::WALK || tuned) {
+            float h = c.h, fd = c.fd;
+            if (mode == MOTION_STATE::WALK_NN) {
+                h = clamped.h;
+                fd = clamped.fd;
+            } else if (!tuned) {
+                clampStandPosture(kinematics, h, fd);
+            }
+            updateFeetDistanceTarget(fd);
+            target_body_state.zm = bodyHeightMm(h);
+            _walkPostureValid = false;
+        }
         target_body_state.omega = c.ry * BODY_TILT_LIMIT_RAD;
         switch (mode) {
             case MOTION_STATE::STAND: {
@@ -196,7 +206,6 @@ class MotionService {
                     target_body_state.zm = -tuned_gait::RIDE_MM;
                     logTunedCommand(cmd, target_gait_state);
                 } else {
-                    target_gait_state.step_height = (clamped.s1 + 1.f) * 20.f;
                     target_gait_state.step_depth = 0.002f;
                     // The envelope sets the cadence; step_speed is left to pace a stance change.
                     target_gait_state.step_speed = 1.f;
@@ -307,6 +316,7 @@ class MotionService {
                 body_state.zm = lerpf(body_state.zm, target_body_state.zm, smoothing_factor);
                 levelAttitude(body_state, target_body_state.phi, target_body_state.omega, _peripherals->angleX(),
                               _peripherals->angleY());
+                settleWalkPosture();
                 // Before the ramp: it clears the 2 mm deadband in one tick, closing the window.
                 updateAutoGait();
                 approachGaitCommand(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
@@ -374,12 +384,7 @@ class MotionService {
     // senders repeat it (app heartbeat 200 ms, ESP-NOW controller 50 Hz), so silence for three
     // heartbeats means the link is gone and the robot must stop walking.
     static constexpr unsigned long STEERING_TIMEOUT_MS = 600;
-    static constexpr float FEET_DISTANCE_SCALE_MIN = 0.75f;
-    static constexpr float FEET_DISTANCE_SCALE_MAX = 1.25f;
-    static constexpr float FEET_DISTANCE_SCALE_RANGE = FEET_DISTANCE_SCALE_MAX - FEET_DISTANCE_SCALE_MIN;
 
-    float base_feet_pos[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
-                                 {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
     float default_feet_pos[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
                                     {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
 
@@ -388,6 +393,22 @@ class MotionService {
     // both are cleared when the locomotion command stops.
     CommandMsg lastWalkCommand_ {};
     float _walkSpeed01 = 0.f;
+    struct Posture {
+        float s1, h, fd;
+    };
+    // The posture the classic walk stands in, valid once it was taken between steps (settleWalkPosture).
+    Posture _walkPosture {};
+    bool _walkPostureValid = false;
+    // A posture is waiting for the gait to stop, then for the robot to settle; the walk is held at zero meanwhile.
+    std::atomic<bool> _posturePending {false};
+    std::atomic<bool> _postureSettling {false};
+    enum class SettleStage : uint8_t { LOWER_LIFT, MOVE, RAISE_LIFT };
+    SettleStage _settleStage = SettleStage::LOWER_LIFT; // control task, while settling
+    bool _heightAfterStance = false;                    // control task: the body height waits for the stance
+    float _feetDistance = 0.f;                          // the stance last commanded, as its fd
+    // A posture change below this, per slider, is not worth a stop and is not taken while walking.
+    static constexpr float POSTURE_DEADBAND = 1.f / 32.f;
+    static constexpr float POSTURE_SETTLED_MM = 0.5f;
     MOTION_STATE motionState = MOTION_STATE::DEACTIVATED;
     unsigned long lastCommandMillis = 0;
     unsigned long lastMotionMicros = 0;
@@ -421,16 +442,89 @@ class MotionService {
         applyWalkTarget();
     }
 
-    // The classic gaits' stroke and cadence for the last stick and posture, from the speed envelope.
+    // The classic gaits' stroke and cadence for the last stick, from the speed envelope at the posture in effect. A
+    // posture further than POSTURE_DEADBAND from that one is never walked into: the parts of a posture arrive at their
+    // own rates (the height in a tenth of a second, the stance only swing by swing), and the mixed postures between
+    // can leave the joints' travel. So the walk stops, settleWalkPosture takes the new posture once the gait is still,
+    // and the walk resumes once the robot has settled into it.
     void applyWalkTarget() {
         if (motionState != MOTION_STATE::WALK || gait_state.gait_type == GaitType::TUNED) return;
         const CommandMsg &c = lastWalkCommand_;
-        const WalkTarget w = classicWalkTarget(gait_state.gait_type, c.lx, c.ly, c.rx, c.s, c.s1, c.h, c.fd);
-        target_gait_state.step_x = w.stepX;
-        target_gait_state.step_y = w.stepY;
-        target_gait_state.step_angle = w.stepAngle;
-        target_gait_state.phase_rate = w.phaseRate;
+        if (!_walkPostureValid || postureOffset(c) > POSTURE_DEADBAND) _posturePending = true;
+        const bool held = _posturePending || _postureSettling;
+        const Posture p = held ? Posture {c.s1, c.h, c.fd} : _walkPosture;
+        const WalkTarget w = classicWalkTarget(gait_state.gait_type, c.lx, c.ly, c.rx, c.s, p.s1, p.h, p.fd);
+        // Held, it still tells AUTO how fast the walk will be, so the gait is chosen while the walk waits.
         _walkSpeed01 = w.speed01;
+        target_gait_state.step_x = held ? 0.f : w.stepX;
+        target_gait_state.step_y = held ? 0.f : w.stepY;
+        target_gait_state.step_angle = held ? 0.f : w.stepAngle;
+        target_gait_state.phase_rate = held ? 0.f : w.phaseRate;
+    }
+
+    float postureOffset(const CommandMsg &c) const {
+        return std::max(
+            {std::fabs(c.s1 - _walkPosture.s1), std::fabs(c.h - _walkPosture.h), std::fabs(c.fd - _walkPosture.fd)});
+    }
+
+    // Control task, classic walk. Takes a pending posture once the gait has stopped stepping, as a stand takes one,
+    // and releases the walk once the robot has settled into it. Each stage waits for the one before to arrive:
+    // - the lift comes down to the stand's, since the walk's own, up to 40 mm, leaves the femur's travel when the
+    //   stance is stepped into;
+    // - the stance and the body height move, the stance stepped at the lower of the two heights, since a foot lifted
+    //   under a raised body leaves it too: a body going up waits for the stance, one going down leads it, unless the
+    //   legs could not stand through that order;
+    // - the lift goes up to the walk's.
+    void settleWalkPosture() {
+        if (gait_state.gait_type == GaitType::TUNED) return;
+        if (_posturePending && !gaitIsCommanded(gait_state)) {
+            // Settling is raised first, so the command worker holds the walk at zero throughout.
+            _postureSettling = true;
+            _posturePending = false;
+            const CommandMsg c = lastWalkCommand_;
+            _walkPosture = {c.s1, c.h, c.fd};
+            _walkPostureValid = true;
+            _settleStage = SettleStage::LOWER_LIFT;
+            target_gait_state.step_height = DEFAULT_STEP_HEIGHT_MM;
+        }
+        if (!_postureSettling) return;
+        switch (_settleStage) {
+            case SettleStage::LOWER_LIFT: {
+                if (!liftArrived()) return;
+                const float heldHeight = target_body_state.zm / bodyHeightMm(1.f);
+                _heightAfterStance = _walkPosture.h > heldHeight;
+                if (!(_heightAfterStance ? standFeasible(kinematics, heldHeight, _walkPosture.fd)
+                                         : standFeasible(kinematics, _walkPosture.h, _feetDistance)))
+                    _heightAfterStance = !_heightAfterStance;
+                if (!_heightAfterStance) target_body_state.zm = bodyHeightMm(_walkPosture.h);
+                updateFeetDistanceTarget(_walkPosture.fd);
+                _settleStage = SettleStage::MOVE;
+                return;
+            }
+            case SettleStage::MOVE: {
+                if (std::fabs(body_state.zm - target_body_state.zm) >= POSTURE_SETTLED_MM ||
+                    gait.hasPendingStanceChange())
+                    return;
+                if (_heightAfterStance) {
+                    _heightAfterStance = false;
+                    target_body_state.zm = bodyHeightMm(_walkPosture.h);
+                    return;
+                }
+                target_gait_state.step_height = (_walkPosture.s1 + 1.f) * 20.f;
+                _settleStage = SettleStage::RAISE_LIFT;
+                return;
+            }
+            case SettleStage::RAISE_LIFT: {
+                if (!liftArrived()) return;
+                _postureSettling = false;
+                applyWalkTarget();
+                return;
+            }
+        }
+    }
+
+    bool liftArrived() const {
+        return std::fabs(gait_state.step_height - target_gait_state.step_height) < POSTURE_SETTLED_MM;
     }
 
     // Zeroes the locomotion command. `snap` collapses the live gait state onto it as well, for modes
@@ -448,6 +542,10 @@ class MotionService {
         // Else a gait loaded later, AUTO's included, would walk the stick the dead-man stopped.
         lastWalkCommand_ = {};
         _walkSpeed01 = 0.f;
+        // The next walk starts by taking its posture, whatever this mode leaves the body in.
+        _walkPostureValid = false;
+        _posturePending = false;
+        _postureSettling = false;
         if (!snap) return;
         approachGaitCommand(gait_state, target_gait_state, 0.f, 0.f);
         gait.setPhase(0.f);
@@ -462,19 +560,9 @@ class MotionService {
         stopLocomotionCommand(false);
     }
 
-    void rebuildDefaultFeet(float scale, float output[6][4]) {
-        for (int i = 0; i < 6; ++i) {
-            output[i][0] = base_feet_pos[i][0] * scale;
-            output[i][1] = base_feet_pos[i][1] * scale;
-            output[i][2] = base_feet_pos[i][2];
-            output[i][3] = base_feet_pos[i][3];
-        }
-    }
-
     void updateFeetDistanceTarget(float normalizedFeetDistance) {
-        const float clamped = CLIP(normalizedFeetDistance, -1.0f, 1.0f);
-        const float scale = FEET_DISTANCE_SCALE_MIN + ((clamped + 1.0f) * 0.5f) * FEET_DISTANCE_SCALE_RANGE;
-        rebuildDefaultFeet(scale, default_feet_pos);
+        _feetDistance = normalizedFeetDistance;
+        scaleStance(feetScale(normalizedFeetDistance), default_feet_pos);
         gait.setDefaultFootTarget(default_feet_pos);
     }
 
