@@ -89,8 +89,12 @@ The mode is a `MOTION_STATE`: `DEACTIVATED`, `IDLE`, `POSE`, `STAND`, `WALK`, `W
   A posture change is clamped to what the legs can stand in (`clampStandPosture`) and taken only once the feet are at rest.
 - `WALK` turns the stick into a locomotion command for `GaitController`; with `GaitType::TUNED` the stick is a velocity command mapped through the searched gait in `gait_tuned.h` instead.
   A classical gait (`TRI_GATE`, `BI_GATE`, `WAVE`, `RIPPLE`) takes its stroke and cadence from `classicWalkTarget` in `include/gait_speed.h`.
-  The stick is a fraction of the gait's top speed at the posture, looked up in the generated `gait_envelope.h`; `s` sets the share of that top (-1, 0 and +1 give 0, 60 % and 100 %), and a combined stick whose L1 norm exceeds 1 is normalised by it.
-  The stroke and the cadence each scale with the square root of the speed fraction, and the cadence is passed as an explicit `phase_rate`.
+  The `stride` slider picks the stroke per axis: 0 is each gait's speed-optimal stroke at the posture, +1 the longest feasible stroke and -1 0.3 of the optimum, linear in between.
+  At many postures the speed-optimal stroke is already the longest, so a positive stride changes nothing there (BI almost everywhere, TRI in yaw); WAVE and RIPPLE have room (forward 64 to 76 mm at the default posture).
+  The stick's share (L1-normalised, times `speedFraction(s)`: -1, 0 and +1 give 0, 60 % and 100 %) sets the cadence as a fraction of that stroke's servo-bound top cadence, passed as an explicit `phase_rate`, with the stroke held, so slow walking takes long, slow steps.
+  A mixed command runs at the smallest top cadence of the axes it uses.
+  The generated `gait_envelope.h` holds only gait-independent geometry, `STROKE_MAX` and swing and stance kappa samples per axis and posture; the firmware computes the top cadences at runtime from the stance fraction of the gait, reading kappa as the running maximum of the samples.
+  `MotionService` slews a stride change at 1.0 per second while walking and takes it at once at rest; a stride change is not a posture change and does not pause the walk.
   The posture sliders (`s1` lift, `h` body height, `fd` feet distance) are first clamped along a ray from neutral to the walkable region (`clampPosture`).
   A posture change while walking pauses the walk and settles the posture in stages: the lift comes down, the stance and body height move at the lower height, and the lift goes back up, after which the walk resumes.
   A walk entered from a stand at rest in the same posture starts at once; a rising lift needs no settling, a falling one does.
@@ -111,7 +115,7 @@ Commands arrive asynchronously and only set targets.
 If no command arrives within a timeout, `MotionService` applies a zero command; the timeout is shorter while a stick is steering, because the senders repeat their command while one is held.
 Gait changes are deferred until the gait is not commanded, not repositioning and not settling a posture, because swapping the phase schedule mid-stride drops a swinging foot.
 `GaitType::AUTO` picks a gait from the commanded speed at the same safe moments.
-That speed is the stick's share of BI's top speed at the posture, whichever gait walks it, and AUTO picks the slowest of `RIPPLE`, `TRI_GATE` and `BI_GATE` whose top speed covers it.
+That speed is the stick's share of BI's top speed at the posture and stride, whichever gait walks it, and AUTO picks the slowest of `RIPPLE`, `TRI_GATE` and `BI_GATE` whose top speed covers it.
 A stick pushed past the top of the gait in effect therefore walks at that top until the next stop.
 
 Mode changes are decided by the pure function in `include/animation/mode_arbiter.h` and applied only on the `ModeMsg` worker, which makes that worker the one place the mode changes.
