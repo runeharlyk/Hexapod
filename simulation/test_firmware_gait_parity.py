@@ -10,6 +10,8 @@ As a pytest module it checks:
   * gait_tuned.h against its gait_library.json entry, including the C++ velocity_to_gait port;
   * firmware_gait.py against constants parsed out of the firmware headers;
   * firmware_gait.py's TUNED command mapping against the header's own formula;
+  * firmware_gait.py's classic command mapping, AUTO's choice and walk, and the posture clamp against gait_speed.h,
+    run in the native library;
   * the nominal-stance IK against the properties the firmware host test pins.
 
 As a script it runs the header check only:
@@ -18,7 +20,9 @@ As a script it runs the header check only:
 """
 
 import argparse
+import ctypes
 import json
+import math
 import os
 import re
 import sys
@@ -29,12 +33,14 @@ import pytest
 from src.envs.hexapod_mj_env import PG_HEIGHT, PG_PHASE_RATE, PG_STEP_ANGLE, PG_STEP_XY
 from src.robot import firmware_gait as fg
 from src.robot.gait_schedule import GaitSchedule
+from src.sim.virtual_robot import native_library
 
 FIRMWARE_INCLUDE = os.path.join(os.path.dirname(__file__), "..", "firmware", "include")
 HDR = os.path.join(FIRMWARE_INCLUDE, "gait_tuned.h")
 GAIT_H = os.path.join(FIRMWARE_INCLUDE, "gait.h")
 MOTION_H = os.path.join(FIRMWARE_INCLUDE, "motion.h")
 KINEMATICS_H = os.path.join(FIRMWARE_INCLUDE, "kinematics.h")
+GAIT_SPEED_H = os.path.join(FIRMWARE_INCLUDE, "gait_speed.h")
 LIB = os.path.join(os.path.dirname(__file__), "src", "resources", "gait_library.json")
 TOL = 1e-4
 
@@ -220,9 +226,7 @@ def test_gait_h_constants_match_the_port(gait_h):
         assert getattr(fg, name) == pytest.approx(_constexpr(gait_h, name)), name
     for name, value in _tuned_stick_constants(gait_h).items():
         assert getattr(fg, name) == pytest.approx(value), name
-    assert fg.AUTO_RIPPLE_MAX == _constexpr(gait_h, "RIPPLE_MAX")
-    assert fg.AUTO_TRI_MAX == _constexpr(gait_h, "TRI_MAX")
-    assert fg.AUTO_HYSTERESIS == _constexpr(gait_h, "AUTO_HYSTERESIS")
+    assert fg.AUTO_HYSTERESIS == pytest.approx(_constexpr(_read(GAIT_SPEED_H), "AUTO_HYSTERESIS"))
     np.testing.assert_allclose(fg.BEZIER_STEPS, _array(gait_h, "BEZIER_STEPS"))
     np.testing.assert_allclose(fg.BEZIER_HEIGHTS, _array(gait_h, "BEZIER_HEIGHTS"))
     for name in ("defaultPosition", "targetDefaultPosition", "swingStartPosition"):
@@ -244,7 +248,7 @@ def test_motion_h_constants_match_the_port():
     assert fg.GAIT_COMMAND_TAU_S == _constexpr(motion_h, "GAIT_COMMAND_TAU_S")
     assert fg.DEFAULT_STEP_HEIGHT_MM == _constexpr(motion_h, "DEFAULT_STEP_HEIGHT_MM")
     assert fg.DEFAULT_STEP_DEPTH == _constexpr(motion_h, "DEFAULT_STEP_DEPTH")
-    np.testing.assert_allclose(fg.DEFAULT_FEET, _nested_array(motion_h, "base_feet_pos"))
+    np.testing.assert_allclose(fg.DEFAULT_FEET, _nested_array(_read(GAIT_SPEED_H), "DEFAULT_STANCE"))
 
 
 def test_kinematics_h_geometry_matches_the_port():
@@ -273,6 +277,109 @@ def test_tuned_command_mapping_follows_the_firmware_formula(header, gait_h):
         rate = header["PHASE_RATE_MIN"] + (a[5] + 1) * 0.5 * (header["PHASE_RATE_MAX"] - header["PHASE_RATE_MIN"])
         assert gait.phase_rate == pytest.approx(rate, abs=1e-4)
         assert zm == pytest.approx(-header["RIDE_MM"], abs=1e-4)
+
+
+CLASSIC_GAITS = (fg.TRI_GATE, fg.BI_GATE, fg.WAVE, fg.RIPPLE)
+
+
+def _random_stick(rng):
+    """An axis is idle a third of the time, so the walks mix single axes with combined ones."""
+    return [0.0 if rng.random() < 1 / 3 else rng.uniform(-1.0, 1.0) for _ in range(3)]
+
+
+def _random_posture(rng):
+    """Half beyond the grid or anywhere in it, half pulled onto the walkable boundary, where most clamped commands
+    land and where the corner gate decides."""
+    posture = rng.uniform(-1.2, 1.2, 3)
+    return fg.clamp_posture(*posture) if rng.random() < 0.5 else tuple(posture)
+
+
+def _native_walk_target(gait, lx, ly, rx, s, s1, h, fd):
+    out = (ctypes.c_float * 4)()
+    native_library().classicWalkTarget(gait, lx, ly, rx, s, s1, h, fd, out)
+    return np.array(out[:])
+
+
+@pytest.mark.parametrize("gait", CLASSIC_GAITS)
+def test_classic_walk_target_matches_the_firmware(gait):
+    rng = np.random.default_rng(100 + gait)
+    walking = 0
+    for _ in range(500):
+        lx, ly, rx = _random_stick(rng)
+        s = rng.uniform(-1.1, 1.1)
+        posture = _random_posture(rng)
+        native = _native_walk_target(gait, lx, ly, rx, s, *posture)
+        port = np.array(fg.classic_walk_target(gait, lx, ly, rx, s, *posture))
+        np.testing.assert_allclose(port, native, rtol=0, atol=TOL, err_msg=f"stick {lx, ly, rx} s {s} at {posture}")
+        walking += native[3] > 0.0
+    assert walking > 150, "too few samples walk to compare the stroke and cadence"
+
+
+def _native_auto(current, lx, ly, rx, s, s1, h, fd):
+    """AUTO's choice from `current` and the walk the chosen gait takes, as the native library computes them."""
+    out = (ctypes.c_float * 4)()
+    gait = native_library().autoWalk(current, lx, ly, rx, s, s1, h, fd, out)
+    return gait, np.array(out[:])
+
+
+@pytest.mark.parametrize("current", (fg.RIPPLE, fg.TRI_GATE, fg.BI_GATE))
+def test_auto_matches_the_firmware(current):
+    rng = np.random.default_rng(200 + current)
+    chosen = set()
+    for _ in range(500):
+        lx, ly, rx = _random_stick(rng)
+        s = rng.uniform(-1.1, 1.1)
+        posture = _random_posture(rng)
+        native_gait, native = _native_auto(current, lx, ly, rx, s, *posture)
+        demand = fg.auto_demand(lx, ly, rx, s, *posture)
+        gait = fg.select_auto_gait(demand, current, *posture)
+        port = np.array(fg.auto_walk_target(gait, demand, lx, ly, rx, *posture))
+        message = f"stick {lx, ly, rx} s {s} at {posture}"
+        assert gait == native_gait, message
+        np.testing.assert_allclose(port, native, rtol=0, atol=TOL, err_msg=message)
+        chosen.add(gait)
+    assert chosen == {fg.RIPPLE, fg.TRI_GATE, fg.BI_GATE}, "the samples must reach every band"
+
+
+def test_clamp_posture_matches_the_firmware():
+    rng = np.random.default_rng(7)
+    moved = 0
+    for _ in range(500):
+        posture = rng.uniform(-1.3, 1.3, 3)
+        native = (ctypes.c_float * 3)(*posture)
+        native_library().clampPosture(native)
+        clamped = fg.clamp_posture(*posture)
+        np.testing.assert_allclose(clamped, native[:], rtol=0, atol=1e-5, err_msg=f"posture {posture}")
+        moved += not np.allclose(clamped, np.clip(posture, -1.0, 1.0))
+    assert moved > 100, "too few postures needed clamping to compare the ray search"
+
+
+def test_classic_command_walks_the_clamped_posture():
+    """The posture is clamped before the envelope is read, and the lift and height are the clamped posture's."""
+    s1, h, fd = fg.clamp_posture(0.5, 1.0, -1.0)
+    assert (s1, h, fd) != (0.5, 1.0, -1.0), "the test posture must lie outside the walkable region"
+    gait = fg.GaitState(gait_type=fg.TRI_GATE)
+    zm = fg.command_to_walk_gait(0.2, 0.8, -0.3, 0.4, 0.5, gait, 1.0, -1.0)
+    expected = fg.classic_walk_target(fg.TRI_GATE, 0.2, 0.8, -0.3, 0.4, s1, h, fd)
+    assert (gait.step_x, gait.step_y, gait.step_angle, gait.phase_rate) == pytest.approx(expected)
+    assert gait.phase_rate > 0.0
+    assert gait.step_height == pytest.approx((s1 + 1.0) * 20.0)
+    assert gait.step_speed == 1.0
+    assert zm == pytest.approx(h * 50.0)
+
+
+@pytest.mark.parametrize("progress", [0.0, 0.1, 0.37, 0.5, 0.83, 0.999, 1.0])
+def test_bezier_curve_follows_the_firmware_formula(progress):
+    """gait.h's bezierCurve: sum C(11, i) p^i (1 - p)^(11 - i) times the control point, which at p = 1 is the last
+    control point, the full stroke ahead on the ground."""
+    length, angle, height = 30.0, 0.7, 25.0
+    weights = np.array([math.comb(11, i) * progress**i * (1.0 - progress) ** (11 - i) for i in range(12)])
+    expected = [(weights * fg.BEZIER_STEPS).sum() * length * math.cos(angle),
+                (weights * fg.BEZIER_STEPS).sum() * length * math.sin(angle),
+                (weights * fg.BEZIER_HEIGHTS).sum() * height]
+    point = [0.0, 0.0, 0.0]
+    fg.GaitController._bezier_curve(length, angle, height, progress, point)
+    np.testing.assert_allclose(point, expected, rtol=0, atol=1e-9)
 
 
 def test_nominal_stance_ik_meets_the_firmware_host_test():
@@ -332,6 +439,53 @@ def test_settled_legs_hold_station_while_others_reposition():
     assert np.all(max_lift[1:] < 1.0), "a leg already on target took an empty step"
 
 
+def test_a_repositioning_swing_once_begun_is_finished():
+    """Mirrors the firmware host test: a foot 0.8 mm off its target swings for it and is never dropped, while foot 2,
+    whose swing overlaps it, is still stepping."""
+    gc, gait, body = fg.GaitController(), _tripod(), fg.BodyState()
+    gait.step_height = 15.0
+    target = fg.DEFAULT_FEET.copy()
+    target[0, 0] += 0.8
+    target[2, 0] += 30.0
+    gc.set_default_foot_target(target)
+    max_lift = max_drop = 0.0
+    previous = body.feet[0, 2]
+    for _ in range(4000):
+        gc.step(gait, body, FIRMWARE_DT)
+        max_lift = max(max_lift, body.feet[0, 2] - fg.DEFAULT_FEET[0, 2])
+        max_drop = max(max_drop, previous - body.feet[0, 2])
+        previous = body.feet[0, 2]
+    assert not gc.has_pending_stance_change(), "stance change never converged"
+    assert max_lift > 1.0, "the foot that had to move never stepped"
+    assert max_drop < 2.0
+
+
+def test_a_walk_after_a_stance_change_starts_its_swings_from_the_new_stance():
+    """Mirrors the firmware host test: a walk started after a stance change never pulls a foot back to the old one."""
+    gc, gait, body = fg.GaitController(), _tripod(), fg.BodyState()
+    gait.step_height = 15.0
+    target = fg.DEFAULT_FEET.copy()
+    target[1, 0] += 30.0
+    gc.set_default_foot_target(target)
+    for _ in range(4000):
+        if not gc.has_pending_stance_change():
+            break
+        gc.step(gait, body, FIRMWARE_DT)
+    assert not gc.has_pending_stance_change()
+    for _ in range(200):
+        gc.step(gait, body, FIRMWARE_DT)
+    target = fg.GaitState(**{**gait.__dict__, "offset": gait.offset.copy()})
+    target.step_y = 60.0  # eased in as MotionService does, so a swing starting at rest starts at no stroke
+    largest = 0.0
+    previous = body.feet[1, :3].copy()
+    for _ in range(400):
+        fg.approach_gait_command(gait, target, FIRMWARE_DT)
+        gc.step(gait, body, FIRMWARE_DT)
+        largest = max(largest, float(np.linalg.norm(body.feet[1, :3] - previous)))
+        previous = body.feet[1, :3].copy()
+    assert largest < 5.0
+
+
 def test_released_command_stops_the_cycle():
     cur = _tripod()
     cur.step_x, cur.step_y, cur.step_angle = -30.0, 80.0, 0.4
@@ -371,6 +525,30 @@ def test_command_ramp_switches_cadence_mode_outright():
     assert 1.0 < between.phase_rate < 1.2, "between two explicit rates the cadence should ease"
 
 
+def test_a_stop_eases_the_stroke_out_on_the_speed_law():
+    """GaitCommandRamp: a walk starts first order; a stop eases its stroke out through two stages, so its first tick
+    barely moves the stroke and its fastest step is 1/e of a single stage's first, and its cadence shrinks with the
+    stroke until the stroke leaves the deadband."""
+    a = 1.0 - math.exp(-FIRMWARE_DT / fg.GAIT_COMMAND_TAU_S)
+    walking = _tripod()
+    walking.step_y, walking.phase_rate = 60.0, 0.8
+    live, ramp = _tripod(), fg.GaitCommandRamp()
+    ramp.step(live, walking, FIRMWARE_DT)
+    assert live.step_y == pytest.approx(60.0 * a)
+    for _ in range(600):
+        ramp.step(live, walking, FIRMWARE_DT)
+    stop = fg.GaitState(**{**walking.__dict__, "offset": walking.offset.copy()})
+    stop.step_y, stop.phase_rate = 0.0, 0.0
+    ramp.step(live, stop, FIRMWARE_DT)
+    assert 60.0 - live.step_y < 0.1 * 60.0 * a
+    fastest, previous = 0.0, live.step_y
+    while fg.gait_is_commanded(live):
+        ramp.step(live, stop, FIRMWARE_DT)
+        fastest, previous = max(fastest, previous - live.step_y), live.step_y
+        assert live.phase_rate == pytest.approx(0.8 * live.step_y / 60.0 if fg.gait_is_commanded(live) else 0.0)
+    assert fastest == pytest.approx(60.0 * a / math.e, rel=0.02)
+
+
 def test_explicit_phase_rate_overrides_the_stride_law():
     gait = _tripod()
     gait.step_y, gait.phase_rate = 100.0, 1.35
@@ -381,14 +559,6 @@ def test_explicit_phase_rate_overrides_the_stride_law():
     gc.set_phase(0.0)
     gc.advance_phase(gait, 0.1)
     assert gc.phase == pytest.approx(0.1 * 1.5), "100 mm stride saturates the legacy law at 1.5"
-
-
-def test_auto_gait_picks_by_speed_and_resists_flapping():
-    assert fg.select_auto_gait(0.10, fg.RIPPLE) == fg.RIPPLE
-    assert fg.select_auto_gait(0.50, fg.RIPPLE) == fg.TRI_GATE
-    assert fg.select_auto_gait(0.90, fg.TRI_GATE) == fg.BI_GATE
-    assert fg.select_auto_gait(0.32, fg.RIPPLE) == fg.RIPPLE
-    assert fg.select_auto_gait(0.32, fg.TRI_GATE) == fg.TRI_GATE
 
 
 # ------------------------------------------------------------------ CLI

@@ -48,6 +48,8 @@ def test_a_standing_robot_on_miscalibrated_servos_holds_still():
 
 # The physical check of the axis mapping: REP-103 forward, left and counter-clockwise, in the world.
 def test_forward_left_and_counter_clockwise_follow_rep103(sim):
+    sim.set_mode(Mode.STAND)
+    sim.sleep(1.5)
     sim.set_mode(Mode.WALK)
     start = _left_forward(sim)
     sim.set_velocity(Velocity(0.1, 0, 0))
@@ -88,18 +90,22 @@ def test_the_simulation_refuses_modes_it_does_not_run(sim):
         sim.set_mode(Mode.ANIMATE)
 
 
-# Clamped to the peak in each direction, which max_velocity's both-ways top may undercut.
+# Clamped to the peak in each direction, which max_velocity's both-ways top may undercut. The classical gaits now walk
+# the same peak both ways, so TUNED (its rightward peak, 0.088 m/s, is 9 % above its leftward one, measured) carries
+# the check.
 def test_a_velocity_beyond_the_gait_is_clamped_to_its_peak_that_way(sim):
-    axes = speed_model._axes(Gait.TRI_GATE)
+    sim.set_gait(Gait.TUNED)
+    axes = speed_model._axes(Gait.TUNED)
     clamped = sim.set_velocity(Velocity(10, -10, 100))
     assert clamped == Velocity(axes["vx"].values.max(), axes["vy"].values.min(), axes["yaw_rate"].values.max())
-    assert clamped.yaw_rate > sim.max_velocity().yaw_rate
+    assert -clamped.vy > sim.max_velocity().vy
     assert sim.set_velocity(ZERO) == ZERO
 
 
 # Distances are open-loop on the steady-state speed model, held RAMP_LAG_S longer for the command ramp; on the
 # firmware's code, TRI_GATE and BI_GATE moves of 0.1-0.5 m forward and sideways from a fresh stand land within 15 %
-# (measured: 0.127/0.1, 0.341/0.3, 0.517/0.5 m forward, 0.091/0.1, 0.225/0.2 m sideways); the turn closes on the yaw.
+# (measured for TRI_GATE: 0.100/0.1, 0.300/0.3, 0.497/0.5 m forward, 0.095/0.1, 0.197/0.2 m sideways); the turn closes
+# on the yaw.
 def test_the_facade_walks_distances_and_turns_angles():
     backend = SimBackend()
     with Robot(backend=backend) as robot:
@@ -117,8 +123,8 @@ def test_the_facade_walks_distances_and_turns_angles():
         assert (robot.state().yaw - yaw + 180) % 360 - 180 == pytest.approx(90, abs=4)
 
 
-# On the firmware's code BI_GATE moves 0.2 m sideways to within 15 % with the ramp term (1.087 and 0.928 of it here,
-# 1.144 and 1.102 on Linux) and falls 18.6 % short leftwards without it (0.973 and 0.814 of it), the worst axis.
+# On the firmware's code BI_GATE moves 0.2 m sideways to 1.010 of it either way with the ramp term and 1.04 without it
+# (measured on Windows); test_robot_motions pins the term itself against the ramp's model.
 @pytest.mark.parametrize("metres", [0.2, -0.2])
 def test_a_timed_move_covers_its_distance_despite_the_command_ramp(metres):
     backend = SimBackend()

@@ -540,6 +540,71 @@ void test_settled_legs_hold_station_while_others_reposition() {
     }
 }
 
+// A foot that begins a repositioning swing finishes it. Holding station used to be decided every tick, so a foot left
+// a little off its target swung for it and, once its anchor came within 0.5 mm mid-swing while another foot was still
+// stepping (foot 2 here, whose swing overlaps foot 0's), dropped to the floor in one tick. A swing descends about
+// 0.5 mm a tick at this cadence; 2 mm tells that from a drop.
+void test_a_repositioning_swing_once_begun_is_finished() {
+    GaitController controller;
+    controller.snapDefaultFootTarget(STAND);
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 0, 0, 0);
+    gait.step_height = 15.0f;
+    controller.setGait(gait);
+    BodyStateMsg body = makeBody();
+
+    float tgt[6][4];
+    for (int i = 0; i < 6; i++)
+        for (int j = 0; j < 4; j++) tgt[i][j] = STAND[i][j];
+    tgt[0][0] += 0.8f;
+    tgt[2][0] += 30.0f;
+    controller.setDefaultFootTarget(tgt);
+
+    float maxLift = 0.0f, maxDrop = 0.0f, previous = body.feet[0][2];
+    for (int t = 0; t < 4000; t++) {
+        controller.step(gait, body, DT);
+        maxLift = std::fmax(maxLift, body.feet[0][2] - STAND[0][2]);
+        maxDrop = std::fmax(maxDrop, previous - body.feet[0][2]);
+        previous = body.feet[0][2];
+    }
+    TEST_ASSERT_FALSE_MESSAGE(controller.hasPendingStanceChange(), "stance change never converged");
+    TEST_ASSERT_TRUE_MESSAGE(maxLift > 1.0f, "the foot that had to move never stepped");
+    TEST_ASSERT_LESS_THAN_FLOAT(2.0f, maxDrop);
+}
+
+// A cycle starts every swing from where the feet stand. A stance change ends as the last foot's anchor comes within
+// 0.5 mm, mid-swing, and that foot was left flagged as swinging; a walk started next with it in swing did not take a
+// new swing start and pulled its anchor back toward the old stance, 30 mm here, in one tick. A walking foot moves
+// 1-2 mm a tick; 5 mm tells that from a jump.
+void test_a_walk_after_a_stance_change_starts_its_swings_from_the_new_stance() {
+    GaitController controller;
+    controller.snapDefaultFootTarget(STAND);
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 0, 0, 0);
+    gait.step_height = 15.0f;
+    controller.setGait(gait);
+    BodyStateMsg body = makeBody();
+
+    float tgt[6][4];
+    for (int i = 0; i < 6; i++)
+        for (int j = 0; j < 4; j++) tgt[i][j] = STAND[i][j];
+    tgt[1][0] += 30.0f; // foot 1 swings at phase 0, where the walk below starts
+    controller.setDefaultFootTarget(tgt);
+    for (int t = 0; t < 4000 && controller.hasPendingStanceChange(); t++) controller.step(gait, body, DT);
+    TEST_ASSERT_FALSE(controller.hasPendingStanceChange());
+    for (int t = 0; t < 200; t++) controller.step(gait, body, DT);
+
+    gait_state_t target = gait;
+    target.step_y = 60.0f; // eased in as MotionService does, so a swing starting at rest starts at no stroke
+    float largest = 0.0f, previous[3] = {body.feet[1][0], body.feet[1][1], body.feet[1][2]};
+    for (int t = 0; t < 400; t++) {
+        approachGaitCommand(gait, target, DT, 0.15f);
+        controller.step(gait, body, DT);
+        largest = std::fmax(largest, std::hypot(body.feet[1][0] - previous[0], body.feet[1][1] - previous[1],
+                                                body.feet[1][2] - previous[2]));
+        for (int j = 0; j < 3; j++) previous[j] = body.feet[1][j];
+    }
+    TEST_ASSERT_LESS_THAN_FLOAT(5.0f, largest);
+}
+
 void test_walking_still_swings_every_foot() {
     // The hold-station rule must not leak into normal walking, where every foot sits at its default
     // position and would otherwise qualify as "settled" and stop lifting entirely.
@@ -694,18 +759,6 @@ void test_tuned_default_lift_trim_still_exceeds_femur_travel() {
     TEST_ASSERT_TRUE_MESSAGE(worst[1] > 0.0f, "femur now fits at the default trim -- revisit the trim default");
 }
 
-void test_auto_gait_picks_by_speed_and_resists_flapping() {
-    TEST_ASSERT_EQUAL_INT((int)GaitType::RIPPLE, (int)selectAutoGait(0.10f, GaitType::RIPPLE));
-    TEST_ASSERT_EQUAL_INT((int)GaitType::TRI_GATE, (int)selectAutoGait(0.50f, GaitType::RIPPLE));
-    TEST_ASSERT_EQUAL_INT((int)GaitType::BI_GATE, (int)selectAutoGait(0.90f, GaitType::TRI_GATE));
-
-    // Sitting just past a boundary must not flip back and forth: the band a gait already holds is
-    // wider than the one it would move to.
-    const float edge = 0.32f;
-    TEST_ASSERT_EQUAL_INT((int)GaitType::RIPPLE, (int)selectAutoGait(edge, GaitType::RIPPLE));
-    TEST_ASSERT_EQUAL_INT((int)GaitType::TRI_GATE, (int)selectAutoGait(edge, GaitType::TRI_GATE));
-}
-
 namespace {
 // Walks a stop-slow-stop-fast-stop profile and reports the worst per-tick foot movement anywhere in
 // it. With autoSwitch the schedule may change; where it may change is the thing under test.
@@ -731,7 +784,8 @@ float runGaitProfile(bool autoSwitch, GaitType fixedGait, int &switches) {
             const bool stepping = std::fabs(gait.step_x) >= 2.0f || std::fabs(gait.step_y) >= 2.0f ||
                                   gait.step_angle != 0.0f;
             if (autoSwitch && !stepping) {
-                const GaitType next = selectAutoGait(std::fabs(target.step_y) / 100.0f, gait.gait_type);
+                // A slow gait for the slow stroke and a fast one for the fast, as AUTO picks them.
+                const GaitType next = target.step_y > 50.0f ? GaitType::BI_GATE : GaitType::RIPPLE;
                 if (next != gait.gait_type) {
                     gait.gait_type = next;
                     controller.setGait(gait);
@@ -809,6 +863,38 @@ void test_released_command_stops_the_cycle() {
     }
 }
 
+// A stop starts the walk's stroke from rest, where a first-order ramp moved it at its fastest on the first tick, and
+// shrinks the cadence with the stroke, as a slower command would. Any other change, a walk starting, eases first order.
+void test_a_stop_eases_the_stroke_out_on_the_speed_law() {
+    const float a = 1.0f - std::exp(-DT / 0.15f);
+    gait_state_t walking = makeGait(GaitType::TRI_GATE, 0, 60.0f, 0);
+    walking.phase_rate = 0.8f;
+    gait_state_t live = makeGait(GaitType::TRI_GATE, 0, 0, 0);
+    GaitCommandRamp ramp;
+    ramp.step(live, walking, DT, 0.15f);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 60.0f * a, live.step_y);
+    for (int t = 0; t < 600; ++t) ramp.step(live, walking, DT, 0.15f);
+    TEST_ASSERT_EQUAL_FLOAT(60.0f, live.step_y);
+
+    gait_state_t stop = walking;
+    stop.step_y = 0.0f;
+    stop.phase_rate = 0.0f;
+    ramp.step(live, stop, DT, 0.15f);
+    TEST_ASSERT_TRUE(60.0f - live.step_y < 0.1f * 60.0f * a);
+    int ticks = 1;
+    float fastest = 0.0f, previous = live.step_y;
+    while (gaitIsCommanded(live)) {
+        ramp.step(live, stop, DT, 0.15f);
+        ++ticks;
+        fastest = std::max(fastest, previous - live.step_y);
+        previous = live.step_y;
+        TEST_ASSERT_FLOAT_WITHIN(1e-6f, gaitIsCommanded(live) ? 0.8f * live.step_y / 60.0f : 0.0f, live.phase_rate);
+    }
+    // Two stages in a row peak at 1/e of a single stage's first step.
+    TEST_ASSERT_FLOAT_WITHIN(0.02f * 60.0f * a, 60.0f * a / std::exp(1.0f), fastest);
+    TEST_ASSERT_TRUE(ticks < 200);
+}
+
 void test_yaw_below_deadband_does_not_start_the_cycle() {
     // The yaw counterpart of test_command_below_deadband_does_not_start_the_cycle: 0.004 rad over the
     // 171 mm leg radius is 0.7 mm of foot travel, which is not a step.
@@ -883,7 +969,8 @@ constexpr int STEADY_TICKS = 400; // 2 s: at least one full cycle at every class
 // The entry may move a joint somewhat faster than steady walking does, not by an order of magnitude.
 constexpr float ENTRY_STEP_BOUND = 1.5f;
 
-// MotionService's STAND command and its classical WALK command for full forward stick at s = s1 = 0.
+// MotionService's STAND command, and a full 100 mm forward stride on the legacy stride-derived cadence (phase_rate 0),
+// the law WALK_NN's residual modes and repositioning still run on.
 gait_state_t standCommand(GaitType type) {
     gait_state_t gait {15.0f, 0, 0, 0, 1.0f, 0.002f, default_stand_frac, type, {}, 0};
     GaitController {}.setGait(gait);
@@ -897,7 +984,7 @@ gait_state_t fullForwardCommand(const gait_state_t& stand) {
     return walk;
 }
 
-// MotionService::updateAutoGait's swap: only while not stepping, onto both the live and the target state.
+// MotionService::loadGait's schedule swap: only while not stepping, onto both the live and the target state.
 void swapGait(GaitController& controller, gait_state_t& live, gait_state_t& target, GaitType next) {
     live.gait_type = next;
     controller.setGait(live);
@@ -1106,7 +1193,7 @@ struct TraceSegment {
     int ticks;
 };
 
-// MotionService's STAND command, and its classical WALK command for full forward and full left stick.
+// MotionService's STAND command, and full 100 mm forward and left strides on the legacy stride-derived cadence.
 constexpr TraceSegment TRACE_SEGMENTS[] = {{"stand", 0.0f, 0.0f, 15.0f, 5},
                                            {"forward", 0.0f, 100.0f, 20.0f, 150},
                                            {"stop", 0.0f, 0.0f, 15.0f, 160},
@@ -1211,10 +1298,13 @@ int main(int, char **) {
     RUN_TEST(test_command_ramp_lands_exactly_on_a_released_command);
     RUN_TEST(test_collapsed_ramp_takes_the_command_outright);
     RUN_TEST(test_released_command_stops_the_cycle);
+    RUN_TEST(test_a_stop_eases_the_stroke_out_on_the_speed_law);
     RUN_TEST(test_yaw_below_deadband_does_not_start_the_cycle);
     RUN_TEST(test_yaw_above_deadband_still_steps);
     RUN_TEST(test_stance_change_walks_the_feet_to_the_new_target);
     RUN_TEST(test_settled_legs_hold_station_while_others_reposition);
+    RUN_TEST(test_a_repositioning_swing_once_begun_is_finished);
+    RUN_TEST(test_a_walk_after_a_stance_change_starts_its_swings_from_the_new_stance);
     RUN_TEST(test_walking_still_swings_every_foot);
     RUN_TEST(test_nominal_stance_is_inside_joint_travel);
     RUN_TEST(test_walking_stays_inside_joint_travel);
@@ -1223,7 +1313,6 @@ int main(int, char **) {
     RUN_TEST(test_tuned_gait_is_feasible_on_single_axis_commands);
     RUN_TEST(test_tuned_gait_records_combined_command_overshoot);
     RUN_TEST(test_tuned_default_lift_trim_still_exceeds_femur_travel);
-    RUN_TEST(test_auto_gait_picks_by_speed_and_resists_flapping);
     RUN_TEST(test_auto_gait_switch_adds_no_discontinuity);
     RUN_TEST(test_walk_entered_from_stand_moves_no_joint_faster_than_walking);
     RUN_TEST(test_gait_swapped_at_a_standstill_moves_no_joint_faster_than_walking);

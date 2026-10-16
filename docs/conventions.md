@@ -57,7 +57,7 @@ It is asserted on the firmware gait (`firmware/test/test_sign_convention`), the 
 ## Stick signs
 
 The stick-to-gait mapping is a separate layer, `MotionService::handleCommand` in `firmware/include/motion.h`, with a port in `simulation/src/robot/firmware_gait.py` (`command_to_walk_gait`); the app runs the firmware's own through the virtual robot.
-Its classical WALK branch sets `step_x = -lx * 100`, `step_y = ly * 100` and `step_angle = rx * 0.8`; the TUNED branch uses the same signs through the velocity command `(ly, -lx, rx)`.
+Its classical WALK branch takes `classicWalkTarget` (`firmware/include/gait_speed.h`), which gives `step_x` the sign of `-lx`, `step_y` the sign of `ly` and `step_angle` the sign of `rx`, scaled to the gait's speed envelope; the TUNED branch uses the same signs through the velocity command `(ly, -lx, rx)`.
 Under the convention above that means +ly walks forward, +lx strafes left and +rx turns counter-clockwise, so a stick pushed right on the app's joystick or a gamepad strafes and turns the robot to its left.
 The simulation measured exactly this (`simulation/src/hexapod/speed_model.py`).
 The fixture records the mapping as it stands, so right strafe is the stick `lx = -0.5`; the Python and app tests assert it, while the native test cannot reach `MotionService` and covers only the gait layer.

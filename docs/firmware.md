@@ -16,6 +16,7 @@ Paths are relative to `firmware/` unless they start at the repository root.
 | EventBus and internal message types | `include/event_bus.h`, `include/message_types.h` |
 | Motion state machine | `include/motion.h` (`MotionService`) |
 | Gait generator and command ramp | `include/gait.h`, generated `include/gait_tuned.h` |
+| Classic gait speed envelope (stick to stroke and cadence, posture clamps) | `include/gait_speed.h`, generated `include/gait_envelope.h` |
 | Inverse kinematics | `include/kinematics.h` |
 | Learned policy (WALK_NN) | `include/policy_runner.h`, generated `include/policy/hexapod_policy.h` |
 | Animation player and mode arbitration | `include/animation/` (`animation.h`, `animation_codec.h`, `animation_runner.h`, `animation_store.h`, `mode_arbiter.h`) |
@@ -85,9 +86,21 @@ The mode is a `MOTION_STATE`: `DEACTIVATED`, `IDLE`, `POSE`, `STAND`, `WALK`, `W
 
 - `DEACTIVATED` puts both PCA9685 boards to sleep; `IDLE` keeps them powered and produces no angles; `POSE` drives every servo to its centre pulse for calibration.
 - `STAND` eases the body toward the commanded offset, height and tilt; the gait stays idle, except that a new stance width is reached by stepping the feet there rather than sliding them.
+  A posture change is clamped to what the legs can stand in (`clampStandPosture`) and taken only once the feet are at rest.
 - `WALK` turns the stick into a locomotion command for `GaitController`; with `GaitType::TUNED` the stick is a velocity command mapped through the searched gait in `gait_tuned.h` instead.
+  A classical gait (`TRI_GATE`, `BI_GATE`, `WAVE`, `RIPPLE`) takes its stroke and cadence from `classicWalkTarget` in `include/gait_speed.h`.
+  The stick is a fraction of the gait's top speed at the posture, looked up in the generated `gait_envelope.h`; `s` sets the share of that top (-1, 0 and +1 give 0, 60 % and 100 %), and a combined stick whose L1 norm exceeds 1 is normalised by it.
+  The stroke and the cadence each scale with the square root of the speed fraction, and the cadence is passed as an explicit `phase_rate`.
+  The posture sliders (`s1` lift, `h` body height, `fd` feet distance) are first clamped along a ray from neutral to the walkable region (`clampPosture`).
+  A posture change while walking pauses the walk and settles the posture in stages: the lift comes down, the stance and body height move at the lower height, and the lift goes back up, after which the walk resumes.
+  A walk entered from a stand at rest in the same posture starts at once; a rising lift needs no settling, a falling one does.
+  A classic walk ignores the tilt stick and eases the stand's shift and tilt out, since the envelope was measured on a level, centred body.
+  Self-levelling stays on, and the tilt it adds on a slope is not covered by the envelope.
+  A stop eases the stroke out from rest and slows the cadence with it (`GaitCommandRamp` in `include/gait.h`), so it passes only through walks a slower stick would take.
+  The dead-man's neutral posture is taken like any other, once the walk has stopped; in `STAND` it waits until the feet are still.
 - `WALK_NN` hands stride, lift, cadence and ride height to `PolicyRunner`, which runs the exported network every fourth tick on top of the analytic gait.
   Its observation and action decoding is `PolicyCore` (`include/policy/policy_core.h`), which the training environment runs through `host/policy_api.cpp`, so the network trains on the code that deploys it.
+  Its `h` and `fd` are clamped to the classic gaits' walkable region (`clampPosture`).
 - `ANIMATE` plays a clip or a streamed puppeteer pose through `AnimationRunner`.
 
 Each tick in a stepping mode follows the same order: the body state eases toward its target, the gait command ramps toward the commanded one (`approachGaitCommand`), `GaitController::step` advances the phase and writes the six foot targets (Bezier swing, sinusoidal stance), and `Kinematics::inverseKinematics` turns body pose and feet into 18 joint angles.
@@ -96,8 +109,10 @@ The IMU's roll and pitch are added to the commanded tilt (self-levelling), clamp
 
 Commands arrive asynchronously and only set targets.
 If no command arrives within a timeout, `MotionService` applies a zero command; the timeout is shorter while a stick is steering, because the senders repeat their command while one is held.
-Gait changes are deferred until the gait is not stepping, because swapping the phase schedule mid-stride drops a swinging foot.
+Gait changes are deferred until the gait is not commanded, not repositioning and not settling a posture, because swapping the phase schedule mid-stride drops a swinging foot.
 `GaitType::AUTO` picks a gait from the commanded speed at the same safe moments.
+That speed is the stick's share of BI's top speed at the posture, whichever gait walks it, and AUTO picks the slowest of `RIPPLE`, `TRI_GATE` and `BI_GATE` whose top speed covers it.
+A stick pushed past the top of the gait in effect therefore walks at that top until the next stop.
 
 Mode changes are decided by the pure function in `include/animation/mode_arbiter.h` and applied only on the `ModeMsg` worker, which makes that worker the one place the mode changes.
 An animation play borrows `ANIMATE` from the current mode and the control task asks for the mode back when the clip ends; `DEACTIVATED`, `IDLE` and `POSE` always apply at once, which is the safety property.
@@ -105,7 +120,7 @@ An animation play borrows `ANIMATE` from the current mode and the control task a
 
 The gait and kinematics math has two mirrors outside the firmware.
 `simulation/src/robot/firmware_gait.py` is the port the simulation's research modes run on and must stay in step, enforced by `simulation/test_firmware_gait_parity.py`; the app draws the robot with its own forward kinematics, which the firmware has none of.
-`include/gait_tuned.h` is generated by `simulation/export_gait.py` and `include/policy/hexapod_policy.h` by `simulation/export_policy.py`; neither is edited by hand.
+`include/gait_tuned.h` is generated by `simulation/export_gait.py`, `include/gait_envelope.h` by `simulation/export_envelope.py` and `include/policy/hexapod_policy.h` by `simulation/export_policy.py`; none is edited by hand.
 
 ## Sensors
 

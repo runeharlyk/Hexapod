@@ -2,6 +2,7 @@
 // the Python simulation loads (simulation/src/sim/virtual_robot.py). One robot per module instance or process;
 // reset() starts it over.
 
+#include <gait_speed.h>
 #include <host_api.h>
 #include <virtual_robot.h>
 
@@ -53,4 +54,29 @@ API const float *servoAngles() { return instance().servoAngles(); }
 // Poses sent to the servos since reset().
 API unsigned servoWrites() { return instance().servoWrites(); }
 
+// gait_speed.h on its own, no robot needed, for the simulation's port to be checked against: a classic gait's walk
+// command for a stick at a posture, as step x, step y, step angle and phase rate.
+API void classicWalkTarget(int gait, float lx, float ly, float rx, float s, float s1, float h, float fd, float out[4]) {
+    const WalkTarget w = ::classicWalkTarget(static_cast<GaitType>(gait), lx, ly, rx, s, s1, h, fd);
+    out[0] = w.stepX;
+    out[1] = w.stepY;
+    out[2] = w.stepAngle;
+    out[3] = w.phaseRate;
+}
+
+// AUTO's gait for a stick at a posture, chosen from the gait in effect `current`, and the walk it takes there as
+// classicWalkTarget's four values.
+API int autoWalk(int current, float lx, float ly, float rx, float s, float s1, float h, float fd, float out[4]) {
+    const AutoDemand demand = autoDemand(lx, ly, rx, s, s1, h, fd);
+    const GaitType gait = selectAutoGait(demand, static_cast<GaitType>(current), s1, h, fd);
+    const WalkTarget w = autoWalkTarget(gait, demand, lx, ly, rx, s1, h, fd);
+    out[0] = w.stepX;
+    out[1] = w.stepY;
+    out[2] = w.stepAngle;
+    out[3] = w.phaseRate;
+    return static_cast<int>(gait);
+}
+
+// The posture s1, h, fd pulled into the walkable region, in place.
+API void clampPosture(float posture[3]) { ::clampPosture(posture[0], posture[1], posture[2]); }
 }

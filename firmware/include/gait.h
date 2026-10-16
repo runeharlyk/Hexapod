@@ -64,17 +64,6 @@ inline float approachf(float current, float target, float alpha, float eps) {
     return std::fabs(target - next) <= eps ? target : next;
 }
 
-// Picks a gait from the commanded stride, slow and stable up to fast and sparse. The bands overlap
-// by AUTO_HYSTERESIS so a stick held near a boundary does not oscillate between two schedules.
-inline GaitType selectAutoGait(float speed01, GaitType current) {
-    constexpr float RIPPLE_MAX = 0.30f, TRI_MAX = 0.70f, AUTO_HYSTERESIS = 0.06f;
-    const float rippleMax = current == GaitType::RIPPLE ? RIPPLE_MAX + AUTO_HYSTERESIS : RIPPLE_MAX;
-    const float triMax = current == GaitType::BI_GATE ? TRI_MAX - AUTO_HYSTERESIS : TRI_MAX;
-    if (speed01 < rippleMax) return GaitType::RIPPLE;
-    if (speed01 < triMax) return GaitType::TRI_GATE;
-    return GaitType::BI_GATE;
-}
-
 inline void approachGaitCommand(gait_state_t& current, const gait_state_t& target, float dt, float tau) {
     const float a = (tau <= 0.0f || dt <= 0.0f) ? 1.0f : 1.0f - expf(-dt / tau);
     current.step_x = approachf(current.step_x, target.step_x, a, GAIT_SNAP_MM);
@@ -91,6 +80,57 @@ inline void approachGaitCommand(gait_state_t& current, const gait_state_t& targe
                              : target.phase_rate;
 }
 
+// The command ramp the walk eases through. A change eases first order over tau, except a stop, which starts from the
+// walk as it is and leaves it the way the speed law (gait_speed.h) would slow it:
+// - Its stroke eases out through two first-order stages in a row. A single stage moves the stroke at its fastest from
+//   the first tick, and a foot at the edge of its reach, where the joints turn furthest per millimetre, then moved up
+//   to 1.8 times as fast as in the walk; two stages start it from rest.
+// - Its cadence shrinks in proportion to the stroke, as the speed law's does. The stride law (phase_rate 0) stepped the
+//   shrinking stroke at up to 1.5 cycles/s, faster than a slow gait walked it, and the walk's own cadence lifts the
+//   feet as fast over a stroke near zero, a pace the envelope never measured.
+// A walk on the stride law keeps it through the stop.
+class GaitCommandRamp {
+  public:
+    void step(gait_state_t& live, const gait_state_t& target, float dt, float tau) {
+        if (target.phase_rate > 0.0f || gaitIsCommanded(target) || !gaitIsCommanded(live)) {
+            stopping = false;
+            approachGaitCommand(live, target, dt, tau);
+            return;
+        }
+        if (!stopping) {
+            stopping = true;
+            from = live;
+            stage = live;
+        }
+        const float a = (tau <= 0.0f || dt <= 0.0f) ? 1.0f : 1.0f - expf(-dt / tau);
+        stage.step_x = approachf(stage.step_x, target.step_x, a, GAIT_SNAP_MM);
+        stage.step_y = approachf(stage.step_y, target.step_y, a, GAIT_SNAP_MM);
+        stage.step_angle = approachf(stage.step_angle, target.step_angle, a, GAIT_SNAP_RAD);
+        gait_state_t eased = target;
+        eased.step_x = stage.step_x;
+        eased.step_y = stage.step_y;
+        eased.step_angle = stage.step_angle;
+        approachGaitCommand(live, eased, dt, tau);
+        live.phase_rate = gaitIsCommanded(live) ? from.phase_rate * strokeLeft(live) : 0.0f;
+    }
+
+  private:
+    // The share of the stop's starting stroke left, along the axis that started furthest past its deadband: both stages
+    // ease every axis alike.
+    float strokeLeft(const gait_state_t& g) const {
+        const float x = std::fabs(from.step_x) / GAIT_STRIDE_DEADBAND_MM,
+                    y = std::fabs(from.step_y) / GAIT_STRIDE_DEADBAND_MM,
+                    yaw = std::fabs(from.step_angle) / GAIT_YAW_DEADBAND_RAD;
+        if (x >= y && x >= yaw) return std::fabs(g.step_x / from.step_x);
+        if (y >= yaw) return std::fabs(g.step_y / from.step_y);
+        return std::fabs(g.step_angle / from.step_angle);
+    }
+
+    bool stopping = false;
+    gait_state_t from {};  // the walk the stop started from
+    gait_state_t stage {}; // the first of the stroke's two stages
+};
+
 class GaitController {
   private:
     float phase = 0.0f;
@@ -101,6 +141,8 @@ class GaitController {
     float swingStartPosition[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
                                       {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
     bool footWasSwinging[6] = {false, false, false, false, false, false};
+    // Whether a foot holds station through its current swing, decided as the swing begins.
+    bool swingHeld[6] = {false, false, false, false, false, false};
     // A cycle started from a standstill finds some legs mid-swing, since at phase 0 every offset past
     // stand_frac is already swinging; taken as is, the foot left the floor at that swing's height in
     // one tick. Such a swing is instead replayed whole, from the floor, over the time left to it, with
@@ -185,6 +227,10 @@ class GaitController {
         for (int i = 0; i < 6; i++) {
             const float ph = std::fmod(phase + gait.offset[i], 1.0f);
             swingEntry[i] = ph >= gait.stand_frac ? swingProgress(ph, gait.stand_frac) : 0.0f;
+            // Every swing starts from where its foot stands now. A foot the last cycle left flagged as
+            // swinging, as a stance change does with its last foot, would otherwise keep that swing's
+            // start and pull its anchor back toward the stance it left.
+            footWasSwinging[i] = false;
         }
         cycleRunning = true;
     }
@@ -343,13 +389,15 @@ class GaitController {
             // A foot already standing where it belongs has nothing to fetch, so it holds station
             // rather than taking an empty step while the others catch up. Repositioning only: in
             // normal walking every foot sits at its default position and must still swing.
-            const bool holdStation = repositioning && footAtTarget(i);
-
             if (isSwinging && !footWasSwinging[i]) {
                 for (int j = 0; j < 4; ++j) {
                     swingStartPosition[i][j] = defaultPosition[i][j];
                 }
+                swingHeld[i] = repositioning && footAtTarget(i);
             }
+            // A swing once begun is finished: decided anew each tick, a foot swinging for a small
+            // offset came within reach of its target mid-swing and dropped to the floor in one tick.
+            const bool holdStation = repositioning && (isSwinging ? swingHeld[i] : footAtTarget(i));
             footWasSwinging[i] = isSwinging;
             if (!isSwinging) swingEntry[i] = 0.0f;
             const float entry = swingEntry[i];

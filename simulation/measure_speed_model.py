@@ -1,10 +1,10 @@
 """Measure the firmware gait's body velocity per stick in MuJoCo -> src/resources/speed_model.json.
 
 The Robot facade (src/hexapod) turns a REP-103 velocity into the sticks the firmware takes, so it needs the
-velocity each stick deflection produces. No closed form is accurate: the classical gait's cadence law is
-piecewise (motion.h / gait.h: speed = step_speed * clip(stride / 25, 0.75, 1.5)), the feet slip, and the TUNED
-gait's stick -> velocity-command map overshoots what it walks. So each axis is measured on its own, from rest,
-through the same firmware control loop the sim backend runs:
+velocity each stick deflection produces. No closed form is accurate: the classical gaits take their stroke and
+cadence from the speed envelope (gait_speed.h), a model of the feet's travel that the sim's servo and the slipping
+feet only approach, and the TUNED gait's stick -> velocity-command map overshoots what it walks. So each axis is
+measured on its own, from rest, through the same firmware control loop the sim backend runs:
 
     ly -> forward speed vx    lx -> leftward speed vy    rx -> counter-clockwise yaw rate
 

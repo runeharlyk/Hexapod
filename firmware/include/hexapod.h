@@ -55,6 +55,7 @@ class Hexapod {
         _motionService.fillTelemetry(tick);
     }
     bool resting() const { return _motionService.resting(); }
+    const MotionService &motion() const { return _motionService; }
     imu_calibration::Check calibrateIMU(ImuCalibration &result) { return _peripherals.calibrateIMU(result); }
     bool magnetometerPresent() const { return _peripherals.magActive(); }
 
