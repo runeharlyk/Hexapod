@@ -4,6 +4,7 @@
 
 #include <unity.h>
 
+#include <algorithm>
 #include <cmath>
 #include <gait_speed.h>
 
@@ -184,7 +185,7 @@ void test_commands_stay_inside_the_table() {
                     TEST_ASSERT_TRUE(std::fabs(target.stepY) <= fwd.stroke * 1.0001f);
                     TEST_ASSERT_TRUE(std::fabs(target.stepX) <= lat.stroke * 1.0001f);
                     TEST_ASSERT_TRUE(std::fabs(target.stepAngle) <= yaw.stroke * 1.0001f);
-                    TEST_ASSERT_TRUE(target.speed01 > 0.0f && target.speed01 <= 1.0001f);
+                    TEST_ASSERT_TRUE(target.speed01 > 0.0f && target.speed01 <= 1.0f);
                 }
             }
         }
@@ -217,25 +218,8 @@ void test_clamp_keeps_walkable_postures() {
 }
 
 void test_clamp_pulls_in_unwalkable_ones() {
-    // The cube corners are the farthest postures a stick can ask for. The result must be walkable and
-    // sit against the boundary: pushing it out by 2% along its own direction leaves the region again.
-    int pulled = 0;
-    for (int corner = 0; corner < 8; ++corner) {
-        const float s1 = corner & 1 ? 1.0f : -1.0f, h = corner & 2 ? 1.0f : -1.0f, fd = corner & 4 ? 1.0f : -1.0f;
-        if (postureWalkable(s1, h, fd)) continue;
-        float a = s1, b = h, c = fd;
-        clampPosture(a, b, c);
-        TEST_ASSERT_TRUE(postureWalkable(a, b, c));
-        TEST_ASSERT_FALSE(postureWalkable(a * 1.02f, b * 1.02f, c * 1.02f));
-        ++pulled;
-    }
-    TEST_ASSERT_TRUE(pulled >= 4);
-}
-
-void test_clamp_scales_along_the_commanded_direction() {
-    // Off the corners the walkable region is not star-shaped around the neutral posture, so the clamp
-    // may stop short of the outermost walkable point; it must still keep the direction of the command
-    // and never push any component outward.
+    // The walkable region is not star-shaped about the neutral posture, so a ray can leave it and
+    // re-enter. The result must be walkable and no scan step (k/32 of the command) beyond it may be.
     int pulled = 0;
     for (int i = 0; i <= 10; ++i)
         for (int j = 0; j <= 10; ++j)
@@ -245,14 +229,32 @@ void test_clamp_scales_along_the_commanded_direction() {
                 float a = s1, b = h, c = fd;
                 clampPosture(a, b, c);
                 TEST_ASSERT_TRUE(postureWalkable(a, b, c));
+                // The command keeps its direction: nothing moves outward and the result is collinear.
                 TEST_ASSERT_TRUE(std::fabs(a) <= std::fabs(s1) && std::fabs(b) <= std::fabs(h) &&
                                  std::fabs(c) <= std::fabs(fd));
-                // Collinear with the original: the cross product vanishes.
                 TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.0f, a * h - b * s1);
                 TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.0f, b * fd - c * h);
+
+                const float largest = std::max({std::fabs(s1), std::fabs(h), std::fabs(fd)});
+                const float scale = std::max({std::fabs(a), std::fabs(b), std::fabs(c)}) / largest;
+                for (int step = 1; step <= 32; ++step) {
+                    const float t = (float)step / 32;
+                    if (t <= scale + 1e-4f) continue;
+                    TEST_ASSERT_FALSE(postureWalkable(s1 * t, h * t, fd * t));
+                }
                 ++pulled;
             }
-    TEST_ASSERT_TRUE(pulled > 100);
+    TEST_ASSERT_TRUE(pulled > 500);
+}
+
+void test_clamp_reaches_the_boundary_of_a_ray_that_reenters() {
+    // (-1, 1, 0) leaves the walkable region at about a quarter of the way out and re-enters it further
+    // out, so only a scan from the outside gets past the inner boundary.
+    float s1 = -1.0f, h = 1.0f, fd = 0.0f;
+    TEST_ASSERT_FALSE(postureWalkable(s1, h, fd));
+    clampPosture(s1, h, fd);
+    TEST_ASSERT_TRUE(postureWalkable(s1, h, fd));
+    TEST_ASSERT_TRUE(h > 0.6f);
 }
 
 void test_clamp_clips_commands_outside_the_unit_cube() {
@@ -351,7 +353,7 @@ int main(int, char**) {
     RUN_TEST(test_unwalkable_posture_and_unsupported_gaits_command_nothing);
     RUN_TEST(test_clamp_keeps_walkable_postures);
     RUN_TEST(test_clamp_pulls_in_unwalkable_ones);
-    RUN_TEST(test_clamp_scales_along_the_commanded_direction);
+    RUN_TEST(test_clamp_reaches_the_boundary_of_a_ray_that_reenters);
     RUN_TEST(test_clamp_clips_commands_outside_the_unit_cube);
     RUN_TEST(test_interpolation_hits_grid_values);
     RUN_TEST(test_interpolation_between_grid_points_is_trilinear);

@@ -73,15 +73,20 @@ inline AxisEnvelope envelopeAt(GaitType gait, int axis, float s1, float h, float
             trilinear(gait_envelope::STROKE[g][axis], cs1, ch, cfd)};
 }
 
-// An unwalkable posture is scaled toward the neutral one along its own direction, to the walkable point
-// furthest from neutral that 8 bisection steps find.
+// An unwalkable posture is scaled toward the neutral one along its own direction. The walkable region is
+// not star-shaped about neutral, so a plain bisection can settle on an inner boundary; a coarse scan from
+// the outside finds the outermost walkable step first, and the bisection refines the boundary above it.
 inline void clampPosture(float& s1, float& h, float& fd) {
+    constexpr int SCAN_STEPS = 32;
+    constexpr int REFINE_STEPS = 5;
     s1 = std::clamp(s1, -1.0f, 1.0f);
     h = std::clamp(h, -1.0f, 1.0f);
     fd = std::clamp(fd, -1.0f, 1.0f);
     if (postureWalkable(s1, h, fd)) return;
-    float walkable = 0.0f, blocked = 1.0f;
-    for (int step = 0; step < 8; ++step) {
+    int step = SCAN_STEPS - 1;
+    while (step > 0 && !postureWalkable(s1 * step / SCAN_STEPS, h * step / SCAN_STEPS, fd * step / SCAN_STEPS)) --step;
+    float walkable = (float)step / SCAN_STEPS, blocked = (float)(step + 1) / SCAN_STEPS;
+    for (int i = 0; i < REFINE_STEPS; ++i) {
         const float mid = 0.5f * (walkable + blocked);
         (postureWalkable(s1 * mid, h * mid, fd * mid) ? walkable : blocked) = mid;
     }
@@ -119,6 +124,7 @@ inline WalkTarget classicWalkTarget(GaitType gait, float lx, float ly, float rx,
     float shareSum = 0.0f;
     for (int axis = 0; axis < 3; ++axis) {
         const AxisEnvelope e = envelopeAt(gait, axis, s1, h, fd);
+        // Walkable guarantees only the forward axis, so lateral or yaw can be empty in a walkable cell.
         if (std::fabs(stick[axis]) == 0.0f || e.vMax <= 0.0f || e.stroke <= 0.0f) continue;
         share[axis] = std::fabs(stick[axis]) / length;
         vMax[axis] = e.vMax;
@@ -138,5 +144,5 @@ inline WalkTarget classicWalkTarget(GaitType gait, float lx, float ly, float rx,
     float stroke[3];
     for (int axis = 0; axis < 3; ++axis) stroke[axis] = frac * share[axis] * vMax[axis] * standFrac / phaseRate;
     return {-std::copysign(stroke[1], lx), std::copysign(stroke[0], ly), std::copysign(stroke[2], rx), phaseRate,
-            total};
+            std::min(total, 1.0f)};
 }
