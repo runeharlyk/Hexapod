@@ -32,7 +32,6 @@ void assertZeroTarget(const WalkTarget& target) {
     TEST_ASSERT_EQUAL_FLOAT(0.0f, target.stepY);
     TEST_ASSERT_EQUAL_FLOAT(0.0f, target.stepAngle);
     TEST_ASSERT_EQUAL_FLOAT(0.0f, target.phaseRate);
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, target.speed01);
 }
 
 } // namespace
@@ -50,7 +49,6 @@ void test_full_stick_forward_reaches_v_max() {
     TEST_ASSERT_FLOAT_WITHIN(0.005f * forward.vMax, forward.vMax, target.stepY * target.phaseRate / (3.1f / 6));
     TEST_ASSERT_EQUAL_FLOAT(0.0f, target.stepX);
     TEST_ASSERT_EQUAL_FLOAT(0.0f, target.stepAngle);
-    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.0f, target.speed01);
 }
 
 void test_default_speed_is_sixty_percent() {
@@ -112,7 +110,7 @@ void test_combined_stick_is_l1_normalized() {
     const GaitType gait = GaitType::TRI_GATE;
     const WalkTarget target = classicWalkTarget(gait, 1, 1, 1, 1, 0, 0, 0);
 
-    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.0f, target.speed01);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.0f, autoDemand(1, 1, 1, 1, 0, 0, 0).speed01);
     const float share[3] = {axisSpeed(gait, target.stepY, target) / envelopeAt(gait, 0, 0, 0, 0).vMax,
                             axisSpeed(gait, -target.stepX, target) / envelopeAt(gait, 1, 0, 0, 0).vMax,
                             axisSpeed(gait, target.stepAngle, target) / envelopeAt(gait, 2, 0, 0, 0).vMax};
@@ -133,7 +131,7 @@ void test_stick_scales_every_axis_by_its_own_share() {
                              axisSpeed(gait, target.stepX, target) / envelopeAt(gait, 1, 0, 0, 0).vMax);
     TEST_ASSERT_FLOAT_WITHIN(0.005f * frac * 0.25f / length, frac * 0.25f / length,
                              axisSpeed(gait, target.stepAngle, target) / envelopeAt(gait, 2, 0, 0, 0).vMax);
-    TEST_ASSERT_FLOAT_WITHIN(1e-6f, frac, target.speed01);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, frac, autoDemand(lx, ly, rx, s, 0, 0, 0).speed01);
 }
 
 void test_partial_stick_commands_a_fraction_of_the_speed() {
@@ -142,7 +140,7 @@ void test_partial_stick_commands_a_fraction_of_the_speed() {
     const float vMax = envelopeAt(gait, 0, 0, 0, 0).vMax;
     const WalkTarget target = classicWalkTarget(gait, 0, 0.5f, 0, 1, 0, 0, 0);
     TEST_ASSERT_FLOAT_WITHIN(0.005f * 0.5f * vMax, 0.5f * vMax, axisSpeed(gait, target.stepY, target));
-    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.5f, target.speed01);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.5f, autoDemand(0, 0.5f, 0, 1, 0, 0, 0).speed01);
 }
 
 void test_speed_rises_with_the_speed_input() {
@@ -185,7 +183,6 @@ void test_commands_stay_inside_the_table() {
                     TEST_ASSERT_TRUE(std::fabs(target.stepY) <= fwd.stroke * 1.0001f);
                     TEST_ASSERT_TRUE(std::fabs(target.stepX) <= lat.stroke * 1.0001f);
                     TEST_ASSERT_TRUE(std::fabs(target.stepAngle) <= yaw.stroke * 1.0001f);
-                    TEST_ASSERT_TRUE(target.speed01 > 0.0f && target.speed01 <= 1.0f);
                 }
             }
         }
@@ -366,6 +363,115 @@ void test_stand_clamp_keeps_standable_postures_and_pulls_in_the_rest() {
     TEST_ASSERT_TRUE(kept > 0 && pulled > 0);
 }
 
+namespace {
+
+constexpr GaitType AUTO_GAITS[3] = {GaitType::RIPPLE, GaitType::TRI_GATE, GaitType::BI_GATE};
+
+// The share of `gait`'s top speeds the demand takes, summed over the axes like the stick; infinite when the gait cannot
+// walk an axis the demand asks for.
+float shareOfTop(GaitType gait, const AutoDemand& demand, float s1, float h, float fd) {
+    float share = 0.0f;
+    for (int axis = 0; axis < 3; ++axis) {
+        if (demand.speed[axis] <= 0.0f) continue;
+        const float vMax = envelopeAt(gait, axis, s1, h, fd).vMax;
+        if (vMax <= 0.0f) return INFINITY;
+        share += demand.speed[axis] / vMax;
+    }
+    return share;
+}
+
+// The body speed a walk target makes along an axis, in the axis's unit per second.
+float walkedSpeed(GaitType gait, const WalkTarget& target, int axis) {
+    const float stroke[3] = {target.stepY, -target.stepX, target.stepAngle};
+    return std::fabs(stroke[axis]) * target.phaseRate / standFrac(gait);
+}
+
+} // namespace
+
+// AUTO's speed signal is the stick's share of BI's top speed, the fastest classic gait's, whichever gait walks it.
+void test_auto_demand_is_the_sticks_share_of_bi() {
+    const float lx = -0.5f, ly = 1.0f, rx = 0.25f, s = 0.5f;
+    const float length = std::fabs(lx) + std::fabs(ly) + std::fabs(rx), frac = speedFraction(s);
+    const AutoDemand demand = autoDemand(lx, ly, rx, s, 0, 0, 0);
+    const float stick[3] = {ly, lx, rx};
+    for (int axis = 0; axis < 3; ++axis) {
+        const float expected =
+            frac * std::fabs(stick[axis]) / length * envelopeAt(GaitType::BI_GATE, axis, 0, 0, 0).vMax;
+        TEST_ASSERT_FLOAT_WITHIN(1e-5f * expected, expected, demand.speed[axis]);
+    }
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, frac, demand.speed01);
+}
+
+// AUTO picks the slowest of RIPPLE, TRI and BI that covers the demand, and that gait walks exactly the demand, so the
+// speed rises with the stick across both band edges. The old bands, set on the share of the gait in effect's own top
+// speed, jumped from 21 to 103 mm/s at half stick.
+void test_auto_walks_the_stick_monotonically_across_the_bands() {
+    const float postures[][3] = {{0, 0, 0}, {1, -1, -1}, {-0.5f, 0.25f, 0.5f}};
+    const float sticks[][3] = {{0, 1, 0}, {1, 0, 0}, {0, 0, 1}, {0.4f, -1, 0.3f}};
+    for (const auto& p : postures) {
+        for (const auto& stick : sticks) {
+            for (const float s : {0.0f, 1.0f}) {
+                float previous = 0.0f;
+                int switches = 0;
+                GaitType last = GaitType::RIPPLE;
+                for (int k = 1; k <= 200; ++k) {
+                    const float scale = (float)k / 200;
+                    const float lx = stick[0] * scale, ly = stick[1] * scale, rx = stick[2] * scale;
+                    const AutoDemand demand = autoDemand(lx, ly, rx, s, p[0], p[1], p[2]);
+                    // From a stop in RIPPLE, the gait AUTO stops into.
+                    const GaitType gait = selectAutoGait(demand, GaitType::RIPPLE, p[0], p[1], p[2]);
+                    TEST_ASSERT_TRUE(shareOfTop(gait, demand, p[0], p[1], p[2]) <= 1.0f + 1e-5f);
+                    for (const GaitType slower : AUTO_GAITS) {
+                        if (slower == gait) break;
+                        const float margin = slower == GaitType::RIPPLE ? 1.0f : 1.0f - 0.06f;
+                        TEST_ASSERT_TRUE(shareOfTop(slower, demand, p[0], p[1], p[2]) > margin - 1e-5f);
+                    }
+                    const WalkTarget target = autoWalkTarget(gait, demand, lx, ly, rx, p[0], p[1], p[2]);
+                    float speed = 0.0f;
+                    for (int axis = 0; axis < 3; ++axis) {
+                        const float walked = walkedSpeed(gait, target, axis);
+                        TEST_ASSERT_FLOAT_WITHIN(0.005f * demand.speed[axis] + 1e-5f, demand.speed[axis], walked);
+                        speed += walked / envelopeAt(GaitType::BI_GATE, axis, p[0], p[1], p[2]).vMax;
+                    }
+                    // A combined stick past an L1 norm of 1 asks for the same speed from there on.
+                    TEST_ASSERT_TRUE(speed >= previous - 1e-5f);
+                    previous = speed;
+                    switches += gait != last;
+                    last = gait;
+                }
+                TEST_ASSERT_TRUE(switches >= 1);
+            }
+        }
+    }
+}
+
+// A gait other than the one in effect must cover the demand with 6 % to spare, so a demand at a gait's top does not
+// flap between two schedules; the gait in effect keeps a demand up to its own top.
+void test_auto_resists_flapping_at_a_band_edge() {
+    const float rippleTop = envelopeAt(GaitType::RIPPLE, 0, 0, 0, 0).vMax;
+    const float biTop = envelopeAt(GaitType::BI_GATE, 0, 0, 0, 0).vMax;
+    const auto atShareOfRipple = [&](float share) { return autoDemand(0, share * rippleTop / biTop, 0, 1, 0, 0, 0); };
+    TEST_ASSERT_EQUAL(GaitType::RIPPLE, selectAutoGait(atShareOfRipple(0.97f), GaitType::RIPPLE, 0, 0, 0));
+    TEST_ASSERT_EQUAL(GaitType::TRI_GATE, selectAutoGait(atShareOfRipple(0.97f), GaitType::TRI_GATE, 0, 0, 0));
+    TEST_ASSERT_EQUAL(GaitType::RIPPLE, selectAutoGait(atShareOfRipple(0.9f), GaitType::TRI_GATE, 0, 0, 0));
+    TEST_ASSERT_EQUAL(GaitType::TRI_GATE, selectAutoGait(atShareOfRipple(1.03f), GaitType::RIPPLE, 0, 0, 0));
+    TEST_ASSERT_EQUAL(GaitType::RIPPLE, selectAutoGait(autoDemand(0, 0, 0, 1, 0, 0, 0), GaitType::BI_GATE, 0, 0, 0));
+}
+
+// The gait changes only at a stop, so a stick pushed past the top of the gait in effect walks at that gait's top until
+// then: the demanded velocity scaled down to the gait's top speeds, their shares summing to 1.
+void test_auto_caps_a_demand_above_the_gaits_top() {
+    const AutoDemand demand = autoDemand(1, 1, 1, 1, 0, 0, 0);
+    const float need = shareOfTop(GaitType::RIPPLE, demand, 0, 0, 0);
+    TEST_ASSERT_TRUE(need > 5.0f);
+    const WalkTarget capped = autoWalkTarget(GaitType::RIPPLE, demand, 1, 1, 1, 0, 0, 0);
+    TEST_ASSERT_TRUE(capped.stepX < 0.0f && capped.stepY > 0.0f && capped.stepAngle > 0.0f);
+    for (int axis = 0; axis < 3; ++axis) {
+        const float expected = demand.speed[axis] / need;
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f * expected, expected, walkedSpeed(GaitType::RIPPLE, capped, axis));
+    }
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_full_stick_forward_reaches_v_max);
@@ -389,5 +495,9 @@ int main(int, char**) {
     RUN_TEST(test_interpolation_between_grid_points_is_trilinear);
     RUN_TEST(test_lookup_clips_inputs_and_is_empty_when_unwalkable);
     RUN_TEST(test_walkable_needs_every_corner_of_the_cell);
+    RUN_TEST(test_auto_demand_is_the_sticks_share_of_bi);
+    RUN_TEST(test_auto_walks_the_stick_monotonically_across_the_bands);
+    RUN_TEST(test_auto_resists_flapping_at_a_band_edge);
+    RUN_TEST(test_auto_caps_a_demand_above_the_gaits_top);
     return UNITY_END();
 }

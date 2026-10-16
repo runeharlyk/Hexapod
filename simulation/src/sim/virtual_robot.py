@@ -70,6 +70,8 @@ def _library() -> ctypes.CDLL:
     lib.servoAngles.restype = ctypes.POINTER(ctypes.c_float)
     lib.servoWrites.restype = ctypes.c_uint
     lib.classicWalkTarget.argtypes = [ctypes.c_int, *floats(7), ctypes.POINTER(ctypes.c_float)]
+    lib.autoWalk.argtypes = [ctypes.c_int, *floats(7), ctypes.POINTER(ctypes.c_float)]
+    lib.autoWalk.restype = ctypes.c_int
     lib.clampPosture.argtypes = [ctypes.POINTER(ctypes.c_float)]
     return lib
 

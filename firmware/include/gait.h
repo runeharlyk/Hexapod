@@ -64,17 +64,6 @@ inline float approachf(float current, float target, float alpha, float eps) {
     return std::fabs(target - next) <= eps ? target : next;
 }
 
-// Picks a gait from the commanded stride, slow and stable up to fast and sparse. The bands overlap
-// by AUTO_HYSTERESIS so a stick held near a boundary does not oscillate between two schedules.
-inline GaitType selectAutoGait(float speed01, GaitType current) {
-    constexpr float RIPPLE_MAX = 0.30f, TRI_MAX = 0.70f, AUTO_HYSTERESIS = 0.06f;
-    const float rippleMax = current == GaitType::RIPPLE ? RIPPLE_MAX + AUTO_HYSTERESIS : RIPPLE_MAX;
-    const float triMax = current == GaitType::BI_GATE ? TRI_MAX - AUTO_HYSTERESIS : TRI_MAX;
-    if (speed01 < rippleMax) return GaitType::RIPPLE;
-    if (speed01 < triMax) return GaitType::TRI_GATE;
-    return GaitType::BI_GATE;
-}
-
 inline void approachGaitCommand(gait_state_t& current, const gait_state_t& target, float dt, float tau) {
     const float a = (tau <= 0.0f || dt <= 0.0f) ? 1.0f : 1.0f - expf(-dt / tau);
     current.step_x = approachf(current.step_x, target.step_x, a, GAIT_SNAP_MM);

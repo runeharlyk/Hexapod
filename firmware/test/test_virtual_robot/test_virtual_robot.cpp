@@ -310,7 +310,7 @@ void test_an_auto_gait_switch_retargets_the_held_stick() {
         float s;
         GaitType selected;
     };
-    for (const Case &k : {Case {0.0f, GaitType::TRI_GATE}, Case {1.0f, GaitType::BI_GATE}}) {
+    for (const Case &k : {Case {-0.5f, GaitType::TRI_GATE}, Case {1.0f, GaitType::BI_GATE}}) {
         VirtualRobot robot;
         standUp(robot);
         robot.setGait(GaitType::AUTO);
@@ -323,8 +323,9 @@ void test_an_auto_gait_switch_retargets_the_held_stick() {
         robot.command({0, 1, 0, 0, 0, k.s, 0, 0});
         robot.tick();
         TEST_ASSERT_EQUAL(k.selected, robot.gait());
-        const WalkTarget left = classicWalkTarget(GaitType::RIPPLE, 0, 1, 0, k.s, 0, 0, 0);
-        const WalkTarget expected = classicWalkTarget(k.selected, 0, 1, 0, k.s, 0, 0, 0);
+        const AutoDemand demand = autoDemand(0, 1, 0, k.s, 0, 0, 0);
+        const WalkTarget left = autoWalkTarget(GaitType::RIPPLE, demand, 0, 1, 0, 0, 0, 0);
+        const WalkTarget expected = autoWalkTarget(k.selected, demand, 0, 1, 0, 0, 0, 0);
         TEST_ASSERT_TRUE(std::fabs(expected.phaseRate - left.phaseRate) > 0.1f * expected.phaseRate);
         const gait_state_t &target = robot.gaitCommand();
         TEST_ASSERT_EQUAL_FLOAT(expected.stepX, target.step_x);
@@ -377,7 +378,7 @@ void test_a_timed_out_auto_walk_stays_at_rest() {
     robot.setGait(GaitType::AUTO);
     robot.tick();
     robot.setMode(MOTION_STATE::WALK);
-    hold(robot, {0, 0.3f, 0, 0, 0, 0, 0, 0}, ticksFor(1.0f));
+    hold(robot, {0, 0.1f, 0, 0, 0, 0, 0, 0}, ticksFor(1.0f));
     hold(robot, fullStick(0, 1, 0), ticksFor(1.0f));
     TEST_ASSERT_EQUAL(GaitType::RIPPLE, robot.gait());
 
@@ -551,7 +552,7 @@ void test_a_gait_change_during_a_settle_waits_for_it() {
         robot.setGait(GaitType::AUTO);
         robot.tick();
         robot.setMode(MOTION_STATE::WALK);
-        const CommandMsg slow {0, 0.3f, 0, 0, 0, 0, 0, 0};
+        const CommandMsg slow {0, 0.1f, 0, 0, 0, 0, 0, 0};
         hold(robot, slow, ticksFor(3.0f));
         TEST_ASSERT_EQUAL(GaitType::RIPPLE, robot.gait());
         hold(robot, withPosture(slow, moved), ticksFor(delay));

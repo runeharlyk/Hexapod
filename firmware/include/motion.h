@@ -69,10 +69,7 @@ class MotionService {
     }
 
     // Loads _requestedGait into the live schedule. Only safe while the gait is not stepping.
-    void applyRequestedGait() {
-        loadGait(_requestedGait == GaitType::AUTO ? selectAutoGait(commandSpeed01(), gait_state.gait_type)
-                                                  : _requestedGait);
-    }
+    void applyRequestedGait() { loadGait(_requestedGait == GaitType::AUTO ? _autoGait.load() : _requestedGait); }
 
     // Mode worker. The rules live in decideMode (animation/mode_arbiter.h); this executes them. A
     // BORROW or HANDBACK is internal, so the mode it applied or kept is published as APPLIED for the
@@ -251,7 +248,8 @@ class MotionService {
                  target_body_state.zm);
     }
 
-    // The commanded share of the top speed, the speed signal AUTO switches on.
+    // The speed the last stick asks for, as a share of BI's top speed at the posture: AUTO's speed signal, the same
+    // whichever gait walks it.
     float commandSpeed01() const { return _walkSpeed01; }
 
     // Schedules cannot be swapped while stepping: changing offset[] reassigns every leg's phase at
@@ -259,9 +257,10 @@ class MotionService {
     // commanded straight down -- measured at 78 mm in a single tick. Retiming legs individually to
     // avoid that is a real transition problem and is deliberately not attempted here.
     //
-    // Instead switch only while the gait is not stepping. selectAutoGait reads the TARGET command,
+    // Instead switch only while the gait is not stepping. AUTO chooses from the TARGET command,
     // so the ramp's window at each start and stop is enough to choose the gait for the walk about to
-    // happen. The cost is that changing gait at speed needs a brief stop.
+    // happen. The cost is that changing gait at speed needs a brief stop, and a stick pushed past the
+    // top of the gait in effect walks at that top until the next stop (autoWalkTarget).
     void updateAutoGait() {
         if (!gaitSwappable()) return;
 
@@ -273,10 +272,10 @@ class MotionService {
             return;
         }
 
-        const GaitType next = selectAutoGait(commandSpeed01(), gait_state.gait_type);
+        const GaitType next = _autoGait;
         if (next == gait_state.gait_type) return;
         loadGait(next);
-        ESP_LOGI("MotionService", "Auto gait -> %d", (int)next);
+        ESP_LOGI("MotionService", "Auto gait -> %d at %.2f of BI's top speed", (int)next, commandSpeed01());
     }
 
     // A stance change steps the feet with a zero stroke, so a gait that is not commanded can still have a foot in the
@@ -427,10 +426,11 @@ class MotionService {
     float default_feet_pos[6][4];
 
     GaitType _requestedGait = GaitType::TRI_GATE;
-    // The last WALK stick, posture clamped, and the share of a classic gait's top speed it asked for;
-    // both are cleared when the locomotion command stops.
+    // The last WALK stick, posture clamped, its share of BI's top speed and the gait AUTO picks for it; all are
+    // cleared when the locomotion command stops.
     CommandMsg lastWalkCommand_ {};
     float _walkSpeed01 = 0.f;
+    std::atomic<GaitType> _autoGait {GaitType::RIPPLE};
     struct Posture {
         float s1, h, fd;
     };
@@ -508,9 +508,13 @@ class MotionService {
         if (!_walkPostureValid || postureOffset(c) > POSTURE_DEADBAND) _posturePending = true;
         const bool held = _posturePending || _postureSettling;
         const Posture p = held ? Posture {c.s1, c.h, c.fd} : _walkPosture;
-        const WalkTarget w = classicWalkTarget(gait_state.gait_type, c.lx, c.ly, c.rx, c.s, p.s1, p.h, p.fd);
-        // Held, it still tells AUTO how fast the walk will be, so the gait is chosen while the walk waits.
-        _walkSpeed01 = w.speed01;
+        // Held, the stick still tells AUTO how fast the walk will be, so the gait is chosen while the walk waits.
+        const AutoDemand demand = autoDemand(c.lx, c.ly, c.rx, c.s, p.s1, p.h, p.fd);
+        _walkSpeed01 = demand.speed01;
+        _autoGait = selectAutoGait(demand, gait_state.gait_type, p.s1, p.h, p.fd);
+        const WalkTarget w = _requestedGait == GaitType::AUTO
+                                 ? autoWalkTarget(gait_state.gait_type, demand, c.lx, c.ly, c.rx, p.s1, p.h, p.fd)
+                                 : classicWalkTarget(gait_state.gait_type, c.lx, c.ly, c.rx, c.s, p.s1, p.h, p.fd);
         target_gait_state.step_x = held ? 0.f : w.stepX;
         target_gait_state.step_y = held ? 0.f : w.stepY;
         target_gait_state.step_angle = held ? 0.f : w.stepAngle;
@@ -648,6 +652,7 @@ class MotionService {
         // Else a gait loaded later, AUTO's included, would walk the stick the dead-man stopped.
         lastWalkCommand_ = {};
         _walkSpeed01 = 0.f;
+        _autoGait = GaitType::RIPPLE;
         forgetWalkPosture();
         // A stand posture waits only within the command stream it came in; the dead-man and a new mode end that.
         _standPosturePending = false;

@@ -759,18 +759,6 @@ void test_tuned_default_lift_trim_still_exceeds_femur_travel() {
     TEST_ASSERT_TRUE_MESSAGE(worst[1] > 0.0f, "femur now fits at the default trim -- revisit the trim default");
 }
 
-void test_auto_gait_picks_by_speed_and_resists_flapping() {
-    TEST_ASSERT_EQUAL_INT((int)GaitType::RIPPLE, (int)selectAutoGait(0.10f, GaitType::RIPPLE));
-    TEST_ASSERT_EQUAL_INT((int)GaitType::TRI_GATE, (int)selectAutoGait(0.50f, GaitType::RIPPLE));
-    TEST_ASSERT_EQUAL_INT((int)GaitType::BI_GATE, (int)selectAutoGait(0.90f, GaitType::TRI_GATE));
-
-    // Sitting just past a boundary must not flip back and forth: the band a gait already holds is
-    // wider than the one it would move to.
-    const float edge = 0.32f;
-    TEST_ASSERT_EQUAL_INT((int)GaitType::RIPPLE, (int)selectAutoGait(edge, GaitType::RIPPLE));
-    TEST_ASSERT_EQUAL_INT((int)GaitType::TRI_GATE, (int)selectAutoGait(edge, GaitType::TRI_GATE));
-}
-
 namespace {
 // Walks a stop-slow-stop-fast-stop profile and reports the worst per-tick foot movement anywhere in
 // it. With autoSwitch the schedule may change; where it may change is the thing under test.
@@ -796,7 +784,8 @@ float runGaitProfile(bool autoSwitch, GaitType fixedGait, int &switches) {
             const bool stepping = std::fabs(gait.step_x) >= 2.0f || std::fabs(gait.step_y) >= 2.0f ||
                                   gait.step_angle != 0.0f;
             if (autoSwitch && !stepping) {
-                const GaitType next = selectAutoGait(std::fabs(target.step_y) / 100.0f, gait.gait_type);
+                // A slow gait for the slow stroke and a fast one for the fast, as AUTO picks them.
+                const GaitType next = target.step_y > 50.0f ? GaitType::BI_GATE : GaitType::RIPPLE;
                 if (next != gait.gait_type) {
                     gait.gait_type = next;
                     controller.setGait(gait);
@@ -1324,7 +1313,6 @@ int main(int, char **) {
     RUN_TEST(test_tuned_gait_is_feasible_on_single_axis_commands);
     RUN_TEST(test_tuned_gait_records_combined_command_overshoot);
     RUN_TEST(test_tuned_default_lift_trim_still_exceeds_femur_travel);
-    RUN_TEST(test_auto_gait_picks_by_speed_and_resists_flapping);
     RUN_TEST(test_auto_gait_switch_adds_no_discontinuity);
     RUN_TEST(test_walk_entered_from_stand_moves_no_joint_faster_than_walking);
     RUN_TEST(test_gait_swapped_at_a_standstill_moves_no_joint_faster_than_walking);

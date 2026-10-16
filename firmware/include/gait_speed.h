@@ -150,44 +150,122 @@ inline float speedFraction(float s) {
 struct WalkTarget {
     float stepX, stepY, stepAngle; // mm, mm, rad per cycle, signed as MotionService's stick convention
     float phaseRate;               // cycles/s
-    float speed01;                 // commanded share of the top speed, for gait selection
 };
 
-inline WalkTarget classicWalkTarget(GaitType gait, float lx, float ly, float rx, float s, float s1, float h, float fd) {
-    using namespace gait_speed_detail;
-    if (!isClassic(gait)) return {};
+namespace gait_speed_detail {
 
-    // Stick axes in envelope order: forward, lateral, yaw.
+// The stick as a share of each axis's top speed, in envelope order (forward, lateral, yaw): |stick| over the stick's
+// L1 norm, or over 1 when the norm is smaller, times the speed fraction.
+inline void stickShares(float lx, float ly, float rx, float s, float (&share)[3]) {
     const float stick[3] = {ly, lx, rx};
     const float length = std::max(1.0f, std::fabs(lx) + std::fabs(ly) + std::fabs(rx));
-    const float frac = speedFraction(s);
-    const float standFrac = gait_envelope::STAND_FRAC[(int)gait];
+    for (int axis = 0; axis < 3; ++axis) share[axis] = speedFraction(s) * std::fabs(stick[axis]) / length;
+}
 
-    float share[3] = {}; // |stick| / L of the axes the posture can walk
+// The walk at share[axis] of each axis's top speed, the shares summing to at most 1, signed as the stick.
+inline WalkTarget walkAtShares(GaitType gait, const float (&share)[3], float lx, float ly, float rx, float s1, float h,
+                               float fd) {
+    const float standFrac = gait_envelope::STAND_FRAC[(int)gait];
+    float used[3] = {}; // the shares of the axes the posture can walk
     float vMax[3] = {};
     float cadence[3] = {}; // cycles/s at which the axis's full stroke reaches its top speed
-    float shareSum = 0.0f;
+    float total = 0.0f;
     for (int axis = 0; axis < 3; ++axis) {
         const AxisEnvelope e = envelopeAt(gait, axis, s1, h, fd);
         // Walkable guarantees only the forward axis, so lateral or yaw can be empty in a walkable cell.
-        if (std::fabs(stick[axis]) == 0.0f || e.vMax <= 0.0f || e.stroke <= 0.0f) continue;
-        share[axis] = std::fabs(stick[axis]) / length;
+        if (share[axis] <= 0.0f || e.vMax <= 0.0f || e.stroke <= 0.0f) continue;
+        used[axis] = share[axis];
         vMax[axis] = e.vMax;
         cadence[axis] = e.vMax * standFrac / e.stroke;
-        shareSum += share[axis];
+        total += used[axis];
     }
-    const float total = frac * shareSum;
     if (total <= 0.0f) return {};
 
     // One cadence for the whole gait, the share-weighted mean of the axes' own, scaled by sqrt(total) so
     // that a slower command takes both a shorter stroke and a lower cadence. Every stroke then stays below
     // its envelope stroke, and the cadence below the cap that the table already respects.
     float weighted = 0.0f;
-    for (int axis = 0; axis < 3; ++axis) weighted += share[axis] / shareSum * cadence[axis];
+    for (int axis = 0; axis < 3; ++axis) weighted += used[axis] / total * cadence[axis];
     const float phaseRate = std::sqrt(total) * weighted;
 
     float stroke[3];
-    for (int axis = 0; axis < 3; ++axis) stroke[axis] = frac * share[axis] * vMax[axis] * standFrac / phaseRate;
-    return {-std::copysign(stroke[1], lx), std::copysign(stroke[0], ly), std::copysign(stroke[2], rx), phaseRate,
-            std::min(total, 1.0f)};
+    for (int axis = 0; axis < 3; ++axis) stroke[axis] = used[axis] * vMax[axis] * standFrac / phaseRate;
+    return {-std::copysign(stroke[1], lx), std::copysign(stroke[0], ly), std::copysign(stroke[2], rx), phaseRate};
+}
+
+} // namespace gait_speed_detail
+
+inline WalkTarget classicWalkTarget(GaitType gait, float lx, float ly, float rx, float s, float s1, float h, float fd) {
+    using namespace gait_speed_detail;
+    if (!isClassic(gait)) return {};
+    float share[3];
+    stickShares(lx, ly, rx, s, share);
+    return walkAtShares(gait, share, lx, ly, rx, s1, h, fd);
+}
+
+// AUTO walks the speed the stick asks of the fastest classic gait, BI: the stick's share of BI's top speed at the
+// posture, on each axis, whichever gait walks it.
+struct AutoDemand {
+    float speed[3]; // forward and lateral in mm/s, yaw in rad/s
+    float speed01;  // its share of BI's top speed, summed over the axes like the stick
+};
+
+inline AutoDemand autoDemand(float lx, float ly, float rx, float s, float s1, float h, float fd) {
+    float share[3];
+    gait_speed_detail::stickShares(lx, ly, rx, s, share);
+    AutoDemand demand {};
+    for (int axis = 0; axis < 3; ++axis) {
+        const AxisEnvelope e = envelopeAt(GaitType::BI_GATE, axis, s1, h, fd);
+        if (e.vMax <= 0.0f || e.stroke <= 0.0f) continue;
+        demand.speed[axis] = share[axis] * e.vMax;
+        demand.speed01 += share[axis];
+    }
+    return demand;
+}
+
+namespace gait_speed_detail {
+
+// The demand as a share of each of the gait's top speeds; false when the gait cannot walk an axis the demand asks for.
+inline bool demandShares(GaitType gait, const AutoDemand& demand, float s1, float h, float fd, float (&share)[3]) {
+    for (int axis = 0; axis < 3; ++axis) {
+        share[axis] = 0.0f;
+        if (demand.speed[axis] <= 0.0f) continue;
+        const AxisEnvelope e = envelopeAt(gait, axis, s1, h, fd);
+        if (e.vMax <= 0.0f || e.stroke <= 0.0f) return false;
+        share[axis] = demand.speed[axis] / e.vMax;
+    }
+    return true;
+}
+
+} // namespace gait_speed_detail
+
+// The slowest of AUTO's gaits, RIPPLE, TRI and BI, whose top speed covers the demand: the shares of its top speeds sum
+// to at most 1, as the stick's do. A gait other than the one in effect must cover it with AUTO_HYSTERESIS to spare, so
+// a demand near a gait's top does not flap between two schedules.
+inline GaitType selectAutoGait(const AutoDemand& demand, GaitType current, float s1, float h, float fd) {
+    constexpr float AUTO_HYSTERESIS = 0.06f;
+    for (const GaitType gait : {GaitType::RIPPLE, GaitType::TRI_GATE}) {
+        float share[3];
+        if (!gait_speed_detail::demandShares(gait, demand, s1, h, fd, share)) continue;
+        const float limit = gait == current ? 1.0f : 1.0f - AUTO_HYSTERESIS;
+        if (share[0] + share[1] + share[2] <= limit) return gait;
+    }
+    return GaitType::BI_GATE;
+}
+
+// The walk `gait` takes for AUTO's demand: the demand's share of the gait's own top speeds, capped at its top. An axis
+// the gait cannot walk at the posture is dropped, as classicWalkTarget drops it.
+inline WalkTarget autoWalkTarget(GaitType gait, const AutoDemand& demand, float lx, float ly, float rx, float s1,
+                                 float h, float fd) {
+    using namespace gait_speed_detail;
+    if (!isClassic(gait)) return {};
+    float share[3];
+    for (int axis = 0; axis < 3; ++axis) {
+        const float vMax = envelopeAt(gait, axis, s1, h, fd).vMax;
+        share[axis] = vMax > 0.0f ? demand.speed[axis] / vMax : 0.0f;
+    }
+    const float total = share[0] + share[1] + share[2];
+    if (total > 1.0f)
+        for (float& axisShare : share) axisShare /= total;
+    return walkAtShares(gait, share, lx, ly, rx, s1, h, fd);
 }

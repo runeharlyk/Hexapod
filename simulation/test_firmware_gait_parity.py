@@ -10,7 +10,8 @@ As a pytest module it checks:
   * gait_tuned.h against its gait_library.json entry, including the C++ velocity_to_gait port;
   * firmware_gait.py against constants parsed out of the firmware headers;
   * firmware_gait.py's TUNED command mapping against the header's own formula;
-  * firmware_gait.py's classic command mapping and posture clamp against gait_speed.h, run in the native library;
+  * firmware_gait.py's classic command mapping, AUTO's choice and walk, and the posture clamp against gait_speed.h,
+    run in the native library;
   * the nominal-stance IK against the properties the firmware host test pins.
 
 As a script it runs the header check only:
@@ -225,9 +226,7 @@ def test_gait_h_constants_match_the_port(gait_h):
         assert getattr(fg, name) == pytest.approx(_constexpr(gait_h, name)), name
     for name, value in _tuned_stick_constants(gait_h).items():
         assert getattr(fg, name) == pytest.approx(value), name
-    assert fg.AUTO_RIPPLE_MAX == _constexpr(gait_h, "RIPPLE_MAX")
-    assert fg.AUTO_TRI_MAX == _constexpr(gait_h, "TRI_MAX")
-    assert fg.AUTO_HYSTERESIS == _constexpr(gait_h, "AUTO_HYSTERESIS")
+    assert fg.AUTO_HYSTERESIS == pytest.approx(_constexpr(_read(GAIT_SPEED_H), "AUTO_HYSTERESIS"))
     np.testing.assert_allclose(fg.BEZIER_STEPS, _array(gait_h, "BEZIER_STEPS"))
     np.testing.assert_allclose(fg.BEZIER_HEIGHTS, _array(gait_h, "BEZIER_HEIGHTS"))
     for name in ("defaultPosition", "targetDefaultPosition", "swingStartPosition"):
@@ -314,6 +313,32 @@ def test_classic_walk_target_matches_the_firmware(gait):
         np.testing.assert_allclose(port, native, rtol=0, atol=TOL, err_msg=f"stick {lx, ly, rx} s {s} at {posture}")
         walking += native[3] > 0.0
     assert walking > 150, "too few samples walk to compare the stroke and cadence"
+
+
+def _native_auto(current, lx, ly, rx, s, s1, h, fd):
+    """AUTO's choice from `current` and the walk the chosen gait takes, as the native library computes them."""
+    out = (ctypes.c_float * 4)()
+    gait = native_library().autoWalk(current, lx, ly, rx, s, s1, h, fd, out)
+    return gait, np.array(out[:])
+
+
+@pytest.mark.parametrize("current", (fg.RIPPLE, fg.TRI_GATE, fg.BI_GATE))
+def test_auto_matches_the_firmware(current):
+    rng = np.random.default_rng(200 + current)
+    chosen = set()
+    for _ in range(500):
+        lx, ly, rx = _random_stick(rng)
+        s = rng.uniform(-1.1, 1.1)
+        posture = _random_posture(rng)
+        native_gait, native = _native_auto(current, lx, ly, rx, s, *posture)
+        demand = fg.auto_demand(lx, ly, rx, s, *posture)
+        gait = fg.select_auto_gait(demand, current, *posture)
+        port = np.array(fg.auto_walk_target(gait, demand, lx, ly, rx, *posture))
+        message = f"stick {lx, ly, rx} s {s} at {posture}"
+        assert gait == native_gait, message
+        np.testing.assert_allclose(port, native, rtol=0, atol=TOL, err_msg=message)
+        chosen.add(gait)
+    assert chosen == {fg.RIPPLE, fg.TRI_GATE, fg.BI_GATE}, "the samples must reach every band"
 
 
 def test_clamp_posture_matches_the_firmware():
@@ -534,14 +559,6 @@ def test_explicit_phase_rate_overrides_the_stride_law():
     gc.set_phase(0.0)
     gc.advance_phase(gait, 0.1)
     assert gc.phase == pytest.approx(0.1 * 1.5), "100 mm stride saturates the legacy law at 1.5"
-
-
-def test_auto_gait_picks_by_speed_and_resists_flapping():
-    assert fg.select_auto_gait(0.10, fg.RIPPLE) == fg.RIPPLE
-    assert fg.select_auto_gait(0.50, fg.RIPPLE) == fg.TRI_GATE
-    assert fg.select_auto_gait(0.90, fg.TRI_GATE) == fg.BI_GATE
-    assert fg.select_auto_gait(0.32, fg.RIPPLE) == fg.RIPPLE
-    assert fg.select_auto_gait(0.32, fg.TRI_GATE) == fg.TRI_GATE
 
 
 # ------------------------------------------------------------------ CLI

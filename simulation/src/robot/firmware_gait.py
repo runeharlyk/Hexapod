@@ -92,9 +92,7 @@ GAIT_SNAP_RAD = 1e-5
 GAIT_SNAP_RATE = 1e-4
 GAIT_SNAP_DEPTH = 1e-6
 
-# selectAutoGait bands (firmware/include/gait.h)
-AUTO_RIPPLE_MAX = 0.30
-AUTO_TRI_MAX = 0.70
+# The share of its top speed a gait other than the one in effect must spare to be chosen (gait_speed.h selectAutoGait)
 AUTO_HYSTERESIS = 0.06
 
 # Stick -> velocity command ranges and the lift trim of GaitType::TUNED (firmware/include/gait.h)
@@ -366,35 +364,101 @@ def speed_fraction(s: float) -> float:
     return default * (1.0 + s) if s < 0.0 else default + (1.0 - default) * s
 
 
-def classic_walk_target(gait_type: int, lx: float, ly: float, rx: float, s: float, s1: float, h: float,
-                        fd: float) -> tuple[float, float, float, float]:
-    """Port of classicWalkTarget (gait_speed.h): (step_x, step_y, step_angle, phase_rate) for a classic gait.
-
-    The stick is a share of each axis's top speed at the posture, and one cadence, the share-weighted mean of the
-    axes' own scaled by sqrt of the total share, sets every stroke below its envelope stroke.
-    """
-    if not TRI_GATE <= gait_type <= RIPPLE:
-        return 0.0, 0.0, 0.0, 0.0
-    stick = (ly, lx, rx)  # envelope axis order: forward, lateral, yaw
+def _stick_shares(lx: float, ly: float, rx: float, s: float) -> list[float]:
+    """Port of gait_speed_detail::stickShares: the stick as a share of each axis's top speed, in envelope order."""
     length = max(1.0, abs(lx) + abs(ly) + abs(rx))
-    frac = speed_fraction(s)
+    return [speed_fraction(s) * abs(v) / length for v in (ly, lx, rx)]
+
+
+def _walk_at_shares(gait_type: int, share: list[float], lx: float, ly: float, rx: float, s1: float, h: float,
+                    fd: float) -> tuple[float, float, float, float]:
+    """Port of gait_speed_detail::walkAtShares: the walk at share[axis] of each axis's top speed, signed as the stick.
+
+    One cadence, the share-weighted mean of the axes' own scaled by sqrt of the total share, sets every stroke below
+    its envelope stroke.
+    """
     stand_frac = float(load_gait_envelope().stand_frac[gait_type])
-    share, v_max, cadence = [0.0] * 3, [0.0] * 3, [0.0] * 3
+    used, v_max, cadence = [0.0] * 3, [0.0] * 3, [0.0] * 3
     for axis in range(3):
         axis_v_max, axis_stroke = envelope_at(gait_type, axis, s1, h, fd)
         # Walkable guarantees only the forward axis, so lateral or yaw can be empty in a walkable cell.
-        if stick[axis] == 0.0 or axis_v_max <= 0.0 or axis_stroke <= 0.0:
+        if share[axis] <= 0.0 or axis_v_max <= 0.0 or axis_stroke <= 0.0:
             continue
-        share[axis] = abs(stick[axis]) / length
+        used[axis] = share[axis]
         v_max[axis] = axis_v_max
         cadence[axis] = axis_v_max * stand_frac / axis_stroke
-    share_sum = sum(share)
-    total = frac * share_sum
+    total = sum(used)
     if total <= 0.0:
         return 0.0, 0.0, 0.0, 0.0
-    phase_rate = math.sqrt(total) * sum(share[axis] / share_sum * cadence[axis] for axis in range(3))
-    stroke = [frac * share[axis] * v_max[axis] * stand_frac / phase_rate for axis in range(3)]
+    phase_rate = math.sqrt(total) * sum(used[axis] / total * cadence[axis] for axis in range(3))
+    stroke = [used[axis] * v_max[axis] * stand_frac / phase_rate for axis in range(3)]
     return -math.copysign(stroke[1], lx), math.copysign(stroke[0], ly), math.copysign(stroke[2], rx), phase_rate
+
+
+def classic_walk_target(gait_type: int, lx: float, ly: float, rx: float, s: float, s1: float, h: float,
+                        fd: float) -> tuple[float, float, float, float]:
+    """Port of classicWalkTarget (gait_speed.h): (step_x, step_y, step_angle, phase_rate) for a classic gait at the
+    stick's share of each axis's top speed at the posture."""
+    if not TRI_GATE <= gait_type <= RIPPLE:
+        return 0.0, 0.0, 0.0, 0.0
+    return _walk_at_shares(gait_type, _stick_shares(lx, ly, rx, s), lx, ly, rx, s1, h, fd)
+
+
+@dataclass
+class AutoDemand:
+    """Port of AutoDemand (gait_speed.h): the speed AUTO walks, the stick's share of BI's top speed on each axis."""
+    speed: list[float]  # forward and lateral in mm/s, yaw in rad/s
+    speed01: float  # its share of BI's top speed, summed over the axes like the stick
+
+
+def auto_demand(lx: float, ly: float, rx: float, s: float, s1: float, h: float, fd: float) -> AutoDemand:
+    """Port of autoDemand."""
+    demand = AutoDemand([0.0] * 3, 0.0)
+    for axis, share in enumerate(_stick_shares(lx, ly, rx, s)):
+        v_max, stroke = envelope_at(BI_GATE, axis, s1, h, fd)
+        if v_max <= 0.0 or stroke <= 0.0:
+            continue
+        demand.speed[axis] = share * v_max
+        demand.speed01 += share
+    return demand
+
+
+def _demand_shares(gait_type: int, demand: AutoDemand, s1: float, h: float, fd: float) -> list[float] | None:
+    """Port of gait_speed_detail::demandShares: None when the gait cannot walk an axis the demand asks for."""
+    share = [0.0] * 3
+    for axis in range(3):
+        if demand.speed[axis] <= 0.0:
+            continue
+        v_max, stroke = envelope_at(gait_type, axis, s1, h, fd)
+        if v_max <= 0.0 or stroke <= 0.0:
+            return None
+        share[axis] = demand.speed[axis] / v_max
+    return share
+
+
+def select_auto_gait(demand: AutoDemand, current: int, s1: float, h: float, fd: float) -> int:
+    """Port of selectAutoGait: the slowest of RIPPLE, TRI and BI whose top speed covers the demand, a gait other than
+    the one in effect with AUTO_HYSTERESIS to spare."""
+    for gait_type in (RIPPLE, TRI_GATE):
+        share = _demand_shares(gait_type, demand, s1, h, fd)
+        if share is not None and sum(share) <= (1.0 if gait_type == current else 1.0 - AUTO_HYSTERESIS):
+            return gait_type
+    return BI_GATE
+
+
+def auto_walk_target(gait_type: int, demand: AutoDemand, lx: float, ly: float, rx: float, s1: float, h: float,
+                     fd: float) -> tuple[float, float, float, float]:
+    """Port of autoWalkTarget: the demand's share of the gait's own top speeds, capped at its top."""
+    if not TRI_GATE <= gait_type <= RIPPLE:
+        return 0.0, 0.0, 0.0, 0.0
+    share = []
+    for axis in range(3):
+        v_max = envelope_at(gait_type, axis, s1, h, fd)[0]
+        share.append(demand.speed[axis] / v_max if v_max > 0.0 else 0.0)
+    total = sum(share)
+    if total > 1.0:
+        share = [axis_share / total for axis_share in share]
+    return _walk_at_shares(gait_type, share, lx, ly, rx, s1, h, fd)
 
 
 def command_to_walk_gait(lx, ly, rx, s, s1, gait: GaitState, h: float = 0.0, fd: float = 0.0) -> float:
@@ -497,17 +561,6 @@ class GaitCommandRamp:
         if y >= yaw:
             return abs(g.step_y / f.step_y)
         return abs(g.step_angle / f.step_angle)
-
-
-def select_auto_gait(speed01: float, current: int) -> int:
-    """Port of selectAutoGait: ripple -> tripod -> bipod with hysteresis at each band edge."""
-    ripple_max = AUTO_RIPPLE_MAX + AUTO_HYSTERESIS if current == RIPPLE else AUTO_RIPPLE_MAX
-    tri_max = AUTO_TRI_MAX - AUTO_HYSTERESIS if current == BI_GATE else AUTO_TRI_MAX
-    if speed01 < ripple_max:
-        return RIPPLE
-    if speed01 < tri_max:
-        return TRI_GATE
-    return BI_GATE
 
 
 class Kinematics:
