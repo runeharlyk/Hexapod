@@ -197,6 +197,8 @@ class MotionService {
                 // Kept whatever the gait, so a classic gait loaded later walks this stick and no older one.
                 lastWalkCommand_ = clamped;
                 if (tuned) {
+                    // It rides at its own height and lift, so a classic walk after it cannot start in the stand's.
+                    _atRest = false;
                     // The searched gait is a VELOCITY -> gait map, not a direct stride map: stride
                     // and cadence were optimized together, so driving stride from the stick while
                     // leaving cadence to the legacy law reproduces neither. The stick therefore
@@ -341,6 +343,8 @@ class MotionService {
                 body_state.zm = lerpf(body_state.zm, target_body_state.zm, smoothing_factor);
                 levelAttitude(body_state, target_body_state.phi, target_body_state.omega, _peripherals->angleX(),
                               _peripherals->angleY());
+                // A walk that steps before its first classic command, TUNED's, leaves the stand's posture.
+                if (gaitIsCommanded(gait_state)) _atRest = false;
                 settleWalkPosture();
                 // Before the ramp: it clears the 2 mm deadband in one tick, closing the window.
                 updateAutoGait();
@@ -355,8 +359,10 @@ class MotionService {
 
     float *getAngles() { return msgAngles.angles; }
 
-    // The locomotion command the gait eases toward, for the virtual robot's tests.
+    // The locomotion command the gait eases toward, and the body pose the motion eases toward, for the virtual robot's
+    // tests.
     const gait_state_t &gaitCommand() const { return target_gait_state; }
+    const BodyStateMsg &bodyCommand() const { return target_body_state; }
 
     // The motion's half of a telemetry tick: what it produced and from which command and mode.
     void fillTelemetry(socket_message_TickSample &tick) const {
@@ -424,8 +430,10 @@ class MotionService {
     // stand the walk was entered from (takeRestPosture).
     Posture _walkPosture {};
     bool _walkPostureValid = false;
-    // The posture of a stand at rest, its lift as an s1, for a walk entered next. The control task rewrites it every
-    // STAND tick while _atRest holds, with the same values, so the command worker's read cannot tear into another.
+    // The posture of a stand at rest, its lift as an s1, for a walk entered next: the targets the stand holds, which
+    // the control task rewrites unchanged every STAND tick while _atRest holds, so the command worker's read cannot
+    // tear. Anything that moves the robot in WALK before the first classic command takes it consumes it (clears
+    // _atRest).
     Posture _restPosture {};
     std::atomic<bool> _atRest {false};
     // A posture is waiting for the gait to stop, then for the robot to settle; the walk is held at zero meanwhile.
@@ -465,7 +473,10 @@ class MotionService {
     // Only safe while the gait is not stepping.
     void loadGait(GaitType next) {
         // The searched gait rides at its own height and lift, so the classic walk's posture is unknown either side.
-        if ((next == GaitType::TUNED) != (gait_state.gait_type == GaitType::TUNED)) forgetWalkPosture();
+        if ((next == GaitType::TUNED) != (gait_state.gait_type == GaitType::TUNED)) {
+            forgetWalkPosture();
+            _atRest = false;
+        }
         gait_state.gait_type = next;
         gait.setGait(gait_state);
         // The schedule switches outright; only the command eases. Keep the target's identity fields
@@ -564,7 +575,7 @@ class MotionService {
         const bool atRest = !gaitIsCommanded(gait_state) && feetAtRest() &&
                             std::fabs(body_state.zm - target_body_state.zm) < POSTURE_SETTLED_MM && liftArrived();
         if (atRest)
-            _restPosture = {gait_state.step_height / 20.f - 1.f, target_body_state.zm / bodyHeightMm(1.f),
+            _restPosture = {target_gait_state.step_height / 20.f - 1.f, target_body_state.zm / bodyHeightMm(1.f),
                             _feetDistance};
         _atRest = atRest;
     }

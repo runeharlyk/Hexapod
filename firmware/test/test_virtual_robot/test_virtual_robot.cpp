@@ -685,6 +685,38 @@ void test_a_walk_from_a_stand_at_rest_settles_a_new_posture_first() {
     }
 }
 
+// A TUNED walk between the stand and the first classic command moves the body to its own ride height and lift, so the
+// classic walk cannot start in the stand's posture: it settles first and walks at the classic height.
+void test_a_tuned_walk_after_the_stand_spends_its_rest_posture() {
+    VirtualRobot robot;
+    standUp(robot);
+    hold(robot, CommandMsg {}, ticksFor(1.0f));
+    robot.setMode(MOTION_STATE::WALK);
+    robot.setGait(GaitType::TUNED);
+    robot.tick();
+    TEST_ASSERT_EQUAL(GaitType::TUNED, robot.gait());
+    hold(robot, fullStick(0, 1, 0), ticksFor(2.0f));
+    TEST_ASSERT_TRUE(robot.bodyCommand().zm < -1.0f);
+    hold(robot, CommandMsg {}, ticksFor(2.0f));
+    // The stick follows the swap within the tick, as a heartbeat can, before the control task has seen the swap.
+    robot.setGait(GaitType::TRI_GATE);
+    const CommandMsg stick = fullStick(0, 1, 0);
+    robot.command(stick);
+    robot.tick();
+    TEST_ASSERT_EQUAL(GaitType::TRI_GATE, robot.gait());
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, robot.gaitCommand().step_y);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, robot.gaitCommand().phase_rate);
+    HeldRun run;
+    for (int t = 0; t < ticksFor(5.0f) && !walkResumed(robot); ++t) {
+        if (t % COMMAND_PERIOD_TICKS == 0) robot.command(stick);
+        robot.tick();
+        for (int j = 0; j < 18; ++j) run.clamped += withinTravel(robot.angles()[j], j % 3) != robot.angles()[j];
+    }
+    TEST_ASSERT_TRUE(walkResumed(robot));
+    TEST_ASSERT_EQUAL_FLOAT(bodyHeightMm(0), robot.bodyCommand().zm);
+    TEST_ASSERT_EQUAL_INT(0, run.clamped + hold(robot, stick, ticksFor(2.0f)).clamped);
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_new_robot_is_deactivated);
@@ -717,5 +749,6 @@ int main(int, char **) {
     RUN_TEST(test_an_interrupted_settle_starts_over);
     RUN_TEST(test_a_walk_from_a_stand_at_rest_steps_at_once);
     RUN_TEST(test_a_walk_from_a_stand_at_rest_settles_a_new_posture_first);
+    RUN_TEST(test_a_tuned_walk_after_the_stand_spends_its_rest_posture);
     return UNITY_END();
 }
