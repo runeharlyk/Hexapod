@@ -248,9 +248,9 @@ void test_clamp_pulls_in_unwalkable_ones() {
 }
 
 void test_clamp_reaches_the_boundary_of_a_ray_that_reenters() {
-    // (-1, 1, 0) leaves the walkable region at about a quarter of the way out and re-enters it further
+    // (-1, 0.75, 0) leaves the walkable region about two thirds of the way out and re-enters it further
     // out, so only a scan from the outside gets past the inner boundary.
-    float s1 = -1.0f, h = 1.0f, fd = 0.0f;
+    float s1 = -1.0f, h = 0.75f, fd = 0.0f;
     TEST_ASSERT_FALSE(postureWalkable(s1, h, fd));
     clampPosture(s1, h, fd);
     TEST_ASSERT_TRUE(postureWalkable(s1, h, fd));

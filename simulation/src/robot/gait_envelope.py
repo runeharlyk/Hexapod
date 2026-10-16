@@ -3,7 +3,8 @@
 The stance and swing curves depend only on their normalized progress, so the peak joint rate splits into two
 gait-independent geometry factors, kappa_swing and kappa_stance (rad per unit of phase progress). A gait with stance
 fraction d at cadence f then peaks at f * max(kappa_swing / (1 - d), kappa_stance / d) and walks at stroke * f / d.
-The cadence is capped by the servo speed through that peak and by CADENCE_MAX; the stroke by joint travel and reach.
+The cadence is capped by the servo speed through that peak and by CADENCE_MAX; the stroke by joint travel, less
+TRAVEL_MARGIN_DEG, and reach.
 The factors are read off the port's own curves at sampled progress, so one posture costs two short sweeps, not a rollout.
 """
 
@@ -16,6 +17,10 @@ from src.robot.animation import JOINT_LIMIT_DEG, foot_reachable
 
 DEFAULT_SERVO_RAD_S = 13.1  # MG92B 0.08 s / 60 deg at the 6 V servo rail
 CADENCE_MAX = 3.0  # cycles/s, the ceiling of the legacy step_speed law (2 x 1.5)
+# Travel kept in reserve on every joint. The table is measured at grid points and sampled curves, and the firmware
+# interpolates it between them, where the feasible stroke can fall short of the interpolated one: up to 1.05 deg of
+# tibia past travel without a margin (measured over 400 walkable postures).
+TRAVEL_MARGIN_DEG = 2.0
 DEFAULT_SPEED_FRACTION = 0.6  # of v_max at s = 0; s = +1 reaches 1.0
 
 AXES = ("forward", "lateral", "yaw")
@@ -87,7 +92,7 @@ def _peak_rate_per_progress(angles: np.ndarray) -> float:
 
 def geometry_factors(axis: str, stroke: float, lift: float, zm: float, feet_scale: float) -> tuple[float, float, bool]:
     """(kappa_swing, kappa_stance, feasible): peak joint rate per unit of swing and stance progress, and whether
-    every sampled angle is within the joint travel and every sampled foot within reach."""
+    every sampled angle is within the joint travel less TRAVEL_MARGIN_DEG and every sampled foot within reach."""
     feet = fg.DEFAULT_FEET.copy()
     feet[:, :2] *= feet_scale
     strokes = _leg_strokes(axis, stroke, feet)
@@ -96,7 +101,7 @@ def geometry_factors(axis: str, stroke: float, lift: float, zm: float, feet_scal
     stance, stance_reachable = _sample_joints(
         fg.GaitController._stance_curve, -fg.DEFAULT_STEP_DEPTH, strokes, feet, zm,
         np.linspace(0.0, 1.0, STANCE_SAMPLES))
-    limit = np.radians(JOINT_LIMIT_DEG)
+    limit = np.radians(JOINT_LIMIT_DEG - TRAVEL_MARGIN_DEG)
     within_travel = bool((np.abs(swing) <= limit).all() and (np.abs(stance) <= limit).all())
     feasible = within_travel and swing_reachable and stance_reachable
     return _peak_rate_per_progress(swing), _peak_rate_per_progress(stance), feasible
@@ -152,6 +157,7 @@ def build_table(servo_rad_s: float) -> dict:
         "grid": [float(g) for g in GRID],
         "servo_rad_s": servo_rad_s,
         "cadence_max": CADENCE_MAX,
+        "travel_margin_deg": TRAVEL_MARGIN_DEG,
         "default_speed_fraction": DEFAULT_SPEED_FRACTION,
         "walkable": walkable,
         "gaits": gaits,

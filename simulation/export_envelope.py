@@ -56,6 +56,7 @@ namespace gait_envelope {{
 constexpr int GRID_N = {n};
 constexpr float SERVO_RAD_S = {table["servo_rad_s"]}f;  // servo speed the speeds were bounded by
 constexpr float CADENCE_MAX = {table["cadence_max"]}f;  // cycles/s
+constexpr float TRAVEL_MARGIN_DEG = {table["travel_margin_deg"]}f;  // joint travel kept in reserve by every stroke
 constexpr float DEFAULT_SPEED_FRACTION = {table["default_speed_fraction"]}f;  // of V_MAX at stick s = 0; s = 1 reaches 1
 
 constexpr float STAND_FRAC[4] = {_nested([table["gaits"][name]["stand_frac"] for name in ge.GAIT_NAMES], lambda v: f"{v:.8f}f")};

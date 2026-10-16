@@ -162,10 +162,6 @@ def test_walkable_postures_walk_full_stick_in_reach(full_stick_walks):
     assert [where for where, (_, reachable) in full_stick_walks.items() if not reachable] == []
 
 
-@pytest.mark.xfail(strict=True, reason="Trilinear interpolation of the stroke overshoots the feasible stroke inside "
-                   "some walkable cells: BI_GATE lateral at (-0.775, 0.335, -0.025) bends the tibia 0.28 deg past its "
-                   "travel, and a denser sweep finds up to 1.05 deg (TRI_GATE lateral); the generator's tables need a "
-                   "stroke that holds across the cell")
 def test_walkable_postures_walk_full_stick_in_travel(full_stick_walks):
     beyond = {where: round(worst, 4) for where, (worst, _) in full_stick_walks.items() if worst > 1.0}
     assert beyond == {}
@@ -188,6 +184,7 @@ def test_header_and_json_carry_the_same_table():
     assert _cpp_array(text, "GRID_N") == GRID_N == len(table["grid"])
     assert _cpp_array(text, "SERVO_RAD_S") == pytest.approx(table["servo_rad_s"], abs=TOL)
     assert _cpp_array(text, "CADENCE_MAX") == pytest.approx(table["cadence_max"], abs=TOL)
+    assert _cpp_array(text, "TRAVEL_MARGIN_DEG") == pytest.approx(table["travel_margin_deg"], abs=TOL)
     assert _cpp_array(text, "DEFAULT_SPEED_FRACTION") == pytest.approx(table["default_speed_fraction"], abs=TOL)
     assert np.array_equal(_cpp_array(text, "WALKABLE"), np.array(table["walkable"], dtype=float))
 
