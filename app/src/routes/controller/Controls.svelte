@@ -7,29 +7,19 @@
   import type { ControllerInput, vector } from '$lib/types/models'
   import { VerticalSlider } from '$lib/components/input'
   import { MotionModes } from '$lib/motion'
-  import { GaitType } from '$lib/gait'
+  import { GaitType, strideApplies } from '$lib/gait'
   import { notifications } from '$lib/components/toasts/notifications'
   import { gamepadAxes, gamepadButtons, hasGamepad } from '$lib/stores/gamepad'
   import { requestGait, requestMode } from '$lib/control'
   import { shapeStick } from '$lib/utilities/stick'
+  import { commandOf } from '$lib/controller-input'
 
-  type SliderKey = 'height' | 'feetDistance' | 'speed' | 's1'
+  type SliderKey = 'height' | 'feetDistance' | 'speed' | 's1' | 'stride'
 
   let left: nipplejs.JoystickManager
   let right: nipplejs.JoystickManager
 
-  const syncCommand = (i: ControllerInput) => {
-    outControllerData.set([
-      i.left.x,
-      i.left.y,
-      i.right.x,
-      i.right.y,
-      i.height,
-      i.speed,
-      i.s1,
-      i.feetDistance
-    ])
-  }
+  const syncCommand = (i: ControllerInput) => outControllerData.set(commandOf(i))
 
   $effect(() => {
     if ($hasGamepad) notifications.success('🎮 Gamepad connected', 3000)
@@ -262,6 +252,24 @@
               max="1"
               value={$input.s1}
               oninput={e => handleRange(e, 's1')}
+              class="range range-sm range-primary"
+            />
+          </div>
+          <div>
+            <div class="flex items-baseline justify-between gap-2">
+              <label for="stride" class="text-xs">Stride</label>
+              <span class="font-mono text-xs tabular-nums">{$input.stride.toFixed(2)}</span>
+            </div>
+            <input
+              id="stride"
+              type="range"
+              name="stride"
+              min="-1"
+              step="0.01"
+              max="1"
+              value={$input.stride}
+              disabled={!strideApplies($gait)}
+              oninput={e => handleRange(e, 'stride')}
               class="range range-sm range-primary"
             />
           </div>

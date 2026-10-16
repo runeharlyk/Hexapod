@@ -29,7 +29,7 @@ def batch_frame(batch_seq: int, first_seq: int, *, gyro=(0.0, 0.0, 0.0), period_
         t.gyro.extend(gyro)
         t.gravity.extend([0.0, 0.0, 1.0])
         t.angles.extend([float(t.seq)] * 18)
-        t.command.extend(command or [0.0] * 8)
+        t.command.extend(command or [0.0] * 9)
     return msg.SerializeToString()
 
 
@@ -94,7 +94,7 @@ def test_the_imu_at_rest_leaves_out_motion_and_steering(tmp_path):
     for b in range(200, 220):
         w.write(batch_frame(b, b * BATCH, gyro=(1.0, 0.5, 0.0)), b)
     for b in range(220, 240):
-        w.write(batch_frame(b, b * BATCH, command=[0.0, 0.8] + [0.0] * 6), b)
+        w.write(batch_frame(b, b * BATCH, command=[0.0, 0.8] + [0.0] * 7), b)
     w.close()
 
     imu = ts.imu_at_rest(load(path))

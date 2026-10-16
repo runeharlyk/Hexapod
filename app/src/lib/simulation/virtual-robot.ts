@@ -14,8 +14,8 @@ export interface SimImu {
   gyroRad: [number, number, number]
 }
 
-/** The stick fields of a ControllerInputData message, in CommandMsg order: lx, ly, rx, ry, h, s, s1, fd. */
-export type Command = [number, number, number, number, number, number, number, number]
+/** The fields of a ControllerInputData message, in CommandMsg order: lx, ly, rx, ry, h, s, s1, fd, stride. */
+export type Command = [number, number, number, number, number, number, number, number, number]
 
 export interface VirtualRobot {
   setMode(mode: number): void

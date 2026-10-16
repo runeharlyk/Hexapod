@@ -1,4 +1,4 @@
-"""Top body speed per gait as a function of posture (step height, body height, feet distance).
+"""The stroke geometry the gait speeds derive from, as a function of posture (step height, body height, feet distance).
 
 The stance and swing curves depend only on their normalized progress, so the peak joint rate splits into two
 gait-independent geometry factors, kappa_swing and kappa_stance (rad per unit of phase progress). A gait with stance
@@ -6,6 +6,8 @@ fraction d at cadence f then peaks at f * max(kappa_swing / (1 - d), kappa_stanc
 The cadence is capped by the servo speed through that peak and by CADENCE_MAX; the stroke by joint travel, less
 TRAVEL_MARGIN_DEG, and reach.
 The factors are read off the port's own curves at sampled progress, so one posture costs two short sweeps, not a rollout.
+The table keeps the factors themselves, sampled along each axis's stroke up to the longest feasible one, so a consumer
+derives the top cadence of any gait at any stroke.
 """
 
 from functools import lru_cache
@@ -21,7 +23,7 @@ CADENCE_MAX = 3.0  # cycles/s, the ceiling of the legacy step_speed law (2 x 1.5
 # interpolates it between them, where the feasible stroke can fall short of the interpolated one: up to 1.05 deg of
 # tibia past travel without a margin (measured over 400 walkable postures).
 TRAVEL_MARGIN_DEG = 2.0
-DEFAULT_SPEED_FRACTION = 0.6  # of v_max at s = 0; s = +1 reaches 1.0
+DEFAULT_SPEED_FRACTION = 0.6  # of the top cadence at s = 0; s = +1 reaches 1.0
 
 AXES = ("forward", "lateral", "yaw")
 GAIT_NAMES = ("TRI_GATE", "BI_GATE", "WAVE", "RIPPLE")
@@ -32,6 +34,8 @@ STROKES = {
     "lateral": 4.0 * np.arange(1, 26),  # mm
     "yaw": 0.02 * np.arange(1, 41),  # rad
 }
+REFINED_STEP = {"forward": 0.5, "lateral": 0.5, "yaw": 0.005}  # resolution of the longest feasible stroke
+STROKE_SAMPLES = 10  # kappa is sampled at (k + 1) / STROKE_SAMPLES of the longest feasible stroke
 WALKABLE_STROKE_MM = 20.0
 SWING_SAMPLES = 24
 STANCE_SAMPLES = 12
@@ -120,45 +124,64 @@ def _feasible_strokes(axis: str, s1: float, h: float, fd: float) -> tuple[tuple[
     return tuple(feasible)
 
 
+@lru_cache(maxsize=None)
+def longest_stroke(axis: str, s1: float, h: float, fd: float) -> float:
+    """The longest feasible stroke: the sweep's last feasible one, refined to REFINED_STEP by bisection. 0 when no
+    stroke is feasible."""
+    feasible = _feasible_strokes(axis, s1, h, fd)
+    if not feasible:
+        return 0.0
+    step = REFINED_STEP[axis]
+    low = round(feasible[-1][0] / step)
+    if feasible[-1][0] == STROKES[axis][-1]:
+        return low * step
+    high = low + round((STROKES[axis][1] - STROKES[axis][0]) / step)
+    lift, zm, feet_scale = posture(s1, h, fd)
+    while high - low > 1:
+        middle = (low + high) // 2
+        if geometry_factors(axis, middle * step, lift, zm, feet_scale)[2]:
+            low = middle
+        else:
+            high = middle
+    return low * step
+
+
 def is_walkable(s1: float, h: float, fd: float) -> bool:
     """Whether the posture can stride WALKABLE_STROKE_MM forward within joint travel and reach."""
     strokes = _feasible_strokes("forward", float(s1), float(h), float(fd))
     return bool(strokes) and strokes[-1][0] >= WALKABLE_STROKE_MM
 
 
-def top_speed(gait_type: int, axis: str, s1: float, h: float, fd: float, servo_rad_s: float) -> tuple[float, float]:
-    """(v_max, stroke): the fastest body speed over the feasible strokes (mm/s, or rad/s for yaw), and the stroke
-    that reaches it. (0, 0) when no stroke is feasible."""
-    d = STAND_FRAC[gait_type]
-    best = (0.0, 0.0)
-    for stroke, kappa_swing, kappa_stance in _feasible_strokes(axis, float(s1), float(h), float(fd)):
-        cadence = min(servo_rad_s / max(kappa_swing / (1.0 - d), kappa_stance / d), CADENCE_MAX)
-        speed = stroke * cadence / d
-        if speed > best[0]:
-            best = (speed, stroke)
-    return best
+def _geometry_samples(axis: str, s1: float, h: float, fd: float) -> tuple[float, list[float], list[float]]:
+    """(longest stroke, kappa_swing, kappa_stance) at STROKE_SAMPLES strokes up to it."""
+    stroke_max = longest_stroke(axis, s1, h, fd)
+    if stroke_max == 0.0:
+        return 0.0, [0.0] * STROKE_SAMPLES, [0.0] * STROKE_SAMPLES
+    lift, zm, feet_scale = posture(s1, h, fd)
+    factors = [geometry_factors(axis, stroke_max * (k + 1) / STROKE_SAMPLES, lift, zm, feet_scale)
+               for k in range(STROKE_SAMPLES)]
+    return stroke_max, [f[0] for f in factors], [f[1] for f in factors]
+
+
+def _round_cells(cells: list, field: int) -> list:
+    """One field of the [s1][h][fd] cells of _geometry_samples, rounded to the 4 decimals the header carries."""
+    return [[[np.round(cell[field], 4).tolist() for cell in row] for row in plane] for plane in cells]
 
 
 def build_table(servo_rad_s: float) -> dict:
-    """The envelope over the posture grid, indexed [s1][h][fd]."""
-    n = len(GRID)
+    """The envelope over the posture grid, indexed [s1][h][fd]; the geometry samples add [k] for the stroke."""
     walkable = [[[is_walkable(s1, h, fd) for fd in GRID] for h in GRID] for s1 in GRID]
-    gaits = {}
-    for gait_type, name in enumerate(GAIT_NAMES):
-        gaits[name] = {"stand_frac": STAND_FRAC[gait_type]}
-        for axis in AXES:
-            cells = [[[top_speed(gait_type, axis, s1, h, fd, servo_rad_s) for fd in GRID] for h in GRID]
-                     for s1 in GRID]
-            gaits[name][axis] = {
-                "v_max": [[[round(cells[i][j][k][0], 4) for k in range(n)] for j in range(n)] for i in range(n)],
-                "stroke": [[[round(cells[i][j][k][1], 4) for k in range(n)] for j in range(n)] for i in range(n)],
-            }
+    geometry = {axis: [[[_geometry_samples(axis, s1, h, fd) for fd in GRID] for h in GRID] for s1 in GRID]
+                for axis in AXES}
     return {
         "grid": [float(g) for g in GRID],
         "servo_rad_s": servo_rad_s,
         "cadence_max": CADENCE_MAX,
         "travel_margin_deg": TRAVEL_MARGIN_DEG,
         "default_speed_fraction": DEFAULT_SPEED_FRACTION,
+        "stand_frac": list(STAND_FRAC),
         "walkable": walkable,
-        "gaits": gaits,
+        "stroke_max": {axis: _round_cells(cells, 0) for axis, cells in geometry.items()},
+        "kappa_swing": {axis: _round_cells(cells, 1) for axis, cells in geometry.items()},
+        "kappa_stance": {axis: _round_cells(cells, 2) for axis, cells in geometry.items()},
     }

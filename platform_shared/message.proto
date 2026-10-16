@@ -44,6 +44,7 @@ message ControllerInputData {
   float speed = 4;
   float s1 = 5;
   float feet_distance = 6;
+  float stride = 7;  // -1 the shortest stroke, 0 (unsent) each gait's speed-optimal one, 1 the longest
 }
 
 message ModeData { ModesEnum mode = 1; }
@@ -165,7 +166,7 @@ message TickSample {
   repeated float gyro = 7;       // rad/s, body rates
   repeated float gravity = 8;    // unit vector, DMP convention (world up)
   repeated float angles = 9;     // deg, the 18 joint angles the motion produced this tick
-  repeated float command = 10;   // lx, ly, rx, ry, h, s, s1, fd of the last command
+  repeated float command = 10;   // lx, ly, rx, ry, h, s, s1, fd, stride of the last command
   uint32 command_age_ms = 11;    // since that command arrived; 0 before any
   uint32 mode = 12;              // MOTION_STATE position
   uint32 gait = 13;              // GaitType position

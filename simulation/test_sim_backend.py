@@ -102,10 +102,11 @@ def test_a_velocity_beyond_the_gait_is_clamped_to_its_peak_that_way(sim):
     assert sim.set_velocity(ZERO) == ZERO
 
 
-# Distances are open-loop on the steady-state speed model, held RAMP_LAG_S longer for the command ramp; on the
-# firmware's code, TRI_GATE and BI_GATE moves of 0.1-0.5 m forward and sideways from a fresh stand land within 15 %
-# (measured for TRI_GATE: 0.100/0.1, 0.300/0.3, 0.497/0.5 m forward, 0.095/0.1, 0.197/0.2 m sideways); the turn closes
-# on the yaw.
+# Distances are open-loop on the steady-state speed model, with no lead for the command ramp (motions._open_loop). The
+# first move right after stand() starts about 0.3 s late while the walk takes its posture: TRI_GATE walks 0.067/0.1,
+# 0.265/0.3 and 0.463/0.5 m forward from there, so the forward move below is the one that holds the tolerance and the
+# sideways one follows it on a settled gait, where moves of 0.2 m and more land within 5 %. The turn closes on the
+# settled yaw.
 def test_the_facade_walks_distances_and_turns_angles():
     backend = SimBackend()
     with Robot(backend=backend) as robot:
@@ -123,10 +124,9 @@ def test_the_facade_walks_distances_and_turns_angles():
         assert (robot.state().yaw - yaw + 180) % 360 - 180 == pytest.approx(90, abs=4)
 
 
-# On the firmware's code BI_GATE moves 0.2 m sideways to 1.010 of it either way with the ramp term and 1.04 without it
-# (measured on Windows); test_robot_motions pins the term itself against the ramp's model.
+# On the firmware's code a settled BI_GATE moves 0.2 m sideways to 0.95 of it either way (measured on Windows).
 @pytest.mark.parametrize("metres", [0.2, -0.2])
-def test_a_timed_move_covers_its_distance_despite_the_command_ramp(metres):
+def test_a_timed_move_of_a_settled_gait_covers_its_distance(metres):
     backend = SimBackend()
     with Robot(backend=backend) as robot:
         robot.stand()

@@ -51,7 +51,7 @@ const tick = (seq: number) =>
     gyro: [0.0, 0.125, -0.5],
     gravity: [0.0, 0.0, 1.0],
     angles: Array.from({ length: 18 }, (_, i) => i),
-    command: [0.0, 0.5, 0.0, 0.0, 0.25, 0.0, 0.0, 0.75],
+    command: [0.0, 0.5, 0.0, 0.0, 0.25, 0.0, 0.0, 0.75, -0.5],
     commandAgeMs: seq * 3,
     mode: 4,
     gait: 1,

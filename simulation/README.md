@@ -234,8 +234,8 @@ The command is a body-frame velocity vector `[vx, vy]` (m/s) + yaw rate (rad/s).
   single gait, and the best curb-climbing gait → `src/resources/gait_library.json`.
 - `optimize_gait.py` / `export_policy.py` — tune the analytic gait map / export the actor to C++.
 - `export_gait.py` - write a `gait_library.json` entry as `firmware/include/gait_tuned.h`.
-- `export_envelope.py` - sweep each classical gait's top speed and stroke over a 9 x 9 x 9 grid of the lift, body height and feet distance sliders, bounded by servo speed (`--servo-rad-s`, default 13.1), a 3 cycles/s cadence cap, joint travel with a 2 degree margin and reach, and write `firmware/include/gait_envelope.h` and `src/resources/gait_envelope.json` (generator `src/robot/gait_envelope.py`).
-  The firmware's `gait_speed.h` reads the header, and regenerating it changes the speed model, so rerun `measure_speed_model.py` afterwards.
+- `export_envelope.py` - sweep the gait-independent stroke geometry per axis over a 9 x 9 x 9 grid of the lift, body height and feet distance sliders (the longest feasible stroke within joint travel with a 2 degree margin and reach, and the swing and stance joint-rate factors at ten strokes up to it), keep the servo speed (`--servo-rad-s`, default 13.1) and the 3 cycles/s cadence cap beside it, and write `firmware/include/gait_envelope.h` and `src/resources/gait_envelope.json` (generator `src/robot/gait_envelope.py`).
+  The firmware's `gait_speed.h` reads the header and computes each gait's top cadence at the stroke the stride slider picks (0 is the speed-optimal stroke, +1 the longest, -1 0.3 of the optimum); regenerating the header changes the speed model, so rerun `measure_speed_model.py` afterwards.
 - `test_firmware_gait_parity.py` - pytest module (and CLI) checking `gait_tuned.h` against the library and `firmware_gait.py` against the firmware headers.
 - `test_gait_trace_parity.py` - replays the firmware's tick-by-tick gait trace (`fixtures/gait_trace.json`) through `firmware_gait.py`.
 - `ik_feasibility.py` - fraction of a gait's commanded joint angles outside the servo range.
@@ -279,8 +279,12 @@ with Robot("simulation") as robot:   # or Robot("192.168.4.1"), the robot's WebS
 
 The API speaks REP-103 (x forward, y left, yaw counter-clockwise); the backends convert to the robot's X-right, Y-forward body frame and to the firmware's sticks.
 `Robot("simulation", viewer=True)` opens the MuJoCo viewer and runs in real time; the simulation backend runs `src/sim/firmware_loop.py`, the firmware's STAND/WALK tick that `replay_gait.py` also uses.
-The firmware takes sticks, not velocities, so `src/resources/speed_model.json` holds the body velocity each stick produces, measured per gait in the simulation by `uv run python measure_speed_model.py`; `test_speed_model.py` fails when it no longer matches the simulation.
+The firmware takes sticks, not velocities, so `src/resources/speed_model.json` holds the body velocity each stick produces, measured per gait in the simulation, at stride 0, by `uv run python measure_speed_model.py`; `test_speed_model.py` fails when it no longer matches the simulation.
 It is the simulated robot's speed: check a distance on the floor before trusting it on the real one.
+A timed move holds its command for distance / speed and the gait phase its stop lands on scatters it by about 1 cm, so from a settled stand a move of 0.3 m or more lands within 4 % of the request, except TUNED forward (8 % short at 0.3 m, 5.5 % at 0.5 m).
+A move of 0.1 m lands between 19 % short (TUNED forward) and 13 % long (RIPPLE sideways), measured per gait forward and to both sides.
+The first move sent the moment `stand()` returns starts about 0.3 s late while the walk takes its posture, so it ends 0.02 to 0.045 m short at any distance.
+A per-gait distance offset is future work.
 On the real robot the input is re-sent every 200 ms inside the firmware's 600 ms dead-man, and a timed move raises if the link may have stalled past that or someone switched the robot out of WALK.
 Leaving the `with` block, also on an exception or Ctrl-C, stops the robot, lowers it onto its belly and switches the servos off.
 
@@ -299,7 +303,7 @@ uv run python measure_pwm_per_degree.py simulation --sim-scale 2.28   # the same
 `ground_truth.py` finds an ArUco marker on the robot's back over four floor markers at known positions, takes the marker's height out of the floor homography, and writes `t,x,y,yaw` in metres and radians in the robot's frame convention (`docs/conventions.md`: yaw 0 faces the floor's +y).
 Its docstring describes the course file; on a rendered video the track comes within 1 mm RMS (`test_ground_truth.py`).
 `score_track.py` aligns the track's clock with a `record.py` recording on the start motion (open a course with a turn in place from standing), then prints, per estimate, the distance made good, the position and yaw error, the yaw drift per metre walked and the ratio of the paths.
-The estimate is the commanded motion, each tick's sticks through the speed model in WALK; the robot reports no odometry yet, and odometry columns (`odometry_x`, `odometry_y`, `odometry_yaw`) in a recording's ticks are scored beside it when present.
+The estimate is the commanded motion, each tick's sticks through the speed model in WALK, so a recording that walked at a nonzero stride (the ninth command entry of a tick) is refused; the robot reports no odometry yet, and odometry columns (`odometry_x`, `odometry_y`, `odometry_yaw`) in a recording's ticks are scored beside it when present.
 `measure_pwm_per_degree.py` sets the nominal stand height, switches the robot to IDLE and steps the six femurs through raw PWMs, left side against right, and fits the counts per degree that make the firmware's leg geometry predict the body roll each step gave; `test_measure_pwm.py` recovers a scale injected into the simulated servos within 2 %.
 On the robot it needs the real backend's roll, `servo_calibration` and `set_servo_pwm`, which are being added to `src/hexapod/backends/real.py`; until then it refuses and names what is missing.
 The operator stands the robot on a flat, level floor before running it; the script refuses a robot that is not standing still.

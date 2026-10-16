@@ -55,12 +55,13 @@ def walk(modes, sticks, translation_scale: float, turn_scale: float, start) -> n
     return poses
 
 
-def write_recording(path, modes, sticks) -> None:
+def write_recording(path, modes, sticks, strides=None) -> None:
+    strides = np.zeros(len(modes)) if strides is None else strides
     robot_us = np.round((ROBOT_START_S + np.arange(len(modes)) * TICK_S) * 1e6).astype(int)
     writer = RecordingWriter(path, {"version": "synthetic"})
     for first in range(0, len(modes), 10):
         ticks = [pb.TickSample(seq=k, t_us=int(robot_us[k]), mode=int(modes[k]), gait=int(Gait.TRI_GATE),
-                               command=[*sticks[k], 0.0, 0.0, 0.0, 0.0, 0.0])
+                               command=[*sticks[k], 0.0, 0.0, 0.0, 0.0, 0.0, strides[k]])
                  for k in range(first, min(first + 10, len(modes)))]
         batch = pb.Message(telemetry_batch=pb.TelemetryBatch(batch_seq=first // 10 + 1, ticks=ticks))
         writer.write(batch.SerializeToString(), int(robot_us[ticks[-1].seq]) + 25_000)
@@ -138,3 +139,37 @@ def test_odometry_in_the_recording_is_scored_beside_the_commanded_motion(tmp_pat
     assert exact.position_rms < 0.003 and exact.yaw_rms < 0.5
     assert exact.path_scale == pytest.approx(1.0, abs=0.01)
     assert commanded.position_rms > 10 * exact.position_rms
+
+
+def _stride_recording(tmp_path, mode):
+    modes, sticks = course_ticks()
+    strides = np.where(modes == mode, 0.5, 0.0)
+    write_recording(tmp_path / "run.hexrec", modes, sticks, strides)
+    return recording.load(tmp_path / "run.hexrec")
+
+
+def test_a_recording_that_walked_at_a_nonzero_stride_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="nonzero stride"):
+        Telemetry.from_recording(_stride_recording(tmp_path, Mode.WALK))
+
+
+def test_a_stride_set_only_while_standing_does_not_change_the_walk(tmp_path):
+    telemetry = Telemetry.from_recording(_stride_recording(tmp_path, Mode.STAND))
+    modes, sticks = course_ticks()
+    walked = walk(modes, sticks, 1.0, 1.0, (0.0, 0.0, 0.0))
+    assert telemetry.estimates["commanded"] == pytest.approx(walked, abs=1e-6)  # the sticks cross the wire as float32
+
+
+def _ticks(command):
+    return {"t_us": np.arange(4) * 5000, "mode": np.full(4, int(Mode.WALK)), "gait": np.zeros(4, dtype=int),
+            "command": command}
+
+
+def test_a_recording_without_a_stride_entry_is_scored():
+    older = np.tile([0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], (4, 1))
+    assert score_track.commanded_path(_ticks(older)).shape == (4, 3)
+
+
+def test_a_recording_without_ticks_has_an_empty_path():
+    assert score_track.commanded_path({"t_us": np.array([]), "mode": np.array([]), "gait": np.array([]),
+                                       "command": np.array([])}).shape == (0, 3)

@@ -19,7 +19,7 @@ import math
 from concurrent.futures import ProcessPoolExecutor
 from itertools import product
 
-from src.hexapod.speed_model import AXES, MODEL_PATH
+from src.hexapod.speed_model import AXES, MODEL_PATH, STRIDE
 from src.robot.firmware_gait import BI_GATE, RIPPLE, TRI_GATE, TUNED, WAVE
 from src.sim.firmware_loop import FIRMWARE_DT, FirmwareLoop
 from src.sim.mj_runtime import HexapodSim
@@ -38,7 +38,7 @@ def measure(gait: int, axis: str, stick: float, settle_s: float = SETTLE_S, wind
     loop = FirmwareLoop(sim, gait)
     sticks = {"lx": 0.0, "ly": 0.0, "rx": 0.0}
     sticks[AXES[axis]] = stick
-    loop.walk(**sticks)
+    loop.walk(**sticks, stride=STRIDE)
     for _ in range(int(round(settle_s / FIRMWARE_DT))):
         loop.tick()
     forward = left = turned = 0.0

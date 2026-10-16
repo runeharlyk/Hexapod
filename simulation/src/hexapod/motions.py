@@ -1,7 +1,7 @@
 """Distance and turn motions, written once against the Robot's velocity, state and clock."""
 import math
 
-from src.robot.firmware_gait import FEET_EASE_S, GAIT_COMMAND_TAU_S, GaitCommandRamp, GaitState, gait_is_commanded
+from src.robot.firmware_gait import FEET_EASE_S, GaitCommandRamp, GaitState, gait_is_commanded
 
 from .backends.base import Mode, RobotError, RobotTimeout
 
@@ -21,21 +21,16 @@ def _stop_seconds(stride_mm: float) -> float:
 # After a stop the firmware's command ramp brings a full 100 mm stride under its deadband, and the feet then ease back
 # to stance.
 SETTLE_S = _stop_seconds(100.0) + FEET_EASE_S
-# How much longer than distance / speed a timed move holds its command, derived from the firmware's command ramp
-# (GaitCommandRamp, gait.h). A start eases the stride s toward its target S as s = S(1 - e^(-t/tau)) at the target's
-# cadence, so the body speed goes as V(1 - e^(-t/tau)) and the start loses tau of travel at V. A stop eases the stride
-# out through two such stages, s = S(1 + t/tau) e^(-t/tau), and slows the cadence with it, so the speed goes as
-# V(1 + t/tau)^2 e^(-2t/tau) and the stop overruns integral((1 + x)^2 e^(-2x)) dx = 1.25 tau. The move overshoots by a
-# quarter tau unless held that much shorter.
-RAMP_LAG_S = -GAIT_COMMAND_TAU_S / 4
 POLL_S = 0.05
 SLOW_DOWN_DEG = 30.0
 MIN_RATE_FRACTION = 0.2
 TOLERANCE_DEG = 3.0
+AIM_DEG = 0.5  # about one poll step at the slowest turn rate
+MAX_TURN_PASSES = 3
 
 
 def _open_loop(robot, vx: float, vy: float, yaw_rate: float, amount: float) -> None:
-    """Holds the velocity for `amount` (metres or radians) over the commanded speed plus RAMP_LAG_S, then stops.
+    """Holds the velocity for `amount` (metres or radians) over the commanded speed, then stops.
 
     That covers the amount only while the robot walks and hears every command throughout: a link that stalled past
     its dead-man timeout, or someone switching the robot out of WALK, may have stopped it partway, and an open-loop
@@ -44,7 +39,10 @@ def _open_loop(robot, vx: float, vy: float, yaw_rate: float, amount: float) -> N
     drops = robot.state().link_drops
     commanded = robot.set_velocity(vx, vy, yaw_rate)
     speed = abs(commanded.yaw_rate) if yaw_rate else math.hypot(commanded.vx, commanded.vy)
-    robot.sleep(hold_seconds(amount, speed))
+    # No lead for the command ramp: it predicts a net overshoot of 0.25 tau (the start loses tau of travel, the stop
+    # coasts 1.25 tau), 4 mm at half speed, but the simulation shows none. The gait phase the stop lands on scatters a
+    # move by about 1 cm, and a lead only made the mean shorter.
+    robot.sleep(amount / speed)
     robot.stop()
     robot.sleep(SETTLE_S)
     state = robot.state()
@@ -52,11 +50,6 @@ def _open_loop(robot, vx: float, vy: float, yaw_rate: float, amount: float) -> N
         raise RobotError(f"the robot was switched to {state.mode.name} during the motion: it moved less than asked")
     if state.link_drops > drops:
         raise RobotError("the link stalled past the robot's dead-man timeout: it may have moved less than asked")
-
-
-def hold_seconds(amount: float, speed: float) -> float:
-    """How long a timed motion holds its command to cover `amount` at `speed`, the command ramp included."""
-    return amount / speed + RAMP_LAG_S
 
 
 def move(robot, forward: float, sideways: float, speed: float | None) -> None:
@@ -74,8 +67,13 @@ def move(robot, forward: float, sideways: float, speed: float | None) -> None:
 def rotate(robot, degrees: float, rate: float | None) -> None:
     """Turns `degrees` counter-clockwise at `rate` rad/s (by default half the gait's top).
 
-    With an IMU the turn closes on the measured yaw, slowing over the last SLOW_DOWN_DEG and stopping within
-    TOLERANCE_DEG; without one it is timed like a move.
+    With an IMU the turn closes on the measured yaw: each pass slows over the last SLOW_DOWN_DEG and runs on to within
+    AIM_DEG, then the yaw is read again once the gait has settled and another pass turns the rest until it is within
+    TOLERANCE_DEG, up to MAX_TURN_PASSES. A pass that stopped at the edge of the tolerance would leave the settle
+    drift free to push the yaw out of it. The gait holds its stroke at any rate, and after the stop its feet return to
+    stance, which turns the body by an amount that depends on the gait phase, well beyond the mean coast of 1.25 tau
+    at the commanded rate. A lead on the stop would correct only that mean, so the turn is closed on the settled yaw
+    instead. Without an IMU the turn is timed like a move.
     """
     if degrees == 0:
         return
@@ -85,22 +83,27 @@ def rotate(robot, degrees: float, rate: float | None) -> None:
     if robot.state().yaw is None:
         _open_loop(robot, 0.0, 0.0, math.copysign(top, degrees), math.radians(abs(degrees)))
         return
-    expected = math.radians(abs(degrees)) / top + math.radians(SLOW_DOWN_DEG) / (MIN_RATE_FRACTION * top)
-    start = robot.time()
     last = robot.state().yaw
     turned = 0.0
-    while True:
+    for _ in range(MAX_TURN_PASSES):
+        remaining = degrees - turned
+        if abs(remaining) <= TOLERANCE_DEG:
+            return
+        expected = math.radians(abs(remaining)) / top + math.radians(SLOW_DOWN_DEG) / (MIN_RATE_FRACTION * top)
+        start = robot.time()
+        while abs(remaining) > AIM_DEG:
+            if robot.time() - start > 2 * expected:
+                robot.stop()
+                raise RobotTimeout(f"turned {turned:.0f} of {degrees:.0f} degrees in {2 * expected:.1f} s")
+            fraction = min(1.0, max(MIN_RATE_FRACTION, abs(remaining) / SLOW_DOWN_DEG))
+            robot.set_velocity(0.0, 0.0, math.copysign(top * fraction, remaining))
+            robot.sleep(POLL_S)
+            yaw = robot.state().yaw
+            turned += (yaw - last + 180) % 360 - 180
+            last = yaw
+            remaining = degrees - turned
+        robot.stop()
+        robot.sleep(SETTLE_S)
         yaw = robot.state().yaw
         turned += (yaw - last + 180) % 360 - 180
         last = yaw
-        remaining = degrees - turned
-        if abs(remaining) <= TOLERANCE_DEG:
-            break
-        if robot.time() - start > 2 * expected:
-            robot.stop()
-            raise RobotTimeout(f"turned {turned:.0f} of {degrees:.0f} degrees in {2 * expected:.1f} s")
-        fraction = min(1.0, max(MIN_RATE_FRACTION, abs(remaining) / SLOW_DOWN_DEG))
-        robot.set_velocity(0.0, 0.0, math.copysign(top * fraction, remaining))
-        robot.sleep(POLL_S)
-    robot.stop()
-    robot.sleep(SETTLE_S)

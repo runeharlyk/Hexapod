@@ -6,6 +6,7 @@
 // would publish are published the same way, so they reach the motion through its own subscriptions.
 // The bus, clock and IMU stand-ins are process-wide, as on the robot, so one VirtualRobot exists at a time.
 
+#include <controller_input.h>
 #include <hexapod.h>
 #include <host_clock.h>
 
@@ -29,6 +30,7 @@ class VirtualRobot {
     void command(CommandMsg c) {
         if (c.sanitize()) EventBus<CommandMsg>::publish(c);
     }
+    void input(const socket_message_ControllerInputData &in) { command(commandFromInput(in)); }
     void setMode(MOTION_STATE mode) { EventBus<ModeMsg>::publish({mode}); }
     void setGait(GaitType gait) { EventBus<GaitMsg>::publish({gait}); }
     void setImu(const Peripherals::Imu &imu) { Peripherals::setImu(imu); }
@@ -47,6 +49,8 @@ class VirtualRobot {
     // The joint angles the motion produced on the last tick, in degrees, three per leg in leg order.
     const float *angles() const { return _sample.angles; }
     MOTION_STATE mode() const { return static_cast<MOTION_STATE>(_sample.mode); }
+    // The last command as the telemetry reports it, in TickSample.command's order.
+    const float *telemetryCommand() const { return _sample.command; }
 
     // What the servos receive: they are driven once the boards are awake and a pose has been sent, to the last pose.
     // The count of poses sent tells a tick that wrote one from a tick that left the servos where they were.

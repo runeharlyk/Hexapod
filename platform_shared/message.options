@@ -22,7 +22,7 @@ socket_message.TickSample.rpy max_count:3 fixed_count:true
 socket_message.TickSample.gyro max_count:3 fixed_count:true
 socket_message.TickSample.gravity max_count:3 fixed_count:true
 socket_message.TickSample.angles max_count:18 fixed_count:true
-socket_message.TickSample.command max_count:8 fixed_count:true
+socket_message.TickSample.command max_count:9 fixed_count:true
 socket_message.TickSample.mag max_count:3 fixed_count:true
 socket_message.CorrelationResponse.error_message max_size:64
 socket_message.OtaStatusData.error max_size:48

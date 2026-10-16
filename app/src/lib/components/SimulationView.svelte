@@ -10,7 +10,7 @@
   import { GaitType } from '$lib/gait'
   import { loadSimulation } from '$lib/simulation/load'
   import { HexapodSim } from '$lib/simulation/hexapod-sim'
-  import type { Command, VirtualRobot } from '$lib/simulation/virtual-robot'
+  import type { VirtualRobot } from '$lib/simulation/virtual-robot'
 
   // The 3D view draws 12 mm per scene unit, and its URDF model at 120 mm per URDF unit.
   const SCENE_UNITS_PER_METRE = 1000 / 12
@@ -93,7 +93,7 @@
   function frame() {
     if (!sim || !robot) return
     const now = performance.now()
-    robot.command(get(outControllerData) as Command)
+    robot.command(get(outControllerData))
     sim.step((now - lastFrame) / 1000)
     lastFrame = now
     update()

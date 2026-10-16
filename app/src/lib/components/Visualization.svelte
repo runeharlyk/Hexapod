@@ -62,7 +62,7 @@
   // While no robot sends its angles, the firmware's own motion code animates the model. The robot-hosted build is
   // always linked, and the build-time constant leaves the virtual robot out of it.
   let virtualRobot: VirtualRobot | undefined
-  let sticks: Command = [0, 0, 0, 0, 0, 0, 0, 0]
+  let sticks: Command = [0, 0, 0, 0, 0, 0, 0, 0, 0]
   let pendingSeconds = 0
   let lastFrame = 0
   const MAX_FRAME_SECONDS = 0.05
@@ -94,7 +94,7 @@
     if (panel) createPanel()
 
     unsubscribers = [
-      outControllerData.subscribe(data => (sticks = data as Command)),
+      outControllerData.subscribe(data => (sticks = data)),
       dataBroker.on(AnglesData, data => {
         settings['Internal kinematic'] = false
         show(data.angles)

@@ -87,7 +87,7 @@ const walk = (command: Command) => {
   robot.setMode(WALK)
   const { lx, ly, rx } = command.stick
   const step = () => {
-    robot.command([lx, ly, rx, 0, 0, 0, 0, 0])
+    robot.command([lx, ly, rx, 0, 0, 0, 0, 0, 0])
     robot.tick()
     return feet()
   }

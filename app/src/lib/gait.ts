@@ -9,3 +9,6 @@ export enum GaitType {
   TUNED = 'Tuned',
   AUTO = 'Auto'
 }
+
+// TUNED replays a searched joint trajectory at a fixed stroke, so the stride slider has no effect on it.
+export const strideApplies = (gait: GaitType) => gait !== GaitType.TUNED

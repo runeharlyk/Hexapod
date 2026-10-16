@@ -24,6 +24,7 @@
 #include <string>
 
 #include <feature_flags.h>
+#include <controller_input.h>
 #include <communication/espnow_adapter.h>
 #include <ota_service.h>
 #include <peripherals_settings_service.h>
@@ -227,7 +228,7 @@ static void deactivateServos() {
 
 static void registerHandlers(CommAdapterBase &c) {
     c.on<socket_message_ControllerInputData>([](const socket_message_ControllerInputData &in, int) {
-        CommandMsg cmd{in.left.x, in.left.y, in.right.x, in.right.y, in.height, in.speed, in.s1, in.feet_distance};
+        CommandMsg cmd = commandFromInput(in);
         if (cmd.sanitize()) EventBus<CommandMsg>::publish(cmd);
     });
     c.on<socket_message_ModeData>([](const socket_message_ModeData &m, int) {

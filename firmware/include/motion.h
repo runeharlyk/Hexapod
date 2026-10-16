@@ -95,6 +95,7 @@ class MotionService {
             case ModeArbiterDecision::GRACEFUL_LEAVE: return;
         }
         const bool enteringWalk = d.mode == MOTION_STATE::WALK && motionState != MOTION_STATE::WALK;
+        const bool leavingPolicy = motionState == MOTION_STATE::WALK_NN;
         motionState = d.mode;
 #if FT_ENABLED(USE_POLICY)
         if (d.mode == MOTION_STATE::WALK_NN) _policy.reset(gait, default_feet_pos);
@@ -103,7 +104,9 @@ class MotionService {
         if (!isWalkingMode(d.mode)) stopLocomotionCommand(!actuated(d.mode) || d.mode == MOTION_STATE::ANIMATE);
         // WALK_NN keeps the command, and its policy moves the ride height and the feet; a stride or a posture left
         // from before it would be walked through whatever it left. The stick comes back with the next heartbeat.
-        if (enteringWalk) stopLocomotionCommand(false);
+        // The classic stroke WALK_NN left in gait_state is snapped out too: ramped out from the feet the policy left,
+        // it took a joint past its travel at some phases of the walk before.
+        if (enteringWalk) stopLocomotionCommand(leavingPolicy);
         motionState == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
         if (internal) EventBus<ModeMsg>::publish({motionState, ModeMsgKind::APPLIED});
     }
@@ -351,6 +354,7 @@ class MotionService {
                 // A walk that steps before its first classic command, TUNED's, leaves the stand's posture.
                 if (gaitIsCommanded(gait_state)) _atRest = false;
                 settleWalkPosture();
+                slewStride(dt);
                 // Before the ramp: it clears the 2 mm deadband in one tick, closing the window.
                 updateAutoGait();
                 _commandRamp.step(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
@@ -373,8 +377,8 @@ class MotionService {
     // The motion's half of a telemetry tick: what it produced and from which command and mode.
     void fillTelemetry(socket_message_TickSample &tick) const {
         std::copy(std::begin(msgAngles.angles), std::end(msgAngles.angles), tick.angles);
-        const float command[8] = {lastCommand.lx, lastCommand.ly, lastCommand.rx, lastCommand.ry,
-                                  lastCommand.h,  lastCommand.s,  lastCommand.s1, lastCommand.fd};
+        const CommandMsg &c = lastCommand;
+        const float command[9] = {c.lx, c.ly, c.rx, c.ry, c.h, c.s, c.s1, c.fd, c.stride};
         std::copy(std::begin(command), std::end(command), tick.command);
         tick.command_age_ms = lastCommandMillis == 0 ? 0 : millis() - lastCommandMillis;
         tick.mode = static_cast<uint32_t>(motionState);
@@ -401,7 +405,6 @@ class MotionService {
     std::atomic<bool> _handbackSent {false}; // a hand-back is queued; cleared by the worker on any mode
     bool _animating = false;                 // control task only: whether the last tick ran ANIMATE
 
-    CommandMsg command = {0, 0, 0, 0, 0, 0, 0, 0};
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
     BodyStateMsg target_body_state = {0, 0, 0, 0, 0, 0};
     static constexpr float DEFAULT_STEP_HEIGHT_MM = 15.f;
@@ -430,6 +433,9 @@ class MotionService {
     // cleared when the locomotion command stops.
     CommandMsg lastWalkCommand_ {};
     float _walkSpeed01 = 0.f;
+    // The stride the classic walk walks, slewed toward the commanded one (slewStride); written by the control task.
+    std::atomic<float> _stride {0.f};
+    static constexpr float STRIDE_SLEW_PER_S = 1.0f;
     std::atomic<GaitType> _autoGait {GaitType::RIPPLE};
     struct Posture {
         float s1, h, fd;
@@ -509,16 +515,31 @@ class MotionService {
         const bool held = _posturePending || _postureSettling;
         const Posture p = held ? Posture {c.s1, c.h, c.fd} : _walkPosture;
         // Held, the stick still tells AUTO how fast the walk will be, so the gait is chosen while the walk waits.
-        const AutoDemand demand = autoDemand(c.lx, c.ly, c.rx, c.s, p.s1, p.h, p.fd);
+        const float stride = _stride;
+        const AutoDemand demand = autoDemand(c.lx, c.ly, c.rx, c.s, p.s1, p.h, p.fd, stride);
         _walkSpeed01 = demand.speed01;
-        _autoGait = selectAutoGait(demand, gait_state.gait_type, p.s1, p.h, p.fd);
-        const WalkTarget w = _requestedGait == GaitType::AUTO
-                                 ? autoWalkTarget(gait_state.gait_type, demand, c.lx, c.ly, c.rx, p.s1, p.h, p.fd)
-                                 : classicWalkTarget(gait_state.gait_type, c.lx, c.ly, c.rx, c.s, p.s1, p.h, p.fd);
+        _autoGait = selectAutoGait(demand, gait_state.gait_type, p.s1, p.h, p.fd, stride);
+        const WalkTarget w =
+            _requestedGait == GaitType::AUTO
+                ? autoWalkTarget(gait_state.gait_type, demand, c.lx, c.ly, c.rx, p.s1, p.h, p.fd, stride)
+                : classicWalkTarget(gait_state.gait_type, c.lx, c.ly, c.rx, c.s, p.s1, p.h, p.fd, stride);
         target_gait_state.step_x = held ? 0.f : w.stepX;
         target_gait_state.step_y = held ? 0.f : w.stepY;
         target_gait_state.step_angle = held ? 0.f : w.stepAngle;
         target_gait_state.phase_rate = held ? 0.f : w.phaseRate;
+    }
+
+    // Control task, WALK. A stride change is a change of the walk, not of its posture, so it never pauses the walk; but
+    // the command ramp alone eases a stroke change fast enough to move a joint up to 5.5 deg in a tick, past the
+    // servo's 3.75. Slewed at STRIDE_SLEW_PER_S, the walk passes only through strides it could walk steadily, and peaks
+    // as a steady walk does. A gait at rest takes the stride at once, since no foot moves with it.
+    void slewStride(float dt) {
+        const float commanded = lastWalkCommand_.stride;
+        const float current = _stride;
+        if (current == commanded) return;
+        const float step = STRIDE_SLEW_PER_S * dt;
+        _stride = gaitIsCommanded(gait_state) ? std::clamp(commanded, current - step, current + step) : commanded;
+        applyWalkTarget();
     }
 
     float postureOffset(const CommandMsg &c) const {

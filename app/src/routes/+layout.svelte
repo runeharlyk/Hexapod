@@ -24,17 +24,9 @@
   import { setAnimationStatus } from '$lib/stores/animation'
   import { connectWebsocket, isLinked } from '$lib/stores/link'
   import { COMMAND_HEARTBEAT_MS, needsHeartbeat } from '$lib/control-link'
+  import { toControllerInput } from '$lib/controller-input'
+  import type { Command } from '$lib/simulation/virtual-robot'
   import { watchUpdateOutcome } from '$lib/firmware/watch-update'
-
-  // outControllerData is [lx, ly, rx, ry, height, speed, s1, feetDistance].
-  const toControllerInput = (d: number[]): ControllerInputData => ({
-    left: { x: d[0], y: d[1] },
-    right: { x: d[2], y: d[3] },
-    height: d[4],
-    speed: d[5],
-    s1: d[6],
-    feetDistance: d[7]
-  })
 
   interface Props {
     children?: import('svelte').Snippet
@@ -45,7 +37,7 @@
   dataBroker.addTransport(ble)
 
   const throttle = new throttler()
-  let lastCommand = [0, 0, 0, 0, 0, 0, 0, 0]
+  let lastCommand: Command = [0, 0, 0, 0, 0, 0, 0, 0, 0]
   let currentMode = MotionModes.DEACTIVATED
   let linked = false
   let commandHeartbeatId: ReturnType<typeof setInterval> | undefined

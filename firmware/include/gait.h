@@ -81,13 +81,14 @@ inline void approachGaitCommand(gait_state_t& current, const gait_state_t& targe
 }
 
 // The command ramp the walk eases through. A change eases first order over tau, except a stop, which starts from the
-// walk as it is and leaves it the way the speed law (gait_speed.h) would slow it:
+// walk as it is:
 // - Its stroke eases out through two first-order stages in a row. A single stage moves the stroke at its fastest from
 //   the first tick, and a foot at the edge of its reach, where the joints turn furthest per millimetre, then moved up
 //   to 1.8 times as fast as in the walk; two stages start it from rest.
-// - Its cadence shrinks in proportion to the stroke, as the speed law's does. The stride law (phase_rate 0) stepped the
-//   shrinking stroke at up to 1.5 cycles/s, faster than a slow gait walked it, and the walk's own cadence lifts the
-//   feet as fast over a stroke near zero, a pace the envelope never measured.
+// - Its cadence is scaled with the share of the stroke left. The stride law (phase_rate 0) stepped the shrinking stroke
+//   at up to 1.5 cycles/s, faster than a slow gait walked it, and the walk's own cadence lifts the feet as fast over a
+//   stroke near zero, a pace the envelope never measured.
+// The virtual robot's stop and release rollouts pin that no stop leaves travel or moves a joint past the step bound.
 // A walk on the stride law keeps it through the stop.
 class GaitCommandRamp {
   public:

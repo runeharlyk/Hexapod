@@ -102,7 +102,7 @@ def write(path, *, stall, hold, kp, noload, deadband, lag_ms, gyro_bias, gyro_no
             tick.gyro.extend(gyro[held[k]])
             tick.gravity.extend(up[held[k]])
             tick.angles.extend(angles[k])
-            tick.command.extend([0.0] * 8)
+            tick.command.extend([0.0] * 9)
         writer.write(message.SerializeToString(), host_rx_us=batch_seq)
     writer.close()
 
@@ -121,8 +121,13 @@ def _within_four_sigma(estimate, truth):
 
 def test_a_walk_recovers_the_servo_parameters_and_the_lag(walk):
     _, found = walk
-    for name in ("stall", "deadband", "lag_ms"):
+    for name in ("stall", "deadband"):
         _within_four_sigma(found[name], TRUTH[name])
+    # write() applies a command at the first physics step at or after its act time, while identify's replay gives
+    # each step the mean command over its span; that window lines up with the point sample half a step later, so in
+    # identify's terms the recording's lag is the truth plus half a physics step.
+    half_step_ms = HexapodSim().model.opt.timestep * 1e3 / 2
+    _within_four_sigma(found["lag_ms"], TRUTH["lag_ms"] + half_step_ms)
     # The stated sigmas must be tight enough to matter: a value pinned no better than today's randomisation range
     # would have been refused.
     assert found["stall"].std < 0.05

@@ -34,6 +34,8 @@ class Sticks:
 
 
 CENTRED = Sticks(0.0, 0.0, 0.0)
+# The stride slider's setting the model was measured at: 0, each classic gait's speed-optimal stroke.
+STRIDE = 0.0
 
 
 class _Axis:
