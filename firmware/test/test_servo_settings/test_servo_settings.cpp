@@ -30,10 +30,10 @@ void test_every_calibration_value_counts() {
     // Servo 3 runs the other way round at the factory, so flipping it is a change while servo 1's
     // factory direction is not.
     ServoSettings direction = ServoSettings_defaults();
-    direction.servos[2].direction = -1;
+    direction.servos[2].direction = 1;
     TEST_ASSERT_TRUE(ServoSettings_calibrated(direction));
     direction = ServoSettings_defaults();
-    direction.servos[0].direction = -1;
+    direction.servos[0].direction = 1;
     TEST_ASSERT_FALSE(ServoSettings_calibrated(direction));
 }
 

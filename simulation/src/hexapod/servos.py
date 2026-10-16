@@ -42,7 +42,7 @@ class ServoCalibration:
 # ServoSettings_defaults (firmware/include/settings/servo_factory.h).
 FACTORY = ServoCalibration(
     center_pwm=(306.0,) * NUM_SERVOS,
-    direction=(-1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0, -1.0, 1.0, -1.0),
+    direction=(1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 1.0),
     center_angle=(0.0,) * NUM_SERVOS,
     conversion=(2.0,) * NUM_SERVOS,
 )

@@ -154,11 +154,11 @@ class ServoController {
 
     void calculatePWM() {
         for (int i = 0; i < 9; i++) {
-            const ServoCfg &sl = cfg[i];
-            const ServoCfg &sr = cfg[i + 9];
+            const ServoCfg &sr = cfg[i];
+            const ServoCfg &sl = cfg[i + 9];
 
-            left_pwm[sl.pin] = toPwm(target_angles[i], sl);
-            right_pwm[sr.pin] = toPwm(target_angles[i + 9], sr);
+            right_pwm[sr.pin] = toPwm(target_angles[i], sr);
+            left_pwm[sl.pin] = toPwm(target_angles[i + 9], sl);
         }
         writeBoards();
     }
@@ -176,8 +176,8 @@ class ServoController {
 
     void setCenterPwm() {
         for (int i = 0; i < 9; i++) {
-            left_pwm[cfg[i].pin] = cfg[i].centerPwm;
-            right_pwm[cfg[i + 9].pin] = cfg[i + 9].centerPwm;
+            right_pwm[cfg[i].pin] = cfg[i].centerPwm;
+            left_pwm[cfg[i + 9].pin] = cfg[i + 9].centerPwm;
         }
         writeBoards();
     }
@@ -215,18 +215,20 @@ class ServoController {
             return;
         }
         int pin = cfg[index].pin;
-        index < 9 ? _left.setPWM(pin, value) : _right.setPWM(pin, value);
+        index < 9 ? _right.setPWM(pin, value) : _left.setPWM(pin, value);
     }
 
     static constexpr const char *TAG = "ServoController";
 
-    // direction defaults reproduce the former l_dir{-1,-1,1}/r_dir{-1,1,-1} so motion is unchanged.
-    ServoCfg cfg[NUM_SERVO] = {{8, 306, 2, -1, 0},  {9, 306, 2, -1, 0}, {10, 306, 2, 1, 0},
-                               {2, 306, 2, -1, 0},  {3, 306, 2, -1, 0}, {4, 306, 2, 1, 0},
-                               {5, 306, 2, -1, 0},  {6, 306, 2, -1, 0}, {7, 306, 2, 1, 0},
-                               {8, 306, 2, -1, 0},  {9, 306, 2, 1, 0},  {10, 306, 2, -1, 0},
-                               {2, 306, 2, -1, 0},  {3, 306, 2, 1, 0},  {4, 306, 2, -1, 0},
-                               {5, 306, 2, -1, 0},  {6, 306, 2, 1, 0},  {7, 306, 2, -1, 0}};
+    // Servos 0-8 are legs 0-2, the right side, on board 0x41; servos 9-17 are the left legs on 0x40
+    // (docs/conventions.md). The femur and tibia servos are mounted mirrored across the body, so their
+    // directions differ by side; the coxa servos are not, and a positive coxa angle turns every leg
+    // counter-clockwise seen from above.
+    ServoCfg cfg[NUM_SERVO] = {{8, 306, 2, 1, 0},  {9, 306, 2, 1, 0},  {10, 306, 2, -1, 0}, {2, 306, 2, 1, 0},
+                               {3, 306, 2, 1, 0},  {4, 306, 2, -1, 0}, {5, 306, 2, 1, 0},   {6, 306, 2, 1, 0},
+                               {7, 306, 2, -1, 0}, {8, 306, 2, 1, 0},  {9, 306, 2, -1, 0},  {10, 306, 2, 1, 0},
+                               {2, 306, 2, 1, 0},  {3, 306, 2, -1, 0}, {4, 306, 2, 1, 0},   {5, 306, 2, 1, 0},
+                               {6, 306, 2, -1, 0}, {7, 306, 2, 1, 0}};
 
     ServoBoard _left;
     ServoBoard _right;
