@@ -53,6 +53,7 @@ Paths are relative to `firmware/` unless they start at the repository root.
 Other tasks are created by the components that need them:
 
 - one `evtbus` worker per EventBus message type (core 1, priority 6, 4 KB stack in PSRAM), started on the type's first publish or subscribe; a subscriber therefore must never touch flash, since the IDF asserts that no flash access runs on an external stack;
+- two `camstream` workers (core 0, priority 5, 4 KB stack in PSRAM) that send the camera's MJPEG streams, so a stream never holds the HTTP server's task and its WebSocket; a third viewer is refused with 503;
 - `BLE_Process` (core 0, priority 6), which reassembles and decodes BLE frames;
 - `serial_rx` (priority 4), which reads and decodes the USB serial link;
 - `dns_server` for the soft AP's captive-portal resolver;

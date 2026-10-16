@@ -3,9 +3,14 @@
 #if USE_CAMERA
 
 #include <esp_camera.h>
+#include <esp_heap_caps.h>
 #include <esp_http_server.h>
 #include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 #include <cJSON.h>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -63,7 +68,7 @@ inline void release() {
 
 #define CAMERA_STREAM_BOUNDARY "hexapodframe"
 
-inline esp_err_t stream(httpd_req_t *req) {
+inline esp_err_t sendFrames(httpd_req_t *req) {
     // httpd_resp_set_type stores the pointer and headers are not flushed until the first send_chunk,
     // so the content type must outlive this call -- it cannot share the per-part buffer below.
     if (httpd_resp_set_type(req, "multipart/x-mixed-replace;boundary=" CAMERA_STREAM_BOUNDARY) != ESP_OK) {
@@ -87,6 +92,55 @@ inline esp_err_t stream(httpd_req_t *req) {
         esp_camera_fb_return(fb);
     }
     return res;  // non-OK once the client disconnects, which ends the stream
+}
+
+// esp_http_server serves every socket from one task, so a stream looping in its handler would hold that task for as
+// long as anyone watches and leave every other request, the WebSocket's commands among them, unread. The handler hands
+// the request to one of STREAM_WORKERS tasks instead and returns; a viewer beyond them is refused rather than left
+// waiting behind streams that never end.
+inline constexpr int STREAM_WORKERS = 2;
+inline QueueHandle_t streamRequests = nullptr;
+inline std::atomic<int> idleStreamWorkers {0};
+
+inline void streamWorker(void *) {
+    for (;;) {
+        httpd_req_t *req = nullptr;
+        if (xQueueReceive(streamRequests, &req, portMAX_DELAY) != pdTRUE) continue;
+        sendFrames(req);
+        httpd_req_async_handler_complete(req);
+        idleStreamWorkers++;
+    }
+}
+
+inline void startStreamWorkers() {
+    streamRequests = xQueueCreate(STREAM_WORKERS, sizeof(httpd_req_t *));
+    if (!streamRequests) return;
+    for (int i = 0; i < STREAM_WORKERS; ++i) {
+        // A PSRAM stack, as the loop only takes the camera's PSRAM frames and writes the socket, never flash.
+        if (xTaskCreatePinnedToCoreWithCaps(streamWorker, "camstream", 4096, nullptr, 5, nullptr, 0,
+                                            MALLOC_CAP_SPIRAM) == pdPASS)
+            idleStreamWorkers++;
+        else
+            ESP_LOGE(TAG, "camera stream worker %d not started", i);
+    }
+}
+
+inline esp_err_t stream(httpd_req_t *req) {
+    int idle = idleStreamWorkers.load();
+    while (idle > 0 && !idleStreamWorkers.compare_exchange_weak(idle, idle - 1)) {
+    }
+    if (idle <= 0) return WebServer::sendError(req, 503, "every camera stream is in use");
+    httpd_req_t *async = nullptr;
+    if (httpd_req_async_handler_begin(req, &async) != ESP_OK) {
+        idleStreamWorkers++;
+        return ESP_FAIL;
+    }
+    if (xQueueSend(streamRequests, &async, 0) != pdTRUE) {
+        httpd_req_async_handler_complete(async);
+        idleStreamWorkers++;
+        return ESP_FAIL;
+    }
+    return ESP_OK;
 }
 
 inline esp_err_t settingsGet(httpd_req_t *req) {
@@ -149,6 +203,7 @@ inline esp_err_t settingsPost(httpd_req_t *req) {
 }
 
 inline void registerRoutes(WebServer &server) {
+    startStreamWorkers();
     server.on("/api/camera/stream", HTTP_GET, stream);
     server.on("/api/camera/settings", HTTP_GET, settingsGet);
     server.on("/api/camera/settings", HTTP_POST, settingsPost);
