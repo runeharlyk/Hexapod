@@ -100,28 +100,33 @@ void test_a_stick_held_in_walk_steps_the_legs() {
     TEST_ASSERT_EQUAL(MOTION_STATE::WALK, robot.mode());
 }
 
-// Joint angles per tick of a walk whose heartbeat of `command` stops at `cut` ticks, or never when `cut` is negative.
-std::vector<std::array<float, 18>> walkWithHeartbeatUntil(const CommandMsg &command, int cut, int ticks) {
+// Per tick of a walk whose heartbeat of `command` stops at `cut` ticks, or never when `cut` is negative: the joint
+// angles, the body height the motion eases toward and the lift the gait eases toward. A dead-man that takes the neutral
+// posture once the walk is still starts by lowering the lift, which moves no joint at rest.
+using MotionSample = std::array<float, 20>;
+std::vector<MotionSample> walkWithHeartbeatUntil(const CommandMsg &command, int cut, int ticks) {
     VirtualRobot robot;
     standUp(robot);
     robot.setMode(MOTION_STATE::WALK);
-    std::vector<std::array<float, 18>> trace;
+    std::vector<MotionSample> trace;
     for (int t = 0; t < ticks; ++t) {
         if ((cut < 0 || t < cut) && t % COMMAND_PERIOD_TICKS == 0) robot.command(command);
         robot.tick();
-        std::array<float, 18> angles;
-        std::copy_n(robot.angles(), 18, angles.begin());
-        trace.push_back(angles);
+        MotionSample sample;
+        std::copy_n(robot.angles(), 18, sample.begin());
+        sample[18] = robot.bodyCommand().zm;
+        sample[19] = robot.gaitCommand().step_height;
+        trace.push_back(sample);
     }
     return trace;
 }
 
-// How long after its last command a walk that stops hearing `command` still moves exactly as one that hears it, in ms.
+// How long after its last command a walk that stops hearing `command` still moves and aims exactly as one that hears
+// it, in ms.
 float msObeyedAfterSilence(const CommandMsg &command, float seconds) {
     const int lastCommand = ticksFor(1.0f);
-    const std::vector<std::array<float, 18>> heard = walkWithHeartbeatUntil(command, -1, ticksFor(seconds));
-    const std::vector<std::array<float, 18>> cutOff =
-        walkWithHeartbeatUntil(command, lastCommand + 1, ticksFor(seconds));
+    const std::vector<MotionSample> heard = walkWithHeartbeatUntil(command, -1, ticksFor(seconds));
+    const std::vector<MotionSample> cutOff = walkWithHeartbeatUntil(command, lastCommand + 1, ticksFor(seconds));
     size_t departed = heard.size();
     for (size_t t = 0; t < heard.size() && departed == heard.size(); ++t) {
         if (heard[t] != cutOff[t]) departed = t;
@@ -838,6 +843,94 @@ void test_every_stop_ramps_down_at_the_walks_cadence() {
     TEST_MESSAGE(summary);
 }
 
+namespace {
+
+// Whether the robot stands still in the neutral posture, h = fd = 0 and the body level and centred, as a stand there
+// would. A stance stepped there ends within 0.5 mm of it (GaitController::hasPendingStanceChange), up to half a degree
+// (measured); a quarter of the feet distance away is 9 deg.
+bool standsInNeutralPosture(VirtualRobot &robot) {
+    Kinematics kin;
+    BodyStateMsg neutral {};
+    neutral.zm = bodyHeightMm(0);
+    scaleStance(feetScale(0), neutral.feet);
+    float expected[18];
+    kin.inverseKinematics(neutral, expected);
+    for (int j = 0; j < 18; ++j)
+        if (std::fabs(expected[j] - robot.angles()[j]) > 1.0f) return false;
+    return largestStep(robot, ticksFor(0.5f)) < 1e-3f;
+}
+
+} // namespace
+
+// The dead-man zeroes the posture as well as the stick. Written into the body height while the walk still stepped, it
+// took the legs through the mixed postures between and out of travel (44 of 960 probed stops). The zero posture is
+// taken like any other instead: after the walk has stopped, settled in stages.
+void test_a_dead_man_stop_takes_the_neutral_posture_once_stopped() {
+    const Posture3 postures[] = {{1, -1, -1}, {-1, -1, 0}, {-0.75f, -0.75f, 0.375f}, {0, 1, 0}, {1, 1, 1}, {0, 0, -1}};
+    for (const GaitType gait : CLASSIC_GAITS) {
+        for (Posture3 posture : postures) {
+            clampPosture(posture.s1, posture.h, posture.fd);
+            for (const CommandMsg &full :
+                 {fullStick(0, 1, 0), fullStick(1, 0, 0), fullStick(0, 0, 1), fullStick(1, 1, 1)}) {
+                const CommandMsg stick = withPosture(full, posture);
+                VirtualRobot robot;
+                standUp(robot);
+                robot.setGait(gait);
+                robot.tick();
+                hold(robot, withPosture(CommandMsg {}, {0, posture.h, posture.fd}), ticksFor(2.0f));
+                robot.setMode(MOTION_STATE::WALK);
+                hold(robot, stick, ticksFor(3.0f));
+                HeldRun run;
+                float previous[18];
+                std::copy_n(robot.angles(), 18, previous);
+                for (int t = 0; t < ticksFor(6.0f); ++t) {
+                    robot.tick();
+                    for (int j = 0; j < 18; ++j) {
+                        const float angle = robot.angles()[j];
+                        if (withinTravel(angle, j % 3) != angle) run.clamped++;
+                        run.largestStep = std::max(run.largestStep, std::fabs(angle - previous[j]));
+                        previous[j] = angle;
+                    }
+                }
+                char msg[160];
+                describe(msg, sizeof(msg), gait, stick, run);
+                TEST_ASSERT_EQUAL_INT_MESSAGE(0, run.clamped, msg);
+                TEST_ASSERT_EQUAL_MESSAGE(MOTION_STATE::WALK, robot.mode(), msg);
+                TEST_ASSERT_TRUE_MESSAGE(standsInNeutralPosture(robot), msg);
+            }
+        }
+    }
+}
+
+// The same in a stand: the link lost as the operator leaves a walk for STAND, so the dead-man fires while the walk
+// still ramps out under the stand. The zero posture waits until the feet are still, as any stand posture does.
+void test_a_dead_man_stop_in_a_stand_waits_for_the_feet() {
+    for (const GaitType gait : CLASSIC_GAITS) {
+        for (Posture3 posture : {Posture3 {1, -1, -1}, Posture3 {-1, -1, 0}, Posture3 {0, 1, 0}}) {
+            clampPosture(posture.s1, posture.h, posture.fd);
+            const CommandMsg stick = withPosture(fullStick(0, 1, 0), posture);
+            VirtualRobot robot;
+            standUp(robot);
+            robot.setGait(gait);
+            robot.tick();
+            hold(robot, withPosture(CommandMsg {}, {0, posture.h, posture.fd}), ticksFor(2.0f));
+            robot.setMode(MOTION_STATE::WALK);
+            hold(robot, stick, ticksFor(3.0f));
+            robot.setMode(MOTION_STATE::STAND);
+            HeldRun run;
+            for (int t = 0; t < ticksFor(6.0f); ++t) {
+                robot.tick();
+                for (int j = 0; j < 18; ++j) run.clamped += withinTravel(robot.angles()[j], j % 3) != robot.angles()[j];
+            }
+            char msg[160];
+            describe(msg, sizeof(msg), gait, stick, run);
+            TEST_ASSERT_EQUAL_INT_MESSAGE(0, run.clamped, msg);
+            TEST_ASSERT_EQUAL_MESSAGE(MOTION_STATE::STAND, robot.mode(), msg);
+            TEST_ASSERT_TRUE_MESSAGE(standsInNeutralPosture(robot), msg);
+        }
+    }
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_new_robot_is_deactivated);
@@ -872,5 +965,7 @@ int main(int, char **) {
     RUN_TEST(test_a_walk_from_a_stand_at_rest_settles_a_new_posture_first);
     RUN_TEST(test_a_tuned_walk_after_the_stand_spends_its_rest_posture);
     RUN_TEST(test_every_stop_ramps_down_at_the_walks_cadence);
+    RUN_TEST(test_a_dead_man_stop_takes_the_neutral_posture_once_stopped);
+    RUN_TEST(test_a_dead_man_stop_in_a_stand_waits_for_the_feet);
     return UNITY_END();
 }

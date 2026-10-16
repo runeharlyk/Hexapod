@@ -653,13 +653,27 @@ class MotionService {
         gait.setPhase(0.f);
     }
 
+    // The dead-man: the stick stops and the posture goes to neutral. A body height changed under stepping feet steps
+    // through postures the legs cannot hold, so a classic walk settles into the neutral posture once it has stopped, as
+    // into any other (settleWalkPosture), and a stand takes it once its feet are still (takeStandPosture). TUNED,
+    // WALK_NN and the modes that drive no gait take the height at once.
     void applyZeroCommand() {
         target_body_state.xm = 0;
         target_body_state.ym = 0;
-        target_body_state.zm = 0;
         target_body_state.phi = 0;
         target_body_state.omega = 0;
+        if (motionState == MOTION_STATE::WALK && gait_state.gait_type != GaitType::TUNED) {
+            lastWalkCommand_ = {};
+            applyWalkTarget();
+            return;
+        }
         stopLocomotionCommand(false);
+        if (motionState == MOTION_STATE::STAND) {
+            _standPosture = {};
+            _standPosturePending = true;
+            return;
+        }
+        target_body_state.zm = 0;
     }
 
     void updateFeetDistanceTarget(float normalizedFeetDistance) {
