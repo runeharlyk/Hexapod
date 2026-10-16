@@ -4,7 +4,7 @@ import { get, type Writable } from 'svelte/store'
 
 export interface WidgetConfig {
   id: string | number
-  component: 'Visualization' | 'Stream' | 'Simulation'
+  component: 'Visualization' | 'Stream' | 'Simulation' | 'StreamWithRobot'
 }
 
 export interface WidgetContainerConfig {
@@ -29,7 +29,7 @@ const defaultViews: View[] = [
     content: {
       id: 'root',
       layout: 'column',
-      widgets: [{ id: 2, component: 'Stream' }]
+      widgets: [{ id: 2, component: 'StreamWithRobot' }]
     }
   },
   {
@@ -62,7 +62,7 @@ const defaultViews: View[] = [
 ]
 
 // Bump the version whenever defaultViews changes shape, so stored layouts do not shadow it.
-const VIEWS_KEY = 'views_v3'
+const VIEWS_KEY = 'views_v4'
 
 export const views: Writable<View[]> = persistentStore(VIEWS_KEY, defaultViews)
 
