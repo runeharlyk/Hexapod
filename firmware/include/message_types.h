@@ -52,13 +52,14 @@ struct IMUAnglesMsg {
 };
 
 struct CommandMsg {
-    float lx, ly, rx, ry, h, s, s1, fd;
+    // stride last, so an initializer that omits it gets 0, the speed-optimal stride.
+    float lx, ly, rx, ry, h, s, s1, fd, stride;
 
     // Every field is a normalized stick or slider in [-1, 1]. Input arrives from the network, so a
     // command carrying NaN or infinity is rejected (returns false) and the rest are clamped, since
     // either would otherwise flow straight into the gait and IK.
     bool sanitize() {
-        float *fields[] = {&lx, &ly, &rx, &ry, &h, &s, &s1, &fd};
+        float *fields[] = {&lx, &ly, &rx, &ry, &h, &s, &s1, &fd, &stride};
         for (float *f : fields) {
             if (!std::isfinite(*f)) return false;
         }

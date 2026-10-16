@@ -231,8 +231,8 @@ void walkIn(VirtualRobot &robot, GaitType gait) {
     robot.setMode(MOTION_STATE::WALK);
 }
 
-// lx, ly, rx at s = +1, the fastest the stick can ask for.
-CommandMsg fullStick(float lx, float ly, float rx) { return {lx, ly, rx, 0, 0, 1, 0, 0}; }
+// lx, ly, rx at s = +1, the fastest the stick can ask for, at the speed-optimal stride unless given another.
+CommandMsg fullStick(float lx, float ly, float rx, float stride = 0) { return {lx, ly, rx, 0, 0, 1, 0, 0, stride}; }
 
 const CommandMsg FULL_STICKS[] = {fullStick(0, 1, 0), fullStick(0, -1, 0), fullStick(1, 0, 0), fullStick(-1, 0, 0),
                                   fullStick(0, 0, 1), fullStick(0, 0, -1), fullStick(1, 1, 1), fullStick(-1, -1, -1)};
@@ -324,9 +324,9 @@ void test_an_auto_gait_switch_retargets_the_held_stick() {
         robot.command({0, 1, 0, 0, 0, k.s, 0, 0});
         robot.tick();
         TEST_ASSERT_EQUAL(k.selected, robot.gait());
-        const AutoDemand demand = autoDemand(0, 1, 0, k.s, 0, 0, 0);
-        const WalkTarget left = autoWalkTarget(GaitType::RIPPLE, demand, 0, 1, 0, 0, 0, 0);
-        const WalkTarget expected = autoWalkTarget(k.selected, demand, 0, 1, 0, 0, 0, 0);
+        const AutoDemand demand = autoDemand(0, 1, 0, k.s, 0, 0, 0, 0);
+        const WalkTarget left = autoWalkTarget(GaitType::RIPPLE, demand, 0, 1, 0, 0, 0, 0, 0);
+        const WalkTarget expected = autoWalkTarget(k.selected, demand, 0, 1, 0, 0, 0, 0, 0);
         TEST_ASSERT_TRUE(std::fabs(expected.phaseRate - left.phaseRate) > 0.1f * expected.phaseRate);
         const gait_state_t &target = robot.gaitCommand();
         TEST_ASSERT_EQUAL_FLOAT(expected.stepX, target.step_x);
@@ -388,13 +388,13 @@ void test_a_timed_out_auto_walk_stays_at_rest() {
 }
 
 // A classic gait loaded after the searched one walks the stick held now, not one a classic command left behind: the
-// switch to TUNED here lands in the ramp window right after a slow stick, whose first ramp tick stays inside the
-// stride deadband, and the stick is released before TRI.
+// switch to TUNED here lands in the ramp window right after a stick at the shortest stride, whose first ramp tick stays
+// inside the stride deadband, and the stick is released before TRI.
 void test_a_classic_gait_loaded_after_tuned_walks_no_stale_stick() {
     VirtualRobot robot;
     walkIn(robot, GaitType::TRI_GATE);
     settleWalk(robot);
-    robot.command({0, 0.3f, 0, 0, 0, 0, 0, 0});
+    robot.command({0, 0.3f, 0, 0, 0, 0, 0, 0, -1});
     robot.tick();
     robot.setGait(GaitType::TUNED);
     robot.tick();
@@ -453,7 +453,7 @@ void test_a_walk_resumes_by_itself_after_a_posture_change() {
     walkIn(robot, GaitType::TRI_GATE);
     const CommandMsg stick = fullStick(0, 1, 0);
     hold(robot, stick, ticksFor(2.0f));
-    TEST_ASSERT_EQUAL_FLOAT(classicWalkTarget(GaitType::TRI_GATE, 0, 1, 0, 1, 0, 0, 0).stepY,
+    TEST_ASSERT_EQUAL_FLOAT(classicWalkTarget(GaitType::TRI_GATE, 0, 1, 0, 1, 0, 0, 0, 0).stepY,
                             robot.gaitCommand().step_y);
 
     CommandMsg raised = stick;
@@ -466,7 +466,7 @@ void test_a_walk_resumes_by_itself_after_a_posture_change() {
     hold(robot, raised, ticksFor(3.0f));
     float s1 = raised.s1, h = raised.h, fd = raised.fd;
     clampPosture(s1, h, fd);
-    const WalkTarget expected = classicWalkTarget(GaitType::TRI_GATE, 0, 1, 0, 1, s1, h, fd);
+    const WalkTarget expected = classicWalkTarget(GaitType::TRI_GATE, 0, 1, 0, 1, s1, h, fd, 0);
     TEST_ASSERT_EQUAL_FLOAT(expected.stepY, robot.gaitCommand().step_y);
     TEST_ASSERT_EQUAL_FLOAT(expected.phaseRate, robot.gaitCommand().phase_rate);
     TEST_ASSERT_GREATER_THAN_FLOAT(STEPPING_DEG_PER_TICK, hold(robot, raised, ticksFor(1.0f)).largestStep);
@@ -592,25 +592,33 @@ void test_leaving_a_walk_for_stand_mid_stride_stays_in_travel() {
 }
 
 // WALK_NN moves the ride height and the feet without a command the walk hears, so a walk entered from it starts from
-// a zero stroke and takes its posture again before it steps, even within the dead-man's 600 ms.
+// a zero stroke, the live one as well as the commanded one, and takes its posture again before it steps, even within
+// the dead-man's 600 ms. The classic stroke left live used to be ramped out from wherever the policy left the feet,
+// which took a coxa past its travel after a walk of 1950 or 2300 ms but not 2000 ms, so the return is checked at
+// walks ending in every part of the cycle.
 void test_a_walk_after_walk_nn_takes_its_posture_again() {
-    VirtualRobot robot;
-    walkIn(robot, GaitType::TRI_GATE);
-    const CommandMsg stick = fullStick(0, 1, 0);
-    hold(robot, stick, ticksFor(2.0f));
-    TEST_ASSERT_TRUE(walkResumed(robot));
+    for (int walkMs = 1500; walkMs <= 2600; walkMs += 50) {
+        VirtualRobot robot;
+        walkIn(robot, GaitType::TRI_GATE);
+        const CommandMsg stick = fullStick(0, 1, 0);
+        hold(robot, stick, ticksFor(walkMs / 1000.0f));
+        TEST_ASSERT_TRUE(walkResumed(robot));
 
-    robot.setMode(MOTION_STATE::WALK_NN);
-    largestStep(robot, ticksFor(0.4f));
-    robot.setMode(MOTION_STATE::WALK);
-    robot.tick();
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, robot.gaitCommand().step_y);
-    robot.command(stick);
-    robot.tick();
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, robot.gaitCommand().step_y);
-    const HeldRun run = hold(robot, stick, ticksFor(3.0f));
-    TEST_ASSERT_EQUAL_INT(0, run.clamped);
-    TEST_ASSERT_TRUE(walkResumed(robot));
+        robot.setMode(MOTION_STATE::WALK_NN);
+        largestStep(robot, ticksFor(0.4f));
+        robot.setMode(MOTION_STATE::WALK);
+        robot.tick();
+        char msg[48];
+        std::snprintf(msg, sizeof(msg), "after a %d ms walk", walkMs);
+        TEST_ASSERT_EQUAL_FLOAT_MESSAGE(0.0f, robot.gaitCommand().step_y, msg);
+        TEST_ASSERT_FALSE_MESSAGE(gaitIsCommanded(robot.gaitState()), msg);
+        robot.command(stick);
+        robot.tick();
+        TEST_ASSERT_EQUAL_FLOAT_MESSAGE(0.0f, robot.gaitCommand().step_y, msg);
+        const HeldRun run = hold(robot, stick, ticksFor(3.0f));
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, run.clamped, msg);
+        TEST_ASSERT_TRUE_MESSAGE(walkResumed(robot), msg);
+    }
 }
 
 // A settle cut short by WALK_NN starts over on the way back. Cut in its last stage, raising the lift, which checks
@@ -649,7 +657,7 @@ void test_an_interrupted_settle_starts_over() {
     }
     TEST_ASSERT_TRUE(liftTakenAgain);
     TEST_ASSERT_EQUAL_INT(0, run.clamped);
-    const WalkTarget expected = classicWalkTarget(GaitType::TRI_GATE, 0, 1, 0, 1, s1, h, fd);
+    const WalkTarget expected = classicWalkTarget(GaitType::TRI_GATE, 0, 1, 0, 1, s1, h, fd, 0);
     TEST_ASSERT_EQUAL_FLOAT(expected.stepY, robot.gaitCommand().step_y);
     TEST_ASSERT_EQUAL_FLOAT(expected.phaseRate, robot.gaitCommand().phase_rate);
 }
@@ -667,7 +675,7 @@ void test_a_walk_from_a_stand_at_rest_steps_at_once() {
         robot.command(stick);
         robot.tick();
         const WalkTarget expected =
-            classicWalkTarget(GaitType::TRI_GATE, 0, 1, 0, 1, posture.s1, posture.h, posture.fd);
+            classicWalkTarget(GaitType::TRI_GATE, 0, 1, 0, 1, posture.s1, posture.h, posture.fd, 0);
         TEST_ASSERT_EQUAL_FLOAT(expected.stepY, robot.gaitCommand().step_y);
         TEST_ASSERT_EQUAL_FLOAT(expected.phaseRate, robot.gaitCommand().phase_rate);
         TEST_ASSERT_EQUAL_FLOAT((posture.s1 + 1.0f) * 20.0f, robot.gaitCommand().step_height);
@@ -737,6 +745,10 @@ const char *stopName(Stop stop) {
     }
     return "";
 }
+
+// The steady walks below peak at 3.95 deg in a tick (measured), just past the servo's 3.75 deg (13.1 rad/s over 5 ms),
+// and their stops at 3.96 deg.
+constexpr float STOP_STEP_BOUND_DEG = 4.0f;
 
 struct StopRun {
     float walkPeak = 0.0f; // the largest joint step in a tick of the steady walk
@@ -814,9 +826,6 @@ StopRun walkThenStop(GaitType gait, const CommandMsg &stick, Stop stop, int phas
 // envelope's edges, a release at eight points of the cycle, and no stop may move a joint faster than
 // STOP_STEP_BOUND_DEG, leave travel, leave the speed law, or leave a cadence set once the gait has stopped.
 void test_every_stop_ramps_down_on_the_speed_law() {
-    // The steady walks below peak at 3.95 deg in a tick (measured), just past the servo's 3.75 deg (13.1 rad/s over 5
-    // ms), and their stops at 3.96 deg.
-    constexpr float STOP_STEP_BOUND_DEG = 4.0f;
     constexpr int PHASES = 8, PHASE_STEP_TICKS = 7; // 0.28 s, half a fast gait's cycle
     const Posture3 postures[] = {{0, 0, 0}, {1, -1, 0}, {1, -1, -1}, {-1, -1, 0}, {1, 0.5f, 0.5f}, {1, 1, 1}};
     float walkPeak = 0.0f, stopPeak = 0.0f;
@@ -852,6 +861,160 @@ void test_every_stop_ramps_down_on_the_speed_law() {
     char summary[96];
     std::snprintf(summary, sizeof(summary), "walk peak %.2f, stop peak %.2f deg per tick", walkPeak, stopPeak);
     TEST_MESSAGE(summary);
+}
+
+namespace {
+
+// Neutral and the envelope's extreme corners, clamped as the walk clamps them.
+const Posture3 STRIDE_POSTURES[] = {{0, 0, 0}, {1, -1, -1}, {-1, -1, 0}, {1, 1, 1}};
+
+constexpr float STRIDE_ANCHORS[3] = {-1.0f, 0.0f, 1.0f};
+
+// A walk entered from a stand in the posture, as an operator would enter it.
+void walkFromStandIn(VirtualRobot &robot, GaitType gait, const Posture3 &posture) {
+    standUp(robot);
+    robot.setGait(gait);
+    robot.tick();
+    hold(robot, withPosture(CommandMsg {}, {0, posture.h, posture.fd}), ticksFor(2.0f));
+    robot.setMode(MOTION_STATE::WALK);
+}
+
+void describeStride(char *msg, size_t size, GaitType gait, const CommandMsg &c, const HeldRun &run) {
+    std::snprintf(msg, size,
+                  "gait %d stick (%.1f %.1f %.1f) stride %.0f posture (%.2f %.2f %.2f): %d clamped, largest "
+                  "step %.2f deg",
+                  (int)gait, c.lx, c.ly, c.rx, c.stride, c.s1, c.h, c.fd, run.clamped, run.largestStep);
+}
+
+} // namespace
+
+// Every stride, from three tenths of the speed-optimal stroke to the longest the joints can travel, walks a full stick
+// inside travel in every classic gait, at the envelope's extreme postures as at neutral.
+void test_full_stick_walk_stays_in_travel_at_every_stride() {
+    for (const GaitType gait : CLASSIC_GAITS) {
+        for (Posture3 posture : STRIDE_POSTURES) {
+            clampPosture(posture.s1, posture.h, posture.fd);
+            for (const float stride : STRIDE_ANCHORS) {
+                for (CommandMsg stick : FULL_STICKS) {
+                    stick.stride = stride;
+                    stick = withPosture(stick, posture);
+                    VirtualRobot robot;
+                    walkFromStandIn(robot, gait, posture);
+                    // Long enough for the slowest posture settle before the walk, WAVE's of about 4 s.
+                    HeldRun run = hold(robot, stick, ticksFor(5.0f));
+                    const HeldRun walking = hold(robot, stick, ticksFor(1.0f));
+                    run.clamped += walking.clamped;
+                    run.largestStep = walking.largestStep;
+                    char msg[200];
+                    describeStride(msg, sizeof(msg), gait, stick, run);
+                    TEST_ASSERT_EQUAL_INT_MESSAGE(0, run.clamped, msg);
+                    TEST_ASSERT_GREATER_THAN_FLOAT_MESSAGE(STEPPING_DEG_PER_TICK, run.largestStep, msg);
+                    TEST_ASSERT_TRUE_MESSAGE(walkResumed(robot), msg);
+                }
+            }
+        }
+    }
+}
+
+// The stride holds the stroke and the stick sets the cadence, so a small stick at the longest stride walks the longest
+// stroke slowly rather than a short stroke at the walk's pace.
+void test_a_small_stick_at_the_longest_stride_steps_slowly_with_the_full_stroke() {
+    for (const GaitType gait : CLASSIC_GAITS) {
+        VirtualRobot robot;
+        walkIn(robot, gait);
+        const CommandMsg small {0, 0.1f, 0, 0, 0, 0, 0, 0, 1};
+        const HeldRun run = hold(robot, small, ticksFor(3.0f));
+        const AxisEnvelope longest = envelopeAt(gait, 0, 0, 0, 0, 1);
+        const gait_state_t &live = robot.gaitState();
+        char msg[160];
+        describeStride(msg, sizeof(msg), gait, small, run);
+        TEST_ASSERT_FLOAT_WITHIN_MESSAGE(1e-3f * longest.stroke, longest.stroke, live.step_y, msg);
+        TEST_ASSERT_GREATER_THAN_FLOAT_MESSAGE(0.0f, live.phase_rate, msg);
+        TEST_ASSERT_LESS_THAN_FLOAT_MESSAGE(0.4f * longest.cadence, live.phase_rate, msg);
+        TEST_ASSERT_GREATER_THAN_FLOAT_MESSAGE(STEPPING_DEG_PER_TICK, run.largestStep, msg);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, run.clamped, msg);
+    }
+}
+
+// A release at either end of the stride, from a small stick and from full ones, stops as every stop does: through the
+// stop ramp, inside travel, no faster in a tick than the stop bound, and with no cadence left once the gait is still.
+void test_a_release_at_any_stride_stops_with_no_cadence_left() {
+    // The steady walks peak at 3.95 deg in a tick, and a stop from the longest stroke at up to 4.02 (measured). The
+    // bound is there to catch gross overruns, such as the 10.4 deg a stop reached before the stop ramp.
+    constexpr float RELEASE_STEP_BOUND_DEG = 4.05f;
+    constexpr int PHASES = 4, PHASE_STEP_TICKS = 14;
+    for (const GaitType gait : CLASSIC_GAITS) {
+        for (Posture3 posture : STRIDE_POSTURES) {
+            clampPosture(posture.s1, posture.h, posture.fd);
+            for (const float stride : {-1.0f, 1.0f}) {
+                for (CommandMsg stick : {CommandMsg {0, 0.1f, 0, 0, 0, 0, 0, 0}, fullStick(0, 1, 0), fullStick(1, 0, 0),
+                                         fullStick(0, 0, 1), fullStick(1, 1, 1)}) {
+                    stick.stride = stride;
+                    stick = withPosture(stick, posture);
+                    for (int k = 0; k <= PHASES; ++k) {
+                        const Stop stop = k < PHASES ? Stop::RELEASE : Stop::DEAD_MAN;
+                        const StopRun run = walkThenStop(gait, stick, stop, k < PHASES ? k * PHASE_STEP_TICKS : 0);
+                        char msg[200];
+                        describeStride(msg, sizeof(msg), gait, stick, run.stop);
+                        TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(RELEASE_STEP_BOUND_DEG, run.stop.largestStep, msg);
+                        TEST_ASSERT_EQUAL_INT_MESSAGE(0, run.stop.clamped, msg);
+                        TEST_ASSERT_TRUE_MESSAGE(run.onSpeedLaw, msg);
+                        TEST_ASSERT_FALSE_MESSAGE(run.cadenceLeft, msg);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A stride change while walking is a gait-command change, not a posture change: the walk slews from one stroke and
+// cadence to the other (motion.h slewStride, a full -1 to +1 in 2 s) without pausing, inside travel, and no joint moves
+// faster in a tick than a stop may move it.
+void test_a_stride_change_while_walking_eases_through_without_a_pause() {
+    const float changes[][2] = {{-1, 1}, {1, -1}, {0, 1}, {0, -1}};
+    for (const GaitType gait : CLASSIC_GAITS) {
+        for (Posture3 posture : STRIDE_POSTURES) {
+            clampPosture(posture.s1, posture.h, posture.fd);
+            for (const CommandMsg &full : {fullStick(0, 1, 0), fullStick(1, 0, 0), fullStick(0, 0, 1),
+                                           fullStick(1, 1, 1), CommandMsg {0.1f, 0.3f, 0, 0, 0, 0, 0, 0}}) {
+                for (const auto &change : changes) {
+                    CommandMsg stick = withPosture(full, posture);
+                    stick.stride = change[0];
+                    VirtualRobot robot;
+                    walkFromStandIn(robot, gait, posture);
+                    hold(robot, stick, ticksFor(5.0f));
+                    TEST_ASSERT_TRUE(walkResumed(robot));
+                    stick.stride = change[1];
+                    HeldRun run;
+                    bool paused = false;
+                    float previous[18];
+                    std::copy_n(robot.angles(), 18, previous);
+                    for (int t = 0; t < ticksFor(3.0f); ++t) {
+                        if (t % COMMAND_PERIOD_TICKS == 0) robot.command(stick);
+                        robot.tick();
+                        paused |= !walkResumed(robot) || !gaitIsCommanded(robot.gaitState());
+                        for (int j = 0; j < 18; ++j) {
+                            const float angle = robot.angles()[j];
+                            if (withinTravel(angle, j % 3) != angle) run.clamped++;
+                            run.largestStep = std::max(run.largestStep, std::fabs(angle - previous[j]));
+                            previous[j] = angle;
+                        }
+                    }
+                    char msg[220];
+                    describeStride(msg, sizeof(msg), gait, stick, run);
+                    TEST_ASSERT_FALSE_MESSAGE(paused, msg);
+                    TEST_ASSERT_EQUAL_INT_MESSAGE(0, run.clamped, msg);
+                    TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(STOP_STEP_BOUND_DEG, run.largestStep, msg);
+                    const WalkTarget expected = classicWalkTarget(gait, stick.lx, stick.ly, stick.rx, stick.s,
+                                                                  posture.s1, posture.h, posture.fd, change[1]);
+                    TEST_ASSERT_EQUAL_FLOAT_MESSAGE(expected.stepX, robot.gaitCommand().step_x, msg);
+                    TEST_ASSERT_EQUAL_FLOAT_MESSAGE(expected.stepY, robot.gaitCommand().step_y, msg);
+                    TEST_ASSERT_EQUAL_FLOAT_MESSAGE(expected.stepAngle, robot.gaitCommand().step_angle, msg);
+                    TEST_ASSERT_EQUAL_FLOAT_MESSAGE(expected.phaseRate, robot.gaitCommand().phase_rate, msg);
+                }
+            }
+        }
+    }
 }
 
 namespace {
@@ -1056,6 +1219,10 @@ int main(int, char **) {
     RUN_TEST(test_a_walk_from_a_stand_at_rest_settles_a_new_posture_first);
     RUN_TEST(test_a_tuned_walk_after_the_stand_spends_its_rest_posture);
     RUN_TEST(test_every_stop_ramps_down_on_the_speed_law);
+    RUN_TEST(test_full_stick_walk_stays_in_travel_at_every_stride);
+    RUN_TEST(test_a_small_stick_at_the_longest_stride_steps_slowly_with_the_full_stroke);
+    RUN_TEST(test_a_release_at_any_stride_stops_with_no_cadence_left);
+    RUN_TEST(test_a_stride_change_while_walking_eases_through_without_a_pause);
     RUN_TEST(test_a_dead_man_stop_takes_the_neutral_posture_once_stopped);
     RUN_TEST(test_a_dead_man_stop_in_a_stand_waits_for_the_feet);
     RUN_TEST(test_a_classic_walk_ignores_the_tilt_stick);
