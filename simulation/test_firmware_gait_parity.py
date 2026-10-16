@@ -19,6 +19,7 @@ As a script it runs the header check only:
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -274,6 +275,20 @@ def test_tuned_command_mapping_follows_the_firmware_formula(header, gait_h):
         rate = header["PHASE_RATE_MIN"] + (a[5] + 1) * 0.5 * (header["PHASE_RATE_MAX"] - header["PHASE_RATE_MIN"])
         assert gait.phase_rate == pytest.approx(rate, abs=1e-4)
         assert zm == pytest.approx(-header["RIDE_MM"], abs=1e-4)
+
+
+@pytest.mark.parametrize("progress", [0.0, 0.1, 0.37, 0.5, 0.83, 0.999, 1.0])
+def test_bezier_curve_follows_the_firmware_formula(progress):
+    """gait.h's bezierCurve: sum C(11, i) p^i (1 - p)^(11 - i) times the control point, which at p = 1 is the last
+    control point, the full stroke ahead on the ground."""
+    length, angle, height = 30.0, 0.7, 25.0
+    weights = np.array([math.comb(11, i) * progress**i * (1.0 - progress) ** (11 - i) for i in range(12)])
+    expected = [(weights * fg.BEZIER_STEPS).sum() * length * math.cos(angle),
+                (weights * fg.BEZIER_STEPS).sum() * length * math.sin(angle),
+                (weights * fg.BEZIER_HEIGHTS).sum() * height]
+    point = [0.0, 0.0, 0.0]
+    fg.GaitController._bezier_curve(length, angle, height, progress, point)
+    np.testing.assert_allclose(point, expected, rtol=0, atol=1e-9)
 
 
 def test_nominal_stance_ik_meets_the_firmware_host_test():

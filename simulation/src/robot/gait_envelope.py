@@ -30,8 +30,6 @@ STROKES = {
 WALKABLE_STROKE_MM = 20.0
 SWING_SAMPLES = 24
 STANCE_SAMPLES = 12
-# The port's Bezier is zero at exactly 1, where 0^11 removes every basis term; the swing it plays never reaches 1.
-SWING_END_PROGRESS = 1.0 - 1e-9
 
 LIFT_MM_PER_S1 = 20.0  # lift = (s1 + 1) * 20 mm
 BODY_HEIGHT_MM = 50.0  # zm = h * 50 mm
@@ -94,7 +92,7 @@ def geometry_factors(axis: str, stroke: float, lift: float, zm: float, feet_scal
     feet[:, :2] *= feet_scale
     strokes = _leg_strokes(axis, stroke, feet)
     swing, swing_reachable = _sample_joints(
-        fg.GaitController._bezier_curve, lift, strokes, feet, zm, np.linspace(0.0, SWING_END_PROGRESS, SWING_SAMPLES))
+        fg.GaitController._bezier_curve, lift, strokes, feet, zm, np.linspace(0.0, 1.0, SWING_SAMPLES))
     stance, stance_reachable = _sample_joints(
         fg.GaitController._stance_curve, -fg.DEFAULT_STEP_DEPTH, strokes, feet, zm,
         np.linspace(0.0, 1.0, STANCE_SAMPLES))

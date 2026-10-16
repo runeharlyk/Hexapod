@@ -489,17 +489,18 @@ class GaitController:
     def _bezier_curve(length, angle, height, phase, point):
         x_polar = math.cos(angle)
         z_polar = math.sin(angle)
-        phase_power = 1.0
-        inv_phase_power = (1.0 - phase) ** 11
-        one_minus_phase = 1.0 - phase
+        # Both power tables multiply up from 1, as gait.h's do: dividing down from (1 - phase)^11 loses every
+        # weight once that power is zero, at the very end of the swing.
+        phase_power = [1.0]
+        inv_phase_power = [1.0]
+        for _ in range(11):
+            phase_power.append(phase_power[-1] * phase)
+            inv_phase_power.append(inv_phase_power[-1] * (1.0 - phase))
         for i in range(12):
-            b = COMBINATORIAL_VALUES[i] * phase_power * inv_phase_power
+            b = COMBINATORIAL_VALUES[i] * phase_power[i] * inv_phase_power[11 - i]
             point[0] += b * BEZIER_STEPS[i] * length * x_polar
             point[1] += b * BEZIER_STEPS[i] * length * z_polar
             point[2] += b * BEZIER_HEIGHTS[i] * height
-            phase_power *= phase
-            if one_minus_phase != 0.0:
-                inv_phase_power /= one_minus_phase
 
     def _phase_params(self, phase, stand_frac, depth, height):
         if phase < stand_frac:
