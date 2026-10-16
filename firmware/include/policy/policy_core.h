@@ -7,6 +7,7 @@
 
 #include <math.h>
 #include <gait.h>
+#include <imu_frame.h>
 #include <message_types.h>
 
 namespace policy_layout {
@@ -143,17 +144,11 @@ class PolicyCore {
   private:
     static constexpr int FRAME = policy_layout::SENSOR_FRAME;
 
-    // The policy was trained on MuJoCo conventions (right-handed, aerospace rpy: pitch positive = nose down). The
-    // I2Cdev DMP formulas differ: dmpGetYawPitchRoll's pitch is positive nose up and its yaw is mirrored, while roll
-    // matches. For a sensor mounted aligned with the model frame, pitch and yaw are therefore negated and roll,
+    // The policy was trained on the simulation's body-frame angles, which the DMP's differ from (imu_frame.h);
     // gravity and gyro pass through (gravity already negated: the DMP's is world up, the policy's world down).
-    // BENCH TEST (serial, raise CORE_DEBUG_LEVEL to see the obs log): hold the robot,
-    //   nose (leg 1 / +x side) tilted DOWN ~15 deg -> obs[7] = +0.26, obs[0] = +0.26
-    //   leg 0/3 (+y) side tilted DOWN ~15 deg      -> obs[6] = -0.26, obs[1] = +0.26
-    //   turning left (counter-clockwise from above) -> obs[5] (gyro z) positive
-    static constexpr float OBS_SIGN_ROLL = +1.0f;
-    static constexpr float OBS_SIGN_PITCH = -1.0f;
-    static constexpr float OBS_SIGN_YAW = -1.0f;
+    static constexpr float OBS_SIGN_ROLL = imu_frame::ROLL_SIGN;
+    static constexpr float OBS_SIGN_PITCH = imu_frame::PITCH_SIGN;
+    static constexpr float OBS_SIGN_YAW = imu_frame::YAW_SIGN;
 
     static float clip1(float v) { return v < -1.0f ? -1.0f : (v > 1.0f ? 1.0f : v); }
     int span() const { return (p.obsHistory - 1) * p.histStride + 1; }

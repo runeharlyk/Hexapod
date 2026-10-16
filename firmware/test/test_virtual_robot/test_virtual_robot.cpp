@@ -45,7 +45,8 @@ const CommandMsg FORWARD{0, 1, 0, 0, 0, 0, 0, 0};
 }  // namespace
 
 void setUp() {}
-void tearDown() {}
+// The IMU stand-in is process-wide, so a test that tilts it must not hand the tilt on, even when it fails.
+void tearDown() { Peripherals::setImu({}); }
 
 void test_a_new_robot_is_deactivated() {
     VirtualRobot robot;
@@ -998,6 +999,29 @@ void test_a_classic_walk_after_a_shifted_stand_stays_in_travel() {
     }
 }
 
+// Self-levelling on the IMU readings measured on the robot on 2026-10-16 (imu_frame.h): with its right side 10 deg
+// down the DMP's pitch reads -10 deg, and nose down its roll reads -10 deg. Levelling raises the low side, so the
+// low side's legs reach down: a smaller femur angle than the high side's.
+void test_self_levelling_reaches_down_with_the_low_side() {
+    constexpr float TILT = 10.0f * static_cast<float>(M_PI) / 180.0f;
+    auto femur = [](VirtualRobot &robot, int leg) { return robot.angles()[leg * 3 + 1]; };
+    {
+        VirtualRobot robot;
+        standUp(robot);
+        robot.setImu({{0, -TILT, 0}, {-std::sin(TILT), 0, std::cos(TILT)}, {0, 0, 0}});
+        largestStep(robot, ticksFor(1.0f));
+        for (int leg = 0; leg < 3; ++leg) TEST_ASSERT_LESS_THAN_FLOAT(femur(robot, leg + 3) - 5.0f, femur(robot, leg));
+    }
+    {
+        VirtualRobot robot;
+        standUp(robot);
+        robot.setImu({{-TILT, 0, 0}, {0, -std::sin(TILT), std::cos(TILT)}, {0, 0, 0}});
+        largestStep(robot, ticksFor(1.0f));
+        for (int side = 0; side < 6; side += 3)
+            TEST_ASSERT_LESS_THAN_FLOAT(femur(robot, side + 2) - 5.0f, femur(robot, side));
+    }
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_new_robot_is_deactivated);
@@ -1036,5 +1060,6 @@ int main(int, char **) {
     RUN_TEST(test_a_dead_man_stop_in_a_stand_waits_for_the_feet);
     RUN_TEST(test_a_classic_walk_ignores_the_tilt_stick);
     RUN_TEST(test_a_classic_walk_after_a_shifted_stand_stays_in_travel);
+    RUN_TEST(test_self_levelling_reaches_down_with_the_low_side);
     return UNITY_END();
 }

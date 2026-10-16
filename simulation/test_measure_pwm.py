@@ -49,17 +49,17 @@ def test_the_factory_calibration_is_the_firmwares():
 
 def test_pwm_is_servo_controllers_to_pwm_and_angles_inverts_it():
     angles = np.zeros(18)
-    angles[0], angles[1], angles[2] = 10.0, -20.0, -100.25  # leg 0, direction -1, -1, +1
-    angles[11] = -100.25  # leg 3's tibia, direction -1
+    angles[0], angles[1], angles[2] = 10.0, -20.0, -100.25  # leg 0, direction +1, +1, -1
+    angles[11] = -100.25  # leg 3's tibia, direction +1
     pwm = FACTORY.pwm(angles)
     # (angle + 90 on a tibia + centre angle) * direction * conversion + centre PWM, truncated to a count.
-    assert pwm[:3].tolist() == [286.0, 346.0, 285.0]
-    assert pwm[11] == 326.0
+    assert pwm[:3].tolist() == [326.0, 266.0, 326.0]
+    assert pwm[11] == 285.0
     assert pwm[3] == 306.0
     assert FACTORY.angles(pwm) == pytest.approx(angles, abs=0.5)
     # A servo of 2.5 counts per degree turns the same counts 2 / 2.5 as far about its centre PWM.
     assert FACTORY.angles(pwm, 2.5)[1] == pytest.approx(-20.0 * 2 / 2.5)
-    assert FACTORY.angles(pwm, 2.5)[2] + 90 == pytest.approx((285 - 306) / 2.5)
+    assert FACTORY.angles(pwm, 2.5)[2] + 90 == pytest.approx((306 - 326) / 2.5)
 
 
 @pytest.mark.parametrize("true_scale", [2.28, 1.8])

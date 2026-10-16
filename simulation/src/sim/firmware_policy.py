@@ -8,6 +8,14 @@ import numpy as np
 
 from src.sim.virtual_robot import native_library
 
+# firmware/include/imu_frame.h: the MPU6050 DMP's roll, pitch and yaw against the body frame.
+DMP_ANGLE_SIGNS = (1.0, -1.0, -1.0)
+
+
+def dmp_angles(rpy) -> tuple[float, float, float]:
+    """Body-frame roll, pitch and yaw as the robot's DMP reports them, which is what the firmware reads."""
+    return tuple(sign * angle for sign, angle in zip(DMP_ANGLE_SIGNS, rpy))
+
 
 class PolicyParams(ctypes.Structure):
     """firmware/include/policy/policy_core.h's PolicyParams, field for field; FirmwarePolicy checks the size."""

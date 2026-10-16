@@ -1,11 +1,10 @@
 """Does the firmware's self-levelling term reduce body tilt, or amplify it?
 
-motion.h adds the measured pitch/roll to the commanded body attitude (`target.phi + angleY()`).
+motion.h adds the measured pitch/roll, in the body frame (imu_frame.h), to the commanded body attitude.
 Whether that levels the robot or tips it further depends on the IMU mounting, the DMP's angle
-convention and this robot's X-lateral body frame -- three sign choices that cannot be resolved by
-reading the code. The robot behaves correctly on hardware, so the composite is right; this measures
-which sign reproduces that in the sim, because training against an amplifying body would be worse
-than not modelling the term at all.
+convention and this robot's X-lateral body frame; imu_frame.h records the signs measured on the robot.
+This measures which sign of the environment's own copy levels the body in the sim, because training
+against an amplifying body would be worse than not modelling the term at all.
 
 Runs the analytic gait over rough ground with levelling off, +1 and -1, and reports mean body tilt. This sets the
 sign of the environment's own copy of the term, which the research modes use; residual_pure and residual_gait run

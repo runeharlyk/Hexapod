@@ -4,7 +4,7 @@
 // and the stepping, IMU and servo handling mirror HexapodSim and FirmwareLoop (simulation/src/sim/).
 import type { MainModule, MjData, MjModel } from '@mujoco/mujoco'
 import { GEAR_FRICTION, servoTorque } from './servo'
-import { TICK_SECONDS, type SimImu, type VirtualRobot } from './virtual-robot'
+import { DMP_ANGLE_SIGNS, TICK_SECONDS, type SimImu, type VirtualRobot } from './virtual-robot'
 
 /** MuJoCo's joint and actuator names, in the firmware's angle order. */
 export const JOINTS = [0, 1, 2, 3, 4, 5].flatMap(leg =>
@@ -131,8 +131,8 @@ export class HexapodSim {
     }
   }
 
-  // The IMU as the training environment derives it from the base: roll, pitch and yaw of the base quaternion,
-  // world up in the body frame, and the gyro sensor at the IMU site.
+  // The IMU as the robot reports it: roll, pitch and yaw of the base quaternion with the DMP's signs, world up in
+  // the body frame, and the gyro sensor at the IMU site.
   private imu(): SimImu {
     const [w, x, y, z] = this.baseQuaternion()
     const roll = Math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
@@ -140,7 +140,7 @@ export class HexapodSim {
     const yaw = Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
     const gyro = this.data.sensordata
     return {
-      rpyRad: [roll, pitch, yaw],
+      rpyRad: [roll * DMP_ANGLE_SIGNS[0], pitch * DMP_ANGLE_SIGNS[1], yaw * DMP_ANGLE_SIGNS[2]],
       gravityUp: [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
       gyroRad: [gyro[this.gyroAdr], gyro[this.gyroAdr + 1], gyro[this.gyroAdr + 2]]
     }

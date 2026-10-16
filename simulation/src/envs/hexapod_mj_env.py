@@ -39,7 +39,7 @@ import gymnasium as gym
 import mujoco
 
 from src.sim.mj_runtime import HexapodSim, TERRAIN_MODEL_PATH
-from src.sim.firmware_policy import FirmwarePolicy, PolicyParams
+from src.sim.firmware_policy import FirmwarePolicy, PolicyParams, dmp_angles
 from src.sim.domain_rand import DomainRandomizer, Ranges
 from src.sim.terrain import randomize_hfield, KINDS as TERRAIN_KINDS
 from src.sim.rollout_weights import SCORE_W_STUCK, SCORE_W_KNOCK
@@ -90,8 +90,8 @@ SCHED_LAG_RATE = 0.6       # cycles/s of offset change
 # Firmware self-levelling (motion.h): the commanded body attitude tracks target + measured tilt,
 # lerped at `smoothing_factor` per 5 ms control tick. Without it here the policy trains against a
 # body that never auto-levels and then deploys onto one that does, competing for the same joints.
-# LEVEL_SIGN is +1 to match the firmware's `+ angleY()`; the direction that actually reduces tilt
-# is measured, not assumed -- see check_self_level.py.
+# LEVEL_SIGN is +1 to match the firmware, which adds the body-frame pitch (imu_frame.h); the direction that
+# actually reduces tilt is measured, not assumed -- see check_self_level.py.
 SELF_LEVEL_SMOOTHING = 0.06   # firmware smoothing_factor
 SELF_LEVEL_TICK_S = 0.005     # firmware control period the factor was tuned at
 LEVEL_SIGN = 1.0
@@ -665,9 +665,9 @@ class HexapodMjEnv(gym.Env):
         if self.randomize:
             grav, gyro, rpy = self.dr.noisy_imu(grav, gyro, rpy, self.np_random_)
         if self.firmware is not None:
-            # The IMU as the virtual robot models it (firmware_loop.imu_reading): MuJoCo's roll, pitch and yaw, and
-            # world up in the body frame.
-            return self.firmware.observe(-np.asarray(grav), gyro, rpy, self.dt)
+            # The IMU as the robot reports it (firmware_loop.imu_reading): the DMP's roll, pitch and yaw, and world
+            # up in the body frame.
+            return self.firmware.observe(-np.asarray(grav), gyro, dmp_angles(rpy), self.dt)
         frame = np.concatenate([grav, gyro, self._contact_sensed]) if self.obs_contact \
             else np.concatenate([grav, gyro])
         if not self._hist:

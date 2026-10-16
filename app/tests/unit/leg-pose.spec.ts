@@ -211,11 +211,11 @@ describe('a calibration PWM read as a joint angle', () => {
   })
 
   it('moves mirrored femurs opposite ways as the PWM rises', () => {
-    // Factory directions: right femurs -1, left femurs +1, so the same PWM rise drops one and lifts the other.
+    // Factory directions: right femurs +1, left femurs -1, so the same PWM rise lifts one and drops the other.
     const rise = (servoId: number) =>
       jointAngleFromPwm(servos[servoId], 1, 326) - jointAngleFromPwm(servos[servoId], 1, 306)
-    expect(rise(1)).toBeCloseTo(-10, 6)
-    expect(rise(10)).toBeCloseTo(10, 6)
+    expect(rise(1)).toBeCloseTo(10, 6)
+    expect(rise(10)).toBeCloseTo(-10, 6)
   })
 })
 
@@ -233,8 +233,8 @@ describe('the leg shown while calibrating', () => {
   })
 
   it('moves only the calibrated joint away from the reference pose', () => {
-    expectClose(calibrationLeg(servos, 13, 346), [0, 20, -90])
+    expectClose(calibrationLeg(servos, 13, 346), [0, -20, -90])
     expectClose(calibrationLeg(servos, 14, 306), referenceLeg(servos, 4))
-    expectClose(calibrationLeg(servos, 2, 346), [0, 0, -70])
+    expectClose(calibrationLeg(servos, 2, 346), [0, 0, -110])
   })
 })

@@ -18,6 +18,7 @@ constexpr esp_err_t ESP_FAIL = -1;
 using TickType_t = uint32_t;
 #define pdMS_TO_TICKS(ms) static_cast<TickType_t>(ms)
 inline void vTaskDelay(TickType_t) {}
+enum gpio_num_t : int {};
 
 struct FakeWrite {
     uint8_t addr;
@@ -38,6 +39,10 @@ class I2CBus {
         absent.clear();
         attempts.clear();
     }
+
+    // The bus is up before any driver touches it, so the servo controller's start-up has nothing to do.
+    bool isInitialized() const { return true; }
+    void begin(gpio_num_t, gpio_num_t, uint32_t) {}
 
     bool probe(uint8_t addr) { return registers.count(addr) != 0 && absent.count(addr) == 0; }
 

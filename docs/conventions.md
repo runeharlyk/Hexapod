@@ -64,9 +64,20 @@ The fixture records the mapping as it stands, so right strafe is the stick `lx =
 
 ## Floor confirmation
 
-Floor confirmation: not yet performed.
+Floor confirmation: performed on 2026-10-16, after the wiring fix below.
 The convention above is derived from the code, and the MuJoCo model agrees by construction: `simulation/src/resources/build_model.py` places leg 0 at +x +y in MuJoCo's right-handed, z-up world.
-Nothing yet shows that the physical robot's leg 0 is its right front leg, that `step_x > 0` strafes it right, or that `step_angle > 0` turns it counter-clockwise.
+A bench check on 2026-10-16 found the robot built as the mirror image of that convention: with its left side lifted, its right legs reached down while the self-levelling extended legs 3-5.
+Its servos 0-8 were wired to the board at 0x40, the left side: on the servo page, servo 0 moved the left front coxa.
+Raising servo 0's pulse swung that foot toward the rear, a counter-clockwise turn seen from above, so a rising pulse turns a coxa counter-clockwise on either side.
+Servos 0-8 now drive the board at 0x41, the right side, with every coxa direction reversed (`servo_controller.h`, `servo_factory.h`; `firmware/test/test_servo_map`).
+With the fix flashed and the calibration moved with its servos, servo 0 moves the right front coxa, raising its pulse swings that foot forward, and the self-levelling reaches down with whichever side is low.
+On the floor a forward stick walks the robot toward its front, a turn command with `step_angle > 0` turns it counter-clockwise, `step_x > 0` strafes it right, and the app's 3D view moves the same way.
+
+## IMU angles
+
+The MPU6050 DMP's roll agrees with the body frame, while its pitch and yaw are mirrored (`firmware/include/imu_frame.h`); its gravity vector and gyro agree.
+Measured on the robot on 2026-10-16: right side down 17.7 deg read pitch -17.7 deg and world up (-0.30, 0, 0.95), nose down 12 deg read roll -12.0 deg, and a counter-clockwise turn read a falling yaw with a positive gyro z.
+Self-levelling and the policy's observation turn the DMP's angles into the body frame with those signs, and the simulations feed the firmware the DMP's angles, not their own.
 
 ## Compass heading
 

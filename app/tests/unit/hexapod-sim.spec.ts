@@ -7,6 +7,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import loadMujoco, { type MainModule } from '@mujoco/mujoco'
 import { HexapodSim } from '../../src/lib/simulation/hexapod-sim'
 import {
+  DMP_ANGLE_SIGNS,
   loadVirtualRobot,
   type Command,
   type VirtualRobot
@@ -30,6 +31,19 @@ function run(sim: HexapodSim, seconds: number, command?: Command) {
     sim.step(0.02)
   }
 }
+
+describe("the simulated IMU's angle signs", () => {
+  it("are the firmware's, from imu_frame.h", () => {
+    const header = readFileSync(
+      path.resolve(__dirname, '../../../firmware/include/imu_frame.h'),
+      'utf8'
+    )
+    const signs = ['ROLL', 'PITCH', 'YAW'].map(name =>
+      Number(new RegExp(`${name}_SIGN = ([+-][0-9.]+)f;`).exec(header)![1])
+    )
+    expect(signs).toEqual([...DMP_ANGLE_SIGNS])
+  })
+})
 
 describe('the simulated hexapod', () => {
   beforeAll(async () => {
