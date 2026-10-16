@@ -874,6 +874,38 @@ void test_released_command_stops_the_cycle() {
     }
 }
 
+// A stop leaves the walk's stroke at rest and eases it out at the walk's cadence: a first-order ramp left it at its
+// fastest rate on the stop's first tick. Any other change, a walk starting, still eases first order.
+void test_a_stop_leaves_the_stroke_at_rest_at_the_walks_cadence() {
+    const float a = 1.0f - std::exp(-DT / 0.15f);
+    gait_state_t walking = makeGait(GaitType::TRI_GATE, 0, 60.0f, 0);
+    walking.phase_rate = 0.8f;
+    gait_state_t live = makeGait(GaitType::TRI_GATE, 0, 0, 0);
+    GaitCommandRamp ramp;
+    ramp.step(live, walking, DT, 0.15f);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 60.0f * a, live.step_y);
+    for (int t = 0; t < 600; ++t) ramp.step(live, walking, DT, 0.15f);
+    TEST_ASSERT_EQUAL_FLOAT(60.0f, live.step_y);
+
+    gait_state_t stop = walking;
+    stop.step_y = 0.0f;
+    stop.phase_rate = 0.0f;
+    ramp.step(live, stop, DT, 0.15f);
+    TEST_ASSERT_TRUE(60.0f - live.step_y < 0.1f * 60.0f * a);
+    int ticks = 1;
+    float fastest = 0.0f, previous = live.step_y;
+    while (gaitIsCommanded(live)) {
+        ramp.step(live, stop, DT, 0.15f);
+        ++ticks;
+        fastest = std::max(fastest, previous - live.step_y);
+        previous = live.step_y;
+        TEST_ASSERT_EQUAL_FLOAT(gaitIsCommanded(live) ? 0.8f : 0.0f, live.phase_rate);
+    }
+    // Two stages in a row peak at 1/e of a single stage's first step.
+    TEST_ASSERT_FLOAT_WITHIN(0.02f * 60.0f * a, 60.0f * a / std::exp(1.0f), fastest);
+    TEST_ASSERT_TRUE(ticks < 200);
+}
+
 void test_yaw_below_deadband_does_not_start_the_cycle() {
     // The yaw counterpart of test_command_below_deadband_does_not_start_the_cycle: 0.004 rad over the
     // 171 mm leg radius is 0.7 mm of foot travel, which is not a step.
@@ -1277,6 +1309,7 @@ int main(int, char **) {
     RUN_TEST(test_command_ramp_lands_exactly_on_a_released_command);
     RUN_TEST(test_collapsed_ramp_takes_the_command_outright);
     RUN_TEST(test_released_command_stops_the_cycle);
+    RUN_TEST(test_a_stop_leaves_the_stroke_at_rest_at_the_walks_cadence);
     RUN_TEST(test_yaw_below_deadband_does_not_start_the_cycle);
     RUN_TEST(test_yaw_above_deadband_still_steps);
     RUN_TEST(test_stance_change_walks_the_feet_to_the_new_target);

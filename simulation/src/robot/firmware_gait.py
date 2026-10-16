@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import lru_cache
+import copy
 import json
 import math
 import os
@@ -458,6 +459,26 @@ def approach_gait_command(current: GaitState, target: GaitState, dt: float,
         current.phase_rate = _approach(current.phase_rate, target.phase_rate, a, GAIT_SNAP_RATE)
     elif not stopping:
         current.phase_rate = target.phase_rate
+
+
+class GaitCommandRamp:
+    """Port of GaitCommandRamp (gait.h): every change eases first order, except a stop, whose stroke eases out through
+    two stages in a row so that it leaves the walk's stroke at rest, at the walk's cadence."""
+
+    def __init__(self):
+        self._stage = GaitState()
+
+    def step(self, live: GaitState, target: GaitState, dt: float, tau: float = GAIT_COMMAND_TAU_S) -> None:
+        previous = self._stage
+        self._stage = copy.deepcopy(target)
+        if target.phase_rate <= 0.0 and not gait_is_commanded(target) and gait_is_commanded(live):
+            a = 1.0 if tau <= 0.0 or dt <= 0.0 else 1.0 - math.exp(-dt / tau)
+            self._stage.step_x = _approach(previous.step_x, target.step_x, a, GAIT_SNAP_MM)
+            self._stage.step_y = _approach(previous.step_y, target.step_y, a, GAIT_SNAP_MM)
+            self._stage.step_angle = _approach(previous.step_angle, target.step_angle, a, GAIT_SNAP_RAD)
+            if gait_is_commanded(self._stage):
+                self._stage.phase_rate = live.phase_rate
+        approach_gait_command(live, self._stage, dt, tau)
 
 
 def select_auto_gait(speed01: float, current: int) -> int:

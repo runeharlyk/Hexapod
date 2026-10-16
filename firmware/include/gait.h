@@ -95,6 +95,29 @@ inline void approachGaitCommand(gait_state_t& current, const gait_state_t& targe
         current.phase_rate = target.phase_rate;
 }
 
+// The command ramp the walk eases through. A change eases first order over tau, except a stop, whose stroke eases out
+// through two such stages in a row. A single stage leaves the walk's stroke at its fastest rate, and a foot at the edge
+// of its reach, where the joints turn furthest per millimetre, then moved up to 1.8 times as fast as in the walk; two
+// stages leave it at rest. The stop steps at the walk's cadence throughout (approachGaitCommand).
+class GaitCommandRamp {
+  public:
+    void step(gait_state_t& live, const gait_state_t& target, float dt, float tau) {
+        const gait_state_t previous = stage;
+        stage = target;
+        if (target.phase_rate <= 0.0f && !gaitIsCommanded(target) && gaitIsCommanded(live)) {
+            const float a = (tau <= 0.0f || dt <= 0.0f) ? 1.0f : 1.0f - expf(-dt / tau);
+            stage.step_x = approachf(previous.step_x, target.step_x, a, GAIT_SNAP_MM);
+            stage.step_y = approachf(previous.step_y, target.step_y, a, GAIT_SNAP_MM);
+            stage.step_angle = approachf(previous.step_angle, target.step_angle, a, GAIT_SNAP_RAD);
+            if (gaitIsCommanded(stage)) stage.phase_rate = live.phase_rate;
+        }
+        approachGaitCommand(live, stage, dt, tau);
+    }
+
+  private:
+    gait_state_t stage {};
+};
+
 class GaitController {
   private:
     float phase = 0.0f;

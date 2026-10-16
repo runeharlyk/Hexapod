@@ -313,7 +313,7 @@ class MotionService {
                 // STAND is not stepping, so this is where a gait selection deferred by
                 // handleInputGait gets honoured -- otherwise leaving WALK would strand it.
                 updateAutoGait();
-                approachGaitCommand(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
+                _commandRamp.step(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
                 gait.step(gait_state, body_state, dt);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 noteRestPosture();
@@ -351,7 +351,7 @@ class MotionService {
                 settleWalkPosture();
                 // Before the ramp: it clears the 2 mm deadband in one tick, closing the window.
                 updateAutoGait();
-                approachGaitCommand(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
+                _commandRamp.step(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
                 gait.step(gait_state, body_state, dt);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
@@ -409,6 +409,7 @@ class MotionService {
         {0, 0.5, 0, 0.5, 0, 0.5}};
     // Commands land here; gait_state eases toward it every tick (issue #7).
     gait_state_t target_gait_state = gait_state;
+    GaitCommandRamp _commandRamp; // control task
 
     static constexpr float smoothing_factor = BODY_SMOOTHING;
     // Ramp time constant for the locomotion command: ~0.45 s to settle. Slow enough that a slammed

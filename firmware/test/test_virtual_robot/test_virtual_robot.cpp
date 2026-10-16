@@ -167,7 +167,7 @@ void test_a_walk_without_commands_comes_to_rest() {
     standUp(robot);
     robot.setMode(MOTION_STATE::WALK);
     largestStep(robot, ticksFor(1.0f), &FORWARD);
-    largestStep(robot, ticksFor(0.6f + 1.1f));  // the timeout, then the ramp's settle and the feet's ease
+    largestStep(robot, ticksFor(0.6f + 1.5f)); // the timeout, then the stop's two-stage ramp and the feet's ease
     TEST_ASSERT_LESS_THAN_FLOAT(1e-3f, largestStep(robot, ticksFor(0.5f)));
     TEST_ASSERT_EQUAL(MOTION_STATE::WALK, robot.mode());
 }
@@ -738,10 +738,10 @@ struct StopRun {
     bool cadenceLeft = false; // the gait stopped stepping with an explicit cadence still set
 };
 
-// Walks `stick` at its posture from a stand in that posture, then stops it the way `stop` does. The stop is followed
-// until the feet have eased home after the gait stopped stepping, or until the motion moves the body to another
-// posture, which a posture pause and the dead-man do once the gait is still.
-StopRun walkThenStop(GaitType gait, const CommandMsg &stick, Stop stop) {
+// Walks `stick` at its posture from a stand in that posture, then stops it the way `stop` does, `phase` ticks later in
+// the cycle. The stop is followed until the feet have eased home after the gait stopped stepping, or until the motion
+// moves the body to another posture, which a posture pause and the dead-man do once the gait is still.
+StopRun walkThenStop(GaitType gait, const CommandMsg &stick, Stop stop, int phase) {
     VirtualRobot robot;
     standUp(robot);
     robot.setGait(gait);
@@ -750,7 +750,7 @@ StopRun walkThenStop(GaitType gait, const CommandMsg &stick, Stop stop) {
     robot.setMode(MOTION_STATE::WALK);
     hold(robot, stick, ticksFor(2.5f));
     StopRun run;
-    run.walkPeak = hold(robot, stick, ticksFor(1.5f)).largestStep;
+    run.walkPeak = hold(robot, stick, ticksFor(1.5f) + phase).largestStep;
 
     CommandMsg after = stick;
     after.lx = after.ly = after.rx = 0;
@@ -791,14 +791,17 @@ StopRun walkThenStop(GaitType gait, const CommandMsg &stick, Stop stop) {
 } // namespace
 
 // A stop ramps the stroke out over several cycles. Stepped at the stride law's cadence, up to 1.5 cycles/s, that stroke
-// moved a joint up to 10.4 deg in a tick, where WAVE and RIPPLE walk theirs below 1 cycle/s; held at the walk's own
-// cadence, a shrinking stroke moves the joints no faster than the walk did. Every way a classic walk stops is checked,
-// at a slow and a fast stick, in postures from neutral to the envelope's edges, and no stop may move a joint faster
-// than STOP_STEP_BOUND_DEG, leave travel, or leave a cadence set once the gait has stopped.
+// moved a joint up to 10.4 deg in a tick, where WAVE and RIPPLE walk theirs below 1 cycle/s. At the walk's own cadence
+// a stroke shrinking at its fastest from the first tick still moved a foot at the edge of its reach up to 6.7 deg in a
+// tick, depending on where in the cycle the stop came; eased out from rest it moves the joints no faster than the walk.
+// Every way a classic walk stops is checked, at a slow and a fast stick, in postures from neutral to the envelope's
+// edges, a release at twelve points of the cycle, and no stop may move a joint faster than STOP_STEP_BOUND_DEG, leave
+// travel, or leave a cadence set once the gait has stopped.
 void test_every_stop_ramps_down_at_the_walks_cadence() {
     // The steady walks below peak at 3.91 deg in a tick (measured), just past the servo's 3.75 deg (13.1 rad/s over 5
-    // ms). A shrinking stroke adds its own rate to the feet's, which took the stops here to 3.96 deg.
+    // ms), and their stops at 3.95 deg.
     constexpr float STOP_STEP_BOUND_DEG = 4.0f;
+    constexpr int PHASES = 12, PHASE_STEP_TICKS = 7; // 0.42 s, most of a fast gait's cycle
     const Posture3 postures[] = {{0, 0, 0}, {1, -1, 0}, {1, -1, -1}, {-1, -1, 0}};
     float walkPeak = 0.0f, stopPeak = 0.0f;
     for (const GaitType gait : CLASSIC_GAITS) {
@@ -808,16 +811,19 @@ void test_every_stop_ramps_down_at_the_walks_cadence() {
                 for (CommandMsg stick : FULL_STICKS) {
                     stick.s = s;
                     stick = withPosture(stick, posture);
-                    for (const Stop stop : {Stop::RELEASE, Stop::POSTURE_PAUSE, Stop::STAND, Stop::DEAD_MAN}) {
-                        const StopRun run = walkThenStop(gait, stick, stop);
+                    for (int k = 0; k < PHASES + 3; ++k) {
+                        const Stop others[] = {Stop::POSTURE_PAUSE, Stop::STAND, Stop::DEAD_MAN};
+                        const Stop stop = k < PHASES ? Stop::RELEASE : others[k - PHASES];
+                        const int phase = k < PHASES ? k * PHASE_STEP_TICKS : 0;
+                        const StopRun run = walkThenStop(gait, stick, stop, phase);
                         walkPeak = std::max(walkPeak, run.walkPeak);
                         stopPeak = std::max(stopPeak, run.stop.largestStep);
                         char msg[200];
                         std::snprintf(msg, sizeof(msg),
-                                      "%s, gait %d stick (%.0f %.0f %.0f) s %.0f posture (%.2f %.2f %.2f): walk peak "
-                                      "%.2f, stop peak %.2f deg, %d clamped",
-                                      stopName(stop), (int)gait, stick.lx, stick.ly, stick.rx, s, posture.s1, posture.h,
-                                      posture.fd, run.walkPeak, run.stop.largestStep, run.stop.clamped);
+                                      "%s %d ticks on, gait %d stick (%.0f %.0f %.0f) s %.0f posture (%.2f %.2f %.2f): "
+                                      "walk peak %.2f, stop peak %.2f deg, %d clamped",
+                                      stopName(stop), phase, (int)gait, stick.lx, stick.ly, stick.rx, s, posture.s1,
+                                      posture.h, posture.fd, run.walkPeak, run.stop.largestStep, run.stop.clamped);
                         TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(STOP_STEP_BOUND_DEG, run.stop.largestStep, msg);
                         TEST_ASSERT_EQUAL_INT_MESSAGE(0, run.stop.clamped, msg);
                         TEST_ASSERT_TRUE_MESSAGE(run.cadenceHeld, msg);

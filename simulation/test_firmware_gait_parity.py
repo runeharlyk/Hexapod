@@ -515,6 +515,29 @@ def test_a_stop_ramps_out_at_the_walks_cadence():
     assert ticks > 50, "the stroke ramps out over cycles, not at once"
 
 
+def test_a_stop_leaves_the_stroke_at_rest():
+    """GaitCommandRamp: a walk starts first order, a stop eases its stroke out through two stages, so its first tick
+    barely moves the stroke and its fastest step is 1/e of a single stage's first."""
+    a = 1.0 - math.exp(-FIRMWARE_DT / fg.GAIT_COMMAND_TAU_S)
+    walking = _tripod()
+    walking.step_y, walking.phase_rate = 60.0, 0.8
+    live, ramp = _tripod(), fg.GaitCommandRamp()
+    ramp.step(live, walking, FIRMWARE_DT)
+    assert live.step_y == pytest.approx(60.0 * a)
+    for _ in range(600):
+        ramp.step(live, walking, FIRMWARE_DT)
+    stop = fg.GaitState(**{**walking.__dict__, "offset": walking.offset.copy()})
+    stop.step_y, stop.phase_rate = 0.0, 0.0
+    ramp.step(live, stop, FIRMWARE_DT)
+    assert 60.0 - live.step_y < 0.1 * 60.0 * a
+    fastest, previous = 0.0, live.step_y
+    while fg.gait_is_commanded(live):
+        ramp.step(live, stop, FIRMWARE_DT)
+        fastest, previous = max(fastest, previous - live.step_y), live.step_y
+        assert live.phase_rate == (0.8 if fg.gait_is_commanded(live) else 0.0)
+    assert fastest == pytest.approx(60.0 * a / math.e, rel=0.02)
+
+
 def test_explicit_phase_rate_overrides_the_stride_law():
     gait = _tripod()
     gait.step_y, gait.phase_rate = 100.0, 1.35
