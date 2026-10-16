@@ -9,6 +9,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <vector>
 #include <gait_speed.h>
 #include <pb_decode.h>
@@ -422,7 +423,8 @@ void test_a_posture_change_while_walking_stays_in_travel() {
     for (const GaitType gait : {GaitType::TRI_GATE, GaitType::WAVE}) {
         for (const CommandMsg &stick : {fullStick(0, 1, 0), fullStick(1, 1, 1)}) {
             for (const auto &change : changes) {
-                VirtualRobot robot;
+                const auto owner = std::make_unique<VirtualRobot>(); // heap: the stack would exceed -Wstack-usage
+                VirtualRobot &robot = *owner;
                 standUp(robot);
                 robot.setGait(gait);
                 robot.tick();
@@ -1006,7 +1008,8 @@ void test_a_stride_change_while_walking_eases_through_without_a_pause() {
                 for (const auto &change : changes) {
                     CommandMsg stick = withPosture(full, posture);
                     stick.stride = change[0];
-                    VirtualRobot robot;
+                    const auto owner = std::make_unique<VirtualRobot>(); // heap: the stack would exceed -Wstack-usage
+                    VirtualRobot &robot = *owner;
                     walkFromStandIn(robot, gait, posture);
                     hold(robot, stick, ticksFor(5.0f));
                     TEST_ASSERT_TRUE(walkResumed(robot));
