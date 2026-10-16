@@ -62,8 +62,9 @@ float trilinear(const Cell& s1, const Cell& h, const Cell& fd, At at) {
     return lerp(lerp(along_fd[0][0], along_fd[0][1], h.frac), lerp(along_fd[1][0], along_fd[1][1], h.frac), s1.frac);
 }
 
-// The longest stroke an axis's joints can travel at the posture, 0 where the posture cannot walk. The table holds zeros
-// outside the walkable cells, so it is interpolated only inside them.
+// The longest stroke an axis's joints can travel at the posture, 0 where the posture cannot walk. Walkability gates the
+// lookup: some grid points outside the walkable cells carry a stroke, so the table is read only in a cell whose eight
+// corners all walk.
 inline float strokeMaxAt(int axis, float s1, float h, float fd) {
     const Cell cs1 = locate(s1), ch = locate(h), cfd = locate(fd);
     if (axis < 0 || axis > 2 || !cellWalkable(cs1, ch, cfd)) return 0.0f;

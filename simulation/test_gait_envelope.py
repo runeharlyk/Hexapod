@@ -252,7 +252,7 @@ def _speed_optimal_cells(table, count, seed):
 @pytest.mark.parametrize("axis", ge.AXES)
 def test_speed_optimal_stroke_matches_the_reference_sweep(table, axis):
     """The table samples the refined longest stroke at tenths and the reference sweeps fixed steps, so neither finds
-    the other's optimum exactly. Kappa rises with the stroke, so a shorter stroke steps at least as fast: the best
+    the other's optimum exactly. Kappa mostly rises with the stroke, so a shorter stroke steps at least as fast: the best
     sample is at least the reference's speed scaled down to the sample just short of the reference's stroke, less what
     a dip in kappa costs, and at most the reference's speed scaled up from the swept stroke just short of its own."""
     sweep_step = ge.STROKES[axis][0]

@@ -578,8 +578,8 @@ def approach_gait_command(current: GaitState, target: GaitState, dt: float,
 
 class GaitCommandRamp:
     """Port of GaitCommandRamp (gait.h): every change eases first order, except a stop, which starts from the walk as
-    it is, eases the stroke out through two first-order stages and shrinks the cadence in proportion to the stroke, as
-    the speed law slows a walk. A walk on the stride law (phase_rate 0) keeps it."""
+    it is, eases the stroke out through two first-order stages and scales the cadence with the share of the stroke left.
+    A walk on the stride law (phase_rate 0) keeps it."""
 
     def __init__(self):
         self._stopping = False
