@@ -10,6 +10,7 @@ As a pytest module it checks:
   * gait_tuned.h against its gait_library.json entry, including the C++ velocity_to_gait port;
   * firmware_gait.py against constants parsed out of the firmware headers;
   * firmware_gait.py's TUNED command mapping against the header's own formula;
+  * firmware_gait.py's classic command mapping and posture clamp against gait_speed.h, run in the native library;
   * the nominal-stance IK against the properties the firmware host test pins.
 
 As a script it runs the header check only:
@@ -18,6 +19,7 @@ As a script it runs the header check only:
 """
 
 import argparse
+import ctypes
 import json
 import math
 import os
@@ -30,6 +32,7 @@ import pytest
 from src.envs.hexapod_mj_env import PG_HEIGHT, PG_PHASE_RATE, PG_STEP_ANGLE, PG_STEP_XY
 from src.robot import firmware_gait as fg
 from src.robot.gait_schedule import GaitSchedule
+from src.sim.virtual_robot import native_library
 
 FIRMWARE_INCLUDE = os.path.join(os.path.dirname(__file__), "..", "firmware", "include")
 HDR = os.path.join(FIRMWARE_INCLUDE, "gait_tuned.h")
@@ -275,6 +278,69 @@ def test_tuned_command_mapping_follows_the_firmware_formula(header, gait_h):
         rate = header["PHASE_RATE_MIN"] + (a[5] + 1) * 0.5 * (header["PHASE_RATE_MAX"] - header["PHASE_RATE_MIN"])
         assert gait.phase_rate == pytest.approx(rate, abs=1e-4)
         assert zm == pytest.approx(-header["RIDE_MM"], abs=1e-4)
+
+
+CLASSIC_GAITS = (fg.TRI_GATE, fg.BI_GATE, fg.WAVE, fg.RIPPLE)
+
+
+def _random_stick(rng):
+    """An axis is idle a third of the time, so the walks mix single axes with combined ones."""
+    return [0.0 if rng.random() < 1 / 3 else rng.uniform(-1.0, 1.0) for _ in range(3)]
+
+
+def _random_posture(rng):
+    """Half beyond the grid or anywhere in it, half pulled onto the walkable boundary, where most clamped commands
+    land and where the corner gate decides."""
+    posture = rng.uniform(-1.2, 1.2, 3)
+    return fg.clamp_posture(*posture) if rng.random() < 0.5 else tuple(posture)
+
+
+def _native_walk_target(gait, lx, ly, rx, s, s1, h, fd):
+    out = (ctypes.c_float * 4)()
+    native_library().classicWalkTarget(gait, lx, ly, rx, s, s1, h, fd, out)
+    return np.array(out[:])
+
+
+@pytest.mark.parametrize("gait", CLASSIC_GAITS)
+def test_classic_walk_target_matches_the_firmware(gait):
+    rng = np.random.default_rng(100 + gait)
+    walking = 0
+    for _ in range(500):
+        lx, ly, rx = _random_stick(rng)
+        s = rng.uniform(-1.1, 1.1)
+        posture = _random_posture(rng)
+        native = _native_walk_target(gait, lx, ly, rx, s, *posture)
+        port = np.array(fg.classic_walk_target(gait, lx, ly, rx, s, *posture))
+        np.testing.assert_allclose(port, native, rtol=0, atol=TOL, err_msg=f"stick {lx, ly, rx} s {s} at {posture}")
+        walking += native[3] > 0.0
+    assert walking > 150, "too few samples walk to compare the stroke and cadence"
+
+
+def test_clamp_posture_matches_the_firmware():
+    rng = np.random.default_rng(7)
+    moved = 0
+    for _ in range(500):
+        posture = rng.uniform(-1.3, 1.3, 3)
+        native = (ctypes.c_float * 3)(*posture)
+        native_library().clampPosture(native)
+        clamped = fg.clamp_posture(*posture)
+        np.testing.assert_allclose(clamped, native[:], rtol=0, atol=1e-5, err_msg=f"posture {posture}")
+        moved += not np.allclose(clamped, np.clip(posture, -1.0, 1.0))
+    assert moved > 100, "too few postures needed clamping to compare the ray search"
+
+
+def test_classic_command_walks_the_clamped_posture():
+    """The posture is clamped before the envelope is read, and the lift and height are the clamped posture's."""
+    s1, h, fd = fg.clamp_posture(0.5, 1.0, -1.0)
+    assert (s1, h, fd) != (0.5, 1.0, -1.0), "the test posture must lie outside the walkable region"
+    gait = fg.GaitState(gait_type=fg.TRI_GATE)
+    zm = fg.command_to_walk_gait(0.2, 0.8, -0.3, 0.4, 0.5, gait, 1.0, -1.0)
+    expected = fg.classic_walk_target(fg.TRI_GATE, 0.2, 0.8, -0.3, 0.4, s1, h, fd)
+    assert (gait.step_x, gait.step_y, gait.step_angle, gait.phase_rate) == pytest.approx(expected)
+    assert gait.phase_rate > 0.0
+    assert gait.step_height == pytest.approx((s1 + 1.0) * 20.0)
+    assert gait.step_speed == 1.0
+    assert zm == pytest.approx(h * 50.0)
 
 
 @pytest.mark.parametrize("progress", [0.0, 0.1, 0.37, 0.5, 0.83, 0.999, 1.0])

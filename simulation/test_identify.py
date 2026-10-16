@@ -32,7 +32,7 @@ TRUTH = dict(stall=0.9, hold=1.1, kp=1.15, noload=1.0, deadband=0.012, lag_ms=8.
              gyro_bias=(0.02, -0.01, 0.005), gyro_noise=0.04, rpy_noise_deg=0.8, gravity_noise=0.01)
 
 
-def joint_commands(stand_s: float, walk_s: float, stick) -> np.ndarray:
+def joint_commands(stand_s: float, walk_s: float, stick, s: float) -> np.ndarray:
     """The firmware's STAND then WALK ticks (deg, as the telemetry carries them), on a level IMU: with no physics in
     the loop the commands are the same on every platform, where feeding back a simulated IMU would let the contacts
     amplify each platform's floating point into a different walk."""
@@ -46,16 +46,18 @@ def joint_commands(stand_s: float, walk_s: float, stick) -> np.ndarray:
         angles.append(robot.servo_angles())
     robot.set_mode(WALK)
     for _ in range(round(walk_s / FIRMWARE_DT)):
-        robot.command(lx=lx, ly=ly, rx=rx)
+        robot.command(lx=lx, ly=ly, rx=rx, s=s)
         robot.tick()
         angles.append(robot.servo_angles())
     return np.array(angles)
 
 
 def write(path, *, stall, hold, kp, noload, deadband, lag_ms, gyro_bias, gyro_noise, rpy_noise_deg, gravity_noise,
-          stand_s, walk_s, stick=(0.0, 0.6, 0.3), seed=0, deactivate_at_s=None):
+          stand_s, walk_s, stick=(0.0, 0.6, 0.3), s=1.0, seed=0, deactivate_at_s=None):
+    # The stick walks at the top of the classic gait's speed range: at the default speed it strides 31 mm instead of
+    # 40, and that walk loads the servos too little to pin the stall (sigma 0.097, measured).
     rng = np.random.default_rng(seed)
-    angles = joint_commands(stand_s, walk_s, stick)
+    angles = joint_commands(stand_s, walk_s, stick, s)
     n = len(angles)
     sim = HexapodSim()
     sim.reset_to_stand()

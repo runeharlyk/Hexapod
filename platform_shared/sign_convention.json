@@ -19,7 +19,7 @@
     {
       "name": "forward",
       "stick": { "lx": 0, "ly": 0.5, "rx": 0 },
-      "gait": { "step_x": 0, "step_y": 50, "step_angle": 0 },
+      "gait": { "step_x": 0, "step_y": 35.05424368, "step_angle": 0 },
       "body_velocity_sign": [0, 1],
       "yaw_sign": 0,
       "stance_foot_displacement_sign": [
@@ -34,7 +34,7 @@
     {
       "name": "right strafe",
       "stick": { "lx": -0.5, "ly": 0, "rx": 0 },
-      "gait": { "step_x": 50, "step_y": 0, "step_angle": 0 },
+      "gait": { "step_x": 30.67246322, "step_y": 0, "step_angle": 0 },
       "body_velocity_sign": [1, 0],
       "yaw_sign": 0,
       "stance_foot_displacement_sign": [
@@ -49,7 +49,7 @@
     {
       "name": "counter-clockwise turn",
       "stick": { "lx": 0, "ly": 0, "rx": 0.5 },
-      "gait": { "step_x": 0, "step_y": 0, "step_angle": 0.4 },
+      "gait": { "step_x": 0, "step_y": 0, "step_angle": 0.25195238 },
       "body_velocity_sign": [0, 0],
       "yaw_sign": 1,
       "stance_foot_displacement_sign": [

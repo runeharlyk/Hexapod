@@ -2,7 +2,8 @@
 
 The sampled joint-rate factors replace a rollout per posture, so the first test pins them to one.
 The remaining tests pin the table's reference values, its walkable region, the servo scaling of the
-speed, and the agreement of the generated header with the generated JSON.
+speed, and the agreement of the generated header with the generated JSON, and walk the port at full
+stick in random walkable postures, between the grid points the table was measured at.
 """
 
 import json
@@ -14,6 +15,7 @@ import pytest
 
 from src.robot import firmware_gait as fg
 from src.robot import gait_envelope as ge
+from src.robot.animation import JOINT_LIMIT_DEG, foot_reachable
 
 FIRMWARE_INCLUDE = os.path.join(os.path.dirname(__file__), "..", "firmware", "include")
 HEADER = os.path.join(FIRMWARE_INCLUDE, "gait_envelope.h")
@@ -93,6 +95,80 @@ def test_stroke_grows_the_joint_rate_and_the_travel():
     long = ge.geometry_factors("forward", 60.0, 20.0, 0.0, 1.0)
     assert long[0] > short[0] and long[1] > short[1]
     assert not ge.geometry_factors("forward", 400.0, 20.0, 0.0, 1.0)[2]
+
+
+FIRMWARE_DT = 0.005
+FULL_STICKS = {"forward": (0.0, 1.0, 0.0), "lateral": (1.0, 0.0, 0.0), "yaw": (0.0, 0.0, 1.0)}
+
+
+def _walkable_postures(count, seed):
+    rng = np.random.default_rng(seed)
+    postures = []
+    while len(postures) < count:
+        posture = tuple(rng.uniform(-1.0, 1.0, 3))
+        if fg.posture_walkable(*posture):
+            postures.append(posture)
+    return postures
+
+
+def _worst_excursion(gait_type, stick, s1, h, fd):
+    """The port's gait at the firmware's tick from a stand in the posture, the command eased in as MotionService does
+    and then held at the top speed for two cycles: the largest |joint| / JOINT_LIMIT_DEG and whether every foot
+    stayed in reach. None when the posture cannot walk the axis."""
+    target = fg.GaitState(gait_type=gait_type)
+    fg.set_gait(target)
+    zm = fg.command_to_walk_gait(*stick, 1.0, s1, target, h, fd)
+    if target.phase_rate <= 0.0:
+        return None
+    gait = fg.GaitState(**{**target.__dict__, "offset": target.offset.copy()})
+    gait.step_x = gait.step_y = gait.step_angle = gait.phase_rate = 0.0
+    stance = fg.DEFAULT_FEET.copy()
+    stance[:, :2] *= ge.posture(s1, h, fd)[2]
+    controller = fg.GaitController()
+    controller.default_position = stance.copy()
+    controller.target_default_position = stance.copy()
+    body, kin = fg.BodyState(zm=zm, feet=stance.copy()), fg.Kinematics()
+    body6 = np.array([0.0, 0.0, 0.0, 0.0, 0.0, zm])
+    worst, reachable = 0.0, True
+    ramp_s = 1.0
+    for _ in range(int(np.ceil((ramp_s + 2.0 / target.phase_rate) / FIRMWARE_DT))):
+        fg.approach_gait_command(gait, target, FIRMWARE_DT)
+        controller.step(gait, body, FIRMWARE_DT)
+        angles = kin.inverse_kinematics(body).reshape(6, 3)
+        worst = max(worst, float((np.abs(angles) / JOINT_LIMIT_DEG).max()))
+        reachable = reachable and all(foot_reachable(kin, body6, np.zeros(3), leg, body.feet) for leg in range(6))
+    return worst, reachable
+
+
+@pytest.fixture(scope="module")
+def full_stick_walks():
+    """{(gait, axis, posture): (worst, reachable)} over 40 walkable postures. Between the grid points the envelope is
+    interpolated, so a stroke read inside a walkable cell has to hold for the posture actually walked, not only at the
+    corners it was measured at."""
+    walks = {}
+    for posture in _walkable_postures(40, seed=4):
+        for gait_type, name in enumerate(ge.GAIT_NAMES):
+            for axis, stick in FULL_STICKS.items():
+                excursion = _worst_excursion(gait_type, stick, *posture)
+                assert excursion is not None or axis != "forward", f"walkable posture {posture} cannot walk forward"
+                if excursion is not None:
+                    walks[name, axis, tuple(round(v, 3) for v in posture)] = excursion
+    walked = {axis: sum(key[1] == axis for key in walks) for axis in FULL_STICKS}
+    assert walked["lateral"] >= 40 and walked["yaw"] >= 40, walked
+    return walks
+
+
+def test_walkable_postures_walk_full_stick_in_reach(full_stick_walks):
+    assert [where for where, (_, reachable) in full_stick_walks.items() if not reachable] == []
+
+
+@pytest.mark.xfail(strict=True, reason="Trilinear interpolation of the stroke overshoots the feasible stroke inside "
+                   "some walkable cells: BI_GATE lateral at (-0.775, 0.335, -0.025) bends the tibia 0.28 deg past its "
+                   "travel, and a denser sweep finds up to 1.05 deg (TRI_GATE lateral); the generator's tables need a "
+                   "stroke that holds across the cell")
+def test_walkable_postures_walk_full_stick_in_travel(full_stick_walks):
+    beyond = {where: round(worst, 4) for where, (worst, _) in full_stick_walks.items() if worst > 1.0}
+    assert beyond == {}
 
 
 def _cpp_array(text, name):

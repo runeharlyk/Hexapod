@@ -13,7 +13,8 @@ radii `build_model.py` gives the links, and is negative on contact.
 
 The servos stop at their travel (`ServoController::setAngles` clips to `JOINT_LIMIT_DEG`), so the
 default check runs on the clamped angles the robot reaches; `commanded` rows use the raw IK angles,
-which over much of the envelope swing a coxa well past its 31.5 deg travel.
+which for the searched gait swing a coxa well past its 31.5 deg travel (the classic gaits' speed
+envelope keeps their strokes inside it).
 
 The gait is sampled at the commanded stride with the command already reached, one phase per sample,
 so the command ramp and the stop/start easing are not part of the sweep.
