@@ -11,6 +11,7 @@
 #include <utils/timing.h>
 #include <utils/math_utils.h>
 #include <gait.h>
+#include <gait_speed.h>
 #include <event_bus.h>
 #include <message_types.h>
 #include <policy_runner.h>
@@ -67,15 +68,8 @@ class MotionService {
 
     // Loads _requestedGait into the live schedule. Only safe while the gait is not stepping.
     void applyRequestedGait() {
-        gait_state.gait_type = _requestedGait == GaitType::AUTO
-                                   ? selectAutoGait(commandSpeed01(), gait_state.gait_type)
-                                   : _requestedGait;
-        gait.setGait(gait_state);
-        // The schedule switches outright; only the command eases. Keep the target's identity fields
-        // in step so a later ramp never reads a stale gait.
-        target_gait_state.gait_type = gait_state.gait_type;
-        target_gait_state.stand_frac = gait_state.stand_frac;
-        for (int i = 0; i < 6; i++) target_gait_state.offset[i] = gait_state.offset[i];
+        loadGait(_requestedGait == GaitType::AUTO ? selectAutoGait(commandSpeed01(), gait_state.gait_type)
+                                                  : _requestedGait);
     }
 
     // Mode worker. The rules live in decideMode (animation/mode_arbiter.h); this executes them. A
@@ -146,11 +140,17 @@ class MotionService {
         lastCommandMillis = millis();
         lastCommand = c;
         commandTimedOut = false;
-        steering = isWalkingMode(motionState) && (c.lx != 0.f || c.ly != 0.f || c.rx != 0.f);
-        updateFeetDistanceTarget(c.fd);
-        target_body_state.zm = c.h * 50;
+        const MOTION_STATE mode = motionState;
+        steering = isWalkingMode(mode) && (c.lx != 0.f || c.ly != 0.f || c.rx != 0.f);
+        CommandMsg clamped = c;
+        clampPosture(clamped.s1, clamped.h, clamped.fd);
+        // The searched gait rides at its own height, outside the grid the envelope was measured on.
+        const bool tuned = mode == MOTION_STATE::WALK && gait_state.gait_type == GaitType::TUNED;
+        const CommandMsg &posture = tuned ? c : clamped;
+        updateFeetDistanceTarget(posture.fd);
+        target_body_state.zm = posture.h * 50;
         target_body_state.omega = c.ry * BODY_TILT_LIMIT_RAD;
-        switch (motionState) {
+        switch (mode) {
             case MOTION_STATE::STAND: {
                 target_body_state.xm = c.lx * 50.f;
                 target_body_state.ym = -c.ly * 50.f;
@@ -169,11 +169,9 @@ class MotionService {
             }
 #endif
             case MOTION_STATE::WALK: {
-                target_gait_state.step_x = -c.lx * 100;
-                target_gait_state.step_y = c.ly * 100;
-                target_gait_state.step_angle = c.rx * 0.8;
-                target_gait_state.step_speed = c.s + 1.f;
-                if (gait_state.gait_type == GaitType::TUNED) {
+                // Kept whatever the gait, so a classic gait loaded later walks this stick and no older one.
+                lastWalkCommand_ = clamped;
+                if (tuned) {
                     // The searched gait is a VELOCITY -> gait map, not a direct stride map: stride
                     // and cadence were optimized together, so driving stride from the stick while
                     // leaving cadence to the legacy law reproduces neither. The stick therefore
@@ -191,15 +189,18 @@ class MotionService {
                         CLIP(tuned_gait::STEP_HEIGHT_MM + c.s1 * TUNED_LIFT_TRIM_MM,
                              tuned_gait::STEP_HEIGHT_MIN_MM, tuned_gait::STEP_HEIGHT_MAX_MM);
                     target_gait_state.step_depth = tuned_gait::STEP_DEPTH_MM;
+                    target_gait_state.step_speed = c.s + 1.f;
                     target_gait_state.phase_rate =
                         tuned_gait::PHASE_RATE_MIN +
                         (a[5] + 1.f) * 0.5f * (tuned_gait::PHASE_RATE_MAX - tuned_gait::PHASE_RATE_MIN);
                     target_body_state.zm = -tuned_gait::RIDE_MM;
                     logTunedCommand(cmd, target_gait_state);
                 } else {
-                    target_gait_state.step_height = (c.s1 + 1.f) * 20.f;
+                    target_gait_state.step_height = (clamped.s1 + 1.f) * 20.f;
                     target_gait_state.step_depth = 0.002f;
-                    target_gait_state.phase_rate = 0.f;  // legacy stride-derived cadence
+                    // The envelope sets the cadence; step_speed is left to pace a stance change.
+                    target_gait_state.step_speed = 1.f;
+                    applyWalkTarget();
                 }
                 break;
             }
@@ -220,12 +221,8 @@ class MotionService {
                  target_body_state.zm);
     }
 
-    // Normalized stride magnitude, the speed signal AUTO switches on.
-    float commandSpeed01() const {
-        const float stride = sqrtf(target_gait_state.step_x * target_gait_state.step_x +
-                                   target_gait_state.step_y * target_gait_state.step_y);
-        return CLIP(stride / 100.0f, 0.0f, 1.0f);
-    }
+    // The commanded share of the top speed, the speed signal AUTO switches on.
+    float commandSpeed01() const { return _walkSpeed01; }
 
     // Schedules cannot be swapped while stepping: changing offset[] reassigns every leg's phase at
     // once, and a leg at the top of its swing in one gait is a stance leg in the next, so its foot is
@@ -248,11 +245,7 @@ class MotionService {
 
         const GaitType next = selectAutoGait(commandSpeed01(), gait_state.gait_type);
         if (next == gait_state.gait_type) return;
-        gait_state.gait_type = next;
-        gait.setGait(gait_state);
-        target_gait_state.gait_type = next;
-        target_gait_state.stand_frac = gait_state.stand_frac;
-        for (int i = 0; i < 6; i++) target_gait_state.offset[i] = gait_state.offset[i];
+        loadGait(next);
         ESP_LOGI("MotionService", "Auto gait -> %d", (int)next);
     }
 
@@ -327,6 +320,9 @@ class MotionService {
 
     float *getAngles() { return msgAngles.angles; }
 
+    // The locomotion command the gait eases toward, for the virtual robot's tests.
+    const gait_state_t &gaitCommand() const { return target_gait_state; }
+
     // The motion's half of a telemetry tick: what it produced and from which command and mode.
     void fillTelemetry(socket_message_TickSample &tick) const {
         std::copy(std::begin(msgAngles.angles), std::end(msgAngles.angles), tick.angles);
@@ -388,6 +384,10 @@ class MotionService {
                                     {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
 
     GaitType _requestedGait = GaitType::TRI_GATE;
+    // The last WALK stick, posture clamped, and the share of a classic gait's top speed it asked for;
+    // both are cleared when the locomotion command stops.
+    CommandMsg lastWalkCommand_ {};
+    float _walkSpeed01 = 0.f;
     MOTION_STATE motionState = MOTION_STATE::DEACTIVATED;
     unsigned long lastCommandMillis = 0;
     unsigned long lastMotionMicros = 0;
@@ -407,6 +407,32 @@ class MotionService {
   private:
     static bool isWalkingMode(MOTION_STATE mode) { return mode == MOTION_STATE::WALK || mode == MOTION_STATE::WALK_NN; }
 
+    // Only safe while the gait is not stepping.
+    void loadGait(GaitType next) {
+        gait_state.gait_type = next;
+        gait.setGait(gait_state);
+        // The schedule switches outright; only the command eases. Keep the target's identity fields
+        // in step so a later ramp never reads a stale gait.
+        target_gait_state.gait_type = gait_state.gait_type;
+        target_gait_state.stand_frac = gait_state.stand_frac;
+        for (int i = 0; i < 6; i++) target_gait_state.offset[i] = gait_state.offset[i];
+        // Top speeds differ several times between gaits, so a held stick's stroke and cadence are the
+        // new gait's from this tick on, not from the next command.
+        applyWalkTarget();
+    }
+
+    // The classic gaits' stroke and cadence for the last stick and posture, from the speed envelope.
+    void applyWalkTarget() {
+        if (motionState != MOTION_STATE::WALK || gait_state.gait_type == GaitType::TUNED) return;
+        const CommandMsg &c = lastWalkCommand_;
+        const WalkTarget w = classicWalkTarget(gait_state.gait_type, c.lx, c.ly, c.rx, c.s, c.s1, c.h, c.fd);
+        target_gait_state.step_x = w.stepX;
+        target_gait_state.step_y = w.stepY;
+        target_gait_state.step_angle = w.stepAngle;
+        target_gait_state.phase_rate = w.phaseRate;
+        _walkSpeed01 = w.speed01;
+    }
+
     // Zeroes the locomotion command. `snap` collapses the live gait state onto it as well, for modes
     // that drive nothing: there is no output to jerk, and a half-stride left frozen in gait_state
     // would otherwise resume the moment the robot is put back into STAND. STAND itself only gets the
@@ -419,6 +445,9 @@ class MotionService {
         target_gait_state.step_height = DEFAULT_STEP_HEIGHT_MM;
         target_gait_state.step_depth = DEFAULT_STEP_DEPTH;
         target_gait_state.phase_rate = 0.f;
+        // Else a gait loaded later, AUTO's included, would walk the stick the dead-man stopped.
+        lastWalkCommand_ = {};
+        _walkSpeed01 = 0.f;
         if (!snap) return;
         approachGaitCommand(gait_state, target_gait_state, 0.f, 0.f);
         gait.setPhase(0.f);

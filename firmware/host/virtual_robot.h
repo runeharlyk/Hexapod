@@ -54,6 +54,8 @@ class VirtualRobot {
     const float *servoAngles() const { return ServoController::output().angles; }
     unsigned servoWrites() const { return ServoController::output().writes; }
     GaitType gait() const { return static_cast<GaitType>(_sample.gait); }
+    // The stroke and cadence the gait is easing toward, as the motion holds them now.
+    const gait_state_t &gaitCommand() const { return _robot.motion().gaitCommand(); }
 
   private:
     Hexapod _robot;
