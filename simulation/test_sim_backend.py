@@ -48,6 +48,8 @@ def test_a_standing_robot_on_miscalibrated_servos_holds_still():
 
 # The physical check of the axis mapping: REP-103 forward, left and counter-clockwise, in the world.
 def test_forward_left_and_counter_clockwise_follow_rep103(sim):
+    sim.set_mode(Mode.STAND)
+    sim.sleep(1.5)
     sim.set_mode(Mode.WALK)
     start = _left_forward(sim)
     sim.set_velocity(Velocity(0.1, 0, 0))
@@ -88,12 +90,14 @@ def test_the_simulation_refuses_modes_it_does_not_run(sim):
         sim.set_mode(Mode.ANIMATE)
 
 
-# Clamped to the peak in each direction, which max_velocity's both-ways top may undercut.
+# Clamped to the peak in each direction, which max_velocity's both-ways top may undercut. The classical gaits now walk
+# the same peak both ways, so TUNED (its leftward peak is 10 % above its rightward one, measured) carries the check.
 def test_a_velocity_beyond_the_gait_is_clamped_to_its_peak_that_way(sim):
-    axes = speed_model._axes(Gait.TRI_GATE)
+    sim.set_gait(Gait.TUNED)
+    axes = speed_model._axes(Gait.TUNED)
     clamped = sim.set_velocity(Velocity(10, -10, 100))
     assert clamped == Velocity(axes["vx"].values.max(), axes["vy"].values.min(), axes["yaw_rate"].values.max())
-    assert clamped.yaw_rate > sim.max_velocity().yaw_rate
+    assert -clamped.vy > sim.max_velocity().vy
     assert sim.set_velocity(ZERO) == ZERO
 
 
