@@ -940,6 +940,63 @@ void test_a_dead_man_stop_in_a_stand_waits_for_the_feet() {
     }
 }
 
+// The envelope measured a level, centred body, so a classic walk eases the tilt stick and the stand's offsets out: a
+// full stick under a full tilt clamped 119-646 joint-ticks in 3 s of TRI or BI.
+void test_a_classic_walk_ignores_the_tilt_stick() {
+    for (const GaitType gait : CLASSIC_GAITS) {
+        for (Posture3 posture : {Posture3 {0, 0, 0}, Posture3 {1, 0, 0}, Posture3 {0, 1, 0}, Posture3 {0, 0, -1}}) {
+            clampPosture(posture.s1, posture.h, posture.fd);
+            for (const float ry : {1.0f, -1.0f}) {
+                for (const CommandMsg &full :
+                     {fullStick(0, 1, 0), fullStick(1, 0, 0), fullStick(0, 0, 1), fullStick(1, 1, 1)}) {
+                    CommandMsg stick = withPosture(full, posture);
+                    stick.ry = ry;
+                    VirtualRobot robot;
+                    walkIn(robot, gait);
+                    const HeldRun run = hold(robot, stick, ticksFor(4.0f));
+                    char msg[160];
+                    describe(msg, sizeof(msg), gait, stick, run);
+                    TEST_ASSERT_EQUAL_INT_MESSAGE(0, run.clamped, msg);
+                    TEST_ASSERT_EQUAL_FLOAT_MESSAGE(0.0f, robot.bodyCommand().omega, msg);
+                    TEST_ASSERT_TRUE_MESSAGE(walkResumed(robot), msg);
+                }
+            }
+        }
+    }
+}
+
+// A shifted and tilted stand hands a walk a body the envelope did not measure; the walk eases it back to level and
+// centred. The stands here are within travel themselves.
+void test_a_classic_walk_after_a_shifted_stand_stays_in_travel() {
+    const CommandMsg shifts[] = {{1, 0, 0, 0, 0, 0, 0, 0},       {0, -1, 0, 0, 0, 0, 0, 0},
+                                 {0, 0, 1, 0, 0, 0, 0, 0},       {0, 0, 0, -1, 0, 0, 0, 0},
+                                 {0.5f, 0.5f, 0, 0, 0, 0, 0, 0}, {0.3f, -0.3f, 0.3f, -0.3f, 0, 0, 0, 0}};
+    for (const GaitType gait : CLASSIC_GAITS) {
+        for (const CommandMsg &shift : shifts) {
+            for (const CommandMsg &stick :
+                 {fullStick(0, 1, 0), fullStick(1, 0, 0), fullStick(0, 0, 1), fullStick(1, 1, 1)}) {
+                VirtualRobot robot;
+                standUp(robot);
+                robot.setGait(gait);
+                robot.tick();
+                hold(robot, shift, ticksFor(2.0f));
+                char msg[160];
+                const HeldRun standing = hold(robot, shift, 1);
+                describe(msg, sizeof(msg), gait, shift, standing);
+                TEST_ASSERT_EQUAL_INT_MESSAGE(0, standing.clamped, msg);
+                robot.setMode(MOTION_STATE::WALK);
+                const HeldRun run = hold(robot, stick, ticksFor(3.0f));
+                describe(msg, sizeof(msg), gait, stick, run);
+                TEST_ASSERT_EQUAL_INT_MESSAGE(0, run.clamped, msg);
+                const BodyStateMsg &body = robot.bodyCommand();
+                TEST_ASSERT_TRUE_MESSAGE(body.xm == 0.0f && body.ym == 0.0f && body.phi == 0.0f && body.omega == 0.0f,
+                                         msg);
+                TEST_ASSERT_TRUE_MESSAGE(walkResumed(robot), msg);
+            }
+        }
+    }
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_new_robot_is_deactivated);
@@ -976,5 +1033,7 @@ int main(int, char **) {
     RUN_TEST(test_every_stop_ramps_down_on_the_speed_law);
     RUN_TEST(test_a_dead_man_stop_takes_the_neutral_posture_once_stopped);
     RUN_TEST(test_a_dead_man_stop_in_a_stand_waits_for_the_feet);
+    RUN_TEST(test_a_classic_walk_ignores_the_tilt_stick);
+    RUN_TEST(test_a_classic_walk_after_a_shifted_stand_stays_in_travel);
     return UNITY_END();
 }

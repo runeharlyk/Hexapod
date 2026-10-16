@@ -223,6 +223,9 @@ class MotionService {
                     target_body_state.zm = -tuned_gait::RIDE_MM;
                     logTunedCommand(cmd, target_gait_state);
                 } else {
+                    // The envelope measured a level, centred body: the tilt stick and the stand's offsets ease out.
+                    target_body_state.xm = target_body_state.ym = 0;
+                    target_body_state.phi = target_body_state.omega = 0;
                     target_gait_state.step_depth = 0.002f;
                     // The envelope sets the cadence; step_speed is left to pace a stance change.
                     target_gait_state.step_speed = 1.f;
