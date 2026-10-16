@@ -234,6 +234,8 @@ The command is a body-frame velocity vector `[vx, vy]` (m/s) + yaw rate (rad/s).
   single gait, and the best curb-climbing gait → `src/resources/gait_library.json`.
 - `optimize_gait.py` / `export_policy.py` — tune the analytic gait map / export the actor to C++.
 - `export_gait.py` - write a `gait_library.json` entry as `firmware/include/gait_tuned.h`.
+- `export_envelope.py` - sweep each classical gait's top speed and stroke over a 9 x 9 x 9 grid of the lift, body height and feet distance sliders, bounded by servo speed (`--servo-rad-s`, default 13.1), a 3 cycles/s cadence cap, joint travel with a 2 degree margin and reach, and write `firmware/include/gait_envelope.h` and `src/resources/gait_envelope.json` (generator `src/robot/gait_envelope.py`).
+  The firmware's `gait_speed.h` reads the header, and regenerating it changes the speed model, so rerun `measure_speed_model.py` afterwards.
 - `test_firmware_gait_parity.py` - pytest module (and CLI) checking `gait_tuned.h` against the library and `firmware_gait.py` against the firmware headers.
 - `test_gait_trace_parity.py` - replays the firmware's tick-by-tick gait trace (`fixtures/gait_trace.json`) through `firmware_gait.py`.
 - `ik_feasibility.py` - fraction of a gait's commanded joint angles outside the servo range.

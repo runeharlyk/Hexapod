@@ -79,7 +79,7 @@ Read it before changing the firmware; what follows is only what an agent needs o
   Never a timer push; settings stay request/response only.
 - `MOTION_STATE`/`GaitType` cross the wire as enum positions, so firmware and app must be deployed together when those enums change.
   `simulation/test_wire_golden.py` fails on any renumbered enum value or field until `simulation/gen_wire_golden.py` regenerates `platform_shared/wire_golden.json`.
-- Never hand-edit `firmware/include/gait_tuned.h` (from `simulation/export_gait.py`) or `firmware/include/policy/hexapod_policy.h` (from `simulation/export_policy.py`); regenerate them.
+- Never hand-edit `firmware/include/gait_tuned.h` (from `simulation/export_gait.py`), `firmware/include/gait_envelope.h` (from `simulation/export_envelope.py`) or `firmware/include/policy/hexapod_policy.h` (from `simulation/export_policy.py`); regenerate them.
 - Internal DMA RAM is the binding limit: measure with `logHeap()`, not `esp_get_free_heap_size()`, and delete the generated `sdkconfig.esp32-wroom-camera` after editing `sdkconfig.defaults`, or the change is silently ignored.
 - The Arduino-only classic-ESP32 envs were removed with the IDF port; recover them from the `main` branch if a classic ESP32 is needed again.
   No TensorFlow Lite or ESP-DL component is part of the build (a local `firmware/components/esp-dl/` clone is gitignored and unreferenced).
