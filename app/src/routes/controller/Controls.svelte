@@ -7,7 +7,7 @@
   import type { ControllerInput, vector } from '$lib/types/models'
   import { VerticalSlider } from '$lib/components/input'
   import { MotionModes } from '$lib/motion'
-  import { GaitType } from '$lib/gait'
+  import { GaitType, strideApplies } from '$lib/gait'
   import { notifications } from '$lib/components/toasts/notifications'
   import { gamepadAxes, gamepadButtons, hasGamepad } from '$lib/stores/gamepad'
   import { requestGait, requestMode } from '$lib/control'
@@ -268,6 +268,7 @@
               step="0.01"
               max="1"
               value={$input.stride}
+              disabled={!strideApplies($gait)}
               oninput={e => handleRange(e, 'stride')}
               class="range range-sm range-primary"
             />
