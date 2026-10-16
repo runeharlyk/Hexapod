@@ -437,7 +437,7 @@ class MotionService {
     // The posture the classic walk stands in, valid once it was taken between steps (settleWalkPosture) or from the
     // stand the walk was entered from (takeRestPosture).
     Posture _walkPosture {};
-    bool _walkPostureValid = false;
+    std::atomic<bool> _walkPostureValid {false};
     // The posture of a stand at rest, its lift as an s1, for a walk entered next: the targets the stand holds, which
     // the control task rewrites unchanged every STAND tick while _atRest holds, so the command worker's read cannot
     // tear. Anything that moves the robot in WALK before the first classic command takes it consumes it (clears
@@ -631,10 +631,6 @@ class MotionService {
         return std::fabs(gait_state.step_height - target_gait_state.step_height) < POSTURE_SETTLED_MM;
     }
 
-    // Zeroes the locomotion command. `snap` collapses the live gait state onto it as well, for modes
-    // that drive nothing: there is no output to jerk, and a half-stride left frozen in gait_state
-    // would otherwise resume the moment the robot is put back into STAND. STAND itself only gets the
-    // target, so the existing ramp walks the legs down instead of dropping them in one tick.
     // The next classic walk takes its posture again, unless it starts from a stand at rest in it (takeRestPosture).
     void forgetWalkPosture() {
         _walkPostureValid = false;
@@ -642,6 +638,10 @@ class MotionService {
         _postureSettling = false;
     }
 
+    // Zeroes the locomotion command. `snap` collapses the live gait state onto it as well, for modes
+    // that drive nothing: there is no output to jerk, and a half-stride left frozen in gait_state
+    // would otherwise resume the moment the robot is put back into STAND. STAND itself only gets the
+    // target, so the existing ramp walks the legs down instead of dropping them in one tick.
     void stopLocomotionCommand(bool snap) {
         target_gait_state.step_x = 0;
         target_gait_state.step_y = 0;

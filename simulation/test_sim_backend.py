@@ -91,7 +91,8 @@ def test_the_simulation_refuses_modes_it_does_not_run(sim):
 
 
 # Clamped to the peak in each direction, which max_velocity's both-ways top may undercut. The classical gaits now walk
-# the same peak both ways, so TUNED (its leftward peak is 10 % above its rightward one, measured) carries the check.
+# the same peak both ways, so TUNED (its rightward peak, 0.088 m/s, is 9 % above its leftward one, measured) carries
+# the check.
 def test_a_velocity_beyond_the_gait_is_clamped_to_its_peak_that_way(sim):
     sim.set_gait(Gait.TUNED)
     axes = speed_model._axes(Gait.TUNED)
