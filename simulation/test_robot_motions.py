@@ -15,8 +15,10 @@ DT = 0.01
 
 class ScriptedBackend:
     """Integrates the commanded REP-103 velocity into a pose while walking, ramped like the firmware's gait command
-    (the stride eases first order with GAIT_COMMAND_TAU_S and the cadence follows the stride, so the body moves at
-    the last non-zero command times the squared ramp), optionally with a yaw that arrives late,
+    (GaitCommandRamp: a start eases the stride first order with GAIT_COMMAND_TAU_S at the commanded cadence, so the body
+    moves at the last non-zero command times the ramp; a stop eases the stride out through two such stages and slows
+    the cadence with it, so the body moves at the square of the ramp over its value at the stop), optionally with a yaw
+    that arrives late,
     a gait that turns slower than commanded, a dead-man stop at `drop_at`, a mode switched from elsewhere and no IMU;
     records every command."""
 
@@ -31,6 +33,8 @@ class ScriptedBackend:
         self.velocity = ZERO
         self._heading = ZERO  # the last non-zero command, which the ramp scales up and, after a stop, back down
         self._ramp = 0.0
+        self._stage = None  # the stop's first stage, and the ramp the stop started from
+        self._stopped_from = 0.0
         self.log = []  # (t, what, value) for every command, in order
         self.closed = False
         self._seen = deque([yaw] * (round(yaw_lag_s / DT) + 1))
@@ -80,12 +84,23 @@ class ScriptedBackend:
 
     def _advance(self, dt):
         walking = self.mode is Mode.WALK
-        # r(t) = a + b e^(-t/tau) toward a = 1 while commanded, 0 after a stop; travel is the exact integral of r^2.
-        tau, a = GAIT_COMMAND_TAU_S, 1.0 if walking and self.velocity != ZERO else 0.0
-        b = self._ramp - a
-        decay = math.exp(-dt / tau)
-        travel_s = a * a * dt + 2 * a * b * tau * (1 - decay) + b * b * tau / 2 * (1 - decay * decay)
-        self._ramp = a + b * decay
+        tau, decay = GAIT_COMMAND_TAU_S, math.exp(-dt / GAIT_COMMAND_TAU_S)
+        if walking and self.velocity != ZERO:
+            # r(t) = 1 + (r0 - 1) e^(-t/tau); travel is the exact integral of r.
+            travel_s = dt + (self._ramp - 1) * tau * (1 - decay)
+            self._ramp = 1 + (self._ramp - 1) * decay
+            self._stage = None
+        else:
+            if self._stage is None:
+                self._stage, self._stopped_from = self._ramp, self._ramp
+            # The stage q = b e^(-x) and the ramp r = (a + b x) e^(-x), x = t / tau; travel is the exact integral of
+            # r^2 / r(stop), from the antiderivative -e^(-2x) ((a + bx)^2 / 2 + b (a + bx) / 2 + b^2 / 4).
+            a, b, x = self._ramp, self._stage, dt / tau
+            antiderivative = lambda r: r * r / 2 + b * r / 2 + b * b / 4
+            travel_s = 0.0
+            if self._stopped_from > 0.0:
+                travel_s = tau * (antiderivative(a) - decay * decay * antiderivative(a + b * x)) / self._stopped_from
+            self._ramp, self._stage = (a + b * x) * decay, b * decay
         v = self._heading if walking else ZERO
         heading = math.radians(self.yaw)
         self.x += (v.vx * math.cos(heading) - v.vy * math.sin(heading)) * travel_s

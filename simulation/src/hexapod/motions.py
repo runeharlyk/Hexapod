@@ -1,25 +1,33 @@
 """Distance and turn motions, written once against the Robot's velocity, state and clock."""
 import math
 
-from src.robot.firmware_gait import FEET_EASE_S, GAIT_COMMAND_TAU_S, STRIDE_DEADBAND_MM
+from src.robot.firmware_gait import FEET_EASE_S, GAIT_COMMAND_TAU_S, GaitCommandRamp, GaitState, gait_is_commanded
 
 from .backends.base import Mode, RobotError, RobotTimeout
 
-# After a stop the firmware's command ramp brings a full 100 mm stride under its deadband (0.59 s), and the feet then
-# ease back to stance.
-SETTLE_S = GAIT_COMMAND_TAU_S * math.log(100.0 / STRIDE_DEADBAND_MM) + FEET_EASE_S
+CONTROL_TICK_S = 0.005  # the firmware's control period (firmware/src/main.cpp)
+
+
+def _stop_seconds(stride_mm: float) -> float:
+    """How long the firmware's stop (GaitCommandRamp, gait.h) takes to bring `stride_mm` under the stride deadband."""
+    ramp, live, stop = GaitCommandRamp(), GaitState(step_y=stride_mm, phase_rate=1.0), GaitState()
+    ticks = 0
+    while gait_is_commanded(live):
+        ramp.step(live, stop, CONTROL_TICK_S)
+        ticks += 1
+    return ticks * CONTROL_TICK_S
+
+
+# After a stop the firmware's command ramp brings a full 100 mm stride under its deadband, and the feet then ease back
+# to stance.
+SETTLE_S = _stop_seconds(100.0) + FEET_EASE_S
 # How much longer than distance / speed a timed move holds its command, derived from the firmware's command ramp
-# (approachGaitCommand, gait.h): the stride s eases toward its target S as s = S(1 - e^(-t/tau)), and on a stop decays
-# as s = S e^(-t/tau). The phase advance scales the cadence with the stride (speed_factor = stride / 25 mm inside its
-# 0.75-1.5 clamp, gait.h; advance_phase in firmware_gait.py), so while ramping the body speed goes as s^2:
-# v(t) = V(1 - e^(-t/tau))^2 when starting and V e^(-2t/tau) when stopping. Starting loses
-# integral(1 - (1 - e^(-t/tau))^2) dt = 2 tau - tau/2 = 1.5 tau of travel at V, stopping overruns
-# integral(e^(-2t/tau)) dt = tau/2, so the move falls short by tau unless held that much longer.
-# That is the upper bound, exact only for strides inside the 18.75-37.5 mm band where the cadence tracks the stride;
-# outside it the cadence is clamped and the speed ramps linearly, which nets ~0. Integrating the command model over
-# 10-100 mm strides gives 0.03-0.12 s; the simulation, which adds the legs' mechanical start-up, measured 0.06-0.16 s.
-# tau was chosen empirically as that upper value: it brings every gait's forward and sideways moves within 10 %.
-RAMP_LAG_S = GAIT_COMMAND_TAU_S
+# (GaitCommandRamp, gait.h). A start eases the stride s toward its target S as s = S(1 - e^(-t/tau)) at the target's
+# cadence, so the body speed goes as V(1 - e^(-t/tau)) and the start loses tau of travel at V. A stop eases the stride
+# out through two such stages, s = S(1 + t/tau) e^(-t/tau), and slows the cadence with it, so the speed goes as
+# V(1 + t/tau)^2 e^(-2t/tau) and the stop overruns integral((1 + x)^2 e^(-2x)) dx = 1.25 tau. The move overshoots by a
+# quarter tau unless held that much shorter.
+RAMP_LAG_S = -GAIT_COMMAND_TAU_S / 4
 POLL_S = 0.05
 SLOW_DOWN_DEG = 30.0
 MIN_RATE_FRACTION = 0.2
