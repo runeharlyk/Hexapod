@@ -94,8 +94,13 @@ The mode is a `MOTION_STATE`: `DEACTIVATED`, `IDLE`, `POSE`, `STAND`, `WALK`, `W
   The posture sliders (`s1` lift, `h` body height, `fd` feet distance) are first clamped along a ray from neutral to the walkable region (`clampPosture`).
   A posture change while walking pauses the walk and settles the posture in stages: the lift comes down, the stance and body height move at the lower height, and the lift goes back up, after which the walk resumes.
   A walk entered from a stand at rest in the same posture starts at once; a rising lift needs no settling, a falling one does.
+  A classic walk ignores the tilt stick and eases the stand's shift and tilt out, since the envelope was measured on a level, centred body.
+  Self-levelling stays on, and the tilt it adds on a slope is not covered by the envelope.
+  A stop eases the stroke out from rest and slows the cadence with it (`GaitCommandRamp` in `include/gait.h`), so it passes only through walks a slower stick would take.
+  The dead-man's neutral posture is taken like any other, once the walk has stopped; in `STAND` it waits until the feet are still.
 - `WALK_NN` hands stride, lift, cadence and ride height to `PolicyRunner`, which runs the exported network every fourth tick on top of the analytic gait.
   Its observation and action decoding is `PolicyCore` (`include/policy/policy_core.h`), which the training environment runs through `host/policy_api.cpp`, so the network trains on the code that deploys it.
+  Its `h` and `fd` are clamped to the classic gaits' walkable region (`clampPosture`).
 - `ANIMATE` plays a clip or a streamed puppeteer pose through `AnimationRunner`.
 
 Each tick in a stepping mode follows the same order: the body state eases toward its target, the gait command ramps toward the commanded one (`approachGaitCommand`), `GaitController::step` advances the phase and writes the six foot targets (Bezier swing, sinusoidal stance), and `Kinematics::inverseKinematics` turns body pose and feet into 18 joint angles.
@@ -106,6 +111,8 @@ Commands arrive asynchronously and only set targets.
 If no command arrives within a timeout, `MotionService` applies a zero command; the timeout is shorter while a stick is steering, because the senders repeat their command while one is held.
 Gait changes are deferred until the gait is not commanded, not repositioning and not settling a posture, because swapping the phase schedule mid-stride drops a swinging foot.
 `GaitType::AUTO` picks a gait from the commanded speed at the same safe moments.
+That speed is the stick's share of BI's top speed at the posture, whichever gait walks it, and AUTO picks the slowest of `RIPPLE`, `TRI_GATE` and `BI_GATE` whose top speed covers it.
+A stick pushed past the top of the gait in effect therefore walks at that top until the next stop.
 
 Mode changes are decided by the pure function in `include/animation/mode_arbiter.h` and applied only on the `ModeMsg` worker, which makes that worker the one place the mode changes.
 An animation play borrows `ANIMATE` from the current mode and the control task asks for the mode back when the clip ends; `DEACTIVATED`, `IDLE` and `POSE` always apply at once, which is the safety property.
