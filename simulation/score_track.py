@@ -4,7 +4,8 @@ uv run python score_track.py recording.hexrec track.csv
 The robot's idea is the commanded motion: each tick's sticks (the telemetry's command) through the gait's measured
 speed model (src/hexapod/speed_model.py) while the robot is in WALK, eased in and out by the firmware's command ramp
 (GAIT_COMMAND_TAU_S) and integrated over the ticks. WALK_NN and ANIMATE count as standing still, which they are not;
-score a run that stays in STAND and WALK. Where the recording's ticks also carry the firmware's odometry (the columns
+score a run that stays in STAND and WALK. The speed model is the speed-optimal stroke's (stride 0), so a recording that
+walked at another stride is refused. Where the recording's ticks also carry the firmware's odometry (the columns
 ODOMETRY_COLUMNS: x and y in metres, yaw in radians, in a frame of its own), that is scored beside it; the robot does
 not report odometry yet, so today only the commanded motion is scored.
 
@@ -38,6 +39,7 @@ from src.robot.firmware_gait import GAIT_COMMAND_TAU_S
 from src.sim import recording
 
 ODOMETRY_COLUMNS = ("odometry_x", "odometry_y", "odometry_yaw")
+STRIDE = 8  # the stride's place in a tick's command (lx, ly, rx, ry, h, s, s1, fd, stride); older recordings end before it
 GRID_S = 0.01
 SMOOTH_S = 0.2
 SYNC_S = 10.0
@@ -87,6 +89,9 @@ def commanded_path(ticks: dict[str, np.ndarray]) -> np.ndarray:
     """x, y and yaw (columns) per tick of a robot that walks exactly what its sticks command, from the origin facing
     +y: the speed model's velocity in WALK, nothing otherwise, through the firmware's first-order command ramp."""
     t = ticks["t_us"] / 1e6
+    command = ticks["command"]
+    if command.shape[1] > STRIDE and np.any(command[ticks["mode"] == Mode.WALK, STRIDE] != 0.0):
+        raise ValueError("the recording walked at a nonzero stride, which the stride-0 speed model does not describe")
     velocities = {}
     velocity = np.zeros(3)  # forward, left, counter-clockwise
     poses = np.zeros((len(t), 3))
