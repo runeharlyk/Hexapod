@@ -118,3 +118,8 @@ CONFIG_BT_CTRL_RUN_IN_FLASH_ONLY=y
 CONFIG_BT_CTRL_BLE_MAX_ACT=2
 CONFIG_BT_CTRL_BLE_SCAN=n
 CONFIG_BT_CTRL_DTM_ENABLE=n
+
+# A TCP connection sends one send buffer per round trip (about 20 ms here), which held a camera stream to about
+# 10 fps; 23 KB doubles it (one viewer 20 fps, three 9 fps each, measured 2026-10-16). lwIP buffers come from PSRAM
+# (SPIRAM_TRY_ALLOCATE_WIFI_LWIP): internal free heap with three viewers read the same as with the 5.8 KB default.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=23040

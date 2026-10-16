@@ -3,9 +3,14 @@
 #if USE_CAMERA
 
 #include <esp_camera.h>
+#include <esp_heap_caps.h>
 #include <esp_http_server.h>
 #include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 #include <cJSON.h>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -63,30 +68,87 @@ inline void release() {
 
 #define CAMERA_STREAM_BOUNDARY "hexapodframe"
 
-inline esp_err_t stream(httpd_req_t *req) {
-    // httpd_resp_set_type stores the pointer and headers are not flushed until the first send_chunk,
-    // so the content type must outlive this call -- it cannot share the per-part buffer below.
-    if (httpd_resp_set_type(req, "multipart/x-mixed-replace;boundary=" CAMERA_STREAM_BOUNDARY) != ESP_OK) {
-        return ESP_FAIL;
-    }
+// esp_http_server serves every socket from one task, so a stream looping in its handler would hold that task for as
+// long as anyone watches and leave every other request, the WebSocket's commands among them, unread. The handler hands
+// each viewer to one worker instead, which takes every frame once and writes it to all of them; a viewer beyond
+// MAX_VIEWERS is refused. A viewer whose send fails, or stalls past the server's send timeout, is dropped, and holds
+// the others back until then.
+inline constexpr int MAX_VIEWERS = 3;
+inline QueueHandle_t newViewers = nullptr;
+inline std::atomic<int> viewers {0};
 
-    esp_err_t res = ESP_OK;
+// httpd_resp_set_type keeps the pointer until the first chunk flushes the headers, so the type must outlive the call.
+inline const char *const STREAM_TYPE = "multipart/x-mixed-replace;boundary=" CAMERA_STREAM_BOUNDARY;
+
+inline esp_err_t sendFrame(httpd_req_t *req, const char *part, int partLen, const camera_fb_t *fb) {
+    esp_err_t res = httpd_resp_send_chunk(req, part, partLen);
+    return res == ESP_OK ? httpd_resp_send_chunk(req, (const char *)fb->buf, fb->len) : res;
+}
+
+inline void streamWorker(void *) {
+    httpd_req_t *watching[MAX_VIEWERS];
+    int count = 0;
+    auto drop = [&](int i) {
+        httpd_req_async_handler_complete(watching[i]);
+        watching[i] = watching[--count];
+        viewers--;
+    };
     char part[128];
-    while (res == ESP_OK) {
+    for (;;) {
+        httpd_req_t *req = nullptr;
+        // Asleep while nobody watches; a newcomer joins at the next frame.
+        while (xQueueReceive(newViewers, &req, count == 0 ? portMAX_DELAY : 0) == pdTRUE) {
+            watching[count++] = req;
+            if (httpd_resp_set_type(req, STREAM_TYPE) != ESP_OK) drop(count - 1);
+        }
+        if (count == 0) continue;
         camera_fb_t *fb = esp_camera_fb_get();
         if (!fb) {
             ESP_LOGW(TAG, "frame capture failed");
-            return ESP_FAIL;
+            while (count > 0) drop(count - 1);
+            continue;
         }
-        int n = snprintf(
-            part, sizeof(part),
-            "\r\n--" CAMERA_STREAM_BOUNDARY "\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
-            (unsigned)fb->len);
-        res = httpd_resp_send_chunk(req, part, n);
-        if (res == ESP_OK) res = httpd_resp_send_chunk(req, (const char *)fb->buf, fb->len);
+        const int n =
+            snprintf(part, sizeof(part),
+                     "\r\n--" CAMERA_STREAM_BOUNDARY "\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
+                     (unsigned)fb->len);
+        for (int i = 0; i < count;) {
+            if (sendFrame(watching[i], part, n, fb) == ESP_OK)
+                ++i;
+            else
+                drop(i);
+        }
         esp_camera_fb_return(fb);
     }
-    return res;  // non-OK once the client disconnects, which ends the stream
+}
+
+inline void startStreamWorker() {
+    newViewers = xQueueCreate(MAX_VIEWERS, sizeof(httpd_req_t *));
+    // A PSRAM stack, as the loop only takes the camera's PSRAM frames and writes sockets, never flash.
+    if (!newViewers || xTaskCreatePinnedToCoreWithCaps(streamWorker, "camstream", 4096, nullptr, 5, nullptr, 0,
+                                                       MALLOC_CAP_SPIRAM) != pdPASS) {
+        ESP_LOGE(TAG, "camera stream worker not started");
+        newViewers = nullptr;
+    }
+}
+
+inline esp_err_t stream(httpd_req_t *req) {
+    if (!newViewers) return WebServer::sendError(req, 503, "the camera stream is not running");
+    int count = viewers.load();
+    while (count < MAX_VIEWERS && !viewers.compare_exchange_weak(count, count + 1)) {
+    }
+    if (count >= MAX_VIEWERS) return WebServer::sendError(req, 503, "the camera stream is at its viewer limit");
+    httpd_req_t *async = nullptr;
+    if (httpd_req_async_handler_begin(req, &async) != ESP_OK) {
+        viewers--;
+        return ESP_FAIL;
+    }
+    if (xQueueSend(newViewers, &async, 0) != pdTRUE) {
+        httpd_req_async_handler_complete(async);
+        viewers--;
+        return ESP_FAIL;
+    }
+    return ESP_OK;
 }
 
 inline esp_err_t settingsGet(httpd_req_t *req) {
@@ -149,6 +211,7 @@ inline esp_err_t settingsPost(httpd_req_t *req) {
 }
 
 inline void registerRoutes(WebServer &server) {
+    startStreamWorker();
     server.on("/api/camera/stream", HTTP_GET, stream);
     server.on("/api/camera/settings", HTTP_GET, settingsGet);
     server.on("/api/camera/settings", HTTP_POST, settingsPost);
