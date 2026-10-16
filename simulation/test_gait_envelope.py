@@ -86,8 +86,21 @@ def test_sampled_kappa_matches_a_timed_rollout():
     assert sampled == pytest.approx(rolled, rel=0.05)
 
 
+def top_speed(gait_type, axis, s1, h, fd, servo_rad_s):
+    """The reference sweep: (v_max, stroke), the fastest body speed over the swept feasible strokes (mm/s, or rad/s
+    for yaw) and the stroke that reaches it; (0, 0) when no stroke is feasible."""
+    d = ge.STAND_FRAC[gait_type]
+    best = (0.0, 0.0)
+    for stroke, kappa_swing, kappa_stance in ge._feasible_strokes(axis, float(s1), float(h), float(fd)):
+        cadence = min(servo_rad_s / max(kappa_swing / (1.0 - d), kappa_stance / d), ge.CADENCE_MAX)
+        speed = stroke * cadence / d
+        if speed > best[0]:
+            best = (speed, stroke)
+    return best
+
+
 def test_default_posture_matches_the_reference_sweep():
-    forward = lambda gait: ge.top_speed(gait, "forward", 0, 0, 0, 13.0)[0]
+    forward = lambda gait: top_speed(gait, "forward", 0, 0, 0, 13.0)[0]
     assert forward(fg.TRI_GATE) == pytest.approx(334, rel=0.05)
     assert forward(fg.BI_GATE) == pytest.approx(643, rel=0.05)
     assert forward(fg.WAVE) == pytest.approx(71, rel=0.10)
@@ -103,12 +116,12 @@ def test_known_unwalkable_postures():
 
 
 def test_nothing_feasible_returns_zero():
-    assert ge.top_speed(fg.TRI_GATE, "forward", 0, -1, 1, 13.0) == (0.0, 0.0)
+    assert top_speed(fg.TRI_GATE, "forward", 0, -1, 1, 13.0) == (0.0, 0.0)
 
 
 def test_top_speed_scales_with_servo_speed_when_servo_bound():
-    fast = ge.top_speed(fg.WAVE, "forward", 0, 0, 0, 13.0)[0]
-    slow = ge.top_speed(fg.WAVE, "forward", 0, 0, 0, 6.5)[0]
+    fast = top_speed(fg.WAVE, "forward", 0, 0, 0, 13.0)[0]
+    slow = top_speed(fg.WAVE, "forward", 0, 0, 0, 6.5)[0]
     assert slow == pytest.approx(fast / 2, rel=0.01)
 
 
@@ -119,7 +132,7 @@ def _stand_frac(gait_type):
 
 
 def test_cadence_cap_binds_when_servos_are_fast():
-    v_max, stroke = ge.top_speed(fg.WAVE, "forward", 0, 0, 0, 1000.0)
+    v_max, stroke = top_speed(fg.WAVE, "forward", 0, 0, 0, 1000.0)
     assert v_max == pytest.approx(stroke * ge.CADENCE_MAX / _stand_frac(fg.WAVE), rel=1e-9)
 
 
@@ -247,7 +260,7 @@ def test_speed_optimal_stroke_matches_the_reference_sweep(table, axis):
         posture = tuple(float(ge.GRID[i]) for i in cell)
         strokes = _sample_strokes(table["stroke_max"][axis][cell[0]][cell[1]][cell[2]])
         for gait_type in range(len(ge.GAIT_NAMES)):
-            reference, reference_stroke = ge.top_speed(gait_type, axis, *posture, table["servo_rad_s"])
+            reference, reference_stroke = top_speed(gait_type, axis, *posture, table["servo_rad_s"])
             sampled, stroke = _best_sample(table, gait_type, axis, cell)
             shorter = strokes[strokes <= reference_stroke]
             swept = np.floor(stroke / sweep_step) * sweep_step
