@@ -153,6 +153,7 @@ The odometry runs in every mode that steps the gait, is paused when the motion l
 
 The pose is in every telemetry tick (`TickSample` fields 16 to 20: `odom_x`, `odom_y`, `odom_yaw`, `odom_kinematic_yaw`, `odom_distance`), and `odometry_get` (request 130, reply 130) reads it and optionally resets it.
 A reset must be asked of a robot that is still: a walk under way would be counted into the new frame.
+A reset asked while a goal drives is refused with 409 and resets nothing, since it would move the goal's frame.
 
 ### Goal moves
 

@@ -288,6 +288,19 @@ void test_a_reset_between_packets_carries_no_turn_into_the_new_frame() {
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, TurningDmp::RATE * 3 * DT, dmp.odometry.estimate().yaw);
 }
 
+// Paused, the odometry sees no packets while the DMP's yaw runs on (the robot carried round while deactivated): the
+// first packet after a pause and a reset gives no rate, so none of that turn lands in the new frame.
+void test_a_packet_after_a_pause_and_a_reset_turns_nothing() {
+    TurningDmp dmp;
+    dmp.tick(true);
+    dmp.run(1);
+    dmp.odometry.pause();
+    dmp.yaw += 1.0f;
+    dmp.odometry.reset();
+    dmp.tick(true);
+    TEST_ASSERT_EQUAL_FLOAT(0, dmp.odometry.estimate().yaw);
+}
+
 // Standing still, the bias is learned; this is what the next tests deny to motions that only look still.
 void test_a_still_stand_learns_the_gyro_bias() {
     GaitWalk walk(0, 0, 0);
@@ -635,6 +648,7 @@ int main(int, char **) {
     RUN_TEST(test_a_packet_after_a_fifo_reset_turns_nothing);
     RUN_TEST(test_the_dmp_yaw_turns_the_heading_across_its_wrap);
     RUN_TEST(test_a_reset_between_packets_carries_no_turn_into_the_new_frame);
+    RUN_TEST(test_a_packet_after_a_pause_and_a_reset_turns_nothing);
     RUN_TEST(test_a_still_stand_learns_the_gyro_bias);
     RUN_TEST(test_a_gyro_rate_during_a_stance_change_is_not_learned_as_bias);
     RUN_TEST(test_an_easing_body_yaw_is_not_learned_as_bias);

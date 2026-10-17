@@ -226,7 +226,7 @@ class FusedOdometry {
     /** The motion left the gait for a while: the feet are taken afresh, and no gyro rate or stillness spans it. */
     void pause() {
         kinematic.pause();
-        sinceSampleS = INFINITY;
+        sinceSampleS = sincePacketS = INFINITY;
         stillS = 0;
     }
 
