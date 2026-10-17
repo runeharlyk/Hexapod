@@ -81,7 +81,8 @@ def _servo_lines(writes: ts.ServoWrites | None, stops: ts.DeadManStops | None) -
     if len(stops.fired_seqs):
         line += f" at seq {_seqs(stops.fired_seqs)}"
     if len(stops.after_hole_seqs):
-        line += f" ({_seqs(stops.after_hole_seqs)} right after a hole in the ticks: fired within it)"
+        line += (f" ({_seqs(stops.after_hole_seqs)} right after a hole in the ticks: "
+                 "fired within it or on its first tick)")
     if stops.in_force_at_start:
         line += "; one in force when the recording began"
     return lines + [line + f"; {stops.ticks_in_force} ticks in force"]

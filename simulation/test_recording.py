@@ -222,7 +222,8 @@ def test_the_report_tells_failed_writes_from_skipped_ones_and_lists_each_dead_ma
     assert "  right: 24 ok, 4 failed, 7 skipped while backing off, 0 restarted; failed at seq 10, 11, 12, 20" in text
     assert "  left: 34 ok, 0 failed, 0 skipped while backing off, 1 restarted" in text
     assert "longest 21000 us at seq 20" in text
-    assert ("dead-man stops: 3 at seq 3, 30, 37 (30 right after a hole in the ticks: fired within it); "
+    assert ("dead-man stops: 3 at seq 3, 30, 37 "
+            "(30 right after a hole in the ticks: fired within it or on its first tick); "
             "12 ticks in force") in text
 
 

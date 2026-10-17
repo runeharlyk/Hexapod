@@ -59,7 +59,7 @@ class ServoWrites:
 @dataclass
 class DeadManStops:
     fired_seqs: np.ndarray        # the first tick each stop was in force on
-    after_hole_seqs: np.ndarray   # those of them right after a hole in seq: the stop fired within the hole
+    after_hole_seqs: np.ndarray   # those of them right after a hole in seq: fired within it or on its first tick
     in_force_at_start: bool       # a stop from before the recording; not in fired_seqs
     ticks_in_force: int
 
@@ -123,7 +123,10 @@ def servo_writes(rec: Recording) -> ServoWrites | None:
 
 
 def dead_man_stops(rec: Recording) -> DeadManStops | None:
-    """Every tick the dead-man stop came into force on; None for a recording without the flag."""
+    """Every tick the dead-man stop came into force on; None for a recording without the flag.
+
+    A stop that fired and cleared within a hole in seq is not seen.
+    """
     if "link_lost" not in rec.ticks:
         return None
     lost = rec.ticks["link_lost"].astype(bool)
