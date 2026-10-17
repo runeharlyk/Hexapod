@@ -136,6 +136,16 @@ static void replyOta(socket_message_CorrelationResponse &res, const OtaReply &re
     strncpy(res.error_message, reply.reason, sizeof(res.error_message) - 1);
 }
 
+// Why a goal was refused, for the app and the facade to show (MotionService::startGoal).
+static const char *goalRefusal(uint32_t status) {
+    switch (status) {
+        case 400: return "A malformed goal or style";
+        case 409: return "Only a standing or walking robot takes a goal, and not while updating";
+        case 422: return "No goal walks in this style: TUNED, or no speed at its posture";
+        default: return "";
+    }
+}
+
 static void fillAnalytics(socket_message_AnalyticsData &a) {
     // Internal RAM only, like total_heap: PSRAM would swamp the figure and hide internal exhaustion.
     a.free_heap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
@@ -530,6 +540,46 @@ static void registerHandlers(CommAdapterBase &c) {
                 });
                 break;
             }
+            case socket_message_CorrelationRequest_odometry_get_tag: {
+                res.which_response = socket_message_CorrelationResponse_odometry_tag;
+                const OdometryEstimate e = robot.motion().odometry();
+                res.response.odometry = {e.x, e.y, e.yaw, e.kinematicYaw, e.distance};
+                if (req.request.odometry_get.reset && !robot.resetOdometry()) {
+                    // A goal's origin is the pose. The refusal carries no pose, as a refused goal carries no status.
+                    res.status_code = 409;
+                    res.which_response = socket_message_CorrelationResponse_empty_tag;
+                    strncpy(res.error_message, "No odometry reset while a goal runs", sizeof(res.error_message) - 1);
+                }
+                break;
+            }
+            case socket_message_CorrelationRequest_goal_move_tag: {
+                const auto &m = req.request.goal_move;
+                res.which_response = socket_message_CorrelationResponse_goal_status_tag;
+                if ((unsigned)m.kind > (unsigned)socket_message_GoalKind_GOAL_ARC) {
+                    res.status_code = 400;
+                } else if (ota_service::inProgress) {
+                    // The robot stays deactivated while a new firmware is written.
+                    res.status_code = 409;
+                } else {
+                    const Goal goal {static_cast<GoalKind>(m.kind), m.distance_m, m.angle_rad, m.radius_m, m.speed};
+                    const CommandMsg style {0, 0, 0, 0, m.h, 0, m.s1, m.fd, m.stride};
+                    res.status_code = robot.startGoal(goal, style, static_cast<GaitType>(m.gait), {adapter, clientId});
+                }
+                strncpy(res.error_message, goalRefusal(res.status_code), sizeof(res.error_message) - 1);
+                // A refused request has no goal: the status of the one before is not its.
+                if (res.status_code == 202) res.response.goal_status = robot.motion().goalStatus();
+                break;
+            }
+            case socket_message_CorrelationRequest_goal_cancel_tag: {
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                robot.cancelGoal();
+                break;
+            }
+            case socket_message_CorrelationRequest_goal_status_get_tag: {
+                res.which_response = socket_message_CorrelationResponse_goal_status_tag;
+                res.response.goal_status = robot.motion().goalStatus();
+                break;
+            }
             default: res.status_code = 400; break;
         }
         adapter->emit(res, clientId);
@@ -594,21 +644,22 @@ static void refreshBridge(int32_t tag) {
     if (it != bridges().end()) it->second(anyoneListening(tag));
 }
 
-template <typename Msg, typename Fn>
+template <typename Msg, typename Bus = EventBus<Msg>, typename Fn>
 static void addBridge(int32_t tag, Fn fn) {
-    static typename EventBus<Msg>::Handle handle;
+    static typename Bus::Handle handle;
     std::lock_guard<std::mutex> lock(bridgeMutex);
     bridges()[tag] = [fn, tag](bool wanted) {
         if (wanted == handle.valid()) return;
         ESP_LOGD(TAG, "bridge tag %d %s", (int)tag, wanted ? "attached" : "detached");
-        if (wanted) handle = EventBus<Msg>::subscribe(fn);
+        if (wanted)
+            handle = Bus::subscribe(fn);
         else handle.unsubscribe();
     };
 }
 
-template <typename ProtoT>
+template <typename ProtoT, typename Bus = EventBus<ProtoT>>
 static void observeStatus() {
-    addBridge<ProtoT>(MessageTraits<ProtoT>::tag, [](const ProtoT &s) { emitAll(s); });
+    addBridge<ProtoT, Bus>(MessageTraits<ProtoT>::tag, [](const ProtoT &s) { emitAll(s); });
 }
 
 static void initNvs() {
@@ -708,15 +759,25 @@ static void setupComm() {
     observeStatus<api_WifiStatus>();
     observeStatus<api_APStatus>();
     observeStatus<socket_message_AnimationStatus>();
+    observeStatus<socket_message_GoalStatus, GoalStatusBus>();
 
-    // Losing the last client on every transport stops an animation, so nothing plays unattended.
-    const auto onClientGone = [] {
+    // A client that leaves ends the goal it asked for; losing the last client on every transport stops an animation,
+    // so nothing walks or plays unattended.
+    const auto onClientGone = [](const CommAdapterBase *adapter, int clientId) {
+        robot.goalClientGone({adapter, clientId});
         if (!anyClientConnected()) robot.animationControlLost();
+    };
+    // Any frame keeps a goal's owner alive; one that falls silent loses its goal (MotionService::ownerHeard).
+    const auto onClientHeard = [](const CommAdapterBase *adapter, int clientId) {
+        robot.goalOwnerHeard({adapter, clientId});
     };
     wsSocket.onClientGone(onClientGone);
     bleAdapter.onClientGone(onClientGone);
+    wsSocket.onClientHeard(onClientHeard);
+    bleAdapter.onClientHeard(onClientHeard);
 #if FT_ENABLED(USE_SERIAL_LINK)
     serialAdapter.onClientGone(onClientGone);
+    serialAdapter.onClientHeard(onClientHeard);
 #endif
 
     // Transports start only once every bridge exists, so an early subscription finds its bridge.

@@ -4,6 +4,7 @@ import asyncio
 import math
 import threading
 import time
+from dataclasses import astuple
 
 import pytest
 import serial
@@ -12,6 +13,7 @@ from websockets.asyncio.server import serve
 import robot_animate
 from src.hexapod import Gait, Mode, Robot, RobotDisconnected, RobotError, RobotTimeout, Velocity, speed_model
 from src.hexapod.backends import real, serial_link
+from src.hexapod.backends.base import GoalState, Odometry
 from src.hexapod.backends.real import RealBackend
 from src.hexapod.backends.serial_link import SerialLink
 from src.platform_shared import message_pb2 as pb
@@ -20,6 +22,8 @@ from src.robot import serial_frame
 STEERING_TIMEOUT_S = 0.6  # firmware/include/motion.h STEERING_TIMEOUT_MS
 BOOT_S = 0.5  # how long the fake board ignores the host after a reset; the ESP32-S3 takes about as long
 HELD_GAP_S = 0.02  # between the answers to frames held through a boot, each in its own USB transfer
+RESET_LAG_S = 0.05
+GOAL_SETTLE_S, GOAL_RUN_S = 0.1, 0.4  # the fake robot's goal: SETTLING, then RUNNING, then REACHED
 ROM_BANNER = b"ESP-ROM:esp32s3-20210327\r\nrst:0x15 (USB_UART_CHIP_RESET),boot:0x8 (SPI_FAST_FLASH_BOOT)\r\n"
 SERIAL_PORT = "COM7"
 
@@ -130,10 +134,20 @@ class FakeRobot:
     `silent` stops all sending; `stall(s)` stops handling frames for s seconds, as a WiFi stall does: they queue up
     and are handled late. `reset_on_open` reboots the board when a serial port opens, as some USB hosts do: the ROM
     prints its banner, and the frames of the next BOOT_S are lost ("drops") or held until the firmware reads them
-    ("queues"); which of the two a real host does is unmeasured."""
+    ("queues"); which of the two a real host does is unmeasured.
 
-    def __init__(self, imu=True, obey=True, reset_on_open=None):
-        self.imu, self.obey, self.reset_on_open = imu, obey, reset_on_open
+    With `goals` it takes goal moves as the firmware does: a goal_move from STAND or WALK is accepted (202), enters
+    WALK, settles for GOAL_SETTLE_S, runs for GOAL_RUN_S and is REACHED; its status is pushed on every change, except
+    the last when `drop_final_push`, as a full bus can drop it. Its odometry has turned a goal's angle from the start,
+    exactly, and is zeroed RESET_LAG_S after a reset's reply, as the control task's next tick does it. Without, it
+    answers every goal and odometry request 400, as a firmware from before goals does."""
+
+    def __init__(self, imu=True, obey=True, reset_on_open=None, goals=False):
+        self.imu, self.obey, self.reset_on_open, self.goals = imu, obey, reset_on_open, goals
+        self.drop_final_push = False
+        self.goal_count, self.goal_started = 0, None
+        self.odometry = pb.OdometryData()
+        self.reset_at = None
         self.status, self.silent = 200, False
         self.yaw_rad = 0.3
         self.mode = None
@@ -204,15 +218,59 @@ class FakeRobot:
         elif kind == "gait" and _tag("gait") in self.subscribed:
             yield pb.Message(gait=pb.GaitData(gait=message.gait.gait))
         elif kind == "correlation_request":
-            response = pb.CorrelationResponse(correlation_id=message.correlation_request.correlation_id,
-                                              status_code=self.status)
-            response.features_data_response.imu = self.imu
+            request = message.correlation_request
+            response = pb.CorrelationResponse(correlation_id=request.correlation_id, status_code=self.status)
+            asked = request.WhichOneof("request")
+            if asked == "features_data_request":
+                response.features_data_response.imu = self.imu
+            elif not self.goals:
+                response.status_code = 400
+            elif asked == "goal_move":
+                if self.mode in (pb.STAND, pb.WALK):
+                    response.status_code = 202
+                    self.goal_count, self.goal_started = self.goal_count + 1, time.monotonic()
+                    self.odometry.yaw += request.goal_move.angle_rad
+                    response.goal_status.CopyFrom(self.goal_status())
+                    if self.mode == pb.STAND:
+                        self.mode = pb.WALK
+                        if _tag("mode") in self.subscribed:
+                            yield pb.Message(mode=pb.ModeData(mode=self.mode))
+                else:
+                    response.status_code = 409
+                    response.error_message = "Only a standing or walking robot takes a goal"
+            elif asked == "goal_status_get":
+                response.goal_status.CopyFrom(self.goal_status())
+            elif asked == "odometry_get":
+                if self.reset_at is not None and time.monotonic() >= self.reset_at:
+                    self.odometry, self.reset_at = pb.OdometryData(), None
+                response.odometry.CopyFrom(self.odometry)
+                if request.odometry_get.reset:
+                    self.reset_at = time.monotonic() + RESET_LAG_S
             yield pb.Message(correlation_response=response)
 
+    def goal_status(self):
+        if self.goal_started is None:
+            return pb.GoalStatus()
+        elapsed = time.monotonic() - self.goal_started
+        if elapsed < GOAL_SETTLE_S:
+            state, progress = pb.GOAL_SETTLING, 0.0
+        elif elapsed < GOAL_SETTLE_S + GOAL_RUN_S:
+            state, progress = pb.GOAL_RUNNING, round((elapsed - GOAL_SETTLE_S) / GOAL_RUN_S, 1)
+        else:
+            state, progress = pb.GOAL_REACHED, 1.0
+        return pb.GoalStatus(id=self.goal_count, state=state, kind=pb.GOAL_FORWARD, target=0.3, progress=progress,
+                             y=0.3 * progress, passes=1)
+
     async def _stream(self, link):
+        pushed = pb.GoalStatus()
         while True:
             if self.imu and not self.silent and _tag("imu") in self.subscribed:
                 await link.send(pb.Message(imu=pb.IMUData(z=self.yaw_rad)).SerializeToString())
+            status = self.goal_status()
+            if status != pushed and _tag("goal_status") in self.subscribed and not self.silent:
+                pushed = status
+                if not (self.drop_final_push and status.state == pb.GOAL_REACHED):
+                    await link.send(pb.Message(goal_status=status).SerializeToString())
             await asyncio.sleep(0.05)
 
     def stall(self, seconds):
@@ -223,6 +281,11 @@ class FakeRobot:
 
     def inputs(self):
         return [(t, message.input) for t, message in self.received if message.WhichOneof("message") == "input"]
+
+    def requests(self, name):
+        return [(t, message.correlation_request) for t, message in self.received
+                if message.WhichOneof("message") == "correlation_request"
+                and message.correlation_request.WhichOneof("request") == name]
 
     def longest_walking_silence(self):
         """The longest the firmware went without input after a walking one: past 600 ms its dead-man fired."""
@@ -537,3 +600,124 @@ def test_robot_animate_drives_the_robot_through_the_same_link(fake, monkeypatch)
     assert robot_animate.main(["--port", SERIAL_PORT, "mode", "ANIMATE"]) == 0
     _eventually(lambda: fake.mode == pb.ANIMATE)
     _eventually(lambda: fake.connections == 0)  # the tool closes the port behind it
+
+
+# --- goal moves ----------------------------------------------------------------------------------------------------
+
+@pytest.fixture
+def goal_fake():
+    robot = FakeRobot(goals=True)
+    yield robot
+    robot.stop()
+
+
+@pytest.fixture
+def goal_robot(goal_fake, transport, monkeypatch):
+    monkeypatch.setattr(real, "REPLY_TIMEOUT_S", 1.0)
+    client = Robot(_target(goal_fake, transport, monkeypatch))
+    client.connect()
+    yield client
+    client.close()
+
+
+def test_connecting_finds_that_the_robot_takes_goals(goal_robot, goal_fake):
+    assert goal_robot._backend.supports_goals() and _tag("goal_status") in goal_fake.subscribed
+
+
+def test_a_robot_from_before_goals_walks_timed_moves(robot, fake):
+    assert not robot._backend.supports_goals()  # it answers the probe 400
+    robot.stand()
+    robot.move_forward(0.05)
+    assert fake.requests("goal_move") == [] and any(data.left.y for _, data in fake.inputs())
+
+
+# The firmware's body frame on the wire: SIDEWAYS positive is right, angles in radians.
+def test_a_goal_crosses_the_wire_in_the_body_frame_with_its_style(goal_robot, goal_fake):
+    goal_robot.stand()
+    goal_robot.style(gait=Gait.BI_GATE, speed=0.7, stride=0.5, step_height=30, body_height=10, feet_distance=-0.2)
+    goal_robot.walk(-0.3, sideways=True)
+    goal_robot.turn(90)
+    goal_robot.arc(0.5, -90)
+    moves = [request.goal_move for _, request in goal_fake.requests("goal_move")]
+    assert [(m.kind, m.distance_m, m.angle_rad, m.radius_m) for m in moves] == [
+        (pb.GOAL_SIDEWAYS, pytest.approx(0.3), 0, 0), (pb.GOAL_TURN, 0, pytest.approx(math.pi / 2), 0),
+        (pb.GOAL_ARC, 0, pytest.approx(-math.pi / 2), pytest.approx(0.5))]
+    for m in moves:
+        assert (m.speed, m.gait, m.stride, m.s1, m.h, m.fd) == pytest.approx((0.7, pb.BI_GATE, 0.5, 0.5, -0.2, -0.2))
+
+
+# A goal ignores centred sticks and cancels on any other, and is cancelled when its owner falls silent for 2 s: the
+# keep-alive must go on through it, centred, and keep the style's posture after it so nothing re-imposes the old one.
+def test_a_goal_starts_from_centred_sticks_and_is_kept_alive_in_its_style(goal_robot, goal_fake):
+    goal_robot.stand()
+    goal_robot.set_velocity(0.1, 0.0, 0.0)
+    goal_robot.sleep(0.3)
+    goal_robot.style(stride=0.5, step_height=30, body_height=10, feet_distance=-0.2)
+    goal_robot.walk(0.3)
+    assert goal_robot.state().mode is Mode.WALK  # the goal took the robot from STAND into WALK
+    goal_robot.sleep(0.5)
+    kinds = [m.WhichOneof("message") == "correlation_request" and m.correlation_request.HasField("goal_move")
+             for _, m in goal_fake.received]
+    asked = kinds.index(True)
+    before = [m.input for _, m in goal_fake.received[:asked] if m.WhichOneof("message") == "input"]
+    after = [(t, m.input) for t, m in goal_fake.received[asked:] if m.WhichOneof("message") == "input"]
+    assert (before[-1].left.x, before[-1].left.y, before[-1].right.x) == (0, 0, 0)
+    assert all((d.left.x, d.left.y, d.right.x) == (0, 0, 0) for _, d in after)
+    assert all((d.stride, d.s1, d.height, d.feet_distance) == pytest.approx((0.5, 0.5, -0.2, -0.2)) for _, d in after)
+    times = [goal_fake.received[asked][0]] + [t for t, _ in after]
+    assert len(after) >= 3 and max(b - a for a, b in zip(times, times[1:])) < 0.35
+
+
+# The status push can be dropped, so the end is confirmed by a request; progress follows the pushes.
+@pytest.mark.parametrize("drop_final_push", [False, True])
+def test_a_goal_follows_the_pushes_and_confirms_its_end(goal_robot, goal_fake, drop_final_push):
+    goal_fake.drop_final_push = drop_final_push
+    goal_robot.stand()
+    seen = []
+    status = goal_robot.walk(0.3, on_progress=seen.append)
+    assert status.state is GoalState.REACHED and status.x == pytest.approx(0.3)  # REP-103: the body's y is forward
+    running = [s.progress for s in seen if s.state is GoalState.RUNNING]
+    assert len(running) >= 3 and running == sorted(running)
+    asks = len(goal_fake.requests("goal_status_get")) - 1  # less connect()'s probe
+    assert 1 <= asks <= 3  # the pushes carry the progress; the requests only confirm
+
+
+def test_a_goal_the_robot_refuses_raises_its_reason(goal_robot, goal_fake):
+    with pytest.raises(RobotError, match="standing or walking"):
+        goal_robot.walk(0.3)  # never stood: the robot's mode is unknown, the fake's none
+
+
+def test_an_interrupted_goal_is_cancelled_on_the_robot(goal_robot, goal_fake):
+    goal_robot.stand()
+
+    def interrupt(status):
+        if status.state is GoalState.RUNNING:
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        goal_robot.walk(0.3, on_progress=interrupt)
+    _eventually(lambda: len(goal_fake.requests("goal_cancel")) == 1)
+
+
+def test_the_odometry_is_read_in_rep103_and_reset(goal_robot, goal_fake):
+    goal_fake.odometry = pb.OdometryData(x=0.1, y=0.5, yaw=0.2, kinematic_yaw=0.25, distance=0.6)
+    odometry = goal_robot.state().odometry
+    assert isinstance(odometry, Odometry)
+    assert astuple(odometry) == pytest.approx((0.5, -0.1, math.degrees(0.2), math.degrees(0.25), 0.6))
+    goal_robot.reset_odometry()
+    assert astuple(goal_robot.state().odometry) == (0, 0, 0, 0, 0)  # reset_odometry returned once it had taken effect
+    resets = [request.odometry_get.reset for _, request in goal_fake.requests("odometry_get")]
+    assert resets[:2] == [False, True] and len(resets) >= 4 and not any(resets[2:])
+
+
+# The robot keeps the posture of the goals it took: a refused goal's style must not reach the keep-alive.
+def test_a_refused_goal_leaves_the_posture_the_inputs_carry(goal_robot, goal_fake):
+    goal_robot.stand()
+    goal_fake.mode = pb.DEACTIVATED  # the app's stop button, which the client has not heard of yet
+    goal_robot.style(step_height=30, feet_distance=-0.2)
+    with pytest.raises(RobotError, match="409"):
+        goal_robot.walk(0.3)
+    refused = len(goal_fake.received)
+    goal_robot.sleep(0.5)
+    after = [m.input for _, m in goal_fake.received[refused:] if m.WhichOneof("message") == "input"]
+    assert after and all((d.s1, d.feet_distance) == (0, 0) for d in after)

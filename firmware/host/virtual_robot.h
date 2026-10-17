@@ -64,6 +64,27 @@ class VirtualRobot {
     const gait_state_t &gaitState() const { return _robot.motion().gaitState(); }
     // The body pose the motion is easing toward.
     const BodyStateMsg &bodyCommand() const { return _robot.motion().bodyCommand(); }
+    // The odometry as the last tick's telemetry reports it.
+    OdometryEstimate odometry() const {
+        return {.x = _sample.odom_x,
+                .y = _sample.odom_y,
+                .yaw = _sample.odom_yaw,
+                .kinematicYaw = _sample.odom_kinematic_yaw,
+                .distance = _sample.odom_distance};
+    }
+    // Takes effect on the next tick, as a reset from a transport does; refused while a goal drives.
+    bool resetOdometry() { return _robot.resetOdometry(); }
+    // As main.cpp's goal_move handler, whose OTA check has no counterpart here: the reply's status. The goal starts on
+    // the next tick.
+    int goalMove(const Goal &goal, const CommandMsg &style, GaitType gait, GoalOwner owner = {}) {
+        return _robot.startGoal(goal, style, gait, owner);
+    }
+    void goalCancel() { _robot.cancelGoal(); }
+    socket_message_GoalStatus goalStatus() const { return _robot.motion().goalStatus(); }
+    // A transport's client has gone.
+    void clientGone(GoalOwner owner) { _robot.goalClientGone(owner); }
+    // A transport's client sent something.
+    void ownerHeard(GoalOwner owner) { _robot.goalOwnerHeard(owner); }
 
   private:
     Hexapod _robot;

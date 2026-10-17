@@ -22,6 +22,7 @@
   import { GaitType } from '$lib/gait'
   import { throttler } from '$lib/utilities'
   import { setAnimationStatus } from '$lib/stores/animation'
+  import { followGoalStatus } from '$lib/stores/goal'
   import { connectWebsocket, isLinked } from '$lib/stores/link'
   import { COMMAND_HEARTBEAT_MS, needsHeartbeat } from '$lib/control-link'
   import { toControllerInput } from '$lib/controller-input'
@@ -42,6 +43,7 @@
   let linked = false
   let commandHeartbeatId: ReturnType<typeof setInterval> | undefined
   let stopWatchingUpdate: (() => void) | undefined
+  let stopFollowingGoal: (() => void) | undefined
 
   let { children }: Props = $props()
 
@@ -72,6 +74,7 @@
     })
 
     dataBroker.on(AnimationStatus, setAnimationStatus)
+    stopFollowingGoal = followGoalStatus(dataBroker, isLinked)
 
     dataBroker.on(GaitData, data => {
       const nextGait = Object.values(GaitType)[data.gait]
@@ -97,6 +100,7 @@
   onDestroy(() => {
     if (commandHeartbeatId) clearInterval(commandHeartbeatId)
     stopWatchingUpdate?.()
+    stopFollowingGoal?.()
   })
 
   let menuOpen = $state(false)

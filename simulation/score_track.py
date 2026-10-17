@@ -6,8 +6,8 @@ speed model (src/hexapod/speed_model.py) while the robot is in WALK, eased in an
 (GAIT_COMMAND_TAU_S) and integrated over the ticks. WALK_NN and ANIMATE count as standing still, which they are not;
 score a run that stays in STAND and WALK. The speed model is the speed-optimal stroke's (stride 0), so a recording that
 walked at another stride is refused. Where the recording's ticks also carry the firmware's odometry (the columns
-ODOMETRY_COLUMNS: x and y in metres, yaw in radians, in a frame of its own), that is scored beside it; the robot does
-not report odometry yet, so today only the commanded motion is scored.
+ODOMETRY_COLUMNS: x and y in metres, yaw in radians, in the frame the robot faced at its last odometry reset), that is
+scored beside it.
 
 The track (ground_truth.py) and the telemetry recording (record.py) run on different clocks: the camera's frames carry
 the host's monotonic time or a video's own, the ticks the robot's. The offset between the two is searched for: the
@@ -38,7 +38,7 @@ from src.hexapod.speed_model import Sticks, velocity_of
 from src.robot.firmware_gait import GAIT_COMMAND_TAU_S
 from src.sim import recording
 
-ODOMETRY_COLUMNS = ("odometry_x", "odometry_y", "odometry_yaw")
+ODOMETRY_COLUMNS = ("odom_x", "odom_y", "odom_yaw")
 # The stride's place in a tick's command (lx, ly, rx, ry, h, s, s1, fd, stride); older recordings end before it.
 STRIDE = 8
 GRID_S = 0.01

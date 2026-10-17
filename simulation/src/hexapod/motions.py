@@ -1,9 +1,11 @@
-"""Distance and turn motions, written once against the Robot's velocity, state and clock."""
+"""Distance and turn motions, written once against the Robot: goals the robot walks on its own odometry when it takes
+them, otherwise timed on its velocity, state and clock."""
 import math
 
 from src.robot.firmware_gait import FEET_EASE_S, GaitCommandRamp, GaitState, gait_is_commanded
 
-from .backends.base import Mode, RobotError, RobotTimeout
+from . import speed_model
+from .backends.base import GOAL_GAITS, Gait, Mode, RobotError, RobotTimeout, Velocity
 
 CONTROL_TICK_S = 0.005  # the firmware's control period (firmware/src/main.cpp)
 
@@ -52,10 +54,34 @@ def _open_loop(robot, vx: float, vy: float, yaw_rate: float, amount: float) -> N
         raise RobotError("the link stalled past the robot's dead-man timeout: it may have moved less than asked")
 
 
+def _goal_top(gait: Gait) -> Velocity:
+    """The speed model's tops for a goal's gait; AUTO's goal speed is a share of BI_GATE's top, as on the robot."""
+    return speed_model.max_velocity(Gait.BI_GATE if gait is Gait.AUTO else gait)
+
+
+def _share(speed: float, top: float) -> float:
+    if speed <= 0:
+        raise ValueError(f"a motion needs a positive speed, not {speed}")
+    return min(1.0, speed / top)
+
+
+def _by_goal(robot) -> bool:
+    """A robot that takes goals walks them, in a gait goals accept; TUNED keeps the timed motions."""
+    return robot.takes_goals() and robot.style().gait in GOAL_GAITS
+
+
 def move(robot, forward: float, sideways: float, speed: float | None) -> None:
-    """Walks `forward` and `sideways` metres (one of them zero) at `speed`, by default half the gait's top speed."""
+    """Walks `forward` and `sideways` metres (one of them zero) at `speed` m/s. By default a goal walks the style's
+    share of the gait's top speed (half of it unless set) and a timed move half the gait's top."""
     distance = math.hypot(forward, sideways)
     if distance == 0:
+        return
+    if _by_goal(robot):
+        share = None
+        if speed is not None:
+            top = _goal_top(robot.style().gait)
+            share = _share(speed, top.vx if sideways == 0 else top.vy)
+        robot.walk(forward if sideways == 0 else sideways, sideways=sideways != 0, speed=share)
         return
     top = robot.max_velocity()
     v = speed if speed is not None else (top.vx if sideways == 0 else top.vy) / 2
@@ -65,17 +91,24 @@ def move(robot, forward: float, sideways: float, speed: float | None) -> None:
 
 
 def rotate(robot, degrees: float, rate: float | None) -> None:
-    """Turns `degrees` counter-clockwise at `rate` rad/s (by default half the gait's top).
+    """Turns `degrees` counter-clockwise at `rate` rad/s, by default the style's share of the gait's top for a goal and
+    half the gait's top otherwise.
 
-    With an IMU the turn closes on the measured yaw: each pass slows over the last SLOW_DOWN_DEG and runs on to within
-    AIM_DEG, then the yaw is read again once the gait has settled and another pass turns the rest until it is within
-    TOLERANCE_DEG, up to MAX_TURN_PASSES. A pass that stopped at the edge of the tolerance would leave the settle
-    drift free to push the yaw out of it. The gait holds its stroke at any rate, and after the stop its feet return to
-    stance, which turns the body by an amount that depends on the gait phase, well beyond the mean coast of 1.25 tau
-    at the commanded rate. A lead on the stop would correct only that mean, so the turn is closed on the settled yaw
-    instead. Without an IMU the turn is timed like a move.
+    A robot that takes goals, in a gait they accept, closes the turn itself on its gyro-fused odometry, from the
+    heading the goals so far meant (Robot.turn). Otherwise, with an IMU the turn closes on the measured yaw: each pass
+    slows over the last SLOW_DOWN_DEG and runs on to within AIM_DEG, then the yaw is read again once the gait has
+    settled and another pass turns the rest until it is within TOLERANCE_DEG, up to MAX_TURN_PASSES. A pass that
+    stopped at the edge of the tolerance would leave the settle drift free to push the yaw out of it. The gait holds
+    its stroke at any rate, and after the stop its feet return to stance, which turns the body by an amount that
+    depends on the gait phase, well beyond the mean coast of 1.25 tau at the commanded rate. A lead on the stop would
+    correct only that mean, so the turn is closed on the settled yaw instead. Without an IMU the turn is timed like a
+    move.
     """
     if degrees == 0:
+        return
+    if _by_goal(robot):
+        share = None if rate is None else _share(rate, _goal_top(robot.style().gait).yaw_rate)
+        robot.turn(degrees, speed=share)
         return
     top = rate if rate is not None else robot.max_velocity().yaw_rate / 2
     if top <= 0:

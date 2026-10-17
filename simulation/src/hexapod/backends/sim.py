@@ -5,6 +5,7 @@ not model the link: no command is ever lost, so the dead-man stop never fires an
 """
 import math
 import time
+from dataclasses import replace
 
 import numpy as np
 
@@ -12,9 +13,12 @@ from ...sim.firmware_loop import FIRMWARE_DT, FirmwareLoop
 from ...sim.mj_runtime import HexapodSim
 from .. import speed_model
 from ..servos import FACTORY, NUM_SERVOS, ServoCalibration
-from .base import Gait, Mode, RobotDisconnected, RobotError, RobotState, Velocity
+from .base import Gait, Goal, GoalStatus, Mode, Odometry, RobotDisconnected, RobotError, RobotState, Style, Velocity
 
 POWERED = (Mode.STAND, Mode.WALK, Mode.IDLE)
+# Why the firmware refuses a goal (main.cpp goalRefusal), for the transport the simulation has none of.
+REFUSALS = {400: "a malformed goal or style", 409: "only a standing or walking robot takes a goal",
+            422: "no goal walks in this style: TUNED, or no speed at its posture"}
 
 
 class ServoOutput:
@@ -55,7 +59,7 @@ class SimBackend:
         self._loop: FirmwareLoop | None = None
         self._mode = Mode.DEACTIVATED  # as the firmware boots
         self._gait = Gait.TRI_GATE
-        self._height = 0.0
+        self._style = Style()  # the posture and stride every command carries: set_height's height, then each goal's
         self._sticks = speed_model.CENTRED
 
     def connect(self) -> None:
@@ -86,7 +90,7 @@ class SimBackend:
         self._loop.select_gait(int(gait))
 
     def set_height(self, height: float) -> None:
-        self._height = height
+        self._style = replace(self._style, h=height)
         self._command()
 
     def set_velocity(self, velocity: Velocity) -> Velocity:
@@ -95,11 +99,12 @@ class SimBackend:
         return speed_model.velocity_of(self._gait, self._sticks)
 
     def _command(self) -> None:
+        style = self._style
         if self._mode is Mode.WALK:
             s = self._sticks
-            self._loop.walk(lx=s.lx, ly=s.ly, rx=s.rx, h=self._height, stride=speed_model.STRIDE)
+            self._loop.walk(lx=s.lx, ly=s.ly, rx=s.rx, h=style.h, s1=style.s1, fd=style.fd, stride=style.stride)
         elif self._mode is Mode.STAND:
-            self._loop.hold(self._height)
+            self._loop.hold(h=style.h, s1=style.s1, fd=style.fd, stride=style.stride)
 
     def max_velocity(self) -> Velocity:
         return speed_model.max_velocity(self._gait)
@@ -126,6 +131,36 @@ class SimBackend:
 
     def servo_calibration(self) -> ServoCalibration:
         return FACTORY
+
+    def supports_goals(self) -> bool:
+        return True
+
+    def goal_move(self, goal: Goal, style: Style) -> GoalStatus:
+        self._sticks = speed_model.CENTRED
+        self._command()
+        kind, distance, angle, radius = goal.in_body_frame()
+        status = self._loop.goal_move(int(kind), distance, angle, radius, style.speed, int(style.gait), style.stride,
+                                      style.s1, style.h, style.fd)
+        if status != 202:
+            raise RobotError(f"the simulation refused the goal with status {status}: {REFUSALS.get(status, '')}")
+        self._mode, self._gait, self._style = Mode.WALK, style.gait, style
+        self._command()
+        return self.goal_status()
+
+    def goal_cancel(self) -> None:
+        self._loop.goal_cancel()
+
+    def goal_status(self) -> GoalStatus:
+        return GoalStatus.from_body(*self._loop.goal_status())
+
+    def odometry(self) -> Odometry:
+        return Odometry.from_body(*self._loop.odometry())
+
+    def reset_odometry(self) -> None:
+        """The firmware zeroes the pose on its next tick, so one is run. It refuses while a goal drives, as with 409."""
+        if not self._loop.reset_odometry():
+            raise RobotError("the simulation refused the reset with status 409: No odometry reset while a goal runs")
+        self.sleep(FIRMWARE_DT)
 
     def set_servo_pwm(self, servo: int, pwm: int) -> None:
         """ServoController::servoEvent: holds until the motion writes again, so in IDLE until the mode changes."""

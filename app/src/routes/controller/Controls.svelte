@@ -4,6 +4,7 @@
   import { capitalize } from '$lib/utilities'
   import { input, outControllerData, mode, gait } from '$lib/stores'
   import { isLinked } from '$lib/stores/link'
+  import { goalLine, goalStatus } from '$lib/stores/goal'
   import type { ControllerInput, vector } from '$lib/types/models'
   import { VerticalSlider } from '$lib/components/input'
   import { MotionModes } from '$lib/motion'
@@ -152,6 +153,8 @@
   }
 
   const changeGait = (gaitValue: GaitType) => requestGait(gaitValue)
+
+  const goalText = $derived($goalStatus ? goalLine($goalStatus) : null)
 </script>
 
 <div class="absolute top-0 left-0 h-screen w-screen">
@@ -297,6 +300,13 @@
     {#if !$isLinked}
       <div class="bg-base-300/70 flex shrink-0 items-center gap-2 rounded-tr-xl p-3">
         <span class="badge badge-warning badge-sm shrink-0">Preview</span>
+      </div>
+    {/if}
+
+    {#if goalText}
+      <div class="bg-base-300/70 flex shrink-0 items-center gap-2 rounded-tr-xl p-3">
+        <span class="badge badge-info badge-sm shrink-0">Goal</span>
+        <span class="font-mono text-xs tabular-nums" aria-live="polite">{goalText}</span>
       </div>
     {/if}
   </div>

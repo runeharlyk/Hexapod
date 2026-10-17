@@ -273,20 +273,63 @@ from src.hexapod import Robot
 
 with Robot("simulation") as robot:   # or Robot("192.168.4.1"), the robot's WebSocket at ws://<host>/api/ws
     robot.stand()
-    robot.move_forward(0.3)          # metres, open-loop on the speed model
-    robot.rotate(90)                 # degrees counter-clockwise, closed on the IMU yaw
+    robot.move_forward(0.3)          # metres, a goal the firmware closes on its own odometry
+    robot.rotate(90)                 # degrees counter-clockwise, a goal closed on the gyro-fused heading
 ```
 
 The API speaks REP-103 (x forward, y left, yaw counter-clockwise); the backends convert to the robot's X-right, Y-forward body frame and to the firmware's sticks.
 `Robot("simulation", viewer=True)` opens the MuJoCo viewer and runs in real time; the simulation backend runs `src/sim/firmware_loop.py`, the firmware's STAND/WALK tick that `replay_gait.py` also uses.
 The firmware takes sticks, not velocities, so `src/resources/speed_model.json` holds the body velocity each stick produces, measured per gait in the simulation, at stride 0, by `uv run python measure_speed_model.py`; `test_speed_model.py` fails when it no longer matches the simulation.
 It is the simulated robot's speed: check a distance on the floor before trusting it on the real one.
-A timed move holds its command for distance / speed and the gait phase its stop lands on scatters it by about 1 cm, so from a settled stand a move of 0.3 m or more lands within 4 % of the request, except TUNED forward (8 % short at 0.3 m, 5.5 % at 0.5 m).
+A move that is not a goal (TUNED, or a firmware from before goals) is timed from the PC: it holds its command for distance / speed and the gait phase its stop lands on scatters it by about 1 cm, so from a settled stand a move of 0.3 m or more lands within 4 % of the request, except TUNED forward (8 % short at 0.3 m, 5.5 % at 0.5 m).
 A move of 0.1 m lands between 19 % short (TUNED forward) and 13 % long (RIPPLE sideways), measured per gait forward and to both sides.
 The first move sent the moment `stand()` returns starts about 0.3 s late while the walk takes its posture, so it ends 0.02 to 0.045 m short at any distance.
 A per-gait distance offset is future work.
 On the real robot the input is re-sent every 200 ms inside the firmware's 600 ms dead-man, and a timed move raises if the link may have stalled past that or someone switched the robot out of WALK.
 Leaving the `with` block, also on an exception or Ctrl-C, stops the robot, lowers it onto its belly and switches the servos off.
+
+## Goals
+
+A goal is a move the firmware makes on its own odometry (`docs/firmware.md`, "Odometry and goal moves"), so a WiFi stall cannot cut it short and the PC no longer times it.
+A script sets a walking style and then moves; each call blocks until the move ends:
+
+```python
+robot.style(gait=Gait.TRI_GATE, speed=0.5, stride=0.0, step_height=20, body_height=0, feet_distance=0)
+robot.reset_odometry()               # with the robot still
+for _ in range(4):
+    robot.walk(1.0)                  # metres; negative is backwards; sideways=True walks to the left (negative right)
+    robot.turn(90)                   # degrees, counter-clockwise when positive
+robot.arc(0.5, 360)                  # radius in m (> 0) and degrees; a positive angle curves left, a negative one right
+robot.state().odometry               # the pose in the frame the robot faced at the reset
+```
+
+- `style()` sets the gait, the speed share in (0, 1] of the gait's top speed at the posture, the app's stride and feet-distance sliders in [-1, 1], the step height in mm and the body height in mm.
+  An omitted field keeps its value.
+- `walk()`, `turn()` and `arc()` take an optional `on_progress` callback, called with each new status.
+  They raise `GoalTimedOut` on `TIMED_OUT`, and `RobotError` on `CANCELLED`, on `REFUSED` or when another client's goal replaced theirs; any other exception before the goal is known to have ended, a lost reply (`RobotTimeout`) and Ctrl-C included, cancels the goal as far as the link still allows.
+- Units and signs are REP-103 at the facade's edge (x forward, y left, yaw counter-clockwise); the backends convert to the firmware's frame, where x is right.
+- A walk holds the heading it starts on, and a turn or an arc is aimed at the heading the script intends: after a walk that drifted 2 deg to the left a 90 deg turn turns 88, so the corners of a square do not accumulate the drift.
+  `reset_odometry()` sets the heading the goals then mean; call it with the robot still, as a walk under way would be counted into the new frame.
+  The robot refuses it while a goal runs (409, a `RobotError`), as the pose is the goal's origin.
+- Goals take TRI, BI, WAVE, RIPPLE and AUTO.
+  `move_forward`, `move_sideways` and `rotate` fall back to the timed motions above for TUNED, which has no speed envelope, and for a firmware from before goals, which answers a goal request 400; `walk`, `turn` and `arc` refuse there.
+  The speed model converts the speeds those three take (m/s and rad/s) to the share a goal asks for.
+- An arc's drift correction changes its length as well as its end heading.
+- The keep-alive that holds the link carries the last style's posture and stride (`s1`, `h`, `fd`, `stride`), so the robot keeps it after a goal.
+  It therefore also carries a non-default style into later velocity walks, which the speed model (measured at the default posture and stride 0) does not cover.
+  The style's speed is not carried: a goal ignores centred commands, so the speed would reach only the velocity walks.
+
+Measured in MuJoCo on its true pose:
+
+- The odometry reads about 5 % off the distance the robot truly walks, by foot slip; there is no calibration, by decision, and the floor tests decide whether one is needed.
+- The heading is the DMP's yaw fused with the feet's: it ends within 0.2 deg of the true yaw over a 1 m walk and within 0.4 deg over a 90 deg turn, on TRI and BI.
+- The 1 x 1 m square closes within 2.9 to 4.0 cm and 2.6 deg on TRI.
+- On BI a 90 deg turn ends 2.6 to 3.2 deg short of the true yaw, and 2.5 to 2.8 deg short on its own odometry.
+  The shortfall is the firmware's, not the simulation's: without physics, where the odometry is the truth, the stop prediction ends 90 deg turns between 2.2 deg short and 1.5 deg over (TRI and BI at speeds 0.25 to 1.0), and a turn is accepted within 3 deg.
+  The tolerance stays at 3 deg, as a corrective pass of 1 to 3 deg is a tiny goal that can time out (below); the intended heading keeps the shortfall from adding up over a sequence of turns.
+- BI's square still ends 0.8 to 11.6 cm and up to 9.8 deg off: each turn's corrective pass starts with a yaw of about 2 deg that the feet do not command, and the fused heading, which trusts the feet while they barely move, misses it.
+  Whether the robot's feet slip so at a pass's start is unmeasured.
+- Tiny goals, about 10 to 15 mm or a few degrees, at speeds 0.25 and 1.0 can end `TIMED_OUT`: the settled pose falls outside the tolerance and the passes run out.
 
 ## Floor benchmark
 
@@ -303,7 +346,7 @@ uv run python measure_pwm_per_degree.py simulation --sim-scale 2.28   # the same
 `ground_truth.py` finds an ArUco marker on the robot's back over four floor markers at known positions, takes the marker's height out of the floor homography, and writes `t,x,y,yaw` in metres and radians in the robot's frame convention (`docs/conventions.md`: yaw 0 faces the floor's +y).
 Its docstring describes the course file; on a rendered video the track comes within 1 mm RMS (`test_ground_truth.py`).
 `score_track.py` aligns the track's clock with a `record.py` recording on the start motion (open a course with a turn in place from standing), then prints, per estimate, the distance made good, the position and yaw error, the yaw drift per metre walked and the ratio of the paths.
-The estimate is the commanded motion, each tick's sticks through the speed model in WALK, so a recording that walked at a nonzero stride (the ninth command entry of a tick) is refused; the robot reports no odometry yet, and odometry columns (`odometry_x`, `odometry_y`, `odometry_yaw`) in a recording's ticks are scored beside it when present.
+The estimate is the commanded motion, each tick's sticks through the speed model in WALK, so a recording that walked at a nonzero stride (the ninth command entry of a tick) is refused; the firmware's odometry (the ticks' `odom_x`, `odom_y` and `odom_yaw`) is scored beside it when the recording carries it.
 `measure_pwm_per_degree.py` sets the nominal stand height, switches the robot to IDLE and steps the six femurs through raw PWMs, left side against right, and fits the counts per degree that make the firmware's leg geometry predict the body roll each step gave; `test_measure_pwm.py` recovers a scale injected into the simulated servos within 2 %.
 On the robot it needs the real backend's roll, `servo_calibration` and `set_servo_pwm`, which are being added to `src/hexapod/backends/real.py`; until then it refuses and names what is missing.
 The operator stands the robot on a flat, level floor before running it; the script refuses a robot that is not standing still.

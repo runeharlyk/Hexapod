@@ -44,6 +44,21 @@
    "TUNED": 4,
    "AUTO": 5
   },
+  "socket_message.GoalKind": {
+   "GOAL_FORWARD": 0,
+   "GOAL_SIDEWAYS": 1,
+   "GOAL_TURN": 2,
+   "GOAL_ARC": 3
+  },
+  "socket_message.GoalState": {
+   "GOAL_IDLE": 0,
+   "GOAL_SETTLING": 1,
+   "GOAL_RUNNING": 2,
+   "GOAL_REACHED": 3,
+   "GOAL_CANCELLED": 4,
+   "GOAL_TIMED_OUT": 5,
+   "GOAL_REFUSED": 6
+  },
   "socket_message.ModesEnum": {
    "DEACTIVATED": 0,
    "IDLE": 1,
@@ -442,7 +457,11 @@
    "file_read_chunk": "101 api.FileReadChunk",
    "file_delete": "102 api.FileDeleteRequest",
    "animation_validate": "110 socket_message.AnimationValidate",
-   "animation_list_request": "111 socket_message.AnimationListRequest"
+   "animation_list_request": "111 socket_message.AnimationListRequest",
+   "odometry_get": "130 socket_message.OdometryGet",
+   "goal_move": "131 socket_message.GoalMove",
+   "goal_cancel": "132 socket_message.GoalCancel",
+   "goal_status_get": "133 socket_message.GoalStatusGet"
   },
   "socket_message.CorrelationResponse": {
    "correlation_id": "1 uint32",
@@ -463,7 +482,9 @@
    "empty": "5 api.EmptyMessage",
    "file_chunk": "101 api.FileChunk",
    "animation_report": "110 socket_message.AnimationReport",
-   "animation_list": "111 socket_message.AnimationList"
+   "animation_list": "111 socket_message.AnimationList",
+   "odometry": "130 socket_message.OdometryData",
+   "goal_status": "131 socket_message.GoalStatus"
   },
   "socket_message.FeaturesDataRequest": {},
   "socket_message.FeaturesDataResponse": {
@@ -479,6 +500,31 @@
   "socket_message.GaitData": {
    "gait": "1 socket_message.GaitEnum"
   },
+  "socket_message.GoalCancel": {},
+  "socket_message.GoalMove": {
+   "kind": "1 socket_message.GoalKind",
+   "distance_m": "2 float",
+   "angle_rad": "3 float",
+   "radius_m": "4 float",
+   "speed": "5 float",
+   "gait": "6 socket_message.GaitEnum",
+   "stride": "7 float",
+   "s1": "8 float",
+   "h": "9 float",
+   "fd": "10 float"
+  },
+  "socket_message.GoalStatus": {
+   "id": "1 uint32",
+   "state": "2 socket_message.GoalState",
+   "kind": "3 socket_message.GoalKind",
+   "target": "4 float",
+   "progress": "5 float",
+   "x": "6 float",
+   "y": "7 float",
+   "yaw": "8 float",
+   "passes": "9 uint32"
+  },
+  "socket_message.GoalStatusGet": {},
   "socket_message.I2CDevice": {
    "address": "1 int32",
    "part_number": "2 string",
@@ -528,10 +574,21 @@
    "animation_stop": "281 socket_message.AnimationStop",
    "pose": "282 socket_message.PoseData",
    "animation_status": "283 socket_message.AnimationStatus",
-   "telemetry_batch": "290 socket_message.TelemetryBatch"
+   "telemetry_batch": "290 socket_message.TelemetryBatch",
+   "goal_status": "300 socket_message.GoalStatus"
   },
   "socket_message.ModeData": {
    "mode": "1 socket_message.ModesEnum"
+  },
+  "socket_message.OdometryData": {
+   "x": "1 float",
+   "y": "2 float",
+   "yaw": "3 float",
+   "kinematic_yaw": "4 float",
+   "distance": "5 float"
+  },
+  "socket_message.OdometryGet": {
+   "reset": "1 bool"
   },
   "socket_message.OtaChunk": {
    "index": "1 uint32",
@@ -603,7 +660,12 @@
    "mode": "12 uint32",
    "gait": "13 uint32",
    "mag": "14 repeated float",
-   "mag_fresh": "15 bool"
+   "mag_fresh": "15 bool",
+   "odom_x": "16 float",
+   "odom_y": "17 float",
+   "odom_yaw": "18 float",
+   "odom_kinematic_yaw": "19 float",
+   "odom_distance": "20 float"
   },
   "socket_message.UnsubscribeNotification": {
    "tag": "1 int32"
