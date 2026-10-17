@@ -6,6 +6,7 @@
 #define USE_MPU6050 1
 
 #include <unity.h>
+#include <pb_encode.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -57,8 +58,8 @@ struct Rig {
     VirtualRobot robot;
     std::deque<float> kinematicYaw {0};
     std::vector<socket_message_GoalStatus> pushes;
-    EventBus<socket_message_GoalStatus>::Handle listener = EventBus<socket_message_GoalStatus>::subscribe(
-        [this](const socket_message_GoalStatus &s) { pushes.push_back(s); });
+    GoalStatusBus::Handle listener =
+        GoalStatusBus::subscribe([this](const socket_message_GoalStatus &s) { pushes.push_back(s); });
 
     int ticks = 0;
 
@@ -150,6 +151,15 @@ class FakeAdapter : public CommAdapterBase {
   public:
     bool hasClient() const override { return true; }
     void leave(int id) { removeClient(id); }
+    // A ping from client `id`, as any client's keep-alive arrives.
+    void ping(int id) {
+        socket_message_Message msg = socket_message_Message_init_zero;
+        msg.which_message = socket_message_Message_pingmsg_tag;
+        uint8_t frame[16];
+        pb_ostream_t stream = pb_ostream_from_buffer(frame, sizeof(frame));
+        TEST_ASSERT_TRUE(pb_encode(&stream, socket_message_Message_fields, &msg));
+        handleIncoming(frame, stream.bytes_written, id);
+    }
 
   protected:
     void send(const uint8_t *, size_t, int) override {}
@@ -456,20 +466,77 @@ void test_the_owner_leaving_cancels_the_goal_and_another_client_leaving_does_not
     const auto websocket = std::make_unique<FakeAdapter>(), serial = std::make_unique<FakeAdapter>();
     for (FakeAdapter *adapter : {websocket.get(), serial.get()})
         adapter->onClientGone([&rig](const CommAdapterBase *from, int id) { rig.robot.clientGone({from, id}); });
+    websocket->onClientHeard([&rig](const CommAdapterBase *from, int id) { rig.robot.ownerHeard({from, id}); });
     standUp(rig);
     const GoalOwner owner {static_cast<const CommAdapterBase *>(websocket.get()), 7};
     TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(1.0f), style(), GaitType::TRI_GATE, owner));
-    rig.run(1.5f);
+    // The owner's keep-alive, as the facade sends it.
+    const auto runHeard = [&](float seconds) {
+        for (int t = 0; t < ticksFor(seconds); ++t) {
+            if (t % ticksFor(0.2f) == 0) websocket->ping(7);
+            rig.tick();
+        }
+    };
+    runHeard(1.5f);
     TEST_ASSERT_EQUAL(GoalState::RUNNING, rig.state());
     websocket->leave(8);
     serial->leave(7);
-    rig.run(0.5f);
+    runHeard(0.5f);
     TEST_ASSERT_EQUAL(GoalState::RUNNING, rig.state());
     websocket->leave(7);
     rig.tick();
     TEST_ASSERT_EQUAL(GoalState::CANCELLED, rig.state());
     rig.run(2.0f);
     assertAtRest(rig);
+}
+
+// Ruling R8: a USB serial port the script closed is not reported while the host still polls the bus, so an owner that
+// sends nothing for OWNER_SILENCE_MS has gone. Its keep-alive every 0.2 s keeps the goal; another client's does not.
+void test_an_owner_that_falls_silent_loses_its_goal() {
+    Rig &rig = newRig();
+    const auto serial = std::make_unique<FakeAdapter>();
+    serial->onClientHeard([&rig](const CommAdapterBase *from, int id) { rig.robot.ownerHeard({from, id}); });
+    standUp(rig);
+    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(1.0f), style(), GaitType::TRI_GATE,
+                                                  {static_cast<const CommAdapterBase *>(serial.get()), 0}));
+    for (int t = 0; t < ticksFor(4.0f); ++t) {
+        if (t % ticksFor(0.2f) == 0) serial->ping(0);
+        rig.tick();
+    }
+    TEST_ASSERT_EQUAL(GoalState::RUNNING, rig.state());
+    // From here only another client speaks: 0.2 s after the owner's last ping, 1.7 s more leave it 1.9 s silent.
+    for (int t = 0; t < ticksFor(1.7f); ++t) {
+        if (t % ticksFor(0.2f) == 0) serial->ping(1);
+        rig.tick();
+    }
+    TEST_ASSERT_EQUAL(GoalState::RUNNING, rig.state());
+    rig.run(0.2f);
+    TEST_ASSERT_EQUAL(GoalState::CANCELLED, rig.state());
+    rig.run(2.0f);
+    assertAtRest(rig);
+}
+
+// A goal asked for while TUNED walks on its last stick stops that walk, since TUNED steps on until a stop, and then
+// walks its own gait; left walking, TUNED would never come to rest for the swap.
+void test_a_goal_stops_a_tuned_walk_and_walks_its_own_gait() {
+    Rig &rig = newRig();
+    standUp(rig);
+    rig.robot.setMode(MOTION_STATE::WALK);
+    rig.robot.setGait(GaitType::TUNED);
+    rig.tick();
+    for (int t = 0; t < ticksFor(0.5f); ++t) {
+        if (t % COMMAND_PERIOD_TICKS == 0) rig.robot.command({0, 0.5f, 0, 0, 0, 0, 0, 0});
+        rig.tick();
+    }
+    TEST_ASSERT_EQUAL(GaitType::TUNED, rig.robot.gait());
+    TEST_ASSERT_TRUE(gaitIsCommanded(rig.robot.gaitState()));
+    const OdometryEstimate start = rig.robot.odometry();
+    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(0.3f), style(), GaitType::TRI_GATE));
+    rig.runGoal();
+    TEST_ASSERT_EQUAL(GoalState::REACHED, rig.state());
+    TEST_ASSERT_EQUAL(GaitType::TRI_GATE, rig.robot.gait());
+    // The goal's frame starts where TUNED came to rest, a short coast past `start`.
+    TEST_ASSERT_LESS_THAN_FLOAT(0.5f, relative(start, rig.robot.odometry()).distance);
 }
 
 // Review focus 4: the stance change and the body height a style settles into before the walk are no travel.
@@ -575,26 +642,34 @@ void test_a_new_goal_replaces_the_one_in_progress() {
     TEST_ASSERT_EQUAL(GoalState::REACHED, rig.state());
 }
 
-// The status is pushed on every change of state and on every 5 % of progress, and on nothing else.
+// The status is pushed on every change of state and on every 5 % of progress, and on nothing else. A one-pass goal goes
+// SETTLING (its posture), RUNNING, SETTLING (coming to rest) and REACHED, and its progress crosses each of the 20 steps
+// once on the way up. Progress is judged on the pose the feet will settle in, which can step back a little as a step
+// lands, so a step may be crossed back and forth: each crossing back costs two pushes more.
 void test_the_status_is_pushed_on_state_changes_and_every_5_percent() {
     Rig &rig = newRig();
     standUp(rig);
     TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(1.0f), style(), GaitType::TRI_GATE));
     const uint32_t id = rig.robot.goalStatus().id;
-    const int ticks = rig.runGoal();
+    rig.runGoal();
     TEST_ASSERT_EQUAL(GoalState::REACHED, rig.state());
+    TEST_ASSERT_EQUAL_UINT32(1, rig.robot.goalStatus().passes);
     const auto step = [](float p) { return static_cast<int>(std::floor(p * 20)); };
     const std::vector<socket_message_GoalStatus> &pushes = rig.pushes;
-    TEST_ASSERT_LESS_THAN(ticks / 20, pushes.size());
-    TEST_ASSERT_EQUAL(socket_message_GoalState_GOAL_SETTLING, pushes.front().state);
-    TEST_ASSERT_EQUAL(socket_message_GoalState_GOAL_REACHED, pushes.back().state);
+    std::vector<int> states;
+    int backs = 0;
     for (size_t i = 0; i < pushes.size(); ++i) {
         TEST_ASSERT_EQUAL_UINT32(id, pushes[i].id);
-        if (i == 0) continue;
-        TEST_ASSERT_TRUE(pushes[i].state != pushes[i - 1].state ||
-                         step(pushes[i].progress) != step(pushes[i - 1].progress));
+        if (states.empty() || states.back() != pushes[i].state) states.push_back(pushes[i].state);
+        if (i > 0) backs += step(pushes[i].progress) < step(pushes[i - 1].progress);
     }
-    // The walk covers every 5 % step, and each was pushed.
+    const std::vector<int> expected {socket_message_GoalState_GOAL_SETTLING, socket_message_GoalState_GOAL_RUNNING,
+                                     socket_message_GoalState_GOAL_SETTLING, socket_message_GoalState_GOAL_REACHED};
+    TEST_ASSERT_TRUE(states == expected);
+    // At most four state changes, twenty steps up and two pushes for every step back; a state change on a new step is
+    // one push for both.
+    TEST_ASSERT_LESS_OR_EQUAL(4 + 20 + 2 * backs, pushes.size());
+    TEST_ASSERT_LESS_OR_EQUAL(3, backs);
     for (int k = 0; k <= 20; ++k)
         TEST_ASSERT_TRUE(std::any_of(pushes.begin(), pushes.end(),
                                      [&](const socket_message_GoalStatus &s) { return step(s.progress) == k; }));
@@ -615,6 +690,8 @@ int main(int, char **) {
     RUN_TEST(test_the_dead_man_timeout_does_not_stop_a_goal);
     RUN_TEST(test_a_cancelled_goal_stops_with_no_cadence_left);
     RUN_TEST(test_the_owner_leaving_cancels_the_goal_and_another_client_leaving_does_not);
+    RUN_TEST(test_an_owner_that_falls_silent_loses_its_goal);
+    RUN_TEST(test_a_goal_stops_a_tuned_walk_and_walks_its_own_gait);
     RUN_TEST(test_settling_into_the_style_adds_no_travel);
     RUN_TEST(test_an_unwalkable_style_is_clamped_like_the_sliders);
     RUN_TEST(test_a_tuned_style_is_refused);

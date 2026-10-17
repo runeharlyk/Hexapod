@@ -23,6 +23,9 @@
 #include <animation/animation_runner.h>
 #include <animation/mode_arbiter.h>
 
+/** The goal status the motion pushes: a few pushes a tick at most, to the app's bridge. */
+using GoalStatusBus = EventBus<socket_message_GoalStatus, 4, 2, 1>;
+
 /** A transport's client, its adapter and its id there: ids repeat across transports. */
 struct GoalOwner {
     const void *adapter = nullptr;
@@ -420,6 +423,7 @@ class MotionService {
         _goalRequest = {goal, s, gait, ++_goalCount};
         _goalRequested = true;
         _goalOwner = owner;
+        _ownerHeardMs = millis();
         _goalDrives = true;
         // Whatever ended the goal before is done with: a cancel from now on is this goal's.
         _goalCancelRequested = false;
@@ -433,6 +437,13 @@ class MotionService {
     void clientGone(GoalOwner owner) {
         std::lock_guard<std::mutex> lock(_goalMutex);
         if (_goalDrives && owner == _goalOwner) _goalCancelRequested = true;
+    }
+
+    // Adapter task: a client sent something. A goal's owner that falls silent for OWNER_SILENCE_MS loses its goal,
+    // since a closed USB serial port is not reported while the host still polls the bus.
+    void ownerHeard(GoalOwner owner) {
+        std::lock_guard<std::mutex> lock(_goalMutex);
+        if (_goalDrives && owner == _goalOwner) _ownerHeardMs = millis();
     }
 
     // Any task: the newest goal's status, one accepted but not yet taken as settling, with the pose now.
@@ -513,6 +524,7 @@ class MotionService {
     bool _goalRequested = false;
     uint32_t _goalCount = 0;
     GoalOwner _goalOwner {};
+    unsigned long _ownerHeardMs = 0;
     bool _goalDrives = false;
     bool _goalCancelRequested = false;
     socket_message_GoalStatus _goalStatus = socket_message_GoalStatus_init_zero;
@@ -522,8 +534,14 @@ class MotionService {
     GoalState _goalState = GoalState::IDLE;
     bool _goalStyleTaken = false; // its posture and gait were handed to the walk
     bool _goalStarted = false;    // _goal walks it
+    unsigned long _goalTakenMs = 0;
     socket_message_GoalStatus _goalReported = socket_message_GoalStatus_init_zero;
     static constexpr int GOAL_STATUS_STEPS = 20; // a push every 5 % of progress
+    // The facade and the app send every 0.2 s; an owner silent ten times as long has gone, whether or not its transport
+    // has said so. A goal with no transport, the host's own, has no owner to fall silent.
+    static constexpr unsigned long OWNER_SILENCE_MS = 2000;
+    // A goal takes its posture and gait in a few seconds; one still waiting after this never will.
+    static constexpr unsigned long GOAL_START_TIMEOUT_MS = 10000;
     // How long a stop goes on stepping, as a time at the cadence it stopped from: the stop ramp's cadence follows the
     // stroke left, whose integral over the stop is 2 tau (GoalController::STOP_S), but a foot that lifts in the stop's
     // tail still sets down off its stance, so 3 tau. Fitted on the virtual robot over TRI and BI goals at four speeds
@@ -731,6 +749,20 @@ class MotionService {
                 envelopeAt(walked, 2, p.s1, p.h, p.fd, stride).vMax};
     }
 
+    static_assert((int)GoalState::IDLE == socket_message_GoalState_GOAL_IDLE &&
+                      (int)GoalState::SETTLING == socket_message_GoalState_GOAL_SETTLING &&
+                      (int)GoalState::RUNNING == socket_message_GoalState_GOAL_RUNNING &&
+                      (int)GoalState::REACHED == socket_message_GoalState_GOAL_REACHED &&
+                      (int)GoalState::CANCELLED == socket_message_GoalState_GOAL_CANCELLED &&
+                      (int)GoalState::TIMED_OUT == socket_message_GoalState_GOAL_TIMED_OUT &&
+                      (int)GoalState::REFUSED == socket_message_GoalState_GOAL_REFUSED,
+                  "GoalStatus.state carries GoalState by value");
+    static_assert((int)GoalKind::FORWARD == socket_message_GoalKind_GOAL_FORWARD &&
+                      (int)GoalKind::SIDEWAYS == socket_message_GoalKind_GOAL_SIDEWAYS &&
+                      (int)GoalKind::TURN == socket_message_GoalKind_GOAL_TURN &&
+                      (int)GoalKind::ARC == socket_message_GoalKind_GOAL_ARC,
+                  "GoalStatus.kind and GoalMove.kind carry GoalKind by value");
+
     static socket_message_GoalStatus goalStatusOf(uint32_t id, GoalState state, const Goal &goal, float progress,
                                                   int passes) {
         socket_message_GoalStatus s = socket_message_GoalStatus_init_zero;
@@ -778,7 +810,8 @@ class MotionService {
             std::lock_guard<std::mutex> lock(_goalMutex);
             requested = std::exchange(_goalRequested, false);
             request = _goalRequest;
-            cancelled = std::exchange(_goalCancelRequested, false);
+            cancelled = std::exchange(_goalCancelRequested, false) ||
+                        (_goalDrives && _goalOwner.adapter && millis() - _ownerHeardMs > OWNER_SILENCE_MS);
             if (cancelled && _goalDrives) {
                 _goalDrives = false;
                 centreWalk();
@@ -788,6 +821,7 @@ class MotionService {
             cancelGoalTaken();
             _goalTaken = request;
             _goalStyleTaken = _goalStarted = false;
+            _goalTakenMs = millis();
             const MOTION_STATE mode = motionState;
             // The mode can have changed since the reply, on another task.
             _goalState = cancelled                                                   ? GoalState::CANCELLED
@@ -799,6 +833,10 @@ class MotionService {
             reportGoal();
         } else if (cancelled) {
             cancelGoalTaken();
+        } else if (goalActive() && !_goalStarted && millis() - _goalTakenMs > GOAL_START_TIMEOUT_MS) {
+            _goalState = GoalState::TIMED_OUT;
+            releaseGoalWalk();
+            reportGoal();
         }
     }
 
@@ -859,17 +897,19 @@ class MotionService {
     // stand at rest in it starts at once, any other settles first) and its gait through the deferred swap. TUNED steps
     // on the stick it last had, which only a stop ends.
     void takeGoalStyle() {
-        std::lock_guard<std::mutex> lock(_goalMutex);
-        if (!_goalDrives) return;
-        if (gait_state.gait_type == GaitType::TUNED) stopLocomotionCommand(false);
-        if (_requestedGait != _goalTaken.gait) {
+        bool newGait;
+        {
+            std::lock_guard<std::mutex> lock(_goalMutex);
+            if (!_goalDrives) return;
+            if (gait_state.gait_type == GaitType::TUNED) stopLocomotionCommand(false);
+            newGait = _requestedGait != _goalTaken.gait;
             _requestedGait = _goalTaken.gait;
-            // For the app and the controller; MotionService would take its own selection for a wire gait change.
-            EventBus<GaitMsg>::publish({_goalTaken.gait}, _gaitSubHandle);
+            lastWalkCommand_ = _goalTaken.style;
+            walkClassic(_goalTaken.style);
+            _goalStyleTaken = true;
         }
-        lastWalkCommand_ = _goalTaken.style;
-        walkClassic(_goalTaken.style);
-        _goalStyleTaken = true;
+        // For the app and the controller; MotionService would take its own selection for a wire gait change.
+        if (newGait) EventBus<GaitMsg>::publish({_goalTaken.gait}, _gaitSubHandle);
     }
 
     // Control task: pushes the status on a change of goal or state, or a step of progress.
@@ -887,7 +927,7 @@ class MotionService {
             std::lock_guard<std::mutex> lock(_goalMutex);
             _goalStatus = s;
         }
-        EventBus<socket_message_GoalStatus>::publish(s);
+        GoalStatusBus::publish(s);
     }
 
     // Command worker or control task. The envelope measured a level, centred body: the tilt stick and the stand's

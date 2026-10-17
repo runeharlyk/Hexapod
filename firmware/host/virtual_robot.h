@@ -83,6 +83,8 @@ class VirtualRobot {
     socket_message_GoalStatus goalStatus() const { return _robot.motion().goalStatus(); }
     // A transport's client has gone.
     void clientGone(GoalOwner owner) { _robot.goalClientGone(owner); }
+    // A transport's client sent something.
+    void ownerHeard(GoalOwner owner) { _robot.goalOwnerHeard(owner); }
 
   private:
     Hexapod _robot;

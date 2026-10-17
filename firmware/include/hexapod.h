@@ -62,6 +62,7 @@ class Hexapod {
     }
     void cancelGoal() { _motionService.cancelGoal(); }
     void goalClientGone(GoalOwner owner) { _motionService.clientGone(owner); }
+    void goalOwnerHeard(GoalOwner owner) { _motionService.ownerHeard(owner); }
     imu_calibration::Check calibrateIMU(ImuCalibration &result) { return _peripherals.calibrateIMU(result); }
     bool magnetometerPresent() const { return _peripherals.magActive(); }
 

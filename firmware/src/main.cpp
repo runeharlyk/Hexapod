@@ -561,7 +561,8 @@ static void registerHandlers(CommAdapterBase &c) {
                     res.status_code = robot.startGoal(goal, style, static_cast<GaitType>(m.gait), {adapter, clientId});
                 }
                 strncpy(res.error_message, goalRefusal(res.status_code), sizeof(res.error_message) - 1);
-                res.response.goal_status = robot.motion().goalStatus();
+                // A refused request has no goal: the status of the one before is not its.
+                if (res.status_code == 202) res.response.goal_status = robot.motion().goalStatus();
                 break;
             }
             case socket_message_CorrelationRequest_goal_cancel_tag: {
@@ -638,21 +639,22 @@ static void refreshBridge(int32_t tag) {
     if (it != bridges().end()) it->second(anyoneListening(tag));
 }
 
-template <typename Msg, typename Fn>
+template <typename Msg, typename Bus = EventBus<Msg>, typename Fn>
 static void addBridge(int32_t tag, Fn fn) {
-    static typename EventBus<Msg>::Handle handle;
+    static typename Bus::Handle handle;
     std::lock_guard<std::mutex> lock(bridgeMutex);
     bridges()[tag] = [fn, tag](bool wanted) {
         if (wanted == handle.valid()) return;
         ESP_LOGD(TAG, "bridge tag %d %s", (int)tag, wanted ? "attached" : "detached");
-        if (wanted) handle = EventBus<Msg>::subscribe(fn);
+        if (wanted)
+            handle = Bus::subscribe(fn);
         else handle.unsubscribe();
     };
 }
 
-template <typename ProtoT>
+template <typename ProtoT, typename Bus = EventBus<ProtoT>>
 static void observeStatus() {
-    addBridge<ProtoT>(MessageTraits<ProtoT>::tag, [](const ProtoT &s) { emitAll(s); });
+    addBridge<ProtoT, Bus>(MessageTraits<ProtoT>::tag, [](const ProtoT &s) { emitAll(s); });
 }
 
 static void initNvs() {
@@ -752,7 +754,7 @@ static void setupComm() {
     observeStatus<api_WifiStatus>();
     observeStatus<api_APStatus>();
     observeStatus<socket_message_AnimationStatus>();
-    observeStatus<socket_message_GoalStatus>();
+    observeStatus<socket_message_GoalStatus, GoalStatusBus>();
 
     // A client that leaves ends the goal it asked for; losing the last client on every transport stops an animation,
     // so nothing walks or plays unattended.
@@ -760,10 +762,17 @@ static void setupComm() {
         robot.goalClientGone({adapter, clientId});
         if (!anyClientConnected()) robot.animationControlLost();
     };
+    // Any frame keeps a goal's owner alive; one that falls silent loses its goal (MotionService::ownerHeard).
+    const auto onClientHeard = [](const CommAdapterBase *adapter, int clientId) {
+        robot.goalOwnerHeard({adapter, clientId});
+    };
     wsSocket.onClientGone(onClientGone);
     bleAdapter.onClientGone(onClientGone);
+    wsSocket.onClientHeard(onClientHeard);
+    bleAdapter.onClientHeard(onClientHeard);
 #if FT_ENABLED(USE_SERIAL_LINK)
     serialAdapter.onClientGone(onClientGone);
+    serialAdapter.onClientHeard(onClientHeard);
 #endif
 
     // Transports start only once every bridge exists, so an early subscription finds its bridge.
