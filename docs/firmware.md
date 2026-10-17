@@ -138,11 +138,12 @@ Both are ports of SpotMicroESP32-Leika's, to six legs and the body frame of `doc
 `KinematicOdometry` takes the six foot targets the gait placed, before the body's tilt and shift, since those move the body over the planted feet and the robot travels only as far as the gait strokes them.
 A foot is on the floor when its gait phase is in stance and it is within `LIFTED_MM` (3 mm) of the lowest foot, which keeps a foot a stopped walk is lowering from counting.
 The robot's step each tick is the inverse of the least-squares rigid motion of the feet that were on the floor in both this tick and the last; the yaw comes from the fit only when at least two feet were down in both.
-The stop's ease home is credited through `restStep`, as the feet that stay carry the body while the lifted ones come down.
+The stop's ease home is credited tick by tick through the same fit, as the feet that stay carry the body while the lifted ones come down; `restStep` predicts where that ease will leave the robot, for the goal's rest pose only.
 It knows only what the gait commanded: servo lag, slip and short steps make the robot travel otherwise.
 
-`FusedOdometry` corrects the heading with the gyro's z rate.
-The gyro is read every 25 ms and the control runs every 5 ms, so a sample is fused on the tick that read it, over the time since the last one, and only while that time is at most `GYRO_STALE_S` (50 ms); the heading follows the feet in between and across a stall.
+`FusedOdometry` corrects the heading with the gyro's yaw rate, taken from the DMP's yaw: its change between two packets over the time between them, in the body frame through `imu_frame.h`'s `YAW_SIGN`.
+The chip integrates the gyro at 200 Hz, so the walk's yaw rocking does not alias into that mean as it did into one raw gyro sample held over the read period; the raw gyro is still read for the policy.
+The IMU is read every 25 ms and the control runs every 5 ms, so a packet's rate is fused on the tick that read it, over the time since the last one, and only while the packet before it is at most `GYRO_STALE_S` (50 ms) old and no FIFO reset came between them; the heading follows the feet in between and across a stall.
 The two rates are weighted by their variances, which puts the gyro's weight up while walking and the feet's while standing.
 The gyro's bias is learned by a scalar Kalman filter on the difference of the two rates, and only while the robot is still: every foot down and no gait cycling, the body's yaw over the planted feet still, and the feet's own rate quiet, all kept up for `SETTLE_S` (0.2 s).
 A stance change, a body tilt or an easing body shift is therefore taken neither for bias nor for travel.

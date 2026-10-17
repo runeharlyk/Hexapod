@@ -321,8 +321,13 @@ robot.state().odometry               # the pose in the frame the robot faced at 
 Measured in MuJoCo on its true pose:
 
 - The odometry reads about 5 % off the distance the robot truly walks, by foot slip; there is no calibration, by decision, and the floor tests decide whether one is needed.
-- The 1 x 1 m square closes within 1.0 to 5.4 cm and 4.5 deg on TRI.
-  On BI a turn ends 2.8 to 2.9 deg short and the square 6 to 19 cm and 12 deg off, which is a limit of the simulation.
+- The heading is the DMP's yaw fused with the feet's: it ends within 0.2 deg of the true yaw over a 1 m walk and within 0.4 deg over a 90 deg turn, on TRI and BI.
+- The 1 x 1 m square closes within 2.9 to 4.0 cm and 2.6 deg on TRI.
+- On BI a 90 deg turn ends 2.6 to 3.2 deg short of the true yaw, and 2.5 to 2.8 deg short on its own odometry.
+  The shortfall is the firmware's, not the simulation's: without physics, where the odometry is the truth, the stop prediction ends 90 deg turns between 2.2 deg short and 1.5 deg over (TRI and BI at speeds 0.25 to 1.0), and a turn is accepted within 3 deg.
+  The tolerance stays at 3 deg, as a corrective pass of 1 to 3 deg is a tiny goal that can time out (below); the intended heading keeps the shortfall from adding up over a sequence of turns.
+- BI's square still ends 0.8 to 11.6 cm and up to 9.8 deg off: each turn's corrective pass starts with a yaw of about 2 deg that the feet do not command, and the fused heading, which trusts the feet while they barely move, misses it.
+  Whether the robot's feet slip so at a pass's start is unmeasured.
 - Tiny goals, about 10 to 15 mm or a few degrees, at speeds 0.25 and 1.0 can end `TIMED_OUT`: the settled pose falls outside the tolerance and the passes run out.
 
 ## Floor benchmark
