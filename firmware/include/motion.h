@@ -56,20 +56,10 @@ class MotionService {
             ESP_LOGD("MotionService", "GAIT callback called with gait %d", (int)c.gait);
             handleInputGait(c);
         });
-        _angleSubHandle = EventBus<ServoAnglesMsg>::subscribe([&](ServoAnglesMsg const &s) {
-            ESP_LOGD("MotionService", "ANGLES callback called");
-            handleAnglesEvent(s);
-        });
         ESP_LOGI("MotionService", "Event bus subscriptions completed");
         body_state.updateFeet(default_feet_pos);
         EventBus<ModeMsg>::publish({motionState});
         EventBus<GaitMsg>::publish({gait_state.gait_type});
-    }
-
-    void handleAnglesEvent(ServoAnglesMsg const &s) {
-        for (int i = 0; i < 12; i++) {
-            msgAngles.angles[i] = s.angles[i];
-        }
     }
 
     void handleInputGait(GaitMsg const &g) {
@@ -491,7 +481,6 @@ class MotionService {
     EventBus<CommandMsg>::Handle _cmdSubHandle;
     EventBus<ModeMsg>::Handle _modeSubHandle;
     EventBus<GaitMsg>::Handle _gaitSubHandle;
-    EventBus<ServoAnglesMsg>::Handle _angleSubHandle;
     Kinematics kinematics;
     GaitController gait;
 #if FT_ENABLED(USE_POLICY)

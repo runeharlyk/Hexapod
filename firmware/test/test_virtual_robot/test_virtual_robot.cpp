@@ -236,6 +236,21 @@ void test_deactivating_mid_walk_freezes_the_joints() {
     TEST_ASSERT_EQUAL_FLOAT(0.0f, largestStep(robot, ticksFor(0.5f), &FORWARD));
 }
 
+// The joint angles are the control task's alone: the angles the robot publishes for the app are never written back.
+void test_angles_on_the_bus_leave_the_motions_angles_alone() {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setMode(MOTION_STATE::DEACTIVATED);
+    robot.tick();
+    float held[18];
+    std::copy_n(robot.angles(), 18, held);
+    ServoAnglesMsg stale;
+    std::fill_n(stale.angles, 18, 99.0f);
+    EventBus<ServoAnglesMsg>::publish(stale);
+    robot.tick();
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(held, robot.angles(), 18);
+}
+
 void test_a_gait_selected_while_standing_is_applied() {
     VirtualRobot robot;
     standUp(robot);
@@ -1331,6 +1346,7 @@ int main(int, char **) {
     RUN_TEST(test_no_servo_is_driven_past_its_joint_travel);
     RUN_TEST(test_a_walk_without_commands_comes_to_rest);
     RUN_TEST(test_deactivating_mid_walk_freezes_the_joints);
+    RUN_TEST(test_angles_on_the_bus_leave_the_motions_angles_alone);
     RUN_TEST(test_a_gait_selected_while_standing_is_applied);
     RUN_TEST(test_full_stick_walk_stays_in_travel_for_every_classic_gait);
     RUN_TEST(test_an_auto_gait_switch_retargets_the_held_stick);

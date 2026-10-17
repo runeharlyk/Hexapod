@@ -83,7 +83,7 @@ Callbacks run on the type's worker task, so a subscriber that touches state shar
 
 ## Motion pipeline
 
-`MotionService` (`include/motion.h`) subscribes to `CommandMsg`, `ModeMsg`, `GaitMsg` and `ServoAnglesMsg`, and `Hexapod::planMotion()` calls its `updateMotion()` once per control tick.
+`MotionService` (`include/motion.h`) subscribes to `CommandMsg`, `ModeMsg` and `GaitMsg`, and `Hexapod::planMotion()` calls its `updateMotion()` once per control tick.
 The mode is a `MOTION_STATE`: `DEACTIVATED`, `IDLE`, `POSE`, `STAND`, `WALK`, `WALK_NN` and `ANIMATE`.
 
 - `DEACTIVATED` puts both PCA9685 boards to sleep; `IDLE` keeps them powered and produces no angles; `POSE` drives every servo to its centre pulse for calibration.
