@@ -55,13 +55,15 @@ def walk(modes, sticks, translation_scale: float, turn_scale: float, start) -> n
     return poses
 
 
-def write_recording(path, modes, sticks, strides=None) -> None:
+def write_recording(path, modes, sticks, strides=None, odometry=None) -> None:
     strides = np.zeros(len(modes)) if strides is None else strides
+    odometry = np.zeros((len(modes), 3)) if odometry is None else odometry
     robot_us = np.round((ROBOT_START_S + np.arange(len(modes)) * TICK_S) * 1e6).astype(int)
     writer = RecordingWriter(path, {"version": "synthetic"})
     for first in range(0, len(modes), 10):
         ticks = [pb.TickSample(seq=k, t_us=int(robot_us[k]), mode=int(modes[k]), gait=int(Gait.TRI_GATE),
-                               command=[*sticks[k], 0.0, 0.0, 0.0, 0.0, 0.0, strides[k]])
+                               command=[*sticks[k], 0.0, 0.0, 0.0, 0.0, 0.0, strides[k]],
+                               odom_x=odometry[k, 0], odom_y=odometry[k, 1], odom_yaw=odometry[k, 2])
                  for k in range(first, min(first + 10, len(modes)))]
         batch = pb.Message(telemetry_batch=pb.TelemetryBatch(batch_seq=first // 10 + 1, ticks=ticks))
         writer.write(batch.SerializeToString(), int(robot_us[ticks[-1].seq]) + 25_000)
@@ -81,15 +83,13 @@ def write_track(path, floor, track_less_robot: float, rng) -> None:
 
 
 def scored(tmp_path, translation_scale, turn_scale, track_less_robot, odometry=None):
-    """The score, the floor path, and the path the sticks command; `odometry` (x, y, yaw per tick) is added to the
-    recording's ticks as the firmware's odometry would be."""
+    """The score, the floor path, and the path the sticks command; `odometry` (x, y, yaw per tick) is recorded in the
+    ticks as the firmware records its odometry."""
     modes, sticks = course_ticks()
     floor = walk(modes, sticks, translation_scale, turn_scale, START)
-    write_recording(tmp_path / "run.hexrec", modes, sticks)
+    write_recording(tmp_path / "run.hexrec", modes, sticks, odometry=odometry)
     write_track(tmp_path / "track.csv", floor, track_less_robot, np.random.default_rng(3))
     rec = recording.load(tmp_path / "run.hexrec")
-    if odometry is not None:
-        rec.ticks.update(zip(score_track.ODOMETRY_COLUMNS, odometry.T))
     result = score_track.score(Track.load(tmp_path / "track.csv"), Telemetry.from_recording(rec))
     return result, floor, walk(modes, sticks, 1.0, 1.0, (0.0, 0.0, 0.0))
 
