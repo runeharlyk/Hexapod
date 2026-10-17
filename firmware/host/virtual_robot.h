@@ -72,8 +72,8 @@ class VirtualRobot {
                 .kinematicYaw = _sample.odom_kinematic_yaw,
                 .distance = _sample.odom_distance};
     }
-    // Takes effect on the next tick, as a reset from a transport does.
-    void resetOdometry() { _robot.resetOdometry(); }
+    // Takes effect on the next tick, as a reset from a transport does; refused while a goal drives.
+    bool resetOdometry() { return _robot.resetOdometry(); }
     // As main.cpp's goal_move handler, whose OTA check has no counterpart here: the reply's status. The goal starts on
     // the next tick.
     int goalMove(const Goal &goal, const CommandMsg &style, GaitType gait, GoalOwner owner = {}) {

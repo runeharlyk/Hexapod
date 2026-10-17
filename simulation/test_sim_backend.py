@@ -217,6 +217,22 @@ def test_a_turn_right_after_an_odometry_reset_turns_its_angle(standing):
     assert turned == pytest.approx(90, abs=3)
 
 
+# Ruling R19: the pose is a running goal's origin, so a reset during the goal is refused and resets nothing; the
+# refusal raises out of the progress callback, which cancels the goal.
+def test_an_odometry_reset_during_a_goal_is_refused(standing):
+    robot, backend = standing
+
+    def reset_midway(status):
+        if status.state is GoalState.RUNNING and status.progress > 0.3:
+            robot.reset_odometry()
+
+    with pytest.raises(RobotError, match="409"):
+        robot.walk(1.0, on_progress=reset_midway)
+    robot.sleep(0.05)
+    assert robot.state().odometry.x > 0.25
+    assert backend.goal_status().state is GoalState.CANCELLED
+
+
 # REP-103 at the facade: sideways positive is left, where the firmware's SIDEWAYS is positive right.
 def test_a_sideways_goal_walks_left_when_positive(standing):
     robot, backend = standing

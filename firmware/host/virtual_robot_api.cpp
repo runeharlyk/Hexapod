@@ -94,8 +94,8 @@ API void odometry(float out[5]) {
     std::copy(std::begin(fields), std::end(fields), out);
 }
 
-// Takes effect on the next tick.
-API void resetOdometry() { instance().resetOdometry(); }
+// Takes effect on the next tick; false, and nothing reset, while a goal drives.
+API bool resetOdometry() { return instance().resetOdometry(); }
 
 // The client numbered `owner` has gone: the goal it asked for ends.
 API void clientGone(int owner) { instance().clientGone({nullptr, owner}); }

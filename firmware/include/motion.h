@@ -402,8 +402,14 @@ class MotionService {
 
     // Any task. Off the control task a read can mix two ticks' poses, as lastCommand's can.
     OdometryEstimate odometry() const { return _odometry.estimate(); }
-    // Any task. The control task zeroes the pose before its next update; the gyro bias stays.
-    void resetOdometry() { _odometryResetPending = true; }
+    // Any task. The control task zeroes the pose before its next update; the gyro bias stays. Refused, resetting
+    // nothing, while a goal drives: the pose is its origin.
+    bool resetOdometry() {
+        std::lock_guard<std::mutex> lock(_goalMutex);
+        if (_goalDrives) return false;
+        _odometryResetPending = true;
+        return true;
+    }
 
     // Adapter task: the reply to a goal, 202 when the control task is to walk it from its next tick. A malformed goal
     // or style is 400, a robot neither standing nor walking 409, and a style whose speed envelope is empty 422: TUNED,

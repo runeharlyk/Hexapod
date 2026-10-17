@@ -163,6 +163,10 @@ class RobotTimeout(RobotError):
     pass
 
 
+class GoalTimedOut(RobotError):
+    """The robot ended a goal TIMED_OUT; a reply that never came is a RobotTimeout instead."""
+
+
 class RobotDisconnected(RobotError):
     pass
 
@@ -187,4 +191,4 @@ class Backend(Protocol):
     def goal_cancel(self) -> None: ...
     def goal_status(self) -> GoalStatus: ...  # the newest goal's
     def odometry(self) -> Odometry: ...
-    def reset_odometry(self) -> None: ...  # returns once the robot's odometry reads the reset pose
+    def reset_odometry(self) -> None: ...  # returns once the odometry reads the reset pose; refused during a goal

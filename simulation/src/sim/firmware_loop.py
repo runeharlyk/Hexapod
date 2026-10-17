@@ -74,8 +74,8 @@ class FirmwareLoop:
     def odometry(self) -> list[float]:
         return self.robot.odometry()
 
-    def reset_odometry(self) -> None:
-        self.robot.reset_odometry()
+    def reset_odometry(self) -> bool:
+        return self.robot.reset_odometry()
 
     def select_gait(self, gait: int) -> None:
         self.robot.set_gait(gait)

@@ -467,6 +467,30 @@ void test_the_dead_man_timeout_does_not_stop_a_goal() {
     assertAtRest(rig);
 }
 
+// Ruling R19: the pose is a running goal's origin, so a reset is refused, and resets nothing, from the goal's
+// acceptance until it ends; one after it is taken.
+void test_an_odometry_reset_is_refused_while_a_goal_runs() {
+    Rig &rig = newRig();
+    standUp(rig);
+    const OdometryEstimate start = rig.robot.odometry();
+    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(0.3f), style(), GaitType::TRI_GATE));
+    TEST_ASSERT_FALSE(rig.robot.resetOdometry());
+    rig.runWhile(GoalState::SETTLING);
+    rig.run(1.0f);
+    TEST_ASSERT_EQUAL(GoalState::RUNNING, rig.state());
+    const float walked = relative(start, rig.robot.odometry()).y;
+    TEST_ASSERT_GREATER_THAN_FLOAT(0.05f, walked);
+    TEST_ASSERT_FALSE(rig.robot.resetOdometry());
+    rig.tick();
+    TEST_ASSERT_FLOAT_WITHIN(0.002f, walked, relative(start, rig.robot.odometry()).y);
+    rig.runGoal();
+    TEST_ASSERT_EQUAL(GoalState::REACHED, rig.state());
+    TEST_ASSERT_FLOAT_WITHIN(GoalController::REACHED_M, 0.3f, relative(start, rig.robot.odometry()).y);
+    TEST_ASSERT_TRUE(rig.robot.resetOdometry());
+    rig.tick();
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0, rig.robot.odometry().y);
+}
+
 // Review focus 3: a cancel mid-stride stops the walk through the stop ramp and leaves no cadence.
 void test_a_cancelled_goal_stops_with_no_cadence_left() {
     Rig &rig = newRig();
@@ -722,5 +746,6 @@ int main(int, char **) {
     RUN_TEST(test_a_malformed_goal_is_refused);
     RUN_TEST(test_a_new_goal_replaces_the_one_in_progress);
     RUN_TEST(test_the_status_is_pushed_on_state_changes_and_every_5_percent);
+    RUN_TEST(test_an_odometry_reset_is_refused_while_a_goal_runs);
     return UNITY_END();
 }

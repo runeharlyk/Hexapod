@@ -66,7 +66,7 @@ def _library() -> ctypes.CDLL:
     lib.setMode.argtypes = lib.setGait.argtypes = [ctypes.c_int]
     lib.command.argtypes = floats(9)
     lib.setImu.argtypes = floats(9)
-    lib.servosDriven.restype = ctypes.c_bool
+    lib.servosDriven.restype = lib.resetOdometry.restype = ctypes.c_bool
     lib.servoAngles.restype = ctypes.POINTER(ctypes.c_float)
     lib.servoWrites.restype = ctypes.c_uint
     lib.classicWalkTarget.argtypes = [ctypes.c_int, *floats(8), ctypes.POINTER(ctypes.c_float)]
@@ -149,6 +149,6 @@ class VirtualRobot:
         self._lib.odometry(out)
         return list(out)
 
-    def reset_odometry(self) -> None:
-        """Takes effect on the next tick."""
-        self._lib.resetOdometry()
+    def reset_odometry(self) -> bool:
+        """Takes effect on the next tick; refused, False and nothing reset, while a goal drives."""
+        return self._lib.resetOdometry()

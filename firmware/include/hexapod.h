@@ -56,7 +56,7 @@ class Hexapod {
     }
     bool resting() const { return _motionService.resting(); }
     const MotionService &motion() const { return _motionService; }
-    void resetOdometry() { _motionService.resetOdometry(); }
+    bool resetOdometry() { return _motionService.resetOdometry(); }
     int startGoal(const Goal &goal, const CommandMsg &style, GaitType gait, GoalOwner owner) {
         return _motionService.startGoal(goal, style, gait, owner);
     }

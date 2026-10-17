@@ -16,11 +16,12 @@ square closes on the robot's own heading.
             robot.walk(1.0)
             robot.turn(90)
 """
+from contextlib import suppress
 from dataclasses import replace
 
 from . import motions
-from .backends.base import (ZERO, Backend, Gait, Goal, GoalKind, GoalState, GoalStatus, Mode, RobotError, RobotState,
-                            RobotTimeout, Style, Velocity)
+from .backends.base import (ZERO, Backend, Gait, Goal, GoalKind, GoalState, GoalStatus, GoalTimedOut, Mode, RobotError,
+                            RobotState, RobotTimeout, Style, Velocity)
 from .servos import ServoCalibration
 
 # The modes a script may walk from. DEACTIVATED is the app's stop button and IDLE, POSE and ANIMATE are the user's:
@@ -161,7 +162,8 @@ class Robot:
 
     def reset_odometry(self) -> None:
         """Zeroes the odometry's pose in the frame the robot faces, which is then the heading the goals mean; returns
-        once the robot's odometry reads it, so call it with the robot still."""
+        once the robot's odometry reads it, so call it with the robot still. The robot refuses it, a RobotError, while
+        a goal runs."""
         self._backend.reset_odometry()
         self._intended = 0.0
 
@@ -264,18 +266,22 @@ class Robot:
 
     def run_goal(self, goal: Goal, speed: float | None = None, on_progress=None) -> GoalStatus:
         """Sends `goal` in the style, at the share `speed` instead of the style's when given, and blocks until it ends.
-        Returns its REACHED status; raises RobotTimeout when it TIMED_OUT, and RobotError when it was CANCELLED or
+        Returns its REACHED status; raises GoalTimedOut when it TIMED_OUT, and RobotError when it was CANCELLED or
         REFUSED or another client's goal replaced it. `on_progress` is called with each new status. Any other
-        exception while it runs, Ctrl-C included, cancels it."""
+        exception before the goal is known to have ended, a lost status reply (RobotTimeout) and Ctrl-C included,
+        cancels it as far as the link still allows and is raised."""
         if not self.takes_goals():
             raise RobotError(NO_GOALS)
         style = self._style if speed is None else replace(self._style, speed=speed)
-        status = self._backend.goal_move(goal, style)
+        try:
+            status = self._backend.goal_move(goal, style)
+        except RobotTimeout:
+            self._cancel_goal()  # the robot may have taken the goal and lost only the reply
+            raise
         number, reported = status.id, None
         try:
-            while True:
-                if status.id > number:
-                    raise RobotError(f"another goal replaced goal {number}")
+            # Until a newer goal replaces this one, which ends it: a cancel then would end the newer one.
+            while status.id <= number:
                 if status.id == number and status != reported:
                     reported = status
                     if on_progress is not None:
@@ -284,13 +290,18 @@ class Robot:
                         break
                 self._backend.sleep(GOAL_POLL_S)
                 status = self._backend.goal_status()
-        except RobotError:
-            raise  # replaced, so no longer this script's, or the link is gone and the robot ends the goal itself
         except BaseException:
-            self._backend.goal_cancel()
+            if not (status.id == number and status.ended):
+                self._cancel_goal()
             raise
+        if status.id > number:
+            raise RobotError(f"another goal replaced goal {number}")
         if status.state is GoalState.REACHED:
             return status
-        error = RobotTimeout if status.state is GoalState.TIMED_OUT else RobotError
+        error = GoalTimedOut if status.state is GoalState.TIMED_OUT else RobotError
         raise error(f"the {goal.kind.name} goal ended {status.state.name} at {status.progress:.0%} of "
                     f"{status.target:g} after {status.passes} passes")
+
+    def _cancel_goal(self) -> None:
+        with suppress(RobotError):  # a link that is gone ends the goal itself, through its owner's silence
+            self._backend.goal_cancel()

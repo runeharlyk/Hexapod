@@ -4,7 +4,7 @@ from collections import deque
 
 import pytest
 
-from src.hexapod import Gait, Mode, Robot, RobotError, RobotTimeout, Velocity, speed_model
+from src.hexapod import Gait, GoalTimedOut, Mode, Robot, RobotError, RobotTimeout, Velocity, speed_model
 from src.hexapod import motions
 from src.hexapod.backends.base import ZERO, Goal, GoalKind, GoalState, GoalStatus, Odometry, RobotState, Style
 
@@ -19,13 +19,15 @@ class ScriptedBackend:
     records every command. With `goals` it takes goal moves as the firmware does from STAND or WALK: each settles for
     GOAL_SETTLE_S, runs for `goal_s`, then ends in `goal_ends`, unless another client's goal replaces it at
     `replaced_at` (seconds into the goal). A goal that is REACHED has moved the pose by exactly its target, an arc
-    only its heading."""
+    only its heading. The link loses the reply to a goal with `move_reply_lost`, and to a status read from
+    `status_lost_at` seconds into the goal, as a reply timeout does."""
 
     def __init__(self, top=Velocity(0.3, 0.29, 1.5), yaw=0.0, yaw_lag_s=0.0, turn_scale=1.0, drop_at=None,
                  imu=True, mode=Mode.DEACTIVATED, refuse=(), switch_at=None, stop_drifts=(), goals=False, goal_s=1.0,
-                 goal_ends=GoalState.REACHED, replaced_at=None):
+                 goal_ends=GoalState.REACHED, replaced_at=None, move_reply_lost=False, status_lost_at=None):
         self.top, self.turn_scale, self.drop_at, self.imu, self.refuse = top, turn_scale, drop_at, imu, refuse
         self.goals, self.goal_s, self.goal_ends, self.replaced_at = goals, goal_s, goal_ends, replaced_at
+        self.move_reply_lost, self.status_lost_at = move_reply_lost, status_lost_at
         self._goal = None  # (id, goal, start time)
         self._goal_moved = False
         self._goal_count = 0
@@ -117,6 +119,8 @@ class ScriptedBackend:
         self._goal_count += 1
         self._goal = (self._goal_count, goal, self.t)
         self._goal_moved = False
+        if self.move_reply_lost:
+            raise RobotTimeout("no answer from the scripted link")
         return self.goal_status()
 
     def goal_cancel(self):
@@ -125,6 +129,8 @@ class ScriptedBackend:
     def goal_status(self):
         number, goal, start = self._goal
         elapsed = self.t - start
+        if self.status_lost_at is not None and elapsed >= self.status_lost_at:
+            raise RobotTimeout("no answer from the scripted link")
         if self.replaced_at is not None and elapsed >= self.replaced_at:
             number, state, progress = number + 1, GoalState.SETTLING, 0.0
         elif elapsed < GOAL_SETTLE_S:
@@ -393,18 +399,52 @@ def test_a_goal_blocks_until_reached_and_reports_each_change():
 
 
 @pytest.mark.parametrize("ending, error", [
-    (GoalState.CANCELLED, RobotError), (GoalState.TIMED_OUT, RobotTimeout), (GoalState.REFUSED, RobotError)])
+    (GoalState.CANCELLED, RobotError), (GoalState.TIMED_OUT, GoalTimedOut), (GoalState.REFUSED, RobotError)])
 def test_a_goal_that_does_not_reach_raises(ending, error):
-    robot, _ = _goals(goal_ends=ending)
+    robot, backend = _goals(goal_ends=ending)
     with pytest.raises(error, match=ending.name) as raised:
         robot.turn(45)
-    assert (type(raised.value) is RobotTimeout) == (ending is GoalState.TIMED_OUT)
+    assert (type(raised.value) is GoalTimedOut) == (ending is GoalState.TIMED_OUT)
+    assert backend.logged("cancel") == []  # it ended
 
 
+# The newer goal is another client's: a cancel would end it.
 def test_a_goal_replaced_by_another_clients_raises():
-    robot, _ = _goals(replaced_at=0.5)
+    robot, backend = _goals(replaced_at=0.5)
     with pytest.raises(RobotError, match="another goal"):
         robot.walk(1.0)
+    assert backend.logged("cancel") == []
+
+
+# USB serial drops frames: a lost status reply is no TIMED_OUT, and the goal may still be walking, kept alive by the
+# keep-alive. It is cancelled, and the RobotTimeout raised is not a GoalTimedOut, so no script retries a goal it
+# believes ended.
+def test_a_lost_status_reply_cancels_the_goal_and_is_no_goal_timeout():
+    robot, backend = _goals(status_lost_at=0.5)
+    with pytest.raises(RobotTimeout) as raised:
+        robot.walk(1.0)
+    assert not isinstance(raised.value, GoalTimedOut)
+    assert len(backend.logged("cancel")) == 1
+
+
+# The robot may have taken a goal whose reply was lost.
+def test_a_lost_goal_reply_cancels_the_goal():
+    robot, backend = _goals(move_reply_lost=True)
+    with pytest.raises(RobotTimeout):
+        robot.walk(1.0)
+    assert len(backend.logged("cancel")) == 1
+
+
+def test_a_robot_error_from_the_progress_callback_cancels_the_goal():
+    robot, backend = _goals()
+
+    def fail(status):
+        if status.state is GoalState.RUNNING:
+            raise RobotError("the script's own check failed")
+
+    with pytest.raises(RobotError, match="own check"):
+        robot.walk(1.0, on_progress=fail)
+    assert len(backend.logged("cancel")) == 1
 
 
 # Ctrl-C while a goal runs must not leave the robot walking it.

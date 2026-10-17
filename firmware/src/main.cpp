@@ -544,7 +544,12 @@ static void registerHandlers(CommAdapterBase &c) {
                 res.which_response = socket_message_CorrelationResponse_odometry_tag;
                 const OdometryEstimate e = robot.motion().odometry();
                 res.response.odometry = {e.x, e.y, e.yaw, e.kinematicYaw, e.distance};
-                if (req.request.odometry_get.reset) robot.resetOdometry();
+                if (req.request.odometry_get.reset && !robot.resetOdometry()) {
+                    // A goal's origin is the pose. The refusal carries no pose, as a refused goal carries no status.
+                    res.status_code = 409;
+                    res.which_response = socket_message_CorrelationResponse_empty_tag;
+                    strncpy(res.error_message, "No odometry reset while a goal runs", sizeof(res.error_message) - 1);
+                }
                 break;
             }
             case socket_message_CorrelationRequest_goal_move_tag: {

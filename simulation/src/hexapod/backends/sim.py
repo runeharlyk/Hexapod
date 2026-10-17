@@ -157,8 +157,9 @@ class SimBackend:
         return Odometry.from_body(*self._loop.odometry())
 
     def reset_odometry(self) -> None:
-        """The firmware zeroes the pose on its next tick, so one is run."""
-        self._loop.reset_odometry()
+        """The firmware zeroes the pose on its next tick, so one is run. It refuses while a goal drives, as with 409."""
+        if not self._loop.reset_odometry():
+            raise RobotError("the simulation refused the reset with status 409: No odometry reset while a goal runs")
         self.sleep(FIRMWARE_DT)
 
     def set_servo_pwm(self, servo: int, pwm: int) -> None:

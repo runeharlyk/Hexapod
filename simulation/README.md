@@ -306,10 +306,11 @@ robot.state().odometry               # the pose in the frame the robot faced at 
 - `style()` sets the gait, the speed share in (0, 1] of the gait's top speed at the posture, the app's stride and feet-distance sliders in [-1, 1], the step height in mm and the body height in mm.
   An omitted field keeps its value.
 - `walk()`, `turn()` and `arc()` take an optional `on_progress` callback, called with each new status.
-  They raise `RobotTimeout` on `TIMED_OUT`, and `RobotError` on `CANCELLED`, on `REFUSED` or when another client's goal replaced theirs; any other exception, Ctrl-C included, cancels the goal.
+  They raise `GoalTimedOut` on `TIMED_OUT`, and `RobotError` on `CANCELLED`, on `REFUSED` or when another client's goal replaced theirs; any other exception before the goal is known to have ended, a lost reply (`RobotTimeout`) and Ctrl-C included, cancels the goal as far as the link still allows.
 - Units and signs are REP-103 at the facade's edge (x forward, y left, yaw counter-clockwise); the backends convert to the firmware's frame, where x is right.
 - A walk holds the heading it starts on, and a turn or an arc is aimed at the heading the script intends: after a walk that drifted 2 deg to the left a 90 deg turn turns 88, so the corners of a square do not accumulate the drift.
   `reset_odometry()` sets the heading the goals then mean; call it with the robot still, as a walk under way would be counted into the new frame.
+  The robot refuses it while a goal runs (409, a `RobotError`), as the pose is the goal's origin.
 - Goals take TRI, BI, WAVE, RIPPLE and AUTO.
   `move_forward`, `move_sideways` and `rotate` fall back to the timed motions above for TUNED, which has no speed envelope, and for a firmware from before goals, which answers a goal request 400; `walk`, `turn` and `arc` refuse there.
   The speed model converts the speeds those three take (m/s and rad/s) to the share a goal asks for.
