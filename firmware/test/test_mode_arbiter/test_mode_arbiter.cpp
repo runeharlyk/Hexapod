@@ -1,5 +1,5 @@
-// Host tests for the mode decision MotionService runs on the ModeMsg worker: each test replays one
-// interleaving of explicit modes, animation borrows and hand-backs as the worker would receive them.
+// Host tests for the mode decision MotionService's control task runs on each mode it takes: each test
+// replays one interleaving of explicit modes, animation borrows and hand-backs in the order they arrive.
 
 #include <unity.h>
 
@@ -12,7 +12,7 @@ using D = ModeArbiterDecision;
 using M = MOTION_STATE;
 using K = ModeMsgKind;
 
-// The worker's view of MotionService, updated exactly as handleInputMode executes a decision.
+// MotionService's arbiter state, updated exactly as handleInputMode executes a decision.
 struct Robot {
     M mode;
     bool borrowed = false;

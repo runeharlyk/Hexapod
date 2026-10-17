@@ -2,8 +2,9 @@
 
 // The MotionService mode decision as a pure function, so every interleaving of explicit modes,
 // animation borrows and hand-backs is host-tested (firmware/test/test_mode_arbiter). It only decides;
-// MotionService executes the decision on the ModeMsg worker, the one place the mode changes, so a
-// hand-back can never overtake an emergency stop that was handled first.
+// MotionService's control task executes the decisions at the start of a tick, in the order the modes
+// arrived (motion_inbox.h), the one place the mode changes. It queues its own hand-back behind the
+// modes that arrived before it, so a hand-back can never overtake an emergency stop that arrived first.
 //
 // Rules:
 // - An APPLIED message is MotionService reporting its own decision and is never a request: ignored.

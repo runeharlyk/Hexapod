@@ -79,11 +79,19 @@ Template parameters set the queue depth, the subscriber limit and the batch size
 
 The internal message structs (`CommandMsg`, `ModeMsg`, `GaitMsg`, `ServoAnglesMsg`, `ServoSignalMsg`, `ServoStateMsg`, `IMUAnglesMsg`, `PoseMsg`, `AnimationCommandMsg`) live in `include/message_types.h` and exist in RAM only.
 Status messages that go to the app unchanged (`OtaStatusData`, `WifiStatus`, `APStatus`, `AnimationStatus`, `GoalStatus`) travel on the bus as their generated protobuf structs.
-Callbacks run on the type's worker task, so a subscriber that touches state shared with the control task has to synchronise; `MotionService` keeps that surface small by having the workers only write targets that the control task reads.
+Callbacks run on the type's worker task, so a subscriber that touches state shared with the control task has to synchronise.
+`MotionService`'s subscribers write no motion state: they post into its inbox (`include/motion_inbox.h`), which the control task takes at the start of its next tick.
 
 ## Motion pipeline
 
 `MotionService` (`include/motion.h`) subscribes to `CommandMsg`, `ModeMsg` and `GaitMsg`, and `Hexapod::planMotion()` calls its `updateMotion()` once per control tick.
+Only the control task changes the motion.
+The subscribers and the goal and odometry requests post into `MotionInbox` under its one mutex, and `updateMotion()` starts by taking everything posted since the last tick, so nothing changes in the middle of one.
+It applies the modes in the order they arrived, then the newest gait, then the newest command, then the goal's mail.
+Commands and gaits coalesce, since each is a whole snapshot; modes queue, eight deep and dropping the oldest when full, since a borrow and a hand-back are decided against the mode they find.
+What a reply or a goal depends on is decided on arrival, under the mutex: a goal's takeover by a stick off centre, the goal's end a mode or a gait implies, the refusal of an odometry reset while a goal drives, and a goal's 409, judged on the mode the queued modes predict, so a goal sent right after a stand is accepted.
+No task waits for the control task: the goal status and the pose the replies carry are the last tick's, which the control task writes back.
+The log lines of what a tick took come after its servo write (`Hexapod::updateActuators`), so a slow console does not delay the write.
 The mode is a `MOTION_STATE`: `DEACTIVATED`, `IDLE`, `POSE`, `STAND`, `WALK`, `WALK_NN` and `ANIMATE`.
 
 - `DEACTIVATED` puts both PCA9685 boards to sleep; `IDLE` keeps them powered and produces no angles; `POSE` drives every servo to its centre pulse for calibration.
@@ -120,8 +128,9 @@ Gait changes are deferred until the gait is not commanded, not repositioning and
 That speed is the stick's share of BI's top speed at the posture and stride, whichever gait walks it, and AUTO picks the slowest of `RIPPLE`, `TRI_GATE` and `BI_GATE` whose top speed covers it.
 A stick pushed past the top of the gait in effect therefore walks at that top until the next stop.
 
-Mode changes are decided by the pure function in `include/animation/mode_arbiter.h` and applied only on the `ModeMsg` worker, which makes that worker the one place the mode changes.
-An animation play borrows `ANIMATE` from the current mode and the control task asks for the mode back when the clip ends; `DEACTIVATED`, `IDLE` and `POSE` always apply at once, which is the safety property.
+Mode changes are decided by the pure function in `include/animation/mode_arbiter.h` and applied only by the control task, in the order the modes arrived, which makes it the one place the mode changes.
+An animation play borrows `ANIMATE` from the current mode, and the control task asks for the mode back when the clip ends by posting the hand-back into its own inbox, behind every mode that arrived before it.
+`DEACTIVATED`, `IDLE` and `POSE` always apply at the next tick, even mid-play, which is the safety property.
 `MotionService` republishes the mode it settled on as `ModeMsgKind::APPLIED`, so observers learn the outcome of a borrow or a hand-back.
 
 The gait and kinematics math has two mirrors outside the firmware.
@@ -157,11 +166,11 @@ A reset asked while a goal drives is refused with 409 and resets nothing, since 
 
 ### Goal moves
 
-A goal is a correlation request (`goal_move`, 131) carrying a kind and the walking style, accepted by `MotionService::startGoal` on the adapter's task and walked by the control task, as the other workers' targets are.
+A goal is a correlation request (`goal_move`, 131) carrying a kind and the walking style, accepted by `MotionService::startGoal` on the adapter's task and walked by the control task, through the motion inbox as every other input.
 The kinds are `FORWARD` (m, negative is backwards), `SIDEWAYS` (m, positive is right in the firmware's frame, which the facade maps), `TURN` (rad, counter-clockwise positive) and `ARC` (radius in m above 0 and an angle, positive curving left; a circle is an arc of 360 deg).
 The style carries `gait`, `speed`, `stride`, `s1`, `h` and `fd`.
 Speed is a share in (0, 1] of the gait's top speed at the posture (`goalTops` over `gait_speed.h`'s envelope), and AUTO's is a share of BI's top.
-The reply is 202 with the goal's status when accepted, 400 when malformed, 409 when the robot is in a mode other than `STAND` or `WALK` (deactivated, animating, or `WALK_NN`, which has no stance flags for the odometry) or a firmware update is running, and 422 for a style it cannot walk: TUNED (no speed envelope), or a posture none of whose cells walks the goal's axes.
+The reply is 202 with the goal's status when accepted, 400 when malformed, 409 when the modes posted so far leave the robot in a mode other than `STAND` or `WALK` (deactivated, animating, or `WALK_NN`, which has no stance flags for the odometry) or a firmware update is running, and 422 for a style it cannot walk: TUNED (no speed envelope), or a posture none of whose cells walks the goal's axes.
 A goal accepted while another runs replaces it.
 A posture that is not walkable is clamped as the sliders' is.
 On acceptance the goal takes the style's posture and gait through the existing WALK posture paths (the settle) and the gait swap, enters `WALK` from `STAND`, and then writes the walk's sticks itself every tick, through the path the app's commands take.

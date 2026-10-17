@@ -2,7 +2,6 @@
 #define MotionService_h
 
 #include <algorithm>
-#include <atomic>
 #include <iterator>
 #include <utility>
 #include <esp_log.h>
@@ -61,7 +60,7 @@ class MotionService {
     // Loads _requestedGait into the live schedule. Only safe while the gait is not stepping.
     void applyRequestedGait() {
         const GaitType requested = _requestedGait;
-        loadGait(requested == GaitType::AUTO ? _autoGait.load() : requested);
+        loadGait(requested == GaitType::AUTO ? _autoGait : requested);
     }
 
     // Control task, at the start of the tick after the mode arrived, in arrival order. The rules live in decideMode
@@ -286,7 +285,10 @@ class MotionService {
         resetCommandIfTimedOut();
         const float dt = getMotionDeltaSeconds();
         const MOTION_STATE state = motionState;
-        if (mail.odometryReset) _odometry.reset();
+        if (mail.odometryReset) {
+            _odometry.reset();
+            _inbox.noteOdometry(_odometry.estimate());
+        }
         if (state != MOTION_STATE::STAND && state != MOTION_STATE::WALK) {
             _atRest = false;
             // The odometry holds its pose; whatever moves the feet meanwhile is no travel it can measure.
@@ -394,8 +396,8 @@ class MotionService {
     const gait_state_t &gaitState() const { return gait_state; }
     const BodyStateMsg &bodyCommand() const { return target_body_state; }
 
-    // Any task. Off the control task a read can mix two ticks' poses.
-    OdometryEstimate odometry() const { return _odometry.estimate(); }
+    // Any task: the pose of the last tick, whole.
+    OdometryEstimate odometry() const { return _inbox.odometry(); }
     // Any task. The control task zeroes the pose before its next update; the gyro bias stays. Refused, resetting
     // nothing, while a goal drives: the pose is its origin.
     bool resetOdometry() { return _inbox.requestOdometryReset(); }
@@ -430,12 +432,8 @@ class MotionService {
     // since a closed USB serial port is not reported while the host still polls the bus.
     void ownerHeard(GoalOwner owner) { _inbox.ownerHeard(owner, millis()); }
 
-    // Any task: the newest goal's status, one accepted but not yet taken as settling, with the pose now.
-    socket_message_GoalStatus goalStatus() const {
-        socket_message_GoalStatus s = _inbox.goalStatus();
-        setPose(s, _odometry.estimate());
-        return s;
-    }
+    // Any task: the newest goal's status, one accepted but not yet taken as settling, with the pose of the last tick.
+    socket_message_GoalStatus goalStatus() const { return _inbox.goalStatus(); }
 
     // The motion's half of a telemetry tick: what it produced and from which command and mode.
     void fillTelemetry(socket_message_TickSample &tick) const {
@@ -471,7 +469,7 @@ class MotionService {
     AnimationRunner _animation;
     MOTION_STATE _previousMode = MOTION_STATE::STAND;
     bool _borrowedMode = false;
-    std::atomic<bool> _handbackSent {false}; // a hand-back is queued; cleared by any mode taken
+    bool _handbackSent = false;              // a hand-back is queued; cleared by any mode taken
     bool _animating = false;                 // control task only: whether the last tick ran ANIMATE
 
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
@@ -523,32 +521,32 @@ class MotionService {
 
     float default_feet_pos[6][4];
 
-    std::atomic<GaitType> _requestedGait {GaitType::TRI_GATE};
+    GaitType _requestedGait = GaitType::TRI_GATE;
     // The last WALK stick, posture clamped, its share of BI's top speed and the gait AUTO picks for it; all are
     // cleared when the locomotion command stops.
     CommandMsg lastWalkCommand_ {};
     float _walkSpeed01 = 0.f;
-    // The stride the classic walk walks, slewed toward the commanded one (slewStride); written by the control task.
-    std::atomic<float> _stride {0.f};
+    // The stride the classic walk walks, slewed toward the commanded one (slewStride).
+    float _stride = 0.f;
     static constexpr float STRIDE_SLEW_PER_S = 1.0f;
-    std::atomic<GaitType> _autoGait {GaitType::RIPPLE};
+    GaitType _autoGait = GaitType::RIPPLE;
     struct Posture {
         float s1, h, fd;
     };
     // The posture the classic walk stands in, valid once it was taken between steps (settleWalkPosture) or from the
     // stand the walk was entered from (takeRestPosture).
     Posture _walkPosture {};
-    std::atomic<bool> _walkPostureValid {false};
+    bool _walkPostureValid = false;
     // The posture of a stand at rest, its lift as an s1, for a walk entered next: the targets the stand holds. Anything
     // that moves the robot in WALK before the first classic command takes it consumes it (clears _atRest).
     Posture _restPosture {};
-    std::atomic<bool> _atRest {false};
+    bool _atRest = false;
     // A posture is waiting for the gait to stop, then for the robot to settle; the walk is held at zero meanwhile.
-    std::atomic<bool> _posturePending {false};
-    std::atomic<bool> _postureSettling {false};
+    bool _posturePending = false;
+    bool _postureSettling = false;
     // The stand posture last commanded, waiting until the feet are still (takeStandPosture).
     Posture _standPosture {};
-    std::atomic<bool> _standPosturePending {false};
+    bool _standPosturePending = false;
     enum class SettleStage : uint8_t { LOWER_LIFT, MOVE, RAISE_LIFT };
     SettleStage _settleStage = SettleStage::LOWER_LIFT; // control task, while settling
     bool _heightAfterStance = false;                    // control task: the body height waits for the stance
@@ -855,6 +853,7 @@ class MotionService {
         std::optional<ImuYaw> packet;
         if (imuFresh) packet = ImuYaw {imu_frame::YAW_SIGN * _peripherals->angleZ(), _peripherals->imuFifoResets()};
         _odometry.update(body_state, stanceFlags(), packet, dt);
+        _inbox.noteOdometry(_odometry.estimate());
     }
 
     // Control task: which legs the gait has in stance after its last step.
@@ -909,7 +908,7 @@ class MotionService {
     // which keeps every state between inside the envelope (checked over its walkable grid). One that falls does not:
     // the stand's lift over the posture's stroke can leave travel, so that walk, like any other, settles first.
     void takeRestPosture(const CommandMsg &c) {
-        if (_walkPostureValid || _postureSettling || !_atRest.exchange(false)) return;
+        if (_walkPostureValid || _postureSettling || !std::exchange(_atRest, false)) return;
         const Posture rest = _restPosture;
         if (std::fabs(c.h - rest.h) > POSTURE_DEADBAND || std::fabs(c.fd - rest.fd) > POSTURE_DEADBAND ||
             c.s1 < rest.s1 - POSTURE_DEADBAND || !postureWalkable(c.s1, rest.h, rest.fd))

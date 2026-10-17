@@ -1,10 +1,11 @@
 #pragma once
 
 // What the other tasks hand MotionService's control task, under one mutex: the modes in arrival order, the newest
-// command and gait, a goal asked for and its end, and an odometry reset. The decisions a reply or a goal depends on are
-// made as each arrives, in arrival order, against the mode the queued modes predict; the control task takes what
-// arrived at the start of its next tick, so nothing changes the motion in the middle of one, and no task ever waits for
-// the control task. Ported in shape from SpotMicroESP32-Leika's esp32/include/motion_inbox.h.
+// command and gait, a goal asked for and its end, and an odometry reset; and back from the control task, the goal
+// status and the pose the replies carry. The decisions a reply or a goal depends on are made as each arrives, in
+// arrival order, against the mode the queued modes predict; the control task takes what arrived at the start of its
+// next tick, so nothing changes the motion in the middle of one, and no task ever waits for the control task. Ported in
+// shape from SpotMicroESP32-Leika's esp32/include/motion_inbox.h.
 
 #include <algorithm>
 #include <cstdint>
@@ -14,6 +15,7 @@
 #include <utility>
 #include <animation/mode_arbiter.h>
 #include <goal_controller.h>
+#include <odometry.h>
 #include <message_types.h>
 #include <platform_shared/message.pb.h>
 
@@ -197,10 +199,27 @@ class MotionInbox {
         return true;
     }
 
-    // Any task: the newest goal's status, one accepted but not yet taken as settling.
+    // Any task: the newest goal's status, one accepted but not yet taken as settling, with the pose of the last tick.
     socket_message_GoalStatus goalStatus() const {
         std::lock_guard<std::mutex> lock(_mutex);
-        return _goal ? goalStatusOf(_goal->id, GoalState::SETTLING, _goal->goal, 0.f, 0) : _goalStatus;
+        socket_message_GoalStatus s =
+            _goal ? goalStatusOf(_goal->id, GoalState::SETTLING, _goal->goal, 0.f, 0) : _goalStatus;
+        s.x = _odometry.x;
+        s.y = _odometry.y;
+        s.yaw = _odometry.yaw;
+        return s;
+    }
+
+    // Any task: the pose of the last tick, whole.
+    OdometryEstimate odometry() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _odometry;
+    }
+
+    // Control task: the pose the odometry moved to.
+    void noteOdometry(const OdometryEstimate &pose) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _odometry = pose;
     }
 
     // Control task, at the start of every tick: what arrived since the last take. A goal whose end was asked for no
@@ -258,6 +277,7 @@ class MotionInbox {
     bool _goalCancelRequested = false;
     socket_message_GoalStatus _goalStatus = socket_message_GoalStatus_init_zero;
     bool _odometryReset = false;
+    OdometryEstimate _odometry {};
 
     void cancelGoalLocked() {
         if (_goalDrives) _goalCancelRequested = true;

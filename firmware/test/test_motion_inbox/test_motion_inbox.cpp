@@ -282,6 +282,29 @@ void test_a_mode_leaving_walk_ends_only_a_goal_posted_before_it() {
     TEST_ASSERT_FALSE(mail.goalCancelled);
 }
 
+// A reply off the control task carries one whole tick's pose: the one the control task noted last.
+void test_the_replies_carry_the_pose_the_control_task_noted_last() {
+    MotionInbox inbox;
+    inbox.noteOdometry({.x = 0.1f, .y = 0.2f, .yaw = 0.3f, .kinematicYaw = 0.4f, .distance = 0.5f});
+    const OdometryEstimate pose = inbox.odometry();
+    TEST_ASSERT_EQUAL_FLOAT(0.1f, pose.x);
+    TEST_ASSERT_EQUAL_FLOAT(0.2f, pose.y);
+    TEST_ASSERT_EQUAL_FLOAT(0.3f, pose.yaw);
+    TEST_ASSERT_EQUAL_FLOAT(0.4f, pose.kinematicYaw);
+    TEST_ASSERT_EQUAL_FLOAT(0.5f, pose.distance);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, 0);
+    socket_message_GoalStatus status = inbox.goalStatus();
+    TEST_ASSERT_EQUAL_FLOAT(0.1f, status.x);
+    TEST_ASSERT_EQUAL_FLOAT(0.2f, status.y);
+    TEST_ASSERT_EQUAL_FLOAT(0.3f, status.yaw);
+    inbox.take(0);
+    inbox.report(goalStatusOf(1, GoalState::RUNNING, FORWARD_GOAL, 0.5f, 1));
+    inbox.noteOdometry({.x = 1.0f, .y = 2.0f, .yaw = 3.0f, .kinematicYaw = 0, .distance = 0});
+    status = inbox.goalStatus();
+    TEST_ASSERT_EQUAL(socket_message_GoalState_GOAL_RUNNING, status.state);
+    TEST_ASSERT_EQUAL_FLOAT(2.0f, status.y);
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_goal_is_taken_once_and_reported_settling_until_then);
@@ -301,5 +324,6 @@ int main(int, char **) {
     RUN_TEST(test_a_full_mode_queue_drops_the_oldest_and_keeps_a_newest_deactivation);
     RUN_TEST(test_the_predicted_mode_follows_the_queue_through_the_arbiter);
     RUN_TEST(test_a_mode_leaving_walk_ends_only_a_goal_posted_before_it);
+    RUN_TEST(test_the_replies_carry_the_pose_the_control_task_noted_last);
     return UNITY_END();
 }
