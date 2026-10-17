@@ -38,10 +38,7 @@ class MotionService {
         _animation.begin(kinematics, default_feet_pos);
         ESP_LOGI("MotionService", "Subscribing to event buses...");
         _cmdSubHandle = EventBus<CommandMsg>::subscribe([&](CommandMsg const &c) { _inbox.postCommand(c, millis()); });
-        _modeSubHandle = EventBus<ModeMsg>::subscribe([&](ModeMsg const &c) {
-            ESP_LOGD("MotionService", "MODE callback called with mode %d", (int)c.mode);
-            handleInputMode(c);
-        });
+        _modeSubHandle = EventBus<ModeMsg>::subscribe([&](ModeMsg const &m) { _inbox.postMode(m, _animation.busy()); });
         _gaitSubHandle = EventBus<GaitMsg>::subscribe([&](GaitMsg const &g) { _inbox.postGait(g.gait); });
         ESP_LOGI("MotionService", "Event bus subscriptions completed");
         body_state.updateFeet(default_feet_pos);
@@ -67,15 +64,11 @@ class MotionService {
         loadGait(requested == GaitType::AUTO ? _autoGait.load() : requested);
     }
 
-    // Mode worker. The rules live in decideMode (animation/mode_arbiter.h); this executes them. A
-    // BORROW or HANDBACK is internal, so the mode it applied or kept is published as APPLIED for the
-    // observers, which see only REQUEST and APPLIED.
+    // Control task, at the start of the tick after the mode arrived, in arrival order. The rules live in decideMode
+    // (animation/mode_arbiter.h); this executes them. The goal a mode ends was ended on arrival
+    // (MotionInbox::postMode). A BORROW or HANDBACK is internal, so the mode it applied or kept is published as APPLIED
+    // for the observers, which see only REQUEST and APPLIED.
     void handleInputMode(ModeMsg const &m) {
-        if (m.kind == ModeMsgKind::APPLIED) return;
-        ESP_LOGI("MotionService", "Mode %d%s", (int)m.mode,
-                 m.kind == ModeMsgKind::BORROW     ? " (borrow)"
-                 : m.kind == ModeMsgKind::HANDBACK ? " (hand-back)"
-                                                   : "");
         _handbackSent = false;
         const ModeArbiterDecision d =
             decideMode({motionState, _borrowedMode, _previousMode, m.mode, m.kind, _animation.busy()});
@@ -90,8 +83,6 @@ class MotionService {
             case ModeArbiterDecision::IGNORE:
             case ModeArbiterDecision::GRACEFUL_LEAVE: return;
         }
-        // A goal walks in WALK, and enters it from STAND through this path itself.
-        if (d.mode != MOTION_STATE::WALK) _inbox.cancelGoal();
         const bool enteringWalk = d.mode == MOTION_STATE::WALK && motionState != MOTION_STATE::WALK;
         const bool leavingPolicy = motionState == MOTION_STATE::WALK_NN;
         motionState = d.mode;
@@ -112,30 +103,33 @@ class MotionService {
     // Adapter task. A play from any active mode borrows ANIMATE and hands the mode back when the
     // player finishes; a play while already in ANIMATE (borrowed or sticky) chains. The clip is loaded
     // before the mode changes, so a refused play leaves the robot in its mode and pose; whether the
-    // borrow is granted is decided by handleInputMode.
+    // borrow is granted is decided by handleInputMode. The animation calls judge the mode the modes
+    // already posted leave (MotionInbox::predictedMode).
     void handleAnimationCommand(AnimationCommandMsg const &c) {
-        if (!actuated(motionState)) return;
+        const MOTION_STATE mode = _inbox.predictedMode();
+        if (!actuated(mode)) return;
         if (!_animation.requestPlay(c)) return;
-        if (motionState == MOTION_STATE::ANIMATE) return;
+        if (mode == MOTION_STATE::ANIMATE) return;
         EventBus<ModeMsg>::publish({MOTION_STATE::ANIMATE, ModeMsgKind::BORROW});
     }
 
     // Adapter task. A stop only makes sense in ANIMATE.
     void handleAnimationStop() {
-        if (motionState == MOTION_STATE::ANIMATE) _animation.requestStop();
+        if (_inbox.predictedMode() == MOTION_STATE::ANIMATE) _animation.requestStop();
     }
 
     // Adapter task, when the last client on every transport has gone. Outside ANIMATE a play may be
     // loaded with its borrow still in flight; dropping it keeps an unattended loop from starting.
     void animationControlLost() {
-        if (motionState == MOTION_STATE::ANIMATE) _animation.controlLost();
+        if (_inbox.predictedMode() == MOTION_STATE::ANIMATE)
+            _animation.controlLost();
         else
             _animation.cancelPendingPlay();
     }
 
     // Adapter task. Puppeteer poses apply only in ANIMATE.
     void handleAnimationPose(PoseMsg const &p) {
-        if (motionState == MOTION_STATE::ANIMATE) _animation.setPuppet(p);
+        if (_inbox.predictedMode() == MOTION_STATE::ANIMATE) _animation.setPuppet(p);
     }
 
     void validateAnimation(const char *name, socket_message_AnimationReport &r) { _animation.validate(name, r); }
@@ -283,6 +277,9 @@ class MotionService {
     // imuFresh: the IMU was read on this tick, so its DMP packet and gyro rate are this tick's.
     bool updateMotion(bool imuFresh) {
         const MotionInbox::Mail mail = _inbox.take(millis());
+        _modesTaken = mail.modes;
+        for (int i = 0; i < mail.modes.count; ++i) handleInputMode(mail.modes.items[i]);
+        if (mail.modes.count) _inbox.noteModes({motionState, _borrowedMode, _previousMode}, _animation.busy());
         if (mail.gait) handleInputGait(*mail.gait);
         if (mail.command) handleCommand(*mail.command, mail.commandMs);
         takeGoalMail(mail);
@@ -295,8 +292,7 @@ class MotionService {
             // The odometry holds its pose; whatever moves the feet meanwhile is no travel it can measure.
             _odometry.pause();
         }
-        // Entering and leaving ANIMATE are handled here rather than in handleInputMode so the runner
-        // is only ever touched by the control task.
+        // Entering and leaving ANIMATE are handled here, once every mode the tick took is applied.
         if ((state == MOTION_STATE::ANIMATE) != _animating) {
             _animating = state == MOTION_STATE::ANIMATE;
             if (_animating)
@@ -341,11 +337,11 @@ class MotionService {
             case MOTION_STATE::ANIMATE: {
                 // tick writes the angles itself; body_state carries the absolute pose for telemetry.
                 _animation.tick(dt, target_body_state.zm, body_state, msgAngles.angles);
-                // Only asks: the worker decides, so a mode it handled first (a stop, a sticky ANIMATE)
-                // wins. The flag is raised before the publish so the worker's clear cannot be lost.
+                // Only asks: the hand-back queues behind every mode that arrived before it and is decided when
+                // taken, so a mode taken first (a stop, a sticky ANIMATE) wins.
                 if (_borrowedMode && !_handbackSent && !_animation.busy()) {
                     _handbackSent = true;
-                    if (!EventBus<ModeMsg>::publish({_previousMode, ModeMsgKind::HANDBACK})) _handbackSent = false;
+                    _inbox.postMode({_previousMode, ModeMsgKind::HANDBACK}, false);
                 }
                 break;
             }
@@ -375,6 +371,16 @@ class MotionService {
     // Control task, after the tick's servo write: the log lines of what the tick took from the inbox, so a slow console
     // never delays the write.
     void logMail() {
+        if (_modesTaken.dropped)
+            ESP_LOGW("MotionService", "%u modes dropped, the oldest, from a full queue", _modesTaken.dropped);
+        for (int i = 0; i < _modesTaken.count; ++i) {
+            const ModeMsg &m = _modesTaken.items[i];
+            ESP_LOGI("MotionService", "Mode %d%s", (int)m.mode,
+                     m.kind == ModeMsgKind::BORROW     ? " (borrow)"
+                     : m.kind == ModeMsgKind::HANDBACK ? " (hand-back)"
+                                                       : "");
+        }
+        _modesTaken = {};
         if (_gaitTaken) ESP_LOGI("MotionService", "Gait %d", (int)*_gaitTaken);
         _gaitTaken.reset();
         if (std::exchange(_tunedLogDue, false)) logTunedCommand(_tunedVelocity, target_gait_state);
@@ -395,14 +401,15 @@ class MotionService {
     bool resetOdometry() { return _inbox.requestOdometryReset(); }
 
     // Adapter task: the reply to a goal, 202 when the control task is to walk it from its next tick. A malformed goal
-    // or style is 400, a robot neither standing nor walking 409, and a style whose speed envelope is empty 422: TUNED,
-    // which has none, or a posture none of whose cells walks the goal's axes. The style's posture is clamped as the
-    // sliders' is and its sticks are the goal's. A goal accepted while another runs replaces it.
+    // or style is 400, a robot that will be neither standing nor walking 409, and a style whose speed envelope is empty
+    // 422: TUNED, which has none, or a posture none of whose cells walks the goal's axes. The style's posture is
+    // clamped as the sliders' is and its sticks are the goal's. A goal accepted while another runs replaces it.
     int startGoal(const Goal &goal, const CommandMsg &style, GaitType gait, GoalOwner owner) {
         CommandMsg s = style;
         if (!GoalController::valid(goal) || !s.sanitize() || (int)gait < 0 || (int)gait > (int)GaitType::AUTO)
             return 400;
-        const MOTION_STATE mode = motionState;
+        // The mode the modes posted so far leave, so a script's stand and goal sent at once is a walk.
+        const MOTION_STATE mode = _inbox.predictedMode();
         if (mode != MOTION_STATE::STAND && mode != MOTION_STATE::WALK) return 409;
         clampPosture(s.s1, s.h, s.fd);
         if (!goalTops(goal.kind, gait, {s.s1, s.h, s.fd}, s.stride).walkable()) return 422;
@@ -464,7 +471,7 @@ class MotionService {
     AnimationRunner _animation;
     MOTION_STATE _previousMode = MOTION_STATE::STAND;
     bool _borrowedMode = false;
-    std::atomic<bool> _handbackSent {false}; // a hand-back is queued; cleared by the worker on any mode
+    std::atomic<bool> _handbackSent {false}; // a hand-back is queued; cleared by any mode taken
     bool _animating = false;                 // control task only: whether the last tick ran ANIMATE
 
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
@@ -555,7 +562,9 @@ class MotionService {
     unsigned long lastCommandMillis = 0;
     unsigned long lastMotionMicros = 0;
     unsigned long _lastTunedLog = 0;
-    // The gait the tick took, and the velocity the last TUNED command asked for, logged after its servo write.
+    // The modes and the gait the tick took, and the velocity the last TUNED command asked for, logged after its servo
+    // write.
+    MotionInbox::Modes _modesTaken;
     std::optional<GaitType> _gaitTaken;
     float _tunedVelocity[3] = {0.f, 0.f, 0.f};
     bool _tunedLogDue = false;
@@ -568,8 +577,12 @@ class MotionService {
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
 
   public:
-    // Lying on its belly with the legs limp or folded: still enough to calibrate the IMU against.
-    bool resting() const { return motionState == MOTION_STATE::DEACTIVATED || motionState == MOTION_STATE::IDLE; }
+    // Adapter task. Lying on its belly with the legs limp or folded, in the mode the modes posted so far leave: still
+    // enough to calibrate the IMU against.
+    bool resting() const {
+        const MOTION_STATE mode = _inbox.predictedMode();
+        return mode == MOTION_STATE::DEACTIVATED || mode == MOTION_STATE::IDLE;
+    }
 
   private:
     static bool isWalkingMode(MOTION_STATE mode) { return mode == MOTION_STATE::WALK || mode == MOTION_STATE::WALK_NN; }

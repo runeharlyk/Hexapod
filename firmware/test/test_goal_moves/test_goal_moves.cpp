@@ -685,6 +685,19 @@ void test_a_goal_is_refused_unless_standing_or_walking() {
     }
 }
 
+// A script that asks for a stand and then a goal at once, as Robot.stand() then move_forward() does, has the goal
+// accepted: the stand reached the robot first, though the control task has not taken it yet.
+void test_a_stand_delivered_before_a_goal_in_the_same_tick_lets_it_walk() {
+    Rig &rig = newRig();
+    rig.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, rig.robot.mode());
+    rig.robot.setMode(MOTION_STATE::STAND);
+    host_bus::drainAll();
+    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(0.3f), style(), GaitType::TRI_GATE));
+    rig.runGoal();
+    TEST_ASSERT_EQUAL(GoalState::REACHED, rig.state());
+}
+
 void test_a_malformed_goal_is_refused() {
     Rig &rig = newRig();
     standUp(rig);
@@ -779,6 +792,7 @@ int main(int, char **) {
     RUN_TEST(test_an_unwalkable_style_is_clamped_like_the_sliders);
     RUN_TEST(test_a_tuned_style_is_refused);
     RUN_TEST(test_a_goal_is_refused_unless_standing_or_walking);
+    RUN_TEST(test_a_stand_delivered_before_a_goal_in_the_same_tick_lets_it_walk);
     RUN_TEST(test_a_malformed_goal_is_refused);
     RUN_TEST(test_a_new_goal_replaces_the_one_in_progress);
     RUN_TEST(test_the_status_is_pushed_on_state_changes_and_every_5_percent);

@@ -204,6 +204,84 @@ void test_a_goals_own_gait_is_the_selection() {
     TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
 }
 
+// A borrow and a hand-back are decided against the mode they find, so modes are taken in the order they arrived, none
+// merged: a DEACTIVATED and a borrow posted in one tick are two, the deactivation first. An APPLIED is no request.
+void test_modes_are_taken_in_arrival_order_none_merged() {
+    MotionInbox inbox;
+    inbox.postMode({MOTION_STATE::DEACTIVATED}, false);
+    inbox.postMode({MOTION_STATE::STAND, ModeMsgKind::APPLIED}, false);
+    inbox.postMode({MOTION_STATE::ANIMATE, ModeMsgKind::BORROW}, false);
+    const MotionInbox::Mail mail = inbox.take(0);
+    TEST_ASSERT_EQUAL_INT(2, mail.modes.count);
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, mail.modes.items[0].mode);
+    TEST_ASSERT_EQUAL(ModeMsgKind::REQUEST, mail.modes.items[0].kind);
+    TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, mail.modes.items[1].mode);
+    TEST_ASSERT_EQUAL(ModeMsgKind::BORROW, mail.modes.items[1].kind);
+    TEST_ASSERT_EQUAL_UINT(0, mail.modes.dropped);
+    TEST_ASSERT_EQUAL_INT(0, inbox.take(0).modes.count);
+}
+
+// Full, the queue keeps the newest intent: the oldest mode goes, counted, and a DEACTIVATED posted last is kept.
+void test_a_full_mode_queue_drops_the_oldest_and_keeps_a_newest_deactivation() {
+    MotionInbox inbox;
+    for (int i = 0; i < MotionInbox::MODE_DEPTH; ++i)
+        inbox.postMode({i % 2 ? MOTION_STATE::WALK : MOTION_STATE::STAND}, false);
+    inbox.postMode({MOTION_STATE::DEACTIVATED}, false);
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, inbox.predictedMode());
+    const MotionInbox::Mail mail = inbox.take(0);
+    TEST_ASSERT_EQUAL_INT(MotionInbox::MODE_DEPTH, mail.modes.count);
+    TEST_ASSERT_EQUAL_UINT(1, mail.modes.dropped);
+    TEST_ASSERT_EQUAL(MOTION_STATE::WALK, mail.modes.items[0].mode);
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, mail.modes.items[MotionInbox::MODE_DEPTH - 1].mode);
+    TEST_ASSERT_EQUAL_UINT(0, inbox.take(0).modes.dropped);
+}
+
+// The mode a reply is decided on is the one the queued modes will leave, folded through the arbiter as the control
+// task will apply them.
+void test_the_predicted_mode_follows_the_queue_through_the_arbiter() {
+    MotionInbox inbox;
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, inbox.predictedMode());
+    // A borrow from a mode that drives no servo is refused.
+    inbox.postMode({MOTION_STATE::ANIMATE, ModeMsgKind::BORROW}, false);
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, inbox.predictedMode());
+    inbox.postMode({MOTION_STATE::STAND}, false);
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, inbox.predictedMode());
+    inbox.postMode({MOTION_STATE::ANIMATE, ModeMsgKind::BORROW}, false);
+    TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, inbox.predictedMode());
+    inbox.postMode({MOTION_STATE::STAND, ModeMsgKind::HANDBACK}, false);
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, inbox.predictedMode());
+    inbox.take(0);
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, inbox.predictedMode());
+    // A mode posted while the control task applies what it took is predicted from where those leave it.
+    inbox.postMode({MOTION_STATE::WALK}, false);
+    TEST_ASSERT_EQUAL(MOTION_STATE::WALK, inbox.predictedMode());
+    // The control task reports what it applied, and the modes posted since are predicted from that: here a play the
+    // control task found busy kept ANIMATE, so the walk and the stand posted since are graceful leaves that keep it.
+    inbox.noteModes({MOTION_STATE::ANIMATE, true, MOTION_STATE::STAND}, true);
+    inbox.postMode({MOTION_STATE::STAND}, true);
+    TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, inbox.predictedMode());
+}
+
+// A goal walks in WALK: a mode that leaves it ends a goal accepted before it, and not one accepted after it.
+void test_a_mode_leaving_walk_ends_only_a_goal_posted_before_it() {
+    {
+        MotionInbox inbox;
+        inbox.postMode({MOTION_STATE::STAND}, false);
+        inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, 0);
+        inbox.postMode({MOTION_STATE::WALK}, false);
+        TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
+        inbox.postMode({MOTION_STATE::STAND}, false);
+        TEST_ASSERT_TRUE(inbox.take(0).goalCancelled);
+    }
+    MotionInbox inbox;
+    inbox.postMode({MOTION_STATE::IDLE}, false);
+    inbox.postMode({MOTION_STATE::STAND}, false);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, 0);
+    const MotionInbox::Mail mail = inbox.take(0);
+    TEST_ASSERT_TRUE(mail.goal.has_value());
+    TEST_ASSERT_FALSE(mail.goalCancelled);
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_goal_is_taken_once_and_reported_settling_until_then);
@@ -219,5 +297,9 @@ int main(int, char **) {
     RUN_TEST(test_a_gait_is_taken_once_and_the_newest_wins);
     RUN_TEST(test_a_gait_other_than_the_selection_ends_the_goal);
     RUN_TEST(test_a_goals_own_gait_is_the_selection);
+    RUN_TEST(test_modes_are_taken_in_arrival_order_none_merged);
+    RUN_TEST(test_a_full_mode_queue_drops_the_oldest_and_keeps_a_newest_deactivation);
+    RUN_TEST(test_the_predicted_mode_follows_the_queue_through_the_arbiter);
+    RUN_TEST(test_a_mode_leaving_walk_ends_only_a_goal_posted_before_it);
     return UNITY_END();
 }

@@ -268,6 +268,57 @@ void test_nothing_posted_changes_the_motion_before_the_next_tick() {
         robot.tick();
         TEST_ASSERT_EQUAL(GaitType::BI_GATE, robot.gaitCommand().gait_type);
     }
+    {
+        VirtualRobot robot;
+        standUp(robot);
+        robot.setMode(MOTION_STATE::WALK);
+        largestStep(robot, ticksFor(0.5f), &FORWARD);
+        const float stroke = robot.gaitCommand().step_y;
+        TEST_ASSERT_GREATER_THAN_FLOAT(GAIT_STRIDE_DEADBAND_MM, stroke);
+        robot.setMode(MOTION_STATE::STAND);
+        host_bus::drainAll();
+        TEST_ASSERT_EQUAL_FLOAT(stroke, robot.gaitCommand().step_y);
+        robot.tick();
+        TEST_ASSERT_EQUAL(MOTION_STATE::STAND, robot.mode());
+        TEST_ASSERT_EQUAL_FLOAT(0.f, robot.gaitCommand().step_y);
+        robot.setMode(MOTION_STATE::DEACTIVATED);
+        host_bus::drainAll();
+        TEST_ASSERT_TRUE(robot.servosDriven());
+        robot.tick();
+        TEST_ASSERT_FALSE(robot.servosDriven());
+    }
+}
+
+// Modes are taken in the order they arrived, none merged into another: a borrow arriving in the tick a DEACTIVATED
+// did is decided from DEACTIVATED and refused, so the boards stay asleep.
+void test_a_deactivation_and_a_borrow_in_one_tick_leave_the_robot_deactivated() {
+    VirtualRobot robot;
+    standUp(robot);
+    EventBus<ModeMsg>::publish({MOTION_STATE::DEACTIVATED});
+    EventBus<ModeMsg>::publish({MOTION_STATE::ANIMATE, ModeMsgKind::BORROW});
+    robot.tick();
+    robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, robot.mode());
+    TEST_ASSERT_FALSE(robot.servosDriven());
+    TEST_ASSERT_FALSE(ServoController::output().awake);
+}
+
+// A borrow with nothing to play finds the runner idle at stance, so the control task hands the mode back on its own,
+// and the observers learn both outcomes as APPLIED.
+void test_a_borrow_with_nothing_to_play_hands_the_mode_back() {
+    VirtualRobot robot;
+    standUp(robot);
+    std::vector<ModeMsg> applied;
+    auto listener = EventBus<ModeMsg>::subscribe([&applied](const ModeMsg &m) {
+        if (m.kind == ModeMsgKind::APPLIED) applied.push_back(m);
+    });
+    EventBus<ModeMsg>::publish({MOTION_STATE::ANIMATE, ModeMsgKind::BORROW});
+    for (int t = 0; t < 3; ++t) robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, robot.mode());
+    host_bus::drainAll();
+    TEST_ASSERT_EQUAL(2, applied.size());
+    TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, applied[0].mode);
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, applied[1].mode);
 }
 
 // The joint angles are the control task's alone: the angles the robot publishes for the app are never written back.
@@ -1381,6 +1432,8 @@ int main(int, char **) {
     RUN_TEST(test_a_walk_without_commands_comes_to_rest);
     RUN_TEST(test_deactivating_mid_walk_freezes_the_joints);
     RUN_TEST(test_nothing_posted_changes_the_motion_before_the_next_tick);
+    RUN_TEST(test_a_deactivation_and_a_borrow_in_one_tick_leave_the_robot_deactivated);
+    RUN_TEST(test_a_borrow_with_nothing_to_play_hands_the_mode_back);
     RUN_TEST(test_angles_on_the_bus_leave_the_motions_angles_alone);
     RUN_TEST(test_a_gait_selected_while_standing_is_applied);
     RUN_TEST(test_full_stick_walk_stays_in_travel_for_every_classic_gait);

@@ -2,8 +2,8 @@
 
 // Owns the animation state the control task drives: two clip buffers (the player reads one while a
 // request loads the other), a third for validation, the player, the puppeteer target and the status
-// publisher. Requests arrive on the adapter tasks and the mode worker; they either load into the
-// inactive buffer under the load lock and raise a flag the control task consumes under the same lock,
+// publisher. Requests arrive on the adapter tasks and the control task's mode decisions; they either load
+// into the inactive buffer under the load lock and raise a flag the control task consumes under the same lock,
 // or copy a pose under a critical section. The control task is the only reader of the active clip and
 // the only caller of enter, reset and tick, so a clip is never replaced while it is being evaluated.
 //
@@ -88,7 +88,7 @@ class AnimationRunner {
         pendingStop_.store(true, std::memory_order_release);
     }
 
-    // Mode worker, on a graceful leave: a play exits, and a pose held by an idle player eases home
+    // Control task, on a graceful leave: a play exits, and a pose held by an idle player eases home
     // through the puppet path, so no leg meets the next mode away from its stance. A player the stop
     // moves into Exit drops the stance target, as it drops any pose streamed during a play.
     void requestLeave() {
@@ -102,7 +102,7 @@ class AnimationRunner {
         requestStop();
     }
 
-    // Mode worker: a refused borrow or an explicit mode other than ANIMATE drops what is queued.
+    // Control task: a refused borrow or an explicit mode other than ANIMATE drops what is queued.
     void cancelPendingPlay() {
         pendingPlay_.store(false, std::memory_order_release);
         pendingStop_.store(false, std::memory_order_release);

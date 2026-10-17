@@ -1,14 +1,18 @@
 #pragma once
 
-// What the other tasks hand MotionService's control task, under one mutex: the newest command and gait, a goal asked
-// for and its end, and an odometry reset. The decisions a reply or a goal depends on are made as each arrives, in
-// arrival order; the control task takes what arrived at the start of its next tick, so nothing changes the motion in
-// the middle of one. Ported in shape from SpotMicroESP32-Leika's esp32/include/motion_inbox.h.
+// What the other tasks hand MotionService's control task, under one mutex: the modes in arrival order, the newest
+// command and gait, a goal asked for and its end, and an odometry reset. The decisions a reply or a goal depends on are
+// made as each arrives, in arrival order, against the mode the queued modes predict; the control task takes what
+// arrived at the start of its next tick, so nothing changes the motion in the middle of one, and no task ever waits for
+// the control task. Ported in shape from SpotMicroESP32-Leika's esp32/include/motion_inbox.h.
 
+#include <algorithm>
 #include <cstdint>
+#include <iterator>
 #include <mutex>
 #include <optional>
 #include <utility>
+#include <animation/mode_arbiter.h>
 #include <goal_controller.h>
 #include <message_types.h>
 #include <platform_shared/message.pb.h>
@@ -55,7 +59,26 @@ class MotionInbox {
         uint32_t id;
     };
 
+    // The arbiter's state (animation/mode_arbiter.h): the mode, whether ANIMATE is borrowed and the mode a hand-back
+    // returns to. It starts as MotionService does.
+    struct ModeState {
+        MOTION_STATE mode = MOTION_STATE::DEACTIVATED;
+        bool borrowed = false;
+        MOTION_STATE previous = MOTION_STATE::STAND;
+    };
+
+    // Eight modes within one tick, or within an overrun of 20 ms per timed-out I2C transfer, against the ModeMsg bus
+    // queue's ten upstream.
+    static constexpr int MODE_DEPTH = 8;
+
+    struct Modes {
+        ModeMsg items[MODE_DEPTH]; // in arrival order
+        int count = 0;
+        unsigned dropped = 0; // the oldest, when a full queue took a newer one
+    };
+
     struct Mail {
+        Modes modes;
         std::optional<CommandMsg> command; // the newest since the last take
         unsigned long commandMs = 0;       // when it arrived
         std::optional<GaitType> gait;      // the newest since the last take
@@ -114,6 +137,42 @@ class MotionInbox {
         _commandMs = nowMs;
     }
 
+    // Mode worker, and the control task for its own hand-back, which so queues behind every mode that arrived before
+    // it. Modes are never merged, since a borrow and a hand-back are decided against the mode they find. Each is folded
+    // through the arbiter from the mode the queue predicts, with the runner's `busy` now: one that applies a mode other
+    // than WALK ends the goal driving the walk on arrival, as a goal walks in WALK. An APPLIED is no request. Full, the
+    // queue drops its oldest, so the newest intent, a DEACTIVATED above all, is kept.
+    void postMode(const ModeMsg &m, bool busy) {
+        if (m.kind == ModeMsgKind::APPLIED) return;
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (_modes.count == MODE_DEPTH) {
+            std::move(std::begin(_modes.items) + 1, std::end(_modes.items), std::begin(_modes.items));
+            --_modes.count;
+            ++_modes.dropped;
+            _predicted = fold(_applied, busy);
+        }
+        _modes.items[_modes.count++] = m;
+        const ModeArbiterDecision d = decide(_predicted, m, busy);
+        if (d.action == ModeArbiterDecision::APPLY && d.mode != MOTION_STATE::WALK) cancelGoalLocked();
+        _predicted = {d.mode, d.borrowed, d.previous};
+    }
+
+    // Any task: the mode the robot is in once the control task has taken the modes posted so far. It differs from the
+    // mode applied only for those few milliseconds, and from the mode they will apply only when the runner's busy
+    // changes before the take, which happens only in ANIMATE.
+    MOTION_STATE predictedMode() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _predicted.mode;
+    }
+
+    // Control task, after applying the modes it took: the state they left, from which the modes posted since are
+    // predicted again.
+    void noteModes(const ModeState &applied, bool busy) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _applied = applied;
+        _predicted = fold(applied, busy);
+    }
+
     // Gait worker. A goal's timeout was reckoned at its gait's pace, so a gait other than the one selected ends it, on
     // arrival: a newer gait replacing this one before the take ends nothing more.
     void postGait(GaitType gait) {
@@ -149,6 +208,9 @@ class MotionInbox {
     Mail take(unsigned long nowMs) {
         std::lock_guard<std::mutex> lock(_mutex);
         Mail mail;
+        mail.modes = std::exchange(_modes, Modes {});
+        // The control task applies them now; until it reports what they left, they are taken to leave the prediction.
+        _applied = _predicted;
         mail.command = std::exchange(_command, std::nullopt);
         mail.commandMs = _commandMs;
         mail.gait = std::exchange(_gait, std::nullopt);
@@ -180,6 +242,9 @@ class MotionInbox {
 
   private:
     mutable std::mutex _mutex;
+    Modes _modes;
+    ModeState _applied;   // as the control task last reported it, or as the modes it took will leave it
+    ModeState _predicted; // _applied with the queued modes folded in
     std::optional<CommandMsg> _command;
     unsigned long _commandMs = 0;
     std::optional<GaitType> _gait;
@@ -196,5 +261,18 @@ class MotionInbox {
 
     void cancelGoalLocked() {
         if (_goalDrives) _goalCancelRequested = true;
+    }
+
+    static ModeArbiterDecision decide(const ModeState &s, const ModeMsg &m, bool busy) {
+        return decideMode({s.mode, s.borrowed, s.previous, m.mode, m.kind, busy});
+    }
+
+    // The state the queued modes leave `from`.
+    ModeState fold(ModeState from, bool busy) const {
+        for (int i = 0; i < _modes.count; ++i) {
+            const ModeArbiterDecision d = decide(from, _modes.items[i], busy);
+            from = {d.mode, d.borrowed, d.previous};
+        }
+        return from;
     }
 };

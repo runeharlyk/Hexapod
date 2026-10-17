@@ -230,7 +230,7 @@ static void redactedApSettings(api_APSettings &out) {
 
 // Drops the servos before the chip goes down: the PCA9685 keeps its last outputs across an ESP reset
 // and deep sleep, so a restart would otherwise leave the legs energised while the firmware reports
-// DEACTIVATED. The mode is applied on the EventBus worker, so give it a moment to reach the driver.
+// DEACTIVATED. The control task applies the mode at its next tick, so give it a moment to reach the driver.
 static void deactivateServos() {
     EventBus<ModeMsg>::publish({MOTION_STATE::DEACTIVATED});
     vTaskDelay(pdMS_TO_TICKS(50));
