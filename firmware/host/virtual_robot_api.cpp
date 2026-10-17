@@ -2,6 +2,8 @@
 // the Python simulation loads (simulation/src/sim/virtual_robot.py). One robot per module instance or process;
 // reset() starts it over.
 
+#include <algorithm>
+#include <iterator>
 #include <gait_speed.h>
 #include <host_api.h>
 #include <virtual_robot.h>
@@ -54,6 +56,47 @@ API void setImu(float roll, float pitch, float yaw, float gx, float gy, float gz
 
 // One 5 ms control tick.
 API void tick() { instance().tick(); }
+
+// A GoalMove request from the client numbered `owner`, as main.cpp's handler takes it: the reply's status, 202 when the
+// goal starts on the next tick.
+API int goalMove(int kind, float distance, float angle, float radius, float speed, int gait, float stride, float s1,
+                 float h, float fd, int owner) {
+    if (kind < 0 || kind > static_cast<int>(GoalKind::ARC)) return 400;
+    const Goal goal {static_cast<GoalKind>(kind), distance, angle, radius, speed};
+    const CommandMsg style {0, 0, 0, 0, h, 0, s1, fd, stride};
+    return instance().goalMove(goal, style, static_cast<GaitType>(gait), {nullptr, owner});
+}
+
+API void goalCancel() { instance().goalCancel(); }
+
+// The newest goal's GoalStatus, its fields in their protobuf order: id, state, kind, target, progress, x, y, yaw and
+// passes.
+API void goalStatus(float out[9]) {
+    const socket_message_GoalStatus s = instance().goalStatus();
+    const float fields[9] = {static_cast<float>(s.id),
+                             static_cast<float>(s.state),
+                             static_cast<float>(s.kind),
+                             s.target,
+                             s.progress,
+                             s.x,
+                             s.y,
+                             s.yaw,
+                             static_cast<float>(s.passes)};
+    std::copy(std::begin(fields), std::end(fields), out);
+}
+
+// The pose after the last tick, as OdometryData's fields in their order: x, y, yaw, kinematic yaw and distance.
+API void odometry(float out[5]) {
+    const OdometryEstimate e = instance().odometry();
+    const float fields[5] = {e.x, e.y, e.yaw, e.kinematicYaw, e.distance};
+    std::copy(std::begin(fields), std::end(fields), out);
+}
+
+// Takes effect on the next tick.
+API void resetOdometry() { instance().resetOdometry(); }
+
+// The client numbered `owner` has gone: the goal it asked for ends.
+API void clientGone(int owner) { instance().clientGone({nullptr, owner}); }
 
 // Whether the servos are driven, and the 18 joint angles they are driven to in degrees, three per leg (coxa, femur,
 // tibia) in leg order.

@@ -201,6 +201,53 @@ message OdometryData {
   float distance = 5;       // m travelled along the path
 }
 
+// A move the robot walks on its own odometry, from STAND or WALK, in the frame it faced when the move started (the
+// body frame of docs/conventions.md). The style is what the sliders set; the posture is clamped as theirs is.
+enum GoalKind {
+  GOAL_FORWARD = 0;   // distance_m, negative is backwards
+  GOAL_SIDEWAYS = 1;  // distance_m, positive is right
+  GOAL_TURN = 2;      // angle_rad, counter-clockwise
+  GOAL_ARC = 3;       // radius_m > 0 and angle_rad, positive curves left
+}
+enum GoalState {
+  GOAL_IDLE = 0;
+  GOAL_SETTLING = 1;   // taking the style's posture and gait, or coming to rest to judge the pose
+  GOAL_RUNNING = 2;
+  GOAL_REACHED = 3;
+  GOAL_CANCELLED = 4;
+  GOAL_TIMED_OUT = 5;
+  GOAL_REFUSED = 6;
+}
+// Answered 202 with the accepted goal's status, 400 when malformed, 409 when the robot cannot walk now (deactivated,
+// in another mode than STAND or WALK, or updating) and 422 for a style it cannot walk (TUNED, or no speed envelope).
+message GoalMove {
+  GoalKind kind = 1;
+  float distance_m = 2;
+  float angle_rad = 3;
+  float radius_m = 4;
+  float speed = 5;  // share in (0, 1] of the gait's top speed at the posture; AUTO's is BI's
+  GaitEnum gait = 6;
+  float stride = 7;
+  float s1 = 8;
+  float h = 9;
+  float fd = 10;
+}
+// Ends the goal in progress, if any.
+message GoalCancel {}
+message GoalStatusGet {}
+// Observable: pushed on every state change and every 5 % of progress.
+message GoalStatus {
+  uint32 id = 1;  // the goal's number since boot, 0 before the first
+  GoalState state = 2;
+  GoalKind kind = 3;
+  float target = 4;    // m for FORWARD and SIDEWAYS, rad for TURN and ARC
+  float progress = 5;  // share of the target covered, 0 to 1
+  float x = 6;         // the odometry pose, as OdometryData's
+  float y = 7;
+  float yaw = 8;
+  uint32 passes = 9;   // passes started, the first included
+}
+
 message CorrelationRequest {
   uint32 correlation_id = 1;
   oneof request {
@@ -230,6 +277,9 @@ message CorrelationRequest {
     AnimationValidate animation_validate = 110;
     AnimationListRequest animation_list_request = 111;
     OdometryGet odometry_get = 130;
+    GoalMove goal_move = 131;
+    GoalCancel goal_cancel = 132;
+    GoalStatusGet goal_status_get = 133;
   }
 }
 
@@ -256,6 +306,7 @@ message CorrelationResponse {
     AnimationReport animation_report = 110;
     AnimationList animation_list = 111;
     OdometryData odometry = 130;
+    GoalStatus goal_status = 131;
   }
 }
 
@@ -354,5 +405,6 @@ message Message {
     PoseData pose = 282;
     AnimationStatus animation_status = 283;  // observable status: pushed while an animation runs
     TelemetryBatch telemetry_batch = 290;    // stream: every control tick while subscribed
+    GoalStatus goal_status = 300;            // observable status: pushed while a goal runs
   }
 }

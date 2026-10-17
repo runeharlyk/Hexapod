@@ -57,6 +57,11 @@ class Hexapod {
     bool resting() const { return _motionService.resting(); }
     const MotionService &motion() const { return _motionService; }
     void resetOdometry() { _motionService.resetOdometry(); }
+    int startGoal(const Goal &goal, const CommandMsg &style, GaitType gait, GoalOwner owner) {
+        return _motionService.startGoal(goal, style, gait, owner);
+    }
+    void cancelGoal() { _motionService.cancelGoal(); }
+    void goalClientGone(GoalOwner owner) { _motionService.clientGone(owner); }
     imu_calibration::Check calibrateIMU(ImuCalibration &result) { return _peripherals.calibrateIMU(result); }
     bool magnetometerPresent() const { return _peripherals.magActive(); }
 

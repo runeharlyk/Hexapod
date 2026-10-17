@@ -41,6 +41,7 @@ DEFINE_MESSAGE_TRAITS(AnimationPlay, animation_play)
 DEFINE_MESSAGE_TRAITS(AnimationStop, animation_stop)
 DEFINE_MESSAGE_TRAITS(PoseData, pose)
 DEFINE_MESSAGE_TRAITS(AnimationStatus, animation_status)
+DEFINE_MESSAGE_TRAITS(GoalStatus, goal_status)
 
 #undef DEFINE_MESSAGE_TRAITS
 

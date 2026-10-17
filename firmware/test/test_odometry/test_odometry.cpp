@@ -296,6 +296,17 @@ void test_feet_moving_on_the_floor_teach_no_bias() {
     TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, 0, learnedBias(odometry));
 }
 
+// A pause cuts the stillness it interrupts: whatever moved the robot meanwhile was not still, so the bias waits for
+// SETTLE_S of stillness after it.
+void test_a_pause_restarts_the_stillness_the_bias_waits_for() {
+    GaitWalk walk(0, 0, 0);
+    walk.gyro = GYRO_BIAS;
+    walk.run(ticksFor(0.75f * FusedOdometry::SETTLE_S));
+    walk.fused.pause();
+    walk.run(ticksFor(0.75f * FusedOdometry::SETTLE_S));
+    TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, 0, learnedBias(walk.fused));
+}
+
 // A walk too slow for the feet's motion to tell it from standing (under STILL_RATE / KIN_PER_SPEED) still swings its
 // feet, so a biased gyro teaches it nothing.
 void test_a_slow_walk_teaches_no_bias() {
@@ -494,6 +505,7 @@ int main(int, char **) {
     RUN_TEST(test_a_gyro_rate_during_a_stance_change_is_not_learned_as_bias);
     RUN_TEST(test_an_easing_body_yaw_is_not_learned_as_bias);
     RUN_TEST(test_feet_moving_on_the_floor_teach_no_bias);
+    RUN_TEST(test_a_pause_restarts_the_stillness_the_bias_waits_for);
     RUN_TEST(test_a_slow_walk_teaches_no_bias);
     RUN_TEST(test_a_tripod_walk_forward_moves_the_odometry_forward_and_straight);
     RUN_TEST(test_a_stance_change_at_rest_adds_no_travel);

@@ -168,10 +168,11 @@ class FusedOdometry {
         feetSawTurn = true;
     }
 
-    /** The motion left the gait for a while: the feet are taken afresh, and no gyro sample spans the gap. */
+    /** The motion left the gait for a while: the feet are taken afresh, and no gyro sample or stillness spans it. */
     void pause() {
         kinematic.pause();
         sinceSampleS = INFINITY;
+        stillS = 0;
     }
 
     OdometryEstimate estimate() const {
