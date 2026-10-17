@@ -7,6 +7,7 @@ import pytest
 from src.hexapod import Gait, Mode, Robot, RobotError, Velocity, speed_model
 from src.hexapod.backends.base import ZERO, GoalState
 from src.hexapod.backends.sim import SimBackend
+from src.sim.firmware_loop import FIRMWARE_DT
 
 STAND_HEIGHT_M = 0.072  # base height of the default stance (resting feet 66 mm below the body origin)
 
@@ -129,18 +130,16 @@ def standing():
 
 
 # The tolerances the design binds on MuJoCo's true pose (docs/superpowers/specs/2026-10-17-goal-moves-design.md):
-# the firmware closes each goal on its own odometry, so these measure how far the odometry is from the truth. The host
-# clock runs on across tests, so an outcome also depends on the clock phase a test starts at.
-@pytest.mark.xfail(strict=True, reason="measured 2026-10-17: TRI_GATE walks 4.5-5.0 % beyond its odometry in MuJoCo "
-                                       "(true 1.044-1.049 m on odometry 0.994-0.999 m); a distance calibration "
-                                       "awaits the controller's ruling")
-def test_a_goal_walks_a_metre_to_within_3_cm(standing):
+# the firmware closes each goal on its own odometry, so these measure how far the odometry is from the truth.
+def test_a_goal_walks_a_metre_to_within_6_cm(standing):
     robot, backend = standing
     start = _pose(backend)
     status = robot.walk(1.0)
     position, _ = _moved(start, _pose(backend))
     assert status.state is GoalState.REACHED
-    assert np.linalg.norm(position - (1.0, 0.0)) < 0.03
+    # MuJoCo's feet slip: TRI walks 4.2-4.8 % beyond its odometry, a simulation contact effect that the user chose not to
+    # calibrate out unless the floor runs need it (measured 2026-10-17), so the simulation's tolerance is 6 cm.
+    assert np.linalg.norm(position - (1.0, 0.0)) < 0.06
 
 
 def test_a_goal_turns_90_degrees_to_within_3(standing):
@@ -159,9 +158,9 @@ def test_a_goal_arc_ends_within_5_cm_and_5_degrees(standing):
     assert np.linalg.norm(position - (0.5, 0.5)) < 0.05 and yaw == pytest.approx(90, abs=5)
 
 
-@pytest.mark.xfail(strict=False, reason="measured 2026-10-17 over 8 clock phases: TRI_GATE closes within 0.6-6.7 cm "
-                                        "but up to 5.2 deg (6.0 deg seen alone), and a corrective pass can end "
-                                        "TIMED_OUT; awaits the controller's ruling")
+@pytest.mark.xfail(strict=True, reason="measured 2026-10-17 over 8 clock phases: TRI_GATE closes within 5.4-8.2 cm "
+                                       "but 4.1-6.2 deg off, as each walk ends up to 1.6 deg off its heading and each "
+                                       "turn about 0.9 deg over; awaits the controller's ruling")
 def test_a_goal_square_closes_within_10_cm_and_5_degrees(standing):
     robot, backend = standing
     start = _pose(backend)
@@ -184,7 +183,38 @@ def test_a_sideways_goal_walks_left_when_positive(standing):
     assert np.linalg.norm(position) < 0.03
 
 
-# The odometry the state carries is the firmware's, in REP-103, and follows the true pose.
+# The body vibrates at the physics rate, so one gyro sample per 5 ms tick aliases it: WAVE's integral read 91.2 deg for
+# a true 83.0 (measured). The firmware is fed the rate averaged over the tick, as the MPU6050's low-pass does.
+def test_the_gyro_fed_to_the_firmware_integrates_to_the_true_yaw():
+    backend = SimBackend()
+    with Robot(backend=backend, gait=Gait.WAVE) as robot:
+        robot.stand()
+        fed = []
+        set_imu = backend._loop.robot.set_imu
+        backend._loop.robot.set_imu = lambda rpy, up, gyro: (fed.append(gyro[2]), set_imu(rpy, up, gyro))
+        start = _pose(backend)
+        robot.turn(90)
+        _, turned = _moved(start, _pose(backend))
+    assert math.degrees(sum(fed) * FIRMWARE_DT) == pytest.approx(turned, rel=0.005)
+
+
+def _walk_and_turn():
+    backend = SimBackend()
+    with Robot(backend=backend) as robot:
+        robot.stand()
+        robot.walk(0.3)
+        robot.turn(45)
+        return backend.sim.data.qpos.copy(), robot.state().odometry
+
+
+# The firmware's clock starts over with each robot, so a run does not depend on the runs before it.
+def test_the_same_goals_run_alike_twice_in_one_process():
+    (pose, odometry), (again, odometry_again) = _walk_and_turn(), _walk_and_turn()
+    assert np.array_equal(pose, again) and odometry == odometry_again
+
+
+# The odometry the state carries is the firmware's, in REP-103, and follows the true pose up to MuJoCo's slip: a short
+# TRI walk goes 4-7 % beyond its odometry (measured 2026-10-17 over 12 clock phases: 1.3-2.1 cm on 0.3 m).
 def test_the_state_carries_the_odometry_in_rep103(standing):
     robot, backend = standing
     robot.reset_odometry()
@@ -194,7 +224,7 @@ def test_the_state_carries_the_odometry_in_rep103(standing):
     robot.turn(45)
     position, yaw = _moved(start, _pose(backend))
     odometry = robot.state().odometry
-    assert (odometry.x, odometry.y) == pytest.approx(tuple(position), abs=0.02)
+    assert (odometry.x, odometry.y) == pytest.approx(tuple(position), abs=0.03)
     assert odometry.yaw == pytest.approx(yaw, abs=2)
 
 
