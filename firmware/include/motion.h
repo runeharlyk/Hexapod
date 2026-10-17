@@ -975,16 +975,17 @@ class MotionService {
             _odometry.estimate(), KinematicOdometry::restStep(body_state, stanceFlags(), default_feet_pos, stays));
     }
 
-    // Control task: the phase a stop from now still steps, from the stop ramp run ahead on a copy of the gait. Its
-    // cadence follows the stroke left, and the gait stops cycling once the stroke is under its deadband, so a stop from
-    // a stroke near the deadband steps almost none.
+    // Control task: the phase a stop from now still steps, from the stop ramp run ahead on a copy of it and of the
+    // gait, so a stop already under way goes on from where it is. Its cadence follows the stroke left, and the gait
+    // stops cycling once the stroke is under its deadband, so a stop from a stroke near the deadband steps almost none.
     float stopPhase() const {
-        GaitCommandRamp ramp;
+        GaitCommandRamp ramp = _commandRamp;
         gait_state_t live = gait_state, stopped = target_gait_state;
         stopped.step_x = stopped.step_y = stopped.step_angle = stopped.phase_rate = 0;
+        const float a = easeShare(STOP_PREDICTION_DT_S, GAIT_COMMAND_TAU_S);
         float phase = 0;
         for (int t = 0; t < STOP_PREDICTION_STEPS; ++t) {
-            ramp.step(live, stopped, STOP_PREDICTION_DT_S, GAIT_COMMAND_TAU_S);
+            ramp.stepBy(live, stopped, a);
             if (!gaitIsCommanded(live)) break;
             phase += live.phase_rate * STOP_PREDICTION_DT_S;
         }

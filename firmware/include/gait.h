@@ -64,8 +64,11 @@ inline float approachf(float current, float target, float alpha, float eps) {
     return std::fabs(target - next) <= eps ? target : next;
 }
 
-inline void approachGaitCommand(gait_state_t& current, const gait_state_t& target, float dt, float tau) {
-    const float a = (tau <= 0.0f || dt <= 0.0f) ? 1.0f : 1.0f - expf(-dt / tau);
+// The share of the way to its target a first-order ease of `tau` takes in `dt`.
+inline float easeShare(float dt, float tau) { return (tau <= 0.0f || dt <= 0.0f) ? 1.0f : 1.0f - expf(-dt / tau); }
+
+// One step of the ease, taking the share `a` of the way.
+inline void approachGaitCommandBy(gait_state_t& current, const gait_state_t& target, float a) {
     current.step_x = approachf(current.step_x, target.step_x, a, GAIT_SNAP_MM);
     current.step_y = approachf(current.step_y, target.step_y, a, GAIT_SNAP_MM);
     current.step_angle = approachf(current.step_angle, target.step_angle, a, GAIT_SNAP_RAD);
@@ -78,6 +81,10 @@ inline void approachGaitCommand(gait_state_t& current, const gait_state_t& targe
     current.phase_rate = (current.phase_rate > 0.0f && target.phase_rate > 0.0f)
                              ? approachf(current.phase_rate, target.phase_rate, a, GAIT_SNAP_RATE)
                              : target.phase_rate;
+}
+
+inline void approachGaitCommand(gait_state_t& current, const gait_state_t& target, float dt, float tau) {
+    approachGaitCommandBy(current, target, easeShare(dt, tau));
 }
 
 // The command ramp the walk eases through. A change eases first order over tau, except a stop, which starts from the
@@ -93,9 +100,14 @@ inline void approachGaitCommand(gait_state_t& current, const gait_state_t& targe
 class GaitCommandRamp {
   public:
     void step(gait_state_t& live, const gait_state_t& target, float dt, float tau) {
+        stepBy(live, target, easeShare(dt, tau));
+    }
+
+    // A step that takes the share `a` of the way, easeShare's for its period.
+    void stepBy(gait_state_t& live, const gait_state_t& target, float a) {
         if (target.phase_rate > 0.0f || gaitIsCommanded(target) || !gaitIsCommanded(live)) {
             stopping = false;
-            approachGaitCommand(live, target, dt, tau);
+            approachGaitCommandBy(live, target, a);
             return;
         }
         if (!stopping) {
@@ -103,7 +115,6 @@ class GaitCommandRamp {
             from = live;
             stage = live;
         }
-        const float a = (tau <= 0.0f || dt <= 0.0f) ? 1.0f : 1.0f - expf(-dt / tau);
         stage.step_x = approachf(stage.step_x, target.step_x, a, GAIT_SNAP_MM);
         stage.step_y = approachf(stage.step_y, target.step_y, a, GAIT_SNAP_MM);
         stage.step_angle = approachf(stage.step_angle, target.step_angle, a, GAIT_SNAP_RAD);
@@ -111,7 +122,7 @@ class GaitCommandRamp {
         eased.step_x = stage.step_x;
         eased.step_y = stage.step_y;
         eased.step_angle = stage.step_angle;
-        approachGaitCommand(live, eased, dt, tau);
+        approachGaitCommandBy(live, eased, a);
         live.phase_rate = gaitIsCommanded(live) ? from.phase_rate * strokeLeft(live) : 0.0f;
     }
 
