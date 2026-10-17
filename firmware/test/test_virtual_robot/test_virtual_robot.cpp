@@ -259,6 +259,15 @@ void test_nothing_posted_changes_the_motion_before_the_next_tick() {
         robot.tick();
         TEST_ASSERT_GREATER_THAN_FLOAT(GAIT_STRIDE_DEADBAND_MM, robot.gaitCommand().step_y);
     }
+    {
+        VirtualRobot robot;
+        standUp(robot);
+        robot.setGait(GaitType::BI_GATE);
+        host_bus::drainAll();
+        TEST_ASSERT_EQUAL(GaitType::TRI_GATE, robot.gaitCommand().gait_type);
+        robot.tick();
+        TEST_ASSERT_EQUAL(GaitType::BI_GATE, robot.gaitCommand().gait_type);
+    }
 }
 
 // The joint angles are the control task's alone: the angles the robot publishes for the app are never written back.

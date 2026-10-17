@@ -167,6 +167,43 @@ void test_a_command_posted_before_the_goal_leaves_it_alone() {
     TEST_ASSERT_TRUE(inbox.goalDrives());
 }
 
+void test_a_gait_is_taken_once_and_the_newest_wins() {
+    MotionInbox inbox;
+    TEST_ASSERT_FALSE(inbox.take(0).gait.has_value());
+    inbox.postGait(GaitType::WAVE);
+    inbox.postGait(GaitType::BI_GATE);
+    const MotionInbox::Mail mail = inbox.take(0);
+    TEST_ASSERT_TRUE(mail.gait.has_value());
+    TEST_ASSERT_EQUAL(GaitType::BI_GATE, *mail.gait);
+    TEST_ASSERT_FALSE(inbox.take(0).gait.has_value());
+}
+
+// A goal's timeout was reckoned at its gait's pace, so a gait other than the one selected ends it when it arrives,
+// though a newer gait replaces it before the control task takes it; the gait already selected is no change.
+void test_a_gait_other_than_the_selection_ends_the_goal() {
+    MotionInbox inbox;
+    driving(inbox);
+    inbox.postGait(GaitType::TRI_GATE);
+    TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
+    inbox.postGait(GaitType::BI_GATE);
+    inbox.postGait(GaitType::TRI_GATE);
+    TEST_ASSERT_TRUE(inbox.take(0).goalCancelled);
+    // BI was selected and replaced, so TRI is the selection again.
+    driving(inbox);
+    inbox.postGait(GaitType::TRI_GATE);
+    TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
+}
+
+// The gait a goal walks becomes the selection without ending it, so a client sending that gait next changes nothing.
+void test_a_goals_own_gait_is_the_selection() {
+    MotionInbox inbox;
+    driving(inbox);
+    inbox.selectGait(GaitType::BI_GATE);
+    TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
+    inbox.postGait(GaitType::BI_GATE);
+    TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_goal_is_taken_once_and_reported_settling_until_then);
@@ -179,5 +216,8 @@ int main(int, char **) {
     RUN_TEST(test_a_command_is_taken_once_with_its_arrival_and_the_newest_wins);
     RUN_TEST(test_while_a_goal_drives_a_centred_command_is_swallowed_and_a_stick_takes_the_walk_back);
     RUN_TEST(test_a_command_posted_before_the_goal_leaves_it_alone);
+    RUN_TEST(test_a_gait_is_taken_once_and_the_newest_wins);
+    RUN_TEST(test_a_gait_other_than_the_selection_ends_the_goal);
+    RUN_TEST(test_a_goals_own_gait_is_the_selection);
     return UNITY_END();
 }

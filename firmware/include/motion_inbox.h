@@ -1,9 +1,9 @@
 #pragma once
 
-// What the other tasks hand MotionService's control task, under one mutex: the newest command, a goal asked for and
-// its end, and an odometry reset. The decisions a reply or a goal depends on are made as each arrives, in arrival
-// order; the control task takes what arrived at the start of its next tick, so nothing changes the motion in the
-// middle of one. Ported in shape from SpotMicroESP32-Leika's esp32/include/motion_inbox.h.
+// What the other tasks hand MotionService's control task, under one mutex: the newest command and gait, a goal asked
+// for and its end, and an odometry reset. The decisions a reply or a goal depends on are made as each arrives, in
+// arrival order; the control task takes what arrived at the start of its next tick, so nothing changes the motion in
+// the middle of one. Ported in shape from SpotMicroESP32-Leika's esp32/include/motion_inbox.h.
 
 #include <cstdint>
 #include <mutex>
@@ -58,6 +58,7 @@ class MotionInbox {
     struct Mail {
         std::optional<CommandMsg> command; // the newest since the last take
         unsigned long commandMs = 0;       // when it arrived
+        std::optional<GaitType> gait;      // the newest since the last take
         std::optional<GoalRequest> goal;   // accepted since the last take
         bool goalCancelled = false;  // the end of the goal driving the walk was asked for, or its owner fell silent
         bool goalDriveEnded = false; // so a goal no longer drives the walk, whose sticks are to be centred
@@ -113,6 +114,21 @@ class MotionInbox {
         _commandMs = nowMs;
     }
 
+    // Gait worker. A goal's timeout was reckoned at its gait's pace, so a gait other than the one selected ends it, on
+    // arrival: a newer gait replacing this one before the take ends nothing more.
+    void postGait(GaitType gait) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (gait != _selection) cancelGoalLocked();
+        _selection = gait;
+        _gait = gait;
+    }
+
+    // Control task: a goal's own gait becomes the selection, which ends nothing; its publish is not delivered back.
+    void selectGait(GaitType gait) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _selection = gait;
+    }
+
     // Any task: the control task zeroes the pose before its next update. Refused while a goal drives: the pose is its
     // origin.
     bool requestOdometryReset() {
@@ -135,6 +151,7 @@ class MotionInbox {
         Mail mail;
         mail.command = std::exchange(_command, std::nullopt);
         mail.commandMs = _commandMs;
+        mail.gait = std::exchange(_gait, std::nullopt);
         mail.goal = std::exchange(_goal, std::nullopt);
         mail.goalCancelled = std::exchange(_goalCancelRequested, false) ||
                              (_goalDrives && _goalOwner.adapter && nowMs - _ownerHeardMs > OWNER_SILENCE_MS);
@@ -165,6 +182,8 @@ class MotionInbox {
     mutable std::mutex _mutex;
     std::optional<CommandMsg> _command;
     unsigned long _commandMs = 0;
+    std::optional<GaitType> _gait;
+    GaitType _selection = GaitType::TRI_GATE; // the gait selected last, from the gait MotionService starts in
     std::optional<GoalRequest> _goal;
     uint32_t _goalCount = 0;
     GoalOwner _goalOwner {};

@@ -42,21 +42,17 @@ class MotionService {
             ESP_LOGD("MotionService", "MODE callback called with mode %d", (int)c.mode);
             handleInputMode(c);
         });
-        _gaitSubHandle = EventBus<GaitMsg>::subscribe([&](GaitMsg const &c) {
-            ESP_LOGD("MotionService", "GAIT callback called with gait %d", (int)c.gait);
-            handleInputGait(c);
-        });
+        _gaitSubHandle = EventBus<GaitMsg>::subscribe([&](GaitMsg const &g) { _inbox.postGait(g.gait); });
         ESP_LOGI("MotionService", "Event bus subscriptions completed");
         body_state.updateFeet(default_feet_pos);
         EventBus<ModeMsg>::publish({motionState});
         EventBus<GaitMsg>::publish({gait_state.gait_type});
     }
 
-    void handleInputGait(GaitMsg const &g) {
-        ESP_LOGI("MotionService", "Gait %d", g.gait);
-        // A goal's timeout was reckoned at its gait's pace; the goal's own selection is not delivered here.
-        if (g.gait != _requestedGait) _inbox.cancelGoal();
-        _requestedGait = g.gait;
+    // Control task, at the start of the tick after the gait arrived; the goal it ends was ended on arrival.
+    void handleInputGait(GaitType gait) {
+        _gaitTaken = gait;
+        _requestedGait = gait;
         // Swapping a schedule mid-stride is the hazard updateAutoGait() documents: offset[] reassigns
         // every leg's phase at once, so a leg at the top of its swing becomes a stance leg and its
         // foot is commanded straight down. Defer to the next tick that may swap instead, which
@@ -287,6 +283,7 @@ class MotionService {
     // imuFresh: the IMU was read on this tick, so its DMP packet and gyro rate are this tick's.
     bool updateMotion(bool imuFresh) {
         const MotionInbox::Mail mail = _inbox.take(millis());
+        if (mail.gait) handleInputGait(*mail.gait);
         if (mail.command) handleCommand(*mail.command, mail.commandMs);
         takeGoalMail(mail);
         resetCommandIfTimedOut();
@@ -378,6 +375,8 @@ class MotionService {
     // Control task, after the tick's servo write: the log lines of what the tick took from the inbox, so a slow console
     // never delays the write.
     void logMail() {
+        if (_gaitTaken) ESP_LOGI("MotionService", "Gait %d", (int)*_gaitTaken);
+        _gaitTaken.reset();
         if (std::exchange(_tunedLogDue, false)) logTunedCommand(_tunedVelocity, target_gait_state);
     }
 
@@ -556,7 +555,8 @@ class MotionService {
     unsigned long lastCommandMillis = 0;
     unsigned long lastMotionMicros = 0;
     unsigned long _lastTunedLog = 0;
-    // The velocity the last TUNED command asked for, logged after the servo write of the tick that took it.
+    // The gait the tick took, and the velocity the last TUNED command asked for, logged after its servo write.
+    std::optional<GaitType> _gaitTaken;
     float _tunedVelocity[3] = {0.f, 0.f, 0.f};
     bool _tunedLogDue = false;
     // The dead-man stop is in force: it fired, and no command or goal has come since.
@@ -802,6 +802,7 @@ class MotionService {
         if (gait_state.gait_type == GaitType::TUNED) stopLocomotionCommand(false);
         const bool newGait = _requestedGait != _goalTaken.gait;
         _requestedGait = _goalTaken.gait;
+        _inbox.selectGait(_goalTaken.gait);
         lastWalkCommand_ = _goalTaken.style;
         walkClassic(_goalTaken.style);
         _goalStyleTaken = true;
