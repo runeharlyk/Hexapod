@@ -275,7 +275,7 @@ class Robot:
         style = self._style if speed is None else replace(self._style, speed=speed)
         try:
             status = self._backend.goal_move(goal, style)
-        except RobotTimeout:
+        except (RobotTimeout, KeyboardInterrupt):
             self._cancel_goal()  # the robot may have taken the goal and lost only the reply
             raise
         number, reported = status.id, None

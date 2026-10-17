@@ -19,15 +19,16 @@ class ScriptedBackend:
     records every command. With `goals` it takes goal moves as the firmware does from STAND or WALK: each settles for
     GOAL_SETTLE_S, runs for `goal_s`, then ends in `goal_ends`, unless another client's goal replaces it at
     `replaced_at` (seconds into the goal). A goal that is REACHED has moved the pose by exactly its target, an arc
-    only its heading. The link loses the reply to a goal with `move_reply_lost`, and to a status read from
-    `status_lost_at` seconds into the goal, as a reply timeout does."""
+    only its heading. The wait for a goal's reply ends, once the robot took the goal, in the exception
+    `move_reply_ends` (a lost reply, Ctrl-C), and the link loses the reply to a status read from `status_lost_at`
+    seconds into the goal, as a reply timeout does."""
 
     def __init__(self, top=Velocity(0.3, 0.29, 1.5), yaw=0.0, yaw_lag_s=0.0, turn_scale=1.0, drop_at=None,
                  imu=True, mode=Mode.DEACTIVATED, refuse=(), switch_at=None, stop_drifts=(), goals=False, goal_s=1.0,
-                 goal_ends=GoalState.REACHED, replaced_at=None, move_reply_lost=False, status_lost_at=None):
+                 goal_ends=GoalState.REACHED, replaced_at=None, move_reply_ends=None, status_lost_at=None):
         self.top, self.turn_scale, self.drop_at, self.imu, self.refuse = top, turn_scale, drop_at, imu, refuse
         self.goals, self.goal_s, self.goal_ends, self.replaced_at = goals, goal_s, goal_ends, replaced_at
-        self.move_reply_lost, self.status_lost_at = move_reply_lost, status_lost_at
+        self.move_reply_ends, self.status_lost_at = move_reply_ends, status_lost_at
         self._goal = None  # (id, goal, start time)
         self._goal_moved = False
         self._goal_count = 0
@@ -119,8 +120,8 @@ class ScriptedBackend:
         self._goal_count += 1
         self._goal = (self._goal_count, goal, self.t)
         self._goal_moved = False
-        if self.move_reply_lost:
-            raise RobotTimeout("no answer from the scripted link")
+        if self.move_reply_ends is not None:
+            raise self.move_reply_ends
         return self.goal_status()
 
     def goal_cancel(self):
@@ -427,10 +428,11 @@ def test_a_lost_status_reply_cancels_the_goal_and_is_no_goal_timeout():
     assert len(backend.logged("cancel")) == 1
 
 
-# The robot may have taken a goal whose reply was lost.
-def test_a_lost_goal_reply_cancels_the_goal():
-    robot, backend = _goals(move_reply_lost=True)
-    with pytest.raises(RobotTimeout):
+# The robot may have taken a goal whose reply was lost or interrupted.
+@pytest.mark.parametrize("ending", [RobotTimeout("no answer from the scripted link"), KeyboardInterrupt()])
+def test_a_goal_whose_reply_never_came_is_cancelled(ending):
+    robot, backend = _goals(move_reply_ends=ending)
+    with pytest.raises(type(ending)):
         robot.walk(1.0)
     assert len(backend.logged("cancel")) == 1
 
