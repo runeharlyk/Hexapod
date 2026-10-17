@@ -660,7 +660,9 @@ class HexapodMjEnv(gym.Env):
     def _get_obs(self):
         q = self.sim.base_quat()
         grav = _gravity_in_body(q)
-        gyro = self.sim.gyro()
+        # The firmware path reads the IMU as FirmwareLoop feeds the firmware: low-passed over the control period.
+        now = self.sim.data.time
+        gyro = self.sim.mean_gyro(now - self.dt, now) if self.firmware is not None else self.sim.gyro()
         rpy = _quat_to_rpy(q)
         if self.randomize:
             grav, gyro, rpy = self.dr.noisy_imu(grav, gyro, rpy, self.np_random_)

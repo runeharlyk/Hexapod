@@ -8,6 +8,7 @@ Verified facts:
   - Physics timestep 0.002 s; policy/gait control at 0.02 s -> frame_skip = 10.
 """
 
+import collections
 import os
 import numpy as np
 import mujoco
@@ -82,6 +83,8 @@ class HexapodSim:
         self.powered = True
         self.joint_target = self.stand_pose.copy()
         self.imu_site = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, "imu")
+        self._gyro = self._sensor_slice("imu_gyro")
+        self._rates = collections.deque(maxlen=64)  # (sim time at its end, gyro rate) of the latest physics steps
         self.foot_site_ids = np.array(
             [mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, f"foot_{i}") for i in range(6)]
         )
@@ -122,6 +125,7 @@ class HexapodSim:
         self.joint_target = stand.copy()
         mujoco.mj_forward(self.model, self.data)
         self.data.ctrl[self.act_ids] = 0.0  # motor actuators: ctrl is torque, set by the servo loop
+        self._rates.clear()
 
     def set_powered(self, powered: bool) -> None:
         """A deactivated robot's PCA9685s sleep: its servos give no torque, only their gears' own friction, and the
@@ -166,6 +170,8 @@ class HexapodSim:
         for _ in range(n if n is not None else self.frame_skip):
             self._apply_servo()  # recompute torque each substep (PD runs at the physics rate)
             mujoco.mj_step(self.model, self.data)
+            # The step's sensors were computed at its start, so its rate holds over the step.
+            self._rates.append((self.data.time, self.data.sensordata[self._gyro].copy()))
 
     def body_targets_from_feet(self, body: BodyState) -> np.ndarray:
         return self.kin.inverse_kinematics(body, degrees=False)
@@ -239,9 +245,19 @@ class HexapodSim:
         return self.contact_state()[0] > 0.0
 
     def gyro(self) -> np.ndarray:
-        return self.data.sensordata[
-            self._sensor_slice("imu_gyro")
-        ].copy()
+        return self.data.sensordata[self._gyro].copy()
+
+    def mean_gyro(self, start: float, end: float) -> np.ndarray:
+        """The gyro's rate averaged over the sim time from `start` to `end`, as the IMU's low-pass reports it, from the
+        latest physics steps; the rate now before any step. One step's rate, read once per control period, aliases the
+        body's vibration: integrated so, a 90 deg turn on WAVE read 91.2 deg for a true 83.0 (measured)."""
+        total, covered = np.zeros(3), 0.0
+        for step_end, rate in self._rates:
+            overlap = min(step_end, end) - max(step_end - self.model.opt.timestep, start)
+            if overlap > 0:
+                total += rate * overlap
+                covered += overlap
+        return total / covered if covered > 0 else self.gyro()
 
     def _sensor_slice(self, name):
         sid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SENSOR, name)

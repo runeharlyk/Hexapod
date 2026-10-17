@@ -15,7 +15,7 @@ HEARTBEAT_TICKS = 4  # the app's 20 ms stick period
 
 def imu_reading(quat: np.ndarray, gyro: np.ndarray):
     """The MPU6050 as the robot reports it: the base quaternion's roll, pitch and yaw in radians, with the DMP's signs,
-    world up in the body frame, and the gyro sensor."""
+    world up in the body frame, and the gyro sensor's rate, low-passed over the last tick (HexapodSim.mean_gyro)."""
     w, x, y, z = quat
     roll = np.arctan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
     pitch = np.arcsin(np.clip(2 * (w * y - z * x), -1, 1))
@@ -31,6 +31,7 @@ class FirmwareLoop:
         self.robot.set_gait(gait)
         self.ticks = 0
         self.physics_steps = 0
+        self._start = sim.data.time
         self._mode = DEACTIVATED
         self._mode_undelivered = False  # a mode request reaches the motion on the next tick
         self._sticks = None
@@ -82,7 +83,11 @@ class FirmwareLoop:
     def tick(self) -> None:
         if self._sticks is not None and self.ticks % HEARTBEAT_TICKS == 0:
             self.robot.command(**self._sticks)
-        self.robot.set_imu(*imu_reading(self.sim.base_quat(), self.sim.gyro()))
+        # Physics runs whole steps locked to the ticks, up to half a step behind a tick's time, so the gyro is
+        # averaged over the 5 ms that end half a step before it: the windows tile time and integrate to the true yaw.
+        end = self._start + self.ticks * FIRMWARE_DT - self.sim.model.opt.timestep / 2
+        gyro = self.sim.mean_gyro(end - FIRMWARE_DT, end)
+        self.robot.set_imu(*imu_reading(self.sim.base_quat(), gyro))
         self.robot.tick()
         self.sim.set_powered(self.robot.servos_driven())
         # Only a tick that wrote a pose moves the targets: in IDLE a raw PWM write holds, as on the robot.

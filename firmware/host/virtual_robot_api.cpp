@@ -23,9 +23,11 @@ VirtualRobot &instance() {
 
 extern "C" {
 
+// The clock starts over too, so a new robot's run does not depend on the runs before it in the process.
 API void reset() {
     delete robot;
     robot = nullptr;
+    host_clock::nowUs() = 1;
     instance();
 }
 
