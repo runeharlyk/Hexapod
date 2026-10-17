@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <goal_controller.h>
+#include <initializer_list>
 #include <vector>
 
 namespace {
@@ -50,7 +51,7 @@ Local arcEnd(float radius, float angle) {
  * A body that walks the sticks as MotionService drives the gait: the combined stick is L1-normalized, the walk follows
  * it through a first-order lag, and the gait steps at `cadence`. Centred sticks stop it only at the end of the half
  * cycle in progress, so how far it coasts depends on the phase it stopped in; extraCoast[n] seconds more on the n-th
- * stop.
+ * stop, or, when negative, that long rocking back along its path as its feet settle.
  */
 struct Body {
     float forwardScale = 1, turnScale = 1; // of what the sticks ask, the gait walks this much
@@ -61,8 +62,8 @@ struct Body {
     OdometryEstimate pose;
     float heading = 0; // unwrapped
     float right = 0, ahead = 0, yawRate = 0;
-    float phase = 0, coastLeft = -1;
-    bool walking = false;
+    float phase = 0, coastLeft = 0, backLeft = 0, sense = 1;
+    bool walking = false, stopping = false;
     int stops = 0;
 
     Body(float x = 0, float y = 0, float yaw = 0) : pose(at(x, y, yaw)), heading(yaw) {}
@@ -77,27 +78,35 @@ struct Body {
             ahead += k * (sticks.ly / norm * top - ahead);
             yawRate += k * (sticks.rx / norm * TOP_TURN * turnScale - yawRate);
             walking = true;
-            coastLeft = -1;
+            stopping = false;
+            sense = 1;
         } else if (walking) {
-            if (coastLeft < 0) {
+            if (!stopping) {
                 const float half = 2 * phase;
-                coastLeft = (std::floor(half) + 1 - half) / (2 * cadence);
-                if (stops < static_cast<int>(extraCoast.size())) coastLeft += extraCoast[stops];
+                const float extra = stops < static_cast<int>(extraCoast.size()) ? extraCoast[stops] : 0;
+                coastLeft = (std::floor(half) + 1 - half) / (2 * cadence) + std::max(extra, 0.0f);
+                backLeft = std::max(-extra, 0.0f);
+                stopping = true;
                 stops++;
             }
-            coastLeft -= DT;
-            if (coastLeft <= 0) {
-                walking = false;
+            if (coastLeft > 0) {
+                coastLeft -= DT;
+            } else if (backLeft > 0) {
+                backLeft -= DT;
+                sense = -1;
+            } else {
+                walking = stopping = false;
+                sense = 1;
                 right = ahead = yawRate = 0;
             }
         }
         if (!walking) return;
         phase += cadence * DT;
         const float c = std::cos(heading), s = std::sin(heading);
-        pose.x += (right * c - ahead * s) * DT;
-        pose.y += (right * s + ahead * c) * DT;
+        pose.x += sense * (right * c - ahead * s) * DT;
+        pose.y += sense * (right * s + ahead * c) * DT;
         pose.distance += std::hypot(right, ahead) * DT;
-        heading += (yawRate + drift) * DT;
+        heading += (sense * yawRate + drift) * DT;
         pose.yaw = std::remainder(heading, TWO_PI);
     }
 };
@@ -107,6 +116,7 @@ struct Run {
     float seconds = 0;
     float firstLx = 0, firstLy = 0, firstRx = 0;
     float maxLx = 0, maxLy = 0, maxRx = 0;   // the largest stick magnitudes asked for
+    float minLy = 0;                         // the most backward forward stick
     bool endedAtRest = false;                // the controller was told the body was at rest on its last tick
     bool sticksCentredWhileSettling = true;  // no SETTLING tick asked for a stick
     std::vector<OdometryEstimate> passPoses; // the settled pose each later pass started from
@@ -139,6 +149,7 @@ Run drive(GoalController& goal, Body& body, float maxSeconds = 300, const Local*
         }
         run.maxLx = std::max(run.maxLx, std::fabs(sticks.lx));
         run.maxLy = std::max(run.maxLy, std::fabs(sticks.ly));
+        run.minLy = std::min(run.minLy, sticks.ly);
         run.maxRx = std::max(run.maxRx, std::fabs(sticks.rx));
         body.step(sticks);
         if (centre) {
@@ -174,7 +185,7 @@ void test_a_forward_goal_lands_within_its_tolerance() {
         TEST_ASSERT_FLOAT_WITHIN(1e-6f, std::copysign(0.5f, distance), run.firstLy);
         TEST_ASSERT_EQUAL_FLOAT(0, run.firstLx);
         TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.5f, run.maxLy); // the style's speed caps the driving stick
-        TEST_ASSERT_EQUAL_FLOAT(0, run.maxLx);
+        TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0, run.maxLx);    // only the line hold, on rounding off the line
         TEST_ASSERT_TRUE(run.endedAtRest);
         TEST_ASSERT_TRUE(run.sticksCentredWhileSettling);
         TEST_ASSERT_TRUE(goal.passes() >= 1 && goal.passes() <= GoalController::MAX_PASSES);
@@ -191,7 +202,7 @@ void test_a_sideways_goal_signs_its_stick_by_motion_services_convention() {
         const Run run = drive(goal, body);
         TEST_ASSERT_EQUAL(GoalState::REACHED, run.end);
         TEST_ASSERT_FLOAT_WITHIN(1e-6f, -std::copysign(0.7f, distance), run.firstLx);
-        TEST_ASSERT_EQUAL_FLOAT(0, run.maxLy);
+        TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0, run.maxLy); // only the line hold, on rounding off the line
         TEST_ASSERT_FLOAT_WITHIN(GoalController::REACHED_M, distance, local(origin, body.pose).right);
         TEST_ASSERT_TRUE(run.endedAtRest);
     }
@@ -321,7 +332,7 @@ void test_an_arc_slows_on_its_remaining_angle() {
 }
 
 // A straight walk steers its turn stick against the fused heading's error from the start heading, 2 per rad, at most
-// 0.3, across the yaw's wrap.
+// 0.3, across the yaw's wrap, and its stick across the line against its offset from the start line.
 void test_heading_hold_steers_against_a_drifting_yaw() {
     GoalController goal;
     goal.start(forward(1, 0.5f), at(0.3f, 0.3f, 3.1f), TOP_SPEED_MM, TOP_TURN);
@@ -334,17 +345,67 @@ void test_heading_hold_steers_against_a_drifting_yaw() {
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, -0.5f, hold.lx);
     TEST_ASSERT_FLOAT_WITHIN(1e-4f, -0.2f, hold.rx);
 
-    // A gait drifting 0.15 rad/s would turn well over a radian on this walk; held, it ends near its heading.
-    Body body(0, 0, 1.0f);
-    body.drift = 0.15f;
-    const OdometryEstimate origin = body.pose;
-    goal.start(forward(1, 0.5f), body.pose, TOP_SPEED_MM, TOP_TURN);
-    const Run run = drive(goal, body);
-    TEST_ASSERT_EQUAL(GoalState::REACHED, run.end);
-    TEST_ASSERT_TRUE(body.drift * run.seconds > 1);
-    TEST_ASSERT_FLOAT_WITHIN(0.1f, 0, body.heading - origin.yaw);
-    TEST_ASSERT_FLOAT_WITHIN(GoalController::REACHED_M, 1, local(origin, body.pose).forward);
-    TEST_ASSERT_FLOAT_WITHIN(0.08f, 0, local(origin, body.pose).right);
+    // A gait drifting 0.15 rad/s would turn well over a radian on these walks; held, they end near their heading,
+    // and the heading's steady error, about 0.06 rad, no longer carries them off the line.
+    for (const Goal walk : {forward(1, 0.5f), sideways(-0.6f, 0.5f)}) {
+        Body body(0, 0, 1.0f);
+        body.drift = 0.15f;
+        const OdometryEstimate origin = body.pose;
+        goal.start(walk, body.pose, TOP_SPEED_MM, TOP_TURN);
+        const Run run = drive(goal, body);
+        TEST_ASSERT_EQUAL(GoalState::REACHED, run.end);
+        TEST_ASSERT_TRUE(body.drift * run.seconds > 1);
+        TEST_ASSERT_FLOAT_WITHIN(0.1f, 0, body.heading - origin.yaw);
+        const Local end = local(origin, body.pose);
+        const bool ahead = walk.kind == GoalKind::FORWARD;
+        TEST_ASSERT_FLOAT_WITHIN(GoalController::REACHED_M, walk.distance, ahead ? end.forward : end.right);
+        TEST_ASSERT_FLOAT_WITHIN(GoalController::CROSS_REACHED_M, 0, ahead ? end.right : end.forward);
+    }
+}
+
+// The stick across the line is 10 per m of offset, at most 0.3: right of a forward walk's line walks left (lx > 0),
+// ahead of a sideways walk's line walks back (ly < 0).
+void test_straight_walks_hold_their_line_with_signs_by_the_stick_convention() {
+    GoalController goal;
+    constexpr float YAW = 0.5f;
+    const float c = std::cos(YAW), s = std::sin(YAW);
+    goal.start(forward(1, 0.5f), at(0.3f, 0.3f, YAW), TOP_SPEED_MM, TOP_TURN);
+    GoalSticks sticks = goal.update(at(0.3f + 0.02f * c, 0.3f + 0.02f * s, YAW), false, DT); // 20 mm right
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.2f, sticks.lx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.5f, sticks.ly);
+    sticks = goal.update(at(0.3f - 0.02f * c, 0.3f - 0.02f * s, YAW), false, DT); // 20 mm left
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, -0.2f, sticks.lx);
+    sticks = goal.update(at(0.3f + 0.05f * c, 0.3f + 0.05f * s, YAW), false, DT);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.3f, sticks.lx);
+
+    goal.start(sideways(0.5f, 0.5f), at(0, 0, -YAW), TOP_SPEED_MM, TOP_TURN);
+    sticks = goal.update(at(-0.02f * std::sin(-YAW), 0.02f * std::cos(-YAW), -YAW), false, DT); // 20 mm ahead
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, -0.2f, sticks.ly);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, -0.5f, sticks.lx);
+    sticks = goal.update(at(0.02f * std::sin(-YAW), -0.02f * std::cos(-YAW), -YAW), false, DT); // 20 mm behind
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.2f, sticks.ly);
+}
+
+// Past the target but off its line, a straight walk walks only across until it is within 20 mm; settled on the target
+// but off the line, its next pass walks only across.
+void test_a_pass_walks_the_remaining_cross_track() {
+    GoalController goal;
+    goal.start(forward(0.2f, 0.5f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
+    GoalSticks sticks = goal.update(at(0.03f, 0.203f, 0), false, DT);
+    TEST_ASSERT_EQUAL(GoalState::RUNNING, goal.state());
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.3f, sticks.lx);
+    TEST_ASSERT_EQUAL_FLOAT(0, sticks.ly);
+    TEST_ASSERT_TRUE(centred(goal.update(at(0.015f, 0.203f, 0), false, DT)));
+    TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
+    sticks = goal.update(at(0.025f, 0.197f, 0), true, DT); // settled 3 mm short and 25 mm right
+    TEST_ASSERT_EQUAL(GoalState::RUNNING, goal.state());
+    TEST_ASSERT_EQUAL(2, goal.passes());
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.25f, sticks.lx);
+    TEST_ASSERT_EQUAL_FLOAT(0, sticks.ly);
+    TEST_ASSERT_TRUE(centred(goal.update(at(0.01f, 0.197f, 0), false, DT)));
+    TEST_ASSERT_TRUE(centred(goal.update(at(0.01f, 0.197f, 0), true, DT)));
+    TEST_ASSERT_EQUAL(GoalState::REACHED, goal.state());
+    TEST_ASSERT_EQUAL_FLOAT(1, goal.progress());
 }
 
 // The arc adds the same gain on its heading's error from the ideal heading at the distance travelled, so a gait that
@@ -389,9 +450,10 @@ void test_it_reaches_only_once_at_rest() {
         TEST_ASSERT_TRUE(centred(goal.update(at(0, 0.205f, 0), false, DT)));
         TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
     }
-    TEST_ASSERT_TRUE(centred(goal.update(at(0, 0.206f, 0), true, DT)));
+    TEST_ASSERT_TRUE(centred(goal.update(at(0, 0.195f, 0), true, DT))); // it rocked back 5 mm short
     TEST_ASSERT_EQUAL(GoalState::REACHED, goal.state());
     TEST_ASSERT_EQUAL(1, goal.passes());
+    TEST_ASSERT_EQUAL_FLOAT(1, goal.progress());
     TEST_ASSERT_TRUE(centred(goal.update(at(0, 0.1f, 0), true, DT))); // an ended goal asks for nothing more
 }
 
@@ -423,6 +485,36 @@ void test_it_times_out_after_max_passes() {
     TEST_ASSERT_TRUE(run.endedAtRest); // judged on the settled pose, not cut off by the clock
     TEST_ASSERT_EQUAL(3, body.stops);
     TEST_ASSERT_TRUE(std::fabs(body.heading - 45 * DEG) > GoalController::REACHED_RAD);
+}
+
+// An arc that coasts past its angle walks back along the arc on its next pass; one that rocks back short walks on.
+void test_an_arc_corrects_an_overshoot_backwards_and_an_undershoot_forwards() {
+    struct Case {
+        float extraCoast;
+        bool over;
+    };
+    for (const Case c : {Case {2.0f, true}, Case {-3.0f, false}}) {
+        Body body(0.1f, 0.2f, 0.4f);
+        body.extraCoast = {c.extraCoast};
+        const OdometryEstimate origin = body.pose;
+        GoalController goal;
+        goal.start(arc(0.3f, 90 * DEG, 0.5f), body.pose, TOP_SPEED_MM, TOP_TURN);
+        const Run run = drive(goal, body);
+        TEST_ASSERT_EQUAL(GoalState::REACHED, run.end);
+        TEST_ASSERT_EQUAL(2, goal.passes());
+        const float settled = std::remainder(run.passPoses[0].yaw - origin.yaw, TWO_PI);
+        if (c.over) {
+            TEST_ASSERT_TRUE(settled > 90 * DEG + GoalController::REACHED_RAD);
+            TEST_ASSERT_TRUE(run.minLy < 0);
+        } else {
+            TEST_ASSERT_TRUE(settled < 90 * DEG - GoalController::REACHED_RAD);
+            TEST_ASSERT_EQUAL_FLOAT(0, run.minLy);
+        }
+        const Local end = local(origin, body.pose), ideal = arcEnd(0.3f, 90 * DEG);
+        TEST_ASSERT_TRUE(std::hypot(end.right - ideal.right, end.forward - ideal.forward) <=
+                         GoalController::ARC_REACHED_M);
+        TEST_ASSERT_FLOAT_WITHIN(GoalController::REACHED_RAD, 90 * DEG, body.heading - origin.yaw);
+    }
 }
 
 // An arc whose heading lands but whose end does not has no remaining angle for a pass to walk: it fails at once.
@@ -552,8 +644,21 @@ void test_valid_refuses_malformed_goals_and_start_reports_refused() {
     TEST_ASSERT_FALSE(GoalController::valid({static_cast<GoalKind>(7), 0.2f, 0.2f, 0.2f, 0.5f}));
 
     GoalController goal;
+    for (const float top : {0.0f, -1.0f, NAN, INFINITY}) {
+        goal.start(forward(0.2f, 0.5f), at(0, 0, 0), top, TOP_TURN);
+        TEST_ASSERT_EQUAL(GoalState::REFUSED, goal.state());
+        goal.start(arc(0.3f, 1, 0.5f), at(0, 0, 0), TOP_SPEED_MM, top);
+        TEST_ASSERT_EQUAL(GoalState::REFUSED, goal.state());
+    }
+
+    goal.start(turn(0.5f, 0.5f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
+    goal.update(at(0, 0, 0.51f), false, DT);
+    goal.update(at(0, 0, 0.51f), true, DT);
+    TEST_ASSERT_EQUAL(GoalState::REACHED, goal.state());
+    TEST_ASSERT_EQUAL_FLOAT(1, goal.progress());
     goal.start(arc(0, 1, 0.5f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
     TEST_ASSERT_EQUAL(GoalState::REFUSED, goal.state());
+    TEST_ASSERT_EQUAL(0, goal.passes());
     TEST_ASSERT_TRUE(centred(goal.update(at(0, 0, 0), true, DT)));
     goal.cancel();
     TEST_ASSERT_EQUAL(GoalState::REFUSED, goal.state());
@@ -588,10 +693,13 @@ int main(int, char**) {
     RUN_TEST(test_it_slows_over_the_last_stretch_down_to_a_floor);
     RUN_TEST(test_an_arc_slows_on_its_remaining_angle);
     RUN_TEST(test_heading_hold_steers_against_a_drifting_yaw);
+    RUN_TEST(test_straight_walks_hold_their_line_with_signs_by_the_stick_convention);
+    RUN_TEST(test_a_pass_walks_the_remaining_cross_track);
     RUN_TEST(test_the_arc_corrects_its_yaw_toward_the_ideal_heading);
     RUN_TEST(test_it_reaches_only_once_at_rest);
     RUN_TEST(test_a_settled_overshoot_gets_a_corrective_pass);
     RUN_TEST(test_it_times_out_after_max_passes);
+    RUN_TEST(test_an_arc_corrects_an_overshoot_backwards_and_an_undershoot_forwards);
     RUN_TEST(test_an_arc_off_its_end_with_its_angle_reached_fails);
     RUN_TEST(test_a_goal_that_gets_nowhere_times_out);
     RUN_TEST(test_cancel_ends_only_an_active_goal);
