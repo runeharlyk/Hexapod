@@ -156,7 +156,7 @@ message OtaFinish {}
 
 // What a tick's write to one PCA9685 board did.
 enum ServoWrite {
-  SERVO_WRITE_NONE = 0;       // nothing was written: the mode drives no servo
+  SERVO_WRITE_NONE = 0;       // nothing was written: no servo driven, no WALK_NN angles, or calibration holds the pulses
   SERVO_WRITE_OK = 1;
   SERVO_WRITE_FAILED = 2;     // attempted and not acknowledged
   SERVO_WRITE_SKIPPED = 3;    // not attempted: the board is backing off after failed writes

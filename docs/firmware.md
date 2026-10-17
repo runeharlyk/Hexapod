@@ -272,7 +272,7 @@ When the last client on every transport has gone, a playing animation stops, so 
 
 Per-tick telemetry (`include/telemetry/telemetry.h`) is recorded by the control task into a lock-free single-producer ring, only while someone subscribes, and shipped in whole batches by the service task; a full ring drops samples and counts them rather than blocking the control loop.
 Each `TickSample` also carries the tick's servo write: the 18 pulses written or meant to be written (`pwm`, in PCA9685 counts), the time the write took (`servo_write_us`) and each board's result (`servo_write_right`, `servo_write_left`).
-A board's result is `OK`, `FAILED` for a write it did not acknowledge, `SKIPPED` for one left out while the board backs off, which never reached the bus, `RESTARTED` for one it took after being started again, and `NONE` in a mode that drives no servo.
+A board's result is `OK`, `FAILED` for a write it did not acknowledge, `SKIPPED` for one left out while the board backs off, which never reached the bus, `RESTARTED` for one it took after being started again, and `NONE` for a tick that wrote nothing: a mode that drives no servo, a `WALK_NN` tick on which the policy produced no angles, or a tick on which a servo calibration signal took over the pulses.
 `link_lost` is set from the tick the dead-man stop zeroed the command until a command arrives or a goal takes the walk, so the tick it rises on is the tick the stop fired.
 `simulation/report_recording.py` lists the failed writes and the dead-man stops of a recording.
 
