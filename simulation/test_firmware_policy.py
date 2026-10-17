@@ -124,3 +124,20 @@ def test_the_robots_header_carries_the_constants_the_environment_trains_with():
 def test_the_robots_modes_refuse_what_the_robot_does_not_have(option):
     with pytest.raises(ValueError, match="WALK_NN"):
         HexapodMjEnv(control_mode="residual_gait", **option)
+
+
+# The robot samples its MPU6050's 188 Hz low-passed gyro once per 5 ms tick, so the WALK_NN path observes the rate
+# averaged over the 5 ms before, as FirmwareLoop feeds the firmware, not over the whole control period.
+def test_the_firmware_path_observes_the_gyro_over_the_last_5_ms():
+    env = HexapodMjEnv(control_mode="residual_gait")
+    env.reset(seed=0)
+    seen = []
+    observe = env.firmware.observe
+    env.firmware.observe = lambda down, gyro, rpy, dt: (seen.append(np.array(gyro)), observe(down, gyro, rpy, dt))[1]
+    for _ in range(5):
+        env.step(np.zeros(env.action_space.shape, dtype=np.float32))
+    step = env.sim.model.opt.timestep
+    assert step == pytest.approx(0.002) and env.dt > 0.005
+    rates = [rate for _, rate in env.sim._rates]
+    expected = (rates[-1] * 2 + rates[-2] * 2 + rates[-3] * 1) / 5  # 2 ms, 2 ms and the last 1 ms of the third step
+    np.testing.assert_allclose(seen[-1], expected, rtol=1e-9, atol=1e-12)

@@ -16,6 +16,9 @@ from ..servos import FACTORY, NUM_SERVOS, ServoCalibration
 from .base import Gait, Goal, GoalStatus, Mode, Odometry, RobotDisconnected, RobotError, RobotState, Style, Velocity
 
 POWERED = (Mode.STAND, Mode.WALK, Mode.IDLE)
+# Why the firmware refuses a goal (main.cpp goalRefusal), for the transport the simulation has none of.
+REFUSALS = {400: "a malformed goal or style", 409: "only a standing or walking robot takes a goal",
+            422: "no goal walks in this style: TUNED, or no speed at its posture"}
 
 
 class ServoOutput:
@@ -133,14 +136,14 @@ class SimBackend:
         return True
 
     def goal_move(self, goal: Goal, style: Style) -> GoalStatus:
-        self._sticks, self._style = speed_model.CENTRED, style
+        self._sticks = speed_model.CENTRED
         self._command()
         kind, distance, angle, radius = goal.in_body_frame()
         status = self._loop.goal_move(int(kind), distance, angle, radius, style.speed, int(style.gait), style.stride,
                                       style.s1, style.h, style.fd)
         if status != 202:
-            raise RobotError(f"the simulation refused the goal with status {status}")
-        self._mode, self._gait = Mode.WALK, style.gait
+            raise RobotError(f"the simulation refused the goal with status {status}: {REFUSALS.get(status, '')}")
+        self._mode, self._gait, self._style = Mode.WALK, style.gait, style
         self._command()
         return self.goal_status()
 
@@ -154,7 +157,9 @@ class SimBackend:
         return Odometry.from_body(*self._loop.odometry())
 
     def reset_odometry(self) -> None:
+        """The firmware zeroes the pose on its next tick, so one is run."""
         self._loop.reset_odometry()
+        self.sleep(FIRMWARE_DT)
 
     def set_servo_pwm(self, servo: int, pwm: int) -> None:
         """ServoController::servoEvent: holds until the motion writes again, so in IDLE until the mode changes."""

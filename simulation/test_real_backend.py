@@ -22,6 +22,7 @@ from src.robot import serial_frame
 STEERING_TIMEOUT_S = 0.6  # firmware/include/motion.h STEERING_TIMEOUT_MS
 BOOT_S = 0.5  # how long the fake board ignores the host after a reset; the ESP32-S3 takes about as long
 HELD_GAP_S = 0.02  # between the answers to frames held through a boot, each in its own USB transfer
+RESET_LAG_S = 0.05
 GOAL_SETTLE_S, GOAL_RUN_S = 0.1, 0.4  # the fake robot's goal: SETTLING, then RUNNING, then REACHED
 ROM_BANNER = b"ESP-ROM:esp32s3-20210327\r\nrst:0x15 (USB_UART_CHIP_RESET),boot:0x8 (SPI_FAST_FLASH_BOOT)\r\n"
 SERIAL_PORT = "COM7"
@@ -138,13 +139,15 @@ class FakeRobot:
     With `goals` it takes goal moves as the firmware does: a goal_move from STAND or WALK is accepted (202), enters
     WALK, settles for GOAL_SETTLE_S, runs for GOAL_RUN_S and is REACHED; its status is pushed on every change, except
     the last when `drop_final_push`, as a full bus can drop it. Its odometry has turned a goal's angle from the start,
-    exactly. Without, it answers every goal and odometry request 400, as a firmware from before goals does."""
+    exactly, and is zeroed RESET_LAG_S after a reset's reply, as the control task's next tick does it. Without, it
+    answers every goal and odometry request 400, as a firmware from before goals does."""
 
     def __init__(self, imu=True, obey=True, reset_on_open=None, goals=False):
         self.imu, self.obey, self.reset_on_open, self.goals = imu, obey, reset_on_open, goals
         self.drop_final_push = False
         self.goal_count, self.goal_started = 0, None
         self.odometry = pb.OdometryData()
+        self.reset_at = None
         self.status, self.silent = 200, False
         self.yaw_rad = 0.3
         self.mode = None
@@ -238,7 +241,11 @@ class FakeRobot:
             elif asked == "goal_status_get":
                 response.goal_status.CopyFrom(self.goal_status())
             elif asked == "odometry_get":
+                if self.reset_at is not None and time.monotonic() >= self.reset_at:
+                    self.odometry, self.reset_at = pb.OdometryData(), None
                 response.odometry.CopyFrom(self.odometry)
+                if request.odometry_get.reset:
+                    self.reset_at = time.monotonic() + RESET_LAG_S
             yield pb.Message(correlation_response=response)
 
     def goal_status(self):
@@ -698,4 +705,19 @@ def test_the_odometry_is_read_in_rep103_and_reset(goal_robot, goal_fake):
     assert isinstance(odometry, Odometry)
     assert astuple(odometry) == pytest.approx((0.5, -0.1, math.degrees(0.2), math.degrees(0.25), 0.6))
     goal_robot.reset_odometry()
-    assert [request.odometry_get.reset for _, request in goal_fake.requests("odometry_get")] == [False, True]
+    assert astuple(goal_robot.state().odometry) == (0, 0, 0, 0, 0)  # reset_odometry returned once it had taken effect
+    resets = [request.odometry_get.reset for _, request in goal_fake.requests("odometry_get")]
+    assert resets[:2] == [False, True] and len(resets) >= 4 and not any(resets[2:])
+
+
+# The robot keeps the posture of the goals it took: a refused goal's style must not reach the keep-alive.
+def test_a_refused_goal_leaves_the_posture_the_inputs_carry(goal_robot, goal_fake):
+    goal_robot.stand()
+    goal_fake.mode = pb.DEACTIVATED  # the app's stop button, which the client has not heard of yet
+    goal_robot.style(step_height=30, feet_distance=-0.2)
+    with pytest.raises(RobotError, match="409"):
+        goal_robot.walk(0.3)
+    refused = len(goal_fake.received)
+    goal_robot.sleep(0.5)
+    after = [m.input for _, m in goal_fake.received[refused:] if m.WhichOneof("message") == "input"]
+    assert after and all((d.s1, d.feet_distance) == (0, 0) for d in after)

@@ -542,3 +542,24 @@ def test_a_turn_that_did_not_end_forgets_the_heading_it_meant():
     backend.goal_ends, backend.yaw = GoalState.REACHED, 30.0
     robot.turn(90)
     assert backend.logged("goal")[-1][0].angle == pytest.approx(90.0)
+
+
+# TUNED has no speed envelope, so the robot refuses its goals: its moves and turns stay timed.
+def test_a_tuned_script_moves_and_turns_by_time():
+    robot, backend = _goals()
+    robot.set_gait(Gait.TUNED)
+    robot.move_forward(0.1)
+    robot.move_sideways(0.1)
+    robot.rotate(30)
+    assert backend.logged("goal") == []
+    assert {round(v.vx, 3) for v in backend.logged("velocity") if v.vx} == {backend.top.vx / 2}
+
+
+def test_connecting_again_forgets_the_heading_the_goals_meant():
+    robot, backend = _goals()
+    robot.turn(90)
+    robot.close()
+    robot.connect()
+    backend.yaw = 30.0
+    robot.turn(90)
+    assert [goal.angle for goal, _ in backend.logged("goal")] == pytest.approx([90.0, 90.0])

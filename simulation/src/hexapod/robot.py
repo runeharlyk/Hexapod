@@ -83,6 +83,7 @@ class Robot:
 
     # The speed model is per gait, so the robot is put in the one the script asked for.
     def connect(self) -> None:
+        self._intended = None
         self._backend.connect()
         try:
             self._backend.set_gait(self._style.gait)
@@ -159,8 +160,8 @@ class Robot:
         return replace(state, odometry=self._backend.odometry()) if self.takes_goals() else state
 
     def reset_odometry(self) -> None:
-        """Zeroes the odometry's pose on the robot's next control tick, in the frame it faces then, which is then the
-        heading the goals mean."""
+        """Zeroes the odometry's pose in the frame the robot faces, which is then the heading the goals mean; returns
+        once the robot's odometry reads it, so call it with the robot still."""
         self._backend.reset_odometry()
         self._intended = 0.0
 

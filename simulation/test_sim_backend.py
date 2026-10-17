@@ -170,6 +170,38 @@ def test_a_goal_square_closes_within_10_cm_and_5_degrees(standing):
     assert np.linalg.norm(position) < 0.10 and abs(yaw) < 5
 
 
+# BI is bound by the walk and the arc, which it meets (measured 2026-10-17 over 8 clock phases: walk <= 3.9 cm, arc
+# <= 4.5 cm and <= 1.9 deg). Its turn ends 2.8-2.9 deg short, inside 3 deg but too close to bind, and its square does
+# not close (6-19 cm, up to 12 deg), as its fused heading drifts from the truth over the walks: neither is bound.
+@pytest.fixture
+def standing_bi():
+    backend = SimBackend()
+    with Robot(backend=backend, gait=Gait.BI_GATE) as robot:
+        robot.stand()
+        yield robot, backend
+
+
+def test_a_bi_goal_walks_a_metre_to_within_6_cm(standing_bi):
+    test_a_goal_walks_a_metre_to_within_6_cm(standing_bi)
+
+
+def test_a_bi_goal_arc_ends_within_5_cm_and_5_degrees(standing_bi):
+    test_a_goal_arc_ends_within_5_cm_and_5_degrees(standing_bi)
+
+
+# The firmware zeroes the odometry on its next tick: a turn read before it would aim from the old heading (a 90 deg turn
+# after a 60 deg one turned 32.5).
+def test_a_turn_right_after_an_odometry_reset_turns_its_angle(standing):
+    robot, backend = standing
+    robot.turn(60)
+    robot.reset_odometry()
+    assert robot.state().odometry.yaw == pytest.approx(0, abs=0.05)
+    start = _pose(backend)
+    robot.turn(90)
+    _, turned = _moved(start, _pose(backend))
+    assert turned == pytest.approx(90, abs=3)
+
+
 # REP-103 at the facade: sideways positive is left, where the firmware's SIDEWAYS is positive right.
 def test_a_sideways_goal_walks_left_when_positive(standing):
     robot, backend = standing

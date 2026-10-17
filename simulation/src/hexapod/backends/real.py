@@ -8,9 +8,10 @@ so the mode is unknown until the first push or set_mode.
 Keep-alive: while the robot is in a mode the app heartbeats (STAND, WALK, WALK_NN; app/src/lib/control-link.ts), the
 last input is re-sent every KEEPALIVE_S. The firmware drops a walk command after 600 ms without input while a stick
 is deflected, and zeroes the whole command after 2 s otherwise (motion.h STEERING_TIMEOUT_MS, COMMAND_TIMEOUT_MS).
-Every input carries the style's posture and stride, the last goal's once one was sent, so the robot keeps them. A goal
-ignores centred sticks and is cancelled by any other, and by 2 s without a frame from the client that sent it, so the
-keep-alive goes on through it with centred sticks.
+Every input carries the style's posture and stride, the last goal's once one was sent, so the robot keeps them. Not
+its speed: a goal ignores centred commands, so the speed slider would reach only the velocity walks, and the speed
+model was measured at the slider's 0. A goal is cancelled by any stick off centre, and by 2 s without a frame from the
+client that sent it, so the keep-alive goes on through it with centred sticks.
 
 Goals: a firmware from before them answers their requests 400, which connect() probes. The robot pushes a goal's
 status on each change, but a push can be dropped, so the status is asked for when none came for CONFIRM_S and to
@@ -46,6 +47,8 @@ WALKING_MODES = (Mode.WALK, Mode.WALK_NN)
 REPLY_TIMEOUT_S = 3.0
 SILENCE_S = 2.0  # pongs arrive every KEEPALIVE_S: this long without a frame means the link is gone
 CONFIRM_S = 1.0
+RESET_POLL_S = 0.02
+ODOMETRY_ZERO = 1e-4  # m and rad: what a reset pose reads, a still robot's tick having moved it by less
 # The DMP yaw (mpu6050.h dmpGetYawPitchRoll) is atan2(2(xy - wz), 2(w^2 + x^2) - 1), clockwise-positive about the
 # chip's Z axis, and the chip's Z points up (its gravity vector reads world-up at rest, peripherals.h).
 IMU_YAW_SIGN = -1.0
@@ -330,12 +333,15 @@ class RealBackend:
 
     def goal_move(self, goal: Goal, style: Style) -> GoalStatus:
         with self._changed:
-            self._sticks, self._style = speed_model.CENTRED, style
+            self._sticks = speed_model.CENTRED
         self._run(self._send_input())
         kind, distance, angle, radius = goal.in_body_frame()
         move = pb.GoalMove(kind=int(kind), distance_m=distance, angle_rad=angle, radius_m=radius, speed=style.speed,
                            gait=int(style.gait), stride=style.stride, s1=style.s1, h=style.h, fd=style.fd)
-        return _goal_status(self._run(self._ask(pb.CorrelationRequest(goal_move=move))).goal_status)
+        status = _goal_status(self._run(self._ask(pb.CorrelationRequest(goal_move=move))).goal_status)
+        with self._changed:
+            self._style = style
+        return status
 
     def goal_cancel(self) -> None:
         self._run(self._ask(pb.CorrelationRequest(goal_cancel=pb.GoalCancel())))
@@ -350,11 +356,24 @@ class RealBackend:
         return _goal_status(self._run(self._ask(pb.CorrelationRequest(goal_status_get=pb.GoalStatusGet()))).goal_status)
 
     def odometry(self) -> Odometry:
-        o = self._run(self._ask(pb.CorrelationRequest(odometry_get=pb.OdometryGet()))).odometry
+        o = self._read_odometry()
         return Odometry.from_body(o.x, o.y, o.yaw, o.kinematic_yaw, o.distance)
 
+    def _read_odometry(self) -> pb.OdometryData:
+        return self._run(self._ask(pb.CorrelationRequest(odometry_get=pb.OdometryGet()))).odometry
+
+    def _odometry_zeroed(self) -> bool:
+        o = self._read_odometry()
+        return max(abs(o.x), abs(o.y), abs(o.yaw)) <= ODOMETRY_ZERO
+
+    # The control task zeroes the pose on its next tick, after the reply.
     def reset_odometry(self) -> None:
         self._run(self._ask(pb.CorrelationRequest(odometry_get=pb.OdometryGet(reset=True))))
+        deadline = time.monotonic() + REPLY_TIMEOUT_S
+        while not self._odometry_zeroed():
+            if time.monotonic() > deadline:
+                raise RobotTimeout(f"the odometry of {self._transport.name} did not read its reset pose")
+            self.sleep(RESET_POLL_S)
 
     def sleep(self, seconds: float) -> None:
         deadline = time.monotonic() + seconds

@@ -39,6 +39,7 @@ import gymnasium as gym
 import mujoco
 
 from src.sim.mj_runtime import HexapodSim, TERRAIN_MODEL_PATH
+from src.sim.firmware_loop import FIRMWARE_DT
 from src.sim.firmware_policy import FirmwarePolicy, PolicyParams, dmp_angles
 from src.sim.domain_rand import DomainRandomizer, Ranges
 from src.sim.terrain import randomize_hfield, KINDS as TERRAIN_KINDS
@@ -660,9 +661,11 @@ class HexapodMjEnv(gym.Env):
     def _get_obs(self):
         q = self.sim.base_quat()
         grav = _gravity_in_body(q)
-        # The firmware path reads the IMU as FirmwareLoop feeds the firmware: low-passed over the control period.
+        # The firmware path reads the gyro as FirmwareLoop feeds the firmware: the robot samples its MPU6050's
+        # output, low-passed at 188 Hz (mpu6050.h DLPF_CFG = 1), once per 5 ms tick, so the rate is the mean over the
+        # 5 ms before.
         now = self.sim.data.time
-        gyro = self.sim.mean_gyro(now - self.dt, now) if self.firmware is not None else self.sim.gyro()
+        gyro = self.sim.mean_gyro(now - FIRMWARE_DT, now) if self.firmware is not None else self.sim.gyro()
         rpy = _quat_to_rpy(q)
         if self.randomize:
             grav, gyro, rpy = self.dr.noisy_imu(grav, gyro, rpy, self.np_random_)

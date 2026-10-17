@@ -58,6 +58,8 @@ class GoalState(IntEnum):
 
 
 ENDED = (GoalState.REACHED, GoalState.CANCELLED, GoalState.TIMED_OUT, GoalState.REFUSED)
+# The gaits a goal walks; TUNED has no speed envelope, and the robot refuses it with 422.
+GOAL_GAITS = (Gait.TRI_GATE, Gait.BI_GATE, Gait.WAVE, Gait.RIPPLE, Gait.AUTO)
 
 
 @dataclass(frozen=True)
@@ -185,4 +187,4 @@ class Backend(Protocol):
     def goal_cancel(self) -> None: ...
     def goal_status(self) -> GoalStatus: ...  # the newest goal's
     def odometry(self) -> Odometry: ...
-    def reset_odometry(self) -> None: ...  # takes effect on the robot's next control tick
+    def reset_odometry(self) -> None: ...  # returns once the robot's odometry reads the reset pose
