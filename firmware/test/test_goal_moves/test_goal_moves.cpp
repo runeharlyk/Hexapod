@@ -11,12 +11,12 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
-#include <deque>
 #include <functional>
 #include <memory>
 #include <vector>
 #include <communication/comm_base.hpp>
 #include <gait_speed.h>
+#include <imu_frame.h>
 #include <virtual_robot.h>
 
 namespace {
@@ -24,7 +24,6 @@ namespace {
 constexpr int TICKS_PER_SECOND = 200;
 constexpr float DT = 1.0f / TICKS_PER_SECOND;
 constexpr int COMMAND_PERIOD_TICKS = 4; // the app's 20 ms stick period
-constexpr int GYRO_PERIOD_TICKS = 5;    // hexapod.h reads the IMU every 25 ms
 constexpr float TWO_PI = 2 * PI_F;
 constexpr float DEG = PI_F / 180;
 constexpr float GOAL_LIMIT_S = 40;
@@ -52,11 +51,10 @@ OdometryEstimate relative(const OdometryEstimate &start, const OdometryEstimate 
 
 bool running(GoalState s) { return s == GoalState::SETTLING || s == GoalState::RUNNING; }
 
-// The robot as a script finds it on the floor: its feet do not slip, so its gyro reads the turn its feet make over the
-// gyro's period. Every goal status pushed is recorded.
+// The robot as a script finds it on the floor: its feet do not slip, so its DMP's yaw is the turn its feet made. Every
+// goal status pushed is recorded.
 struct Rig {
     VirtualRobot robot;
-    std::deque<float> kinematicYaw {0};
     std::vector<socket_message_GoalStatus> pushes;
     GoalStatusBus::Handle listener =
         GoalStatusBus::subscribe([this](const socket_message_GoalStatus &s) { pushes.push_back(s); });
@@ -66,13 +64,9 @@ struct Rig {
     void tick() {
         ++ticks;
         Peripherals::Imu imu;
-        if (kinematicYaw.size() > 1)
-            imu.gyroRad[2] = std::remainder(kinematicYaw.back() - kinematicYaw.front(), TWO_PI) /
-                             (DT * static_cast<float>(kinematicYaw.size() - 1));
+        imu.rpyRad[2] = imu_frame::YAW_SIGN * robot.odometry().kinematicYaw;
         robot.setImu(imu);
         robot.tick();
-        kinematicYaw.push_back(robot.odometry().kinematicYaw);
-        if (kinematicYaw.size() > GYRO_PERIOD_TICKS + 1) kinematicYaw.pop_front();
     }
 
     void run(float seconds) {

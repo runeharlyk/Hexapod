@@ -31,6 +31,8 @@ class Peripherals {
     float angleX() { return state().rpyRad[0]; }
     float angleY() { return state().rpyRad[1]; }
     float angleZ() { return state().rpyRad[2]; }
+    // The host's yaw has no FIFO to reset.
+    uint32_t imuFifoResets() const { return 0; }
     void gravityBody(float out[3]) { std::copy_n(state().gravityUp, 3, out); }
     void gyroRad(float out[3]) { std::copy_n(state().gyroRad, 3, out); }
 

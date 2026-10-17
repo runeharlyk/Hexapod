@@ -6,6 +6,8 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <host_clock.h>
+#include <imu_frame.h>
 #include <odometry.h>
 #include <virtual_robot.h>
 
@@ -40,7 +42,8 @@ BodyStateMsg restingStance(GaitController &gait, gait_state_t still) {
 constexpr int SAMPLE_TICKS = 5; // the gyro's 40 Hz in the 200 Hz control loop
 
 // A tripod walked by the gait alone at one cycle per second, its feet and stance flags fed to the odometries as
-// MotionService feeds them, after each step; the fused one gets `gyro` on every fifth tick when it is set.
+// MotionService feeds them, after each step; when `gyro` is set, the DMP's yaw turns at it and the fused one gets a
+// packet on every fifth tick.
 struct GaitWalk {
     GaitController gait;
     gait_state_t state {};
@@ -48,6 +51,7 @@ struct GaitWalk {
     KinematicOdometry odometry;
     FusedOdometry fused;
     std::optional<float> gyro;
+    float dmpYaw = 0;
     int ticksRun = 0;
 
     GaitWalk(float stepX, float stepY, float stepAngle) {
@@ -69,7 +73,9 @@ struct GaitWalk {
             std::array<bool, 6> stance;
             for (int leg = 0; leg < 6; ++leg) stance[leg] = gait.inStance(state, leg);
             odometry.update(body, stance);
-            fused.update(body, stance, ++ticksRun % SAMPLE_TICKS == 0 ? gyro : std::nullopt, DT);
+            if (gyro) dmpYaw = std::remainder(dmpYaw + *gyro * DT, TWO_PI);
+            const bool read = ++ticksRun % SAMPLE_TICKS == 0 && gyro;
+            fused.update(body, stance, read ? std::optional<ImuYaw>({dmpYaw}) : std::nullopt, DT);
         }
     }
 
@@ -93,20 +99,20 @@ constexpr float STEP_ANGLE_RAD = 0.2f;
 constexpr float GYRO_BIAS = 0.02f;
 
 // The gyro bias `odometry` learned, read off its heading on a copy: with no foot down the heading is the gyro's less
-// the bias, so on a gyro reading zero it turns by -bias per second, and without feet it learns nothing more.
-float learnedBias(FusedOdometry odometry) {
+// the bias, so on a DMP yaw that holds at `dmpYaw` it turns by -bias per second, and without feet it learns nothing
+// more.
+float learnedBias(FusedOdometry odometry, float dmpYaw) {
     const BodyStateMsg body {};
     const float start = odometry.estimate().yaw;
     for (int t = 1; t <= TICKS_PER_SECOND; ++t)
-        odometry.update(body, {}, t % SAMPLE_TICKS == 0 ? std::optional<float>(0.0f) : std::nullopt, DT);
+        odometry.update(body, {}, t % SAMPLE_TICKS == 0 ? std::optional<ImuYaw>({dmpYaw}) : std::nullopt, DT);
     return -std::remainder(odometry.estimate().yaw - start, TWO_PI);
 }
 
+float learnedBias(const GaitWalk &walk) { return learnedBias(walk.fused, walk.dmpYaw); }
+
 } // namespace
 
-void setUp() {}
-// The IMU stand-in is process-wide, so a test that feeds it a gyro rate must not hand the rate on, even when it fails.
-void tearDown() { Peripherals::setImu({}); }
 
 void test_a_straight_walk_lands_on_the_commanded_displacement() {
     GaitWalk walk(0, STEP_MM, 0);
@@ -204,42 +210,82 @@ void test_feet_moved_while_paused_are_no_travel() {
     TEST_ASSERT_EQUAL_FLOAT(0, odometry.estimate().distance);
 }
 
-// With no foot down to see the turn, the heading is the gyro's, each sample integrated over the time since the last.
-// A sample after a gap longer than GYRO_STALE_S, a stalled read, does not stand for the gap.
-void test_the_gyro_turns_the_heading_only_over_fresh_samples() {
-    constexpr float RATE = 0.5f; // rad/s
+// The DMP's yaw turning at a steady rate, and the odometry it is fed to with no foot down to see the turn, so that the
+// heading is the gyro's: each packet's rate integrated over the time since the last.
+struct TurningDmp {
+    static constexpr float RATE = 0.5f; // rad/s
     const BodyStateMsg body = GaitWalk(0, 0, 0).body;
     FusedOdometry odometry;
-    const auto tick = [&](bool sampled) {
-        odometry.update(body, {}, sampled ? std::optional<float>(RATE) : std::nullopt, DT);
-    };
-    tick(true); // the first sample has no time since the last
-    for (int t = 1; t <= 8 * SAMPLE_TICKS; ++t) tick(t % SAMPLE_TICKS == 0);
-    TEST_ASSERT_FLOAT_WITHIN(1e-5f, RATE * 8 * SAMPLE_TICKS * DT, odometry.estimate().yaw);
-    for (int t = 1; t <= 4 * SAMPLE_TICKS; ++t) tick(t == 4 * SAMPLE_TICKS);
-    TEST_ASSERT_FLOAT_WITHIN(1e-5f, RATE * 8 * SAMPLE_TICKS * DT, odometry.estimate().yaw);
-    for (int t = 1; t <= SAMPLE_TICKS; ++t) tick(t == SAMPLE_TICKS);
-    TEST_ASSERT_FLOAT_WITHIN(1e-5f, RATE * 9 * SAMPLE_TICKS * DT, odometry.estimate().yaw);
-    TEST_ASSERT_EQUAL_FLOAT(0, odometry.estimate().kinematicYaw);
+    float yaw = 0;
+    uint32_t fifoResets = 0;
+
+    // The DMP reports its yaw in [-pi, pi].
+    void tick(bool read) {
+        yaw = std::remainder(yaw + RATE * DT, TWO_PI);
+        odometry.update(body, {}, read ? std::optional<ImuYaw>({yaw, fifoResets}) : std::nullopt, DT);
+    }
+    // `periods` read periods, read at the end of each.
+    void run(int periods) {
+        for (int t = 1; t <= periods * SAMPLE_TICKS; ++t) tick(t % SAMPLE_TICKS == 0);
+    }
+};
+
+// A packet with none before it, or after a gap longer than GYRO_STALE_S (a stalled read), gives no rate: the gap is not
+// counted, and the packets after it are.
+void test_the_dmp_yaw_turns_the_heading_only_between_fresh_packets() {
+    TurningDmp dmp;
+    dmp.yaw = 1.0f;
+    dmp.tick(true);
+    dmp.run(8);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, TurningDmp::RATE * 8 * SAMPLE_TICKS * DT, dmp.odometry.estimate().yaw);
+    for (int t = 1; t <= 4 * SAMPLE_TICKS; ++t) dmp.tick(t == 4 * SAMPLE_TICKS);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, TurningDmp::RATE * 8 * SAMPLE_TICKS * DT, dmp.odometry.estimate().yaw);
+    dmp.run(1);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, TurningDmp::RATE * 9 * SAMPLE_TICKS * DT, dmp.odometry.estimate().yaw);
+    TEST_ASSERT_EQUAL_FLOAT(0, dmp.odometry.estimate().kinematicYaw);
 }
 
-// A reset between two gyro samples: the next sample turns the new frame only by the time since the reset.
-void test_a_reset_between_gyro_samples_carries_no_turn_into_the_new_frame() {
-    constexpr float RATE = 0.5f; // rad/s
-    const BodyStateMsg body {};
-    FusedOdometry odometry;
-    const auto tick = [&](bool sampled) {
-        odometry.update(body, {}, sampled ? std::optional<float>(RATE) : std::nullopt, DT);
+// A FIFO reset loses the packets between, and the DMP's yaw may jump across it: the packet after it gives no rate.
+void test_a_packet_after_a_fifo_reset_turns_nothing() {
+    TurningDmp dmp;
+    dmp.tick(true);
+    dmp.run(2);
+    const float before = dmp.odometry.estimate().yaw;
+    dmp.yaw += 1.0f;
+    ++dmp.fifoResets;
+    dmp.run(1);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, before, dmp.odometry.estimate().yaw);
+    dmp.run(1);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, before + TurningDmp::RATE * SAMPLE_TICKS * DT, dmp.odometry.estimate().yaw);
+}
+
+// The DMP's yaw wraps at +-pi: a walk turning across the wrap turns its heading as one that does not cross it. The
+// feet see none of the turn, so the heading blends it with theirs, and a turn taken the long way round would show.
+void test_the_dmp_yaw_turns_the_heading_across_its_wrap() {
+    const auto turnedFrom = [](float dmpYaw) {
+        GaitWalk walk(0, STEP_MM, 0);
+        walk.gyro = TurningDmp::RATE;
+        walk.dmpYaw = dmpYaw;
+        walk.run(ticksFor(1.0f));
+        return walk.fused.estimate().yaw;
     };
-    tick(true);
-    for (int t = 1; t <= SAMPLE_TICKS; ++t) tick(t == SAMPLE_TICKS);
-    tick(false);
-    tick(false);
-    odometry.reset();
-    tick(false);
-    tick(false);
-    tick(true);
-    TEST_ASSERT_FLOAT_WITHIN(1e-6f, RATE * 3 * DT, odometry.estimate().yaw);
+    const float uncrossed = turnedFrom(0);
+    TEST_ASSERT_GREATER_THAN_FLOAT(0.3f, uncrossed);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, uncrossed, turnedFrom(PI_F - 0.25f));
+}
+
+// A reset between two packets: the next packet turns the new frame only by the time since the reset.
+void test_a_reset_between_packets_carries_no_turn_into_the_new_frame() {
+    TurningDmp dmp;
+    dmp.tick(true);
+    dmp.run(1);
+    dmp.tick(false);
+    dmp.tick(false);
+    dmp.odometry.reset();
+    dmp.tick(false);
+    dmp.tick(false);
+    dmp.tick(true);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, TurningDmp::RATE * 3 * DT, dmp.odometry.estimate().yaw);
 }
 
 // Standing still, the bias is learned; this is what the next tests deny to motions that only look still.
@@ -247,7 +293,7 @@ void test_a_still_stand_learns_the_gyro_bias() {
     GaitWalk walk(0, 0, 0);
     walk.gyro = GYRO_BIAS;
     walk.run(ticksFor(1.0f));
-    TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, GYRO_BIAS, learnedBias(walk.fused));
+    TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, GYRO_BIAS, learnedBias(walk));
 }
 
 // A stance change keeps its planted feet still while it swings the others, and the gyro reads the body rocking on
@@ -266,7 +312,7 @@ void test_a_gyro_rate_during_a_stance_change_is_not_learned_as_bias() {
     TEST_ASSERT_FALSE(walk.gait.hasPendingStanceChange());
     TEST_ASSERT_GREATER_THAN(ticksFor(0.5f), ticks);
     walk.run(ticksFor(0.75f * FusedOdometry::SETTLE_S));
-    TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, 0, learnedBias(walk.fused));
+    TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, 0, learnedBias(walk));
 }
 
 // The body's yaw (psi) easing back to 0 over the planted feet, as after an animation, turns the gyro and not the feet.
@@ -282,7 +328,7 @@ void test_an_easing_body_yaw_is_not_learned_as_bias() {
         walk.run(1);
     }
     TEST_ASSERT_GREATER_THAN_FLOAT(FusedOdometry::PSI_STILL_RATE, rate);
-    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0, learnedBias(walk.fused));
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0, learnedBias(walk));
 }
 
 // Feet the gait moves on the floor without cycling, as a stopped walk eases them home, keep the robot from being still.
@@ -290,11 +336,13 @@ void test_feet_moving_on_the_floor_teach_no_bias() {
     constexpr float FEET_MM_PER_S = 20.0f;
     BodyStateMsg body = GaitWalk(0, 0, 0).body;
     FusedOdometry odometry;
+    float dmpYaw = 0;
     for (int t = 1; t <= ticksFor(1.0f); ++t) {
         for (auto &foot : body.feet) foot[1] += FEET_MM_PER_S * DT;
-        odometry.update(body, ALL_DOWN, t % SAMPLE_TICKS == 0 ? std::optional<float>(GYRO_BIAS) : std::nullopt, DT);
+        dmpYaw += GYRO_BIAS * DT;
+        odometry.update(body, ALL_DOWN, t % SAMPLE_TICKS == 0 ? std::optional<ImuYaw>({dmpYaw}) : std::nullopt, DT);
     }
-    TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, 0, learnedBias(odometry));
+    TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, 0, learnedBias(odometry, dmpYaw));
 }
 
 // A gait stopped at any phase eases its planted feet home and lowers the lifted ones; the robot settles where restStep
@@ -333,7 +381,7 @@ void test_a_pause_restarts_the_stillness_the_bias_waits_for() {
     walk.run(ticksFor(0.75f * FusedOdometry::SETTLE_S));
     walk.fused.pause();
     walk.run(ticksFor(0.75f * FusedOdometry::SETTLE_S));
-    TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, 0, learnedBias(walk.fused));
+    TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, 0, learnedBias(walk));
 }
 
 // A walk too slow for the feet's motion to tell it from standing (under STILL_RATE / KIN_PER_SPEED) still swings its
@@ -347,7 +395,7 @@ void test_a_slow_walk_teaches_no_bias() {
     const float speed = walk.odometry.estimate().distance / SECONDS;
     TEST_ASSERT_GREATER_THAN_FLOAT(0.001f, speed);
     TEST_ASSERT_LESS_THAN_FLOAT(FusedOdometry::STILL_RATE / FusedOdometry::KIN_PER_SPEED, speed);
-    TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, 0, learnedBias(walk.fused));
+    TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, 0, learnedBias(walk));
 }
 
 namespace {
@@ -355,9 +403,29 @@ namespace {
 const CommandMsg FORWARD {0, 1, 0, 0, 0, 0, 0, 0};
 const CommandMsg CENTRED {0, 0, 0, 0, 0, 0, 0, 0};
 
+// The IMU of a body turned by `yaw` from where it started and turning at `rate`: the DMP's yaw (imu_frame.h) and the
+// gyro's z.
+Peripherals::Imu turnedBy(float yaw, float rate) {
+    Peripherals::Imu imu;
+    imu.rpyRad[2] = imu_frame::YAW_SIGN * yaw;
+    imu.gyroRad[2] = rate;
+    return imu;
+}
+
+// The IMU of a robot that does not turn, its gyro reading `rate` from power-on, as a bias does: the DMP's yaw drifts at
+// it. run() feeds it to the robot every tick.
+struct DriftingImu {
+    float rate = 0, yaw = 0;
+    void tick(VirtualRobot &robot) {
+        yaw += rate * DT;
+        robot.setImu(turnedBy(yaw, rate));
+    }
+} drifting;
+
 void run(VirtualRobot &robot, const CommandMsg &command, float seconds) {
     for (int t = 0; t < ticksFor(seconds); ++t) {
         if (t % COMMAND_PERIOD_TICKS == 0) robot.command(command);
+        drifting.tick(robot);
         robot.tick();
     }
 }
@@ -367,11 +435,6 @@ void standUp(VirtualRobot &robot) {
     run(robot, CENTRED, 1.0f);
 }
 
-Peripherals::Imu gyroZ(float rate) {
-    Peripherals::Imu imu;
-    imu.gyroRad[2] = rate;
-    return imu;
-}
 
 // The standing time the bias is learned within: SETTLE_S of stillness, then some gyro samples.
 constexpr float LEARN_S = 0.5f;
@@ -379,14 +442,14 @@ constexpr float WALK_S = 2.0f;
 
 // Stands the robot up and holds it still for `seconds`, its gyro reading `rate` from power-on, as a bias does.
 void standOnGyro(VirtualRobot &robot, float rate, float seconds) {
-    robot.setImu(gyroZ(rate));
+    drifting.rate = rate;
     robot.setMode(MOTION_STATE::STAND);
     run(robot, CENTRED, seconds);
 }
 
 // The fused heading a forward walk turns by while the gyro reads `rate`, the robot itself walking straight.
 float yawWalkedOnGyro(VirtualRobot &robot, float rate) {
-    robot.setImu(gyroZ(rate));
+    drifting.rate = rate;
     robot.setMode(MOTION_STATE::WALK);
     const float start = robot.odometry().yaw;
     run(robot, FORWARD, WALK_S);
@@ -394,6 +457,13 @@ float yawWalkedOnGyro(VirtualRobot &robot, float rate) {
 }
 
 } // namespace
+
+void setUp() {}
+// The IMU stand-in is process-wide, so a test that feeds it a yaw or a rate must not hand it on, even when it fails.
+void tearDown() {
+    Peripherals::setImu({});
+    drifting = {};
+}
 
 // The body travel the gait's stance strokes command is integrated tick by tick from the stroke and cadence it walks.
 void test_a_tripod_walk_forward_moves_the_odometry_forward_and_straight() {
@@ -472,11 +542,12 @@ void test_a_gyro_bias_seen_standing_is_learned_and_kept_out_of_the_heading() {
 void test_a_stand_tilt_ramp_does_not_keep_the_bias_from_being_learned() {
     constexpr float TILT_S = 2.0f;
     VirtualRobot robot;
-    robot.setImu(gyroZ(GYRO_BIAS));
+    drifting.rate = GYRO_BIAS;
     robot.setMode(MOTION_STATE::STAND);
     for (int t = 0; t < ticksFor(TILT_S); ++t) {
         const CommandMsg tilt {0, 0, static_cast<float>(t) / ticksFor(TILT_S), 0, 0, 0, 0, 0};
         if (t % COMMAND_PERIOD_TICKS == 0) robot.command(tilt);
+        drifting.tick(robot);
         robot.tick();
     }
     TEST_ASSERT_GREATER_THAN_FLOAT(0.2f, robot.bodyCommand().phi);
@@ -519,6 +590,38 @@ void test_resetting_the_odometry_zeroes_the_pose_and_keeps_the_gyro_bias() {
     TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS * WALK_S, 0, yawWalkedOnGyro(robot, GYRO_BIAS));
 }
 
+// The walk rocks the body in yaw at its cadence, which the feet do not see, and the IMU is read every 25 ms. Whichever
+// of the five control ticks of that period the rocking's phase falls on, the fused heading ends on the true one.
+void test_a_yaw_rocking_at_the_cadence_ends_on_the_true_heading() {
+    constexpr float ROCK_RAD = 3 * PI_F / 180, ROCK_S = 2.0f, HEADING_RAD = 0.01f * PI_F / 180;
+    for (int phase = 0; phase < SAMPLE_TICKS; ++phase) {
+        VirtualRobot robot;
+        drifting = {};
+        standUp(robot);
+        robot.setMode(MOTION_STATE::WALK);
+        run(robot, FORWARD, 0.5f); // up to the walk's cadence
+        const float omega = 2 * PI_F * robot.gaitState().phase_rate;
+        // The rocking runs on the clock the IMU reads go by, shifted by `phase` ticks.
+        const auto rock = [&](double s) { return ROCK_RAD * std::sin(omega * (s + phase * DT)); };
+        const auto rockRate = [&](double s) { return ROCK_RAD * omega * std::cos(omega * (s + phase * DT)); };
+        const double startS = host_clock::nowUs() * 1e-6;
+        const OdometryEstimate start = robot.odometry();
+        float turned = 0;
+        for (int t = 0; t < ticksFor(ROCK_S); ++t) {
+            if (t % COMMAND_PERIOD_TICKS == 0) robot.command(FORWARD);
+            const double tickS = (host_clock::nowUs() + VirtualRobot::TICK_US) * 1e-6; // the time the tick reads at
+            turned = static_cast<float>(rock(tickS) - rock(startS));
+            robot.setImu(turnedBy(turned, static_cast<float>(rockRate(tickS))));
+            robot.tick();
+        }
+        drifting.yaw = turned;
+        run(robot, FORWARD, 2 * SAMPLE_TICKS * DT);
+        char msg[48];
+        std::snprintf(msg, sizeof(msg), "rocking shifted by %d ticks", phase);
+        TEST_ASSERT_FLOAT_WITHIN_MESSAGE(HEADING_RAD, turned, relative(start, robot.odometry()).yaw, msg);
+    }
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_straight_walk_lands_on_the_commanded_displacement);
@@ -528,8 +631,10 @@ int main(int, char **) {
     RUN_TEST(test_a_foot_lifted_3_mm_or_more_is_ignored);
     RUN_TEST(test_every_foot_is_in_stance_once_the_gait_stops_cycling);
     RUN_TEST(test_feet_moved_while_paused_are_no_travel);
-    RUN_TEST(test_the_gyro_turns_the_heading_only_over_fresh_samples);
-    RUN_TEST(test_a_reset_between_gyro_samples_carries_no_turn_into_the_new_frame);
+    RUN_TEST(test_the_dmp_yaw_turns_the_heading_only_between_fresh_packets);
+    RUN_TEST(test_a_packet_after_a_fifo_reset_turns_nothing);
+    RUN_TEST(test_the_dmp_yaw_turns_the_heading_across_its_wrap);
+    RUN_TEST(test_a_reset_between_packets_carries_no_turn_into_the_new_frame);
     RUN_TEST(test_a_still_stand_learns_the_gyro_bias);
     RUN_TEST(test_a_gyro_rate_during_a_stance_change_is_not_learned_as_bias);
     RUN_TEST(test_an_easing_body_yaw_is_not_learned_as_bias);
@@ -544,5 +649,6 @@ int main(int, char **) {
     RUN_TEST(test_a_stand_tilt_ramp_does_not_keep_the_bias_from_being_learned);
     RUN_TEST(test_the_odometry_holds_its_pose_while_deactivated);
     RUN_TEST(test_resetting_the_odometry_zeroes_the_pose_and_keeps_the_gyro_bias);
+    RUN_TEST(test_a_yaw_rocking_at_the_cadence_ends_on_the_true_heading);
     return UNITY_END();
 }

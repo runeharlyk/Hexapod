@@ -170,9 +170,10 @@ def test_a_goal_square_closes_within_10_cm_and_5_degrees(standing):
     assert np.linalg.norm(position) < 0.10 and abs(yaw) < 5
 
 
-# BI is bound by the walk and the arc, which it meets (measured 2026-10-17 over 8 clock phases: walk <= 3.9 cm, arc
-# <= 4.5 cm and <= 1.9 deg). Its turn ends 2.8-2.9 deg short, inside 3 deg but too close to bind, and its square does
-# not close (6-19 cm, up to 12 deg), as its fused heading drifts from the truth over the walks: neither is bound.
+# BI is bound by the walk and the arc, which it meets (measured 2026-10-17 over 8 clock phases: walk <= 3.6 cm, arc
+# <= 3.9 cm and <= 0.9 deg). Its turn ends 2.6-3.2 deg short, at the edge of 3 deg, and its square does not close
+# (0.8-11.6 cm, up to 9.8 deg), as each turn's corrective pass starts with a yaw of about 2 deg that the feet do not
+# command and the fused heading misses: neither is bound.
 @pytest.fixture
 def standing_bi():
     backend = SimBackend()
@@ -187,6 +188,20 @@ def test_a_bi_goal_walks_a_metre_to_within_6_cm(standing_bi):
 
 def test_a_bi_goal_arc_ends_within_5_cm_and_5_degrees(standing_bi):
     test_a_goal_arc_ends_within_5_cm_and_5_degrees(standing_bi)
+
+
+# The fused heading integrates the DMP's yaw between packets, into which the walk's yaw rocking does not alias: a 1 m
+# walk ends within 0.21 deg of the true yaw, where a gyro sample held over the 25 ms read period ended 0.05-1.5 deg
+# (TRI) and 0.24-1.7 deg (BI) off (measured 2026-10-17 over 8 clock phases).
+@pytest.mark.parametrize("gait", [Gait.TRI_GATE, Gait.BI_GATE])
+def test_a_walk_s_fused_heading_follows_the_true_yaw(gait):
+    backend = SimBackend()
+    with Robot(backend=backend, gait=gait) as robot:
+        robot.stand()
+        start, heading = _pose(backend), robot.state().odometry.yaw
+        robot.walk(1.0)
+        _, yaw = _moved(start, _pose(backend))
+        assert (robot.state().odometry.yaw - heading + 180) % 360 - 180 == pytest.approx(yaw, abs=0.4)
 
 
 # The firmware zeroes the odometry on its next tick: a turn read before it would aim from the old heading (a 90 deg turn

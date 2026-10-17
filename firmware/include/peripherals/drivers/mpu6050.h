@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <cstdint>
 #include <peripherals/i2c_bus.h>
 #include <utils/math_utils.h>
 
@@ -111,6 +113,8 @@ class MPU6050Driver {
     float getRoll() const { return _rpy[2]; }
     float getPitch() const { return _rpy[1]; }
     float getYaw() const { return _rpy[0]; }
+    // How often the FIFO was reset: a packet after a reset does not continue the one before it.
+    uint32_t fifoResets() const { return _fifoResets; }
     float getTemperature() const { return _temp; }
     bool isInitialized() const { return _initialized; }
 
@@ -347,7 +351,10 @@ class MPU6050Driver {
         return (buf[0] << 8) | buf[1];
     }
 
-    void resetFIFO() { writeBit(REG_USER_CTRL, 2, 1); }
+    void resetFIFO() {
+        writeBit(REG_USER_CTRL, 2, 1);
+        ++_fifoResets;
+    }
 
     void setMemoryBank(uint8_t bank) { writeReg(REG_BANK_SEL, bank & 0x1F); }
 
@@ -576,4 +583,5 @@ class MPU6050Driver {
     float _gyro[3] = {0};
     float _rpy[3] = {0};
     float _temp = 0;
+    std::atomic<uint32_t> _fifoResets {0}; // the calibration resets from an adapter task
 };

@@ -86,6 +86,15 @@ class Peripherals {
 #endif
     }
 
+    // How often the DMP's FIFO was reset: angleZ after a reset does not continue angleZ before it.
+    uint32_t imuFifoResets() const {
+#if FT_ENABLED(USE_MPU6050)
+        return _imu.fifoResets();
+#else
+        return 0;
+#endif
+    }
+
     // Gravity unit vector in body frame, DMP convention (world-UP). The learned policy wants
     // world-DOWN, so its runner negates.
     void gravityBody(float out[3]) {

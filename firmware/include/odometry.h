@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <optional>
 
 // Ported from SpotMicroESP32-Leika (esp32/include/odometry.h) to six legs and the body frame of docs/conventions.md.
@@ -14,6 +15,12 @@ struct OdometryEstimate {
     float yaw = 0;          // rad, counter-clockwise, in [-pi, pi]
     float kinematicYaw = 0; // rad, as yaw: the heading the feet alone give, for diagnosis
     float distance = 0;     // m travelled along the path, never decreasing
+};
+
+/** A fresh DMP packet: its yaw in the body frame, and how often the IMU's FIFO was reset before it. */
+struct ImuYaw {
+    float yaw = 0;           // rad, counter-clockwise
+    uint32_t fifoResets = 0; // a packet after another reset does not continue the one before
 };
 
 /** The robot's motion over one tick, in the frame it faced at the start of the tick. */
@@ -172,9 +179,11 @@ class KinematicOdometry {
  * difference of the two rates; the heading integrates the two rates weighted by their variances, the gyro's while
  * walking and the feet's while standing. The position integrates the feet's steps in the fused heading.
  *
- * The gyro is read every 25 ms, the control runs every 5: a sample is fused on the tick it was read, over the time
- * since the last one, and the heading follows the feet's turn in between. Without a gyro sample it is the kinematic
- * odometry, and the bias stays where it was.
+ * The gyro's rate is the DMP's: its yaw's change between two packets over the time between them. The chip integrates
+ * the gyro at 200 Hz, so the walk's yaw rocking does not alias into that mean as it does into one gyro sample held
+ * over the read period. The IMU is read every 25 ms, the control runs every 5: a packet's rate is fused on the tick it
+ * was read, over the time since the last fused one, and the heading follows the feet's turn in between. Without a
+ * packet that continues the last, it is the kinematic odometry, and the bias stays where it was.
  */
 class FusedOdometry {
   public:
@@ -200,8 +209,8 @@ class FusedOdometry {
     // faster than the gyro resolves, it is no stillness. Tilt and shift turn the body about x and y or not at all, so
     // they never reach the gyro's z.
     static constexpr float PSI_STILL_RATE = GYRO_NOISE; // rad/s
-    // A sample counts over the time since the sample before, at most this long; a longer gap, a stalled read or a long
-    // tick, is left to the feet.
+    // A packet gives a rate over the time since the packet before, at most this long; a longer gap, a stalled read or a
+    // long tick, is left to the feet.
     static constexpr float GYRO_STALE_S = 0.05f;
 
     /** Zeroes the estimate; the bias, a property of the gyro, stays. */
@@ -214,7 +223,7 @@ class FusedOdometry {
         feetSawTurn = true;
     }
 
-    /** The motion left the gait for a while: the feet are taken afresh, and no gyro sample or stillness spans it. */
+    /** The motion left the gait for a while: the feet are taken afresh, and no gyro rate or stillness spans it. */
     void pause() {
         kinematic.pause();
         sinceSampleS = INFINITY;
@@ -228,20 +237,24 @@ class FusedOdometry {
     }
 
     /**
-     * One control tick of `dt` seconds: the body and stance as KinematicOdometry takes them, and the gyro's z rate when
-     * it was read on this tick. Returns the step it took, its turn as the fused heading took it.
+     * One control tick of `dt` seconds: the body and stance as KinematicOdometry takes them, and the DMP packet when
+     * one was read on this tick.
      */
-    BodyStep update(const BodyStateMsg &body, const std::array<bool, 6> &stance, std::optional<float> gyroZ, float dt) {
+    void update(const BodyStateMsg &body, const std::array<bool, 6> &stance, std::optional<ImuYaw> packet, float dt) {
         const BodyStep step = kinematic.update(body, stance);
         noteStill(body, dt);
         sinceSampleS += dt;
+        sincePacketS += dt;
         feetTurn += step.turn;
         feetTravel += std::hypot(step.right, step.forward);
         feetSawTurn = feetSawTurn && kinematic.turnSeen();
         float turn = step.turn;
-        if (gyroZ) {
+        if (packet) {
             // The feet's turns since the last sample were taken provisionally; the fused turn replaces them.
-            if (sinceSampleS > 0 && sinceSampleS <= GYRO_STALE_S) turn += fusedTurn(*gyroZ) - feetTurn;
+            const std::optional<float> rate = yawRate(*packet);
+            if (rate && sinceSampleS > 0 && sinceSampleS <= GYRO_STALE_S) turn += fusedTurn(*rate) - feetTurn;
+            lastPacket = packet;
+            sincePacketS = 0;
             sinceSampleS = 0;
             feetTurn = feetTravel = 0;
             feetSawTurn = true;
@@ -251,7 +264,6 @@ class FusedOdometry {
         current.y += s * step.right + c * step.forward;
         current.yaw = std::remainder(current.yaw + turn, 2.0f * static_cast<float>(M_PI));
         current.distance += std::hypot(step.right, step.forward);
-        return {step.right, step.forward, turn};
     }
 
   private:
@@ -262,12 +274,22 @@ class FusedOdometry {
     float motionVariance = 0; // of the feet's rate, from their motion
     float stillS = 0;         // how long every foot has been down under a body yaw that keeps still
     float lastPsi = 0;
-    // Since the last gyro sample: its age, the feet's turn and travel, and whether every tick saw the feet's turn.
+    // The last DMP packet and its age; a reset or a pause of the odometry leaves the DMP's yaw running on.
+    std::optional<ImuYaw> lastPacket;
+    float sincePacketS = INFINITY;
+    // Since the last fused sample: its age, the feet's turn and travel, and whether every tick saw the feet's turn.
     float sinceSampleS = INFINITY;
     float feetTurn = 0, feetTravel = 0;
     bool feetSawTurn = true;
 
     static float square(float value) { return value * value; }
+
+    // The DMP's mean yaw rate since the last packet; none without one, across a FIFO reset or after GYRO_STALE_S.
+    std::optional<float> yawRate(const ImuYaw &packet) const {
+        if (!lastPacket || lastPacket->fifoResets != packet.fifoResets) return std::nullopt;
+        if (sincePacketS <= 0 || sincePacketS > GYRO_STALE_S) return std::nullopt;
+        return std::remainder(packet.yaw - lastPacket->yaw, 2.0f * static_cast<float>(M_PI)) / sincePacketS;
+    }
 
     // A gait that cycles swings a foot, and one that stopped sets every stance flag (GaitController::inStance), so
     // every foot down means the gait is not cycling, no stance change is stepping and no foot is being lowered.

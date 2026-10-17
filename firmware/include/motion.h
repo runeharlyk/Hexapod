@@ -14,6 +14,7 @@
 #include <utils/math_utils.h>
 #include <gait.h>
 #include <gait_speed.h>
+#include <imu_frame.h>
 #include <odometry.h>
 #include <goal_controller.h>
 #include <event_bus.h>
@@ -302,7 +303,7 @@ class MotionService {
         return !gaitIsCommanded(gait_state) && !gait.hasPendingStanceChange() && !_postureSettling;
     }
 
-    // imuFresh: the IMU was read on this tick, so its gyro rate is this tick's.
+    // imuFresh: the IMU was read on this tick, so its DMP packet and gyro rate are this tick's.
     bool updateMotion(bool imuFresh) {
         takeGoalMail();
         resetCommandIfTimedOut();
@@ -945,15 +946,12 @@ class MotionService {
         applyWalkTarget();
     }
 
-    // Control task, after the gait stepped: the feet it left, the legs it has in stance and the gyro read on this tick.
+    // Control task, after the gait stepped: the feet it left, the legs it has in stance and the DMP's yaw read on this
+    // tick.
     void updateOdometry(float dt, bool imuFresh) {
-        std::optional<float> gyroZ;
-        if (imuFresh) {
-            float rate[3];
-            _peripherals->gyroRad(rate);
-            gyroZ = rate[2];
-        }
-        _odometry.update(body_state, stanceFlags(), gyroZ, dt);
+        std::optional<ImuYaw> packet;
+        if (imuFresh) packet = ImuYaw {imu_frame::YAW_SIGN * _peripherals->angleZ(), _peripherals->imuFifoResets()};
+        _odometry.update(body_state, stanceFlags(), packet, dt);
     }
 
     // Control task: which legs the gait has in stance after its last step.
