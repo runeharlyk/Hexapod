@@ -172,6 +172,22 @@ void test_the_telemetry_flags_the_dead_man_stop_from_the_tick_it_fires() {
     TEST_ASSERT_FALSE(robot.linkLost());
 }
 
+// The telemetry reports the write of its own tick: none in a mode that sends no pose, a success in a stand, and an idle
+// tick after a stand tick does not inherit the stand's write (Hexapod::planMotion starts each tick's record).
+void test_the_telemetry_reports_the_servo_write_of_its_own_tick() {
+    VirtualRobot robot;
+    robot.setMode(MOTION_STATE::IDLE);
+    robot.tick();
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_NONE, robot.servoWrite());
+    robot.setMode(MOTION_STATE::STAND);
+    robot.tick();
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_OK, robot.servoWrite());
+    robot.setMode(MOTION_STATE::IDLE);
+    robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::IDLE, robot.mode());
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_NONE, robot.servoWrite());
+}
+
 // A command that drives no locomotion, such as the height alone, keeps the 2 s link timeout (COMMAND_TIMEOUT_MS).
 void test_a_height_only_command_is_obeyed_for_2_s_after_silence() {
     const CommandMsg raised {0, 0, 0, 0, 0.5f, 0, 0, 0};
@@ -1310,6 +1326,7 @@ int main(int, char **) {
     RUN_TEST(test_a_stick_held_in_walk_steps_the_legs);
     RUN_TEST(test_a_walk_obeys_its_last_command_for_600_ms_and_no_longer);
     RUN_TEST(test_the_telemetry_flags_the_dead_man_stop_from_the_tick_it_fires);
+    RUN_TEST(test_the_telemetry_reports_the_servo_write_of_its_own_tick);
     RUN_TEST(test_a_height_only_command_is_obeyed_for_2_s_after_silence);
     RUN_TEST(test_no_servo_is_driven_past_its_joint_travel);
     RUN_TEST(test_a_walk_without_commands_comes_to_rest);
