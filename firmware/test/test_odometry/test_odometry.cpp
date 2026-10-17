@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <odometry.h>
 #include <virtual_robot.h>
 
@@ -296,6 +297,34 @@ void test_feet_moving_on_the_floor_teach_no_bias() {
     TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, 0, learnedBias(odometry));
 }
 
+// A gait stopped at any phase eases its planted feet home and lowers the lifted ones; the robot settles where restStep
+// says the feet carry it, for a walk, a turn and an arc. The ease is fitted tick by tick on the feet down in each,
+// which one fit over the whole ease matches to within 2 mm and 0.015 rad (measured: 1.7 mm and 0.012 rad at worst).
+void test_the_rest_step_predicts_where_a_stopped_gait_settles() {
+    constexpr float HOME_MM = 2.0f, HOME_RAD = 0.015f;
+    constexpr std::array<bool, 6> STAY = ALL_DOWN;
+    const BodyStateMsg HOME = GaitWalk(0, 0, 0).body; // the stance the gait eases home to
+    for (const std::array<float, 3> stroke :
+         {std::array<float, 3> {0, STEP_MM, 0}, {0, 0, STEP_ANGLE_RAD}, {0, STEP_MM, STEP_ANGLE_RAD}}) {
+        for (int k = 1; k <= 8; ++k) {
+            GaitWalk walk(stroke[0], stroke[1], stroke[2]);
+            walk.run(ticksFor(1.0f) + k * TICKS_PER_SECOND / 8);
+            std::array<bool, 6> stance;
+            for (int leg = 0; leg < 6; ++leg) stance[leg] = walk.gait.inStance(walk.state, leg);
+            const OdometryEstimate predicted = KinematicOdometry::advance(
+                walk.odometry.estimate(), KinematicOdometry::restStep(walk.body, stance, HOME.feet, STAY));
+            walk.state.step_x = walk.state.step_y = walk.state.step_angle = 0;
+            walk.run(ticksFor(FEET_EASE_S + 0.1f));
+            const OdometryEstimate settled = walk.odometry.estimate();
+            char msg[64];
+            std::snprintf(msg, sizeof(msg), "stroke %.0f %.2f, stopped at %d/8 of a cycle", stroke[1], stroke[2], k);
+            TEST_ASSERT_FLOAT_WITHIN_MESSAGE(HOME_MM / 1000, predicted.x, settled.x, msg);
+            TEST_ASSERT_FLOAT_WITHIN_MESSAGE(HOME_MM / 1000, predicted.y, settled.y, msg);
+            TEST_ASSERT_FLOAT_WITHIN_MESSAGE(HOME_RAD, predicted.yaw, settled.yaw, msg);
+        }
+    }
+}
+
 // A pause cuts the stillness it interrupts: whatever moved the robot meanwhile was not still, so the bias waits for
 // SETTLE_S of stillness after it.
 void test_a_pause_restarts_the_stillness_the_bias_waits_for() {
@@ -505,6 +534,7 @@ int main(int, char **) {
     RUN_TEST(test_a_gyro_rate_during_a_stance_change_is_not_learned_as_bias);
     RUN_TEST(test_an_easing_body_yaw_is_not_learned_as_bias);
     RUN_TEST(test_feet_moving_on_the_floor_teach_no_bias);
+    RUN_TEST(test_the_rest_step_predicts_where_a_stopped_gait_settles);
     RUN_TEST(test_a_pause_restarts_the_stillness_the_bias_waits_for);
     RUN_TEST(test_a_slow_walk_teaches_no_bias);
     RUN_TEST(test_a_tripod_walk_forward_moves_the_odometry_forward_and_straight);

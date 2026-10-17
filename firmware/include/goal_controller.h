@@ -61,11 +61,11 @@ class GoalController {
     static constexpr float TIMEOUT_MARGIN_S = 2.0f;
     // MotionService's GAIT_COMMAND_TAU_S: the gait follows a stick's speed through a first-order lag of this time.
     static constexpr float RAMP_TAU_S = 0.15f;
-    // How far the robot walks on once its sticks centre, as a time at the speed it walked: the command ramp eases the
-    // stroke out over RAMP_TAU_S while the stop ramp slows the cadence with the stroke left (gait.h GaitCommandRamp),
-    // and the feet's ease home carries the body on. A ramp alone would give RAMP_TAU_S / 2; the virtual robot coasts
-    // about 0.19 s of its speed, measured from TRI and BI at full speed.
-    static constexpr float STOP_S = 0.19f;
+    // How far the robot walks on once its sticks centre, as a time at the speed it walked. The stop ramp (gait.h
+    // GaitCommandRamp) eases the stroke out through two first-order stages of RAMP_TAU_S, leaving the share
+    // s = (1 + t / tau) exp(-t / tau), and slows the cadence with it, so the speed falls as s^2: its integral is
+    // 1.25 tau. The virtual robot coasts 0.19 s of its speed at full speed, measured on TRI and BI.
+    static constexpr float STOP_S = 1.25f * RAMP_TAU_S;
 
     /** A finite goal with a nonzero target, a positive radius for an arc, at a speed in (0, 1]. */
     static bool valid(const Goal& goal) {

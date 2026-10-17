@@ -524,6 +524,11 @@ class MotionService {
     bool _goalStarted = false;    // _goal walks it
     socket_message_GoalStatus _goalReported = socket_message_GoalStatus_init_zero;
     static constexpr int GOAL_STATUS_STEPS = 20; // a push every 5 % of progress
+    // How long a stop goes on stepping, as a time at the cadence it stopped from: the stop ramp's cadence follows the
+    // stroke left, whose integral over the stop is 2 tau (GoalController::STOP_S), but a foot that lifts in the stop's
+    // tail still sets down off its stance, so 3 tau. Fitted on the virtual robot over TRI and BI goals at four speeds
+    // and four sizes: 60 of 64 reach at 2 tau, 63 from 3 to 4 tau.
+    static constexpr float STOP_PHASE_S = 3 * GoalController::RAMP_TAU_S;
 
     static constexpr float smoothing_factor = BODY_SMOOTHING;
     // Ramp time constant for the locomotion command: ~0.45 s to settle. Slow enough that a slammed
@@ -833,11 +838,10 @@ class MotionService {
             if (_goalTaken.gait != GaitType::AUTO && gait_state.gait_type != _goalTaken.gait) return;
             const GoalTops tops =
                 goalTops(_goalTaken.goal.kind, _goalTaken.gait, _walkPosture, _goalTaken.style.stride);
-            _goal.start(_goalTaken.goal, _odometry.estimate(), tops.speed, tops.turn);
+            _goal.start(_goalTaken.goal, restPose(), tops.speed, tops.turn);
             _goalStarted = true;
         } else {
-            const GoalSticks sticks =
-                _goal.update(_odometry.estimate(), !gaitIsCommanded(gait_state) && feetAtRest(), dt);
+            const GoalSticks sticks = _goal.update(restPose(), !gaitIsCommanded(gait_state) && feetAtRest(), dt);
             std::lock_guard<std::mutex> lock(_goalMutex);
             if (_goalDrives) {
                 lastWalkCommand_.lx = sticks.lx;
@@ -899,15 +903,32 @@ class MotionService {
 
     // Control task, after the gait stepped: the feet it left, the legs it has in stance and the gyro read on this tick.
     void updateOdometry(float dt, bool imuFresh) {
-        std::array<bool, 6> stance;
-        for (int leg = 0; leg < 6; ++leg) stance[leg] = gait.inStance(gait_state, leg);
         std::optional<float> gyroZ;
         if (imuFresh) {
             float rate[3];
             _peripherals->gyroRad(rate);
             gyroZ = rate[2];
         }
-        _odometry.update(body_state, stance, gyroZ, dt);
+        _odometry.update(body_state, stanceFlags(), gyroZ, dt);
+    }
+
+    // Control task: which legs the gait has in stance after its last step.
+    std::array<bool, 6> stanceFlags() const {
+        std::array<bool, 6> stance;
+        for (int leg = 0; leg < 6; ++leg) stance[leg] = gait.inStance(gait_state, leg);
+        return stance;
+    }
+
+    // Control task: where the robot will stand once a stop's ease home has set its planted feet on their places. A goal
+    // judges this pose rather than the odometry's: feet that only slid within their stance carry the body back as they
+    // ease home, so a walk too short for any foot to swing has gone nowhere. A planted foot the stop still lifts before
+    // the gait comes to rest steps on instead, as the coast the goal predicts.
+    OdometryEstimate restPose() const {
+        const float stopPhase = gait_state.phase_rate * STOP_PHASE_S;
+        std::array<bool, 6> stays;
+        for (int leg = 0; leg < 6; ++leg) stays[leg] = gait.phaseToLift(gait_state, leg) > stopPhase;
+        return KinematicOdometry::advance(
+            _odometry.estimate(), KinematicOdometry::restStep(body_state, stanceFlags(), default_feet_pos, stays));
     }
 
     // Control task, at the end of a STAND tick. A stand that has taken its posture and holds still is one a walk can

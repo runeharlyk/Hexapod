@@ -268,10 +268,11 @@ void test_an_arc_goal_ends_on_its_arc() {
 
 // A fast goal slows over a zone that grows with its speed and centres its sticks the predicted coast short of its
 // target, so TRI and BI at full speed, BI near 640 mm/s, land within the tolerances in one pass as they do at half of
-// it.
+// it. At a quarter of it the stop steps too slowly to move the feet off their stance, and the goal judges where their
+// ease home will set the robot down, so a corrective pass walks on until a step has carried it there.
 void test_fast_and_slow_goals_reach_their_targets() {
     for (const GaitType gait : {GaitType::TRI_GATE, GaitType::BI_GATE}) {
-        for (const float speed : {1.0f, 0.5f}) {
+        for (const float speed : {1.0f, 0.5f, 0.25f}) {
             for (const bool turning : {false, true}) {
                 Rig &rig = newRig();
                 standUp(rig);
@@ -285,7 +286,7 @@ void test_fast_and_slow_goals_reach_their_targets() {
                               turning ? "turn" : "forward", (unsigned)rig.robot.goalStatus().passes, end.x, end.y,
                               end.yaw);
                 TEST_ASSERT_EQUAL_MESSAGE(GoalState::REACHED, rig.state(), msg);
-                TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, rig.robot.goalStatus().passes, msg);
+                if (speed >= 0.5f) TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, rig.robot.goalStatus().passes, msg);
                 if (turning) {
                     TEST_ASSERT_FLOAT_WITHIN_MESSAGE(GoalController::REACHED_RAD, 90 * DEG, end.yaw, msg);
                 } else {

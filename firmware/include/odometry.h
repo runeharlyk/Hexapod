@@ -52,13 +52,7 @@ class KinematicOdometry {
     BodyStep update(const BodyStateMsg &body, const std::array<bool, 6> &stance) {
         float feet[6][2];
         bool contact[6];
-        float lowest = body.feet[0][2];
-        for (int leg = 1; leg < 6; leg++) lowest = std::min(lowest, body.feet[leg][2]);
-        for (int leg = 0; leg < 6; leg++) {
-            feet[leg][0] = body.feet[leg][0] / 1000.f;
-            feet[leg][1] = body.feet[leg][1] / 1000.f;
-            contact[leg] = stance[leg] && body.feet[leg][2] - lowest < LIFTED_MM;
-        }
+        floorFeet(body, stance, feet, contact);
         everyFootDown = std::all_of(std::begin(contact), std::end(contact), [](bool down) { return down; });
         sawTurn = false;
         const BodyStep step = primed ? integrate(feet, contact) : BodyStep {};
@@ -71,6 +65,42 @@ class KinematicOdometry {
         return step;
     }
 
+    /**
+     * The step a stopped gait's ease home takes the robot. The ease moves every foot from where it is to `home` (mm, as
+     * BodyStateMsg's) along one blend, lowering the lifted ones: the feet on the floor carry the body by the inverse of
+     * their rigid motion, and a lowered foot joins them once it is within LIFTED_MM of the floor, for the rest of its
+     * way. A foot on the floor that does not `stay`, as the stop lifts it first, holds the body where it stands; one in
+     * its swing that does not carries nothing.
+     */
+    static BodyStep restStep(const BodyStateMsg &body, const std::array<bool, 6> &stance, const float home[6][4],
+                             const std::array<bool, 6> &stays) {
+        float feet[6][2], from[6][2], to[6][2];
+        bool contact[6], carries[6];
+        floorFeet(body, stance, feet, contact);
+        for (int leg = 0; leg < 6; leg++) {
+            const float above = body.feet[leg][2] - home[leg][2];
+            // The share of the ease left when the foot comes within LIFTED_MM of the floor.
+            const float joins = contact[leg] || above <= LIFTED_MM ? 0.0f : 1.0f - LIFTED_MM / above;
+            carries[leg] = contact[leg] || stays[leg];
+            for (int axis = 0; axis < 2; axis++) {
+                to[leg][axis] = stays[leg] ? home[leg][axis] / 1000.f : feet[leg][axis];
+                from[leg][axis] = feet[leg][axis] + joins * (to[leg][axis] - feet[leg][axis]);
+            }
+        }
+        int count;
+        return fit(from, to, carries, count);
+    }
+
+    /** `pose` advanced by `step`, which is in the frame `pose` faces. */
+    static OdometryEstimate advance(OdometryEstimate pose, const BodyStep &step) {
+        const float c = std::cos(pose.yaw), s = std::sin(pose.yaw);
+        pose.x += c * step.right - s * step.forward;
+        pose.y += s * step.right + c * step.forward;
+        pose.yaw = std::remainder(pose.yaw + step.turn, 2.0f * static_cast<float>(M_PI));
+        pose.distance += std::hypot(step.right, step.forward);
+        return pose;
+    }
+
   private:
     OdometryEstimate current;
     float previous[6][2] = {};
@@ -79,40 +109,56 @@ class KinematicOdometry {
     bool sawTurn = false;
     bool everyFootDown = false;
 
-    BodyStep integrate(const float feet[6][2], const bool contact[6]) {
-        int count = 0;
-        float before[2] = {0, 0}, after[2] = {0, 0};
+    // The feet in m, and which of them are on the floor: in stance and within LIFTED_MM of the lowest.
+    static void floorFeet(const BodyStateMsg &body, const std::array<bool, 6> &stance, float feet[6][2],
+                          bool contact[6]) {
+        float lowest = body.feet[0][2];
+        for (int leg = 1; leg < 6; leg++) lowest = std::min(lowest, body.feet[leg][2]);
         for (int leg = 0; leg < 6; leg++) {
-            if (!contact[leg] || !previousContact[leg]) continue;
+            feet[leg][0] = body.feet[leg][0] / 1000.f;
+            feet[leg][1] = body.feet[leg][1] / 1000.f;
+            contact[leg] = stance[leg] && body.feet[leg][2] - lowest < LIFTED_MM;
+        }
+    }
+
+    // The body's step as the feet in `use` move from `before` to `after`: the inverse of their least-squares rigid
+    // motion. `count` is the feet it was fitted on.
+    static BodyStep fit(const float before[6][2], const float after[6][2], const bool use[6], int &count) {
+        count = 0;
+        float from[2] = {0, 0}, to[2] = {0, 0};
+        for (int leg = 0; leg < 6; leg++) {
+            if (!use[leg]) continue;
             count++;
-            before[0] += previous[leg][0], before[1] += previous[leg][1];
-            after[0] += feet[leg][0], after[1] += feet[leg][1];
+            from[0] += before[leg][0], from[1] += before[leg][1];
+            to[0] += after[leg][0], to[1] += after[leg][1];
         }
         if (count == 0) return {};
-        before[0] /= count, before[1] /= count, after[0] /= count, after[1] /= count;
+        from[0] /= count, from[1] /= count, to[0] /= count, to[1] /= count;
 
         // The feet turn by -turn about their centroid; one foot alone shows no turn.
         float cross = 0, dot = 0;
         for (int leg = 0; leg < 6; leg++) {
-            if (!contact[leg] || !previousContact[leg]) continue;
-            const float px = previous[leg][0] - before[0], py = previous[leg][1] - before[1];
-            const float qx = feet[leg][0] - after[0], qy = feet[leg][1] - after[1];
+            if (!use[leg]) continue;
+            const float px = before[leg][0] - from[0], py = before[leg][1] - from[1];
+            const float qx = after[leg][0] - to[0], qy = after[leg][1] - to[1];
             cross += px * qy - py * qx;
             dot += px * qx + py * qy;
         }
-        sawTurn = count > 1;
-        const float turn = sawTurn ? -std::atan2(cross, dot) : 0.0f;
+        const float turn = count > 1 ? -std::atan2(cross, dot) : 0.0f;
 
-        // A floor point p in the last frame is R(-turn) (p - step) in this one; the centroids give the step.
+        // A floor point p in the first frame is R(-turn) (p - step) in the second; the centroids give the step.
         const float c = std::cos(turn), s = std::sin(turn);
-        const BodyStep step {before[0] - (c * after[0] - s * after[1]), before[1] - (s * after[0] + c * after[1]),
-                             turn};
+        return {from[0] - (c * to[0] - s * to[1]), from[1] - (s * to[0] + c * to[1]), turn};
+    }
 
-        const float heading = current.yaw;
-        current.x += std::cos(heading) * step.right - std::sin(heading) * step.forward;
-        current.y += std::sin(heading) * step.right + std::cos(heading) * step.forward;
-        current.yaw = current.kinematicYaw = std::remainder(heading + turn, 2.0f * static_cast<float>(M_PI));
-        current.distance += std::hypot(step.right, step.forward);
+    BodyStep integrate(const float feet[6][2], const bool contact[6]) {
+        bool both[6];
+        for (int leg = 0; leg < 6; leg++) both[leg] = contact[leg] && previousContact[leg];
+        int count;
+        const BodyStep step = fit(previous, feet, both, count);
+        sawTurn = count > 1;
+        current = advance(current, step);
+        current.kinematicYaw = current.yaw;
         return step;
     }
 };
