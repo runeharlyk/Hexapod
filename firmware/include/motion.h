@@ -542,11 +542,15 @@ class MotionService {
     static constexpr unsigned long OWNER_SILENCE_MS = 2000;
     // A goal takes its posture and gait in a few seconds; one still waiting after this never will.
     static constexpr unsigned long GOAL_START_TIMEOUT_MS = 10000;
-    // How long a stop goes on stepping, as a time at the cadence it stopped from: the stop ramp's cadence follows the
-    // stroke left, whose integral over the stop is 2 tau (GoalController::STOP_S), but a foot that lifts in the stop's
-    // tail still sets down off its stance, so 3 tau. Fitted on the virtual robot over TRI and BI goals at four speeds
-    // and four sizes: 60 of 64 reach at 2 tau, 63 from 3 to 4 tau.
-    static constexpr float STOP_PHASE_S = 3 * GoalController::RAMP_TAU_S;
+    // The period a stop is stepped ahead at to predict it, four control ticks, which predicts as well as one on the
+    // virtual robot's goal matrix at a quarter of the cost, and the longest stop it follows.
+    static constexpr float STOP_PREDICTION_DT_S = 0.02f;
+    static constexpr int STOP_PREDICTION_STEPS = 100;
+    // A foot that lifts in the stop's tail still sets down off its stance, so the stop is taken to step a little
+    // further than its ramp. On the virtual robot's TRI and BI goals, 1.05 to 1.15 reach a metre at full speed in one
+    // pass and every centimetre and few-degree goal at half speed; 1.0 needs a second pass at full speed, 1.2 misses
+    // 5 deg turns, and above 1.05 a TRI metre's predicted progress steps back more often.
+    static constexpr float STOP_TAIL = 1.05f;
 
     static constexpr float smoothing_factor = BODY_SMOOTHING;
     // Ramp time constant for the locomotion command: ~0.45 s to settle. Slow enough that a slammed
@@ -964,11 +968,27 @@ class MotionService {
     // ease home, so a walk too short for any foot to swing has gone nowhere. A planted foot the stop still lifts before
     // the gait comes to rest steps on instead, as the coast the goal predicts.
     OdometryEstimate restPose() const {
-        const float stopPhase = gait_state.phase_rate * STOP_PHASE_S;
+        const float phase = stopPhase();
         std::array<bool, 6> stays;
-        for (int leg = 0; leg < 6; ++leg) stays[leg] = gait.phaseToLift(gait_state, leg) > stopPhase;
+        for (int leg = 0; leg < 6; ++leg) stays[leg] = gait.phaseToLift(gait_state, leg) > phase;
         return KinematicOdometry::advance(
             _odometry.estimate(), KinematicOdometry::restStep(body_state, stanceFlags(), default_feet_pos, stays));
+    }
+
+    // Control task: the phase a stop from now still steps, from the stop ramp run ahead on a copy of the gait. Its
+    // cadence follows the stroke left, and the gait stops cycling once the stroke is under its deadband, so a stop from
+    // a stroke near the deadband steps almost none.
+    float stopPhase() const {
+        GaitCommandRamp ramp;
+        gait_state_t live = gait_state, stopped = target_gait_state;
+        stopped.step_x = stopped.step_y = stopped.step_angle = stopped.phase_rate = 0;
+        float phase = 0;
+        for (int t = 0; t < STOP_PREDICTION_STEPS; ++t) {
+            ramp.step(live, stopped, STOP_PREDICTION_DT_S, GAIT_COMMAND_TAU_S);
+            if (!gaitIsCommanded(live)) break;
+            phase += live.phase_rate * STOP_PREDICTION_DT_S;
+        }
+        return phase * STOP_TAIL;
     }
 
     // Control task, at the end of a STAND tick. A stand that has taken its posture and holds still is one a walk can

@@ -308,6 +308,34 @@ void test_fast_and_slow_goals_reach_their_targets() {
     }
 }
 
+// The remainder a metre's walk in MuJoCo leaves for its corrective pass, a centimetre or a few degrees. The classic
+// gait keeps its full stroke at a slow stick and slows its cadence, so a stop from it ends cycling almost at once and
+// eases the feet that just landed back home: predicted from a fixed share of the cadence, such a pass stopped on a
+// coast that never came, three times over, and TRI's 12 mm walked 1.3 mm and TIMED OUT (measured 2026-10-17).
+void test_a_goal_of_a_centimetre_or_a_few_degrees_reaches_it() {
+    for (const GaitType gait : {GaitType::TRI_GATE, GaitType::BI_GATE}) {
+        for (const Goal &goal : {forward(0.011f), forward(0.012f), forward(-0.012f), forward(0.02f), turn(4 * DEG),
+                                 turn(-5 * DEG), Goal {GoalKind::SIDEWAYS, 0.012f, 0, 0, 0.5f}}) {
+            Rig &rig = newRig();
+            standUp(rig);
+            const OdometryEstimate start = rig.robot.odometry();
+            TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(goal, style(), gait));
+            rig.runGoal();
+            const OdometryEstimate end = relative(start, rig.robot.odometry());
+            char msg[120];
+            std::snprintf(msg, sizeof(msg), "gait %d kind %d %.3f %.3f: %u passes, at %.4f %.4f %.4f", (int)gait,
+                          (int)goal.kind, goal.distance, goal.angle, (unsigned)rig.robot.goalStatus().passes, end.x,
+                          end.y, end.yaw);
+            TEST_ASSERT_EQUAL_MESSAGE(GoalState::REACHED, rig.state(), msg);
+            if (goal.kind == GoalKind::TURN)
+                TEST_ASSERT_FLOAT_WITHIN_MESSAGE(GoalController::REACHED_RAD, goal.angle, end.yaw, msg);
+            else
+                TEST_ASSERT_FLOAT_WITHIN_MESSAGE(GoalController::REACHED_M, goal.distance,
+                                                 goal.kind == GoalKind::FORWARD ? end.y : end.x, msg);
+        }
+    }
+}
+
 // Review focus 1: the app's heartbeat, the facade's keep-alive and the ESP-NOW controller's centred packets carry a
 // posture, a speed, a stride and a tilt of their own; during a goal none of it changes a single joint angle.
 void test_centred_commands_during_a_goal_change_nothing() {
@@ -682,6 +710,7 @@ int main(int, char **) {
     RUN_TEST(test_a_turn_goal_turns_90_degrees_in_place);
     RUN_TEST(test_an_arc_goal_ends_on_its_arc);
     RUN_TEST(test_fast_and_slow_goals_reach_their_targets);
+    RUN_TEST(test_a_goal_of_a_centimetre_or_a_few_degrees_reaches_it);
     RUN_TEST(test_centred_commands_during_a_goal_change_nothing);
     RUN_TEST(test_an_off_centre_stick_cancels_the_goal_and_drives_the_walk);
     RUN_TEST(test_a_mode_change_cancels_the_goal);
