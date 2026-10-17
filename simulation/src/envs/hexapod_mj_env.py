@@ -661,9 +661,10 @@ class HexapodMjEnv(gym.Env):
     def _get_obs(self):
         q = self.sim.base_quat()
         grav = _gravity_in_body(q)
-        # The firmware path reads the gyro as FirmwareLoop feeds the firmware: the robot samples its MPU6050's
-        # output, low-passed at 188 Hz (mpu6050.h DLPF_CFG = 1), once per 5 ms tick, so the rate is the mean over the
-        # 5 ms before.
+        # The firmware path reads the gyro as FirmwareLoop feeds the firmware: the MPU6050's output, low-passed at
+        # 188 Hz (mpu6050.h DLPF_CFG = 1), as the mean over the 5 ms before this step. The robot reads its IMU only
+        # every 25 ms (hexapod.h readSensors) and PolicyCore takes that sample, up to 25 ms old, so this gyro is
+        # fresher than the robot's.
         now = self.sim.data.time
         gyro = self.sim.mean_gyro(now - FIRMWARE_DT, now) if self.firmware is not None else self.sim.gyro()
         rpy = _quat_to_rpy(q)

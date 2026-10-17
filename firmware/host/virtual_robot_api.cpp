@@ -59,14 +59,14 @@ API void setImu(float roll, float pitch, float yaw, float gx, float gy, float gz
 // One 5 ms control tick.
 API void tick() { instance().tick(); }
 
-// A GoalMove request from the client numbered `owner`, as main.cpp's handler takes it: the reply's status, 202 when the
-// goal starts on the next tick.
+// A GoalMove request, as main.cpp's handler takes it, from a client with no transport, so no silence ends it: the
+// reply's status, 202 when the goal starts on the next tick.
 API int goalMove(int kind, float distance, float angle, float radius, float speed, int gait, float stride, float s1,
-                 float h, float fd, int owner) {
+                 float h, float fd) {
     if (kind < 0 || kind > static_cast<int>(GoalKind::ARC)) return 400;
     const Goal goal {static_cast<GoalKind>(kind), distance, angle, radius, speed};
     const CommandMsg style {0, 0, 0, 0, h, 0, s1, fd, stride};
-    return instance().goalMove(goal, style, static_cast<GaitType>(gait), {nullptr, owner});
+    return instance().goalMove(goal, style, static_cast<GaitType>(gait));
 }
 
 API void goalCancel() { instance().goalCancel(); }
@@ -96,9 +96,6 @@ API void odometry(float out[5]) {
 
 // Takes effect on the next tick; false, and nothing reset, while a goal drives.
 API bool resetOdometry() { return instance().resetOdometry(); }
-
-// The client numbered `owner` has gone: the goal it asked for ends.
-API void clientGone(int owner) { instance().clientGone({nullptr, owner}); }
 
 // Whether the servos are driven, and the 18 joint angles they are driven to in degrees, three per leg (coxa, femur,
 // tibia) in leg order.

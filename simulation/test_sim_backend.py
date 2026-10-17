@@ -269,6 +269,23 @@ def _walk_and_turn():
         return backend.sim.data.qpos.copy(), robot.state().odometry
 
 
+# Goals refuse TUNED, so its moves are timed from the PC (motions._open_loop). From a settled stand they land as the
+# README states: forward 8 % short at 0.3 m and 5.5 % at 0.5 m, sideways within 4 % (measured 2026-10-17 over 6 clock
+# phases: 7.7-8.6 % and 5.1-6.0 % short forward, 1.0-2.2 % short sideways, at most 3.2 cm across).
+@pytest.mark.parametrize("sideways, metres, covered, within", [
+    (False, 0.3, 0.92, 0.015), (False, 0.5, 0.945, 0.015), (True, 0.3, 1.0, 0.04), (True, -0.3, 1.0, 0.04)])
+def test_a_timed_tuned_move_from_a_settled_stand_lands_as_documented(sideways, metres, covered, within):
+    backend = SimBackend()
+    with Robot(backend=backend, gait=Gait.TUNED) as robot:
+        robot.stand()
+        robot.sleep(1.0)
+        start = _pose(backend)
+        (robot.move_sideways if sideways else robot.move_forward)(metres)
+        (forward, left), _ = _moved(start, _pose(backend))
+    along, across = (left, forward) if sideways else (forward, left)
+    assert along / metres == pytest.approx(covered, abs=within) and abs(across) < 0.04
+
+
 # The firmware's clock starts over with each robot, so a run does not depend on the runs before it.
 def test_the_same_goals_run_alike_twice_in_one_process():
     (pose, odometry), (again, odometry_again) = _walk_and_turn(), _walk_and_turn()

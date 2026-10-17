@@ -73,7 +73,7 @@ def _library() -> ctypes.CDLL:
     lib.autoWalk.argtypes = [ctypes.c_int, *floats(8), ctypes.POINTER(ctypes.c_float)]
     lib.autoWalk.restype = ctypes.c_int
     lib.clampPosture.argtypes = [ctypes.POINTER(ctypes.c_float)]
-    lib.goalMove.argtypes = [ctypes.c_int, *floats(4), ctypes.c_int, *floats(4), ctypes.c_int]
+    lib.goalMove.argtypes = [ctypes.c_int, *floats(4), ctypes.c_int, *floats(4)]
     lib.goalMove.restype = ctypes.c_int
     lib.goalStatus.argtypes = lib.odometry.argtypes = [ctypes.POINTER(ctypes.c_float)]
     return lib
@@ -131,7 +131,7 @@ class VirtualRobot:
                   stride: float, s1: float, h: float, fd: float) -> int:
         """A GoalMove request in the body frame (m and rad) from a client with no transport, so no silence ends it:
         the reply's status, 202 when the goal starts on the next tick."""
-        return self._lib.goalMove(kind, distance, angle, radius, speed, gait, stride, s1, h, fd, 0)
+        return self._lib.goalMove(kind, distance, angle, radius, speed, gait, stride, s1, h, fd)
 
     def goal_cancel(self) -> None:
         self._lib.goalCancel()

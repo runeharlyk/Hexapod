@@ -1,13 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { get } from 'svelte/store'
+import { get, writable } from 'svelte/store'
 import { GoalKind, GoalState, type GoalStatus } from '../../src/lib/platform_shared/message'
 import {
   GOAL_END_HOLD_MS,
   clearGoalStatus,
+  followGoalStatus,
   goalLine,
   goalStatus,
   isGoalActive,
-  setGoalStatus
+  setGoalStatus,
+  type GoalStatusLink
 } from '../../src/lib/stores/goal'
 
 const status = (over: Partial<GoalStatus>): GoalStatus => ({
@@ -115,18 +117,103 @@ describe('goalStatus store', () => {
     expect(get(goalStatus)).toBeNull()
   })
 
-  it('clears at once when the link drops', () => {
-    setGoalStatus(status({ state: GoalState.GOAL_REACHED }))
-    clearGoalStatus()
-    expect(get(goalStatus)).toBeNull()
-    vi.advanceTimersByTime(GOAL_END_HOLD_MS)
-    expect(get(goalStatus)).toBeNull()
-  })
-
   it('tells an active goal from an ended one', () => {
     expect(isGoalActive(status({ state: GoalState.GOAL_SETTLING }))).toBe(true)
     expect(isGoalActive(status({ state: GoalState.GOAL_RUNNING }))).toBe(true)
     expect(isGoalActive(status({ state: GoalState.GOAL_REACHED }))).toBe(false)
     expect(isGoalActive(status({ state: GoalState.GOAL_IDLE }))).toBe(false)
+  })
+})
+
+// The data broker as followGoalStatus uses it: its goal status pushes, and requests answered when the test says.
+const fakeBroker = () => {
+  const pushes = new Set<(s: GoalStatus) => void>()
+  const replies: ((reply: { goalStatus?: GoalStatus }) => void)[] = []
+  const broker: GoalStatusLink = {
+    on: (_fns, callback) => {
+      pushes.add(callback)
+      return () => pushes.delete(callback)
+    },
+    request: () => new Promise(resolve => replies.push(resolve))
+  }
+  return {
+    broker,
+    push: (s: GoalStatus) => pushes.forEach(callback => callback(s)),
+    replies,
+    listening: () => pushes.size
+  }
+}
+
+describe('followGoalStatus', () => {
+  const linked = writable(false)
+  let stop: () => void = () => {}
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    linked.set(false)
+  })
+  afterEach(() => {
+    stop()
+    clearGoalStatus()
+    vi.useRealTimers()
+  })
+
+  it('asks once when the link comes up for a goal that was running before it listened', async () => {
+    const fake = fakeBroker()
+    stop = followGoalStatus(fake.broker, linked)
+    expect(fake.replies).toHaveLength(0)
+    linked.set(true)
+    expect(fake.replies).toHaveLength(1)
+    fake.replies[0]({ goalStatus: status({ progress: 0.4 }) })
+    await vi.runAllTimersAsync()
+    expect(get(goalStatus)?.progress).toBe(0.4)
+    fake.push(status({ progress: 0.5 }))
+    expect(fake.replies).toHaveLength(1)
+  })
+
+  it('shows no ended goal from the reply', async () => {
+    const fake = fakeBroker()
+    stop = followGoalStatus(fake.broker, linked)
+    linked.set(true)
+    fake.replies[0]({ goalStatus: status({ state: GoalState.GOAL_REACHED }) })
+    await vi.runAllTimersAsync()
+    expect(get(goalStatus)).toBeNull()
+  })
+
+  it('keeps a push that beat the reply, as it is newer', async () => {
+    const fake = fakeBroker()
+    stop = followGoalStatus(fake.broker, linked)
+    linked.set(true)
+    fake.push(status({ id: 2, progress: 0.1 }))
+    fake.replies[0]({ goalStatus: status({ id: 1, progress: 0.9 }) })
+    await vi.runAllTimersAsync()
+    expect(get(goalStatus)?.id).toBe(2)
+  })
+
+  it('updates on every push', () => {
+    const fake = fakeBroker()
+    stop = followGoalStatus(fake.broker, linked)
+    fake.push(status({ progress: 0.2 }))
+    expect(get(goalStatus)?.progress).toBe(0.2)
+    fake.push(status({ progress: 0.3 }))
+    expect(get(goalStatus)?.progress).toBe(0.3)
+  })
+
+  it('clears at once when the link drops, without waiting out an ended goal', () => {
+    const fake = fakeBroker()
+    stop = followGoalStatus(fake.broker, linked)
+    linked.set(true)
+    fake.push(status({ state: GoalState.GOAL_REACHED }))
+    expect(get(goalStatus)?.state).toBe(GoalState.GOAL_REACHED)
+    linked.set(false)
+    expect(get(goalStatus)).toBeNull()
+  })
+
+  it('stops listening when stopped', () => {
+    const fake = fakeBroker()
+    followGoalStatus(fake.broker, linked)()
+    expect(fake.listening()).toBe(0)
+    linked.set(true)
+    expect(fake.replies).toHaveLength(0)
   })
 })

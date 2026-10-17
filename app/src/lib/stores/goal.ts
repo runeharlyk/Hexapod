@@ -1,5 +1,5 @@
-import { writable, type Readable } from 'svelte/store'
-import { GoalKind, GoalState, type GoalStatus } from '$lib/platform_shared/message'
+import { get, writable, type Readable } from 'svelte/store'
+import { GoalKind, GoalState, GoalStatus } from '$lib/platform_shared/message'
 
 export const GOAL_END_HOLD_MS = 3000
 
@@ -56,4 +56,32 @@ export const setGoalStatus = (s: GoalStatus) => {
   if (s.state === GoalState.GOAL_IDLE) return status.set(null)
   status.set(s)
   if (!isGoalActive(s)) dropTimer = setTimeout(clearGoalStatus, GOAL_END_HOLD_MS)
+}
+
+/** What the goal status needs of the data broker (transport/databroker.ts): its pushes and one request. */
+export interface GoalStatusLink {
+  on(fns: typeof GoalStatus, callback: (status: GoalStatus) => void): () => void
+  request(payload: { goalStatusGet: object }): Promise<{ goalStatus?: GoalStatus }>
+}
+
+/**
+ * Follows the robot's goal: every push updates the status, and it clears at once when the link drops. A goal already
+ * running when the link comes up pushed its status before anyone listened, so it is requested once; a push that beat
+ * the reply is newer than it. Returns the function that stops following.
+ */
+export const followGoalStatus = (broker: GoalStatusLink, linked: Readable<boolean>) => {
+  const requestRunningGoal = async () => {
+    const res = await broker.request({ goalStatusGet: {} }).catch(() => null)
+    if (res?.goalStatus && isGoalActive(res.goalStatus) && !get(status))
+      setGoalStatus(res.goalStatus)
+  }
+  const stopPushes = broker.on(GoalStatus, setGoalStatus)
+  const stopLink = linked.subscribe(up => {
+    if (!up) return clearGoalStatus()
+    requestRunningGoal()
+  })
+  return () => {
+    stopPushes()
+    stopLink()
+  }
 }
