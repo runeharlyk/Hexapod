@@ -27,7 +27,7 @@ class Hexapod {
         });
     }
 
-    void planMotion() { updatedMotion = _motionService.updateMotion(); }
+    void planMotion() { updatedMotion = _motionService.updateMotion(imuFresh); }
 
     void updateActuators() {
         if (updatedMotion) {
@@ -56,6 +56,7 @@ class Hexapod {
     }
     bool resting() const { return _motionService.resting(); }
     const MotionService &motion() const { return _motionService; }
+    void resetOdometry() { _motionService.resetOdometry(); }
     imu_calibration::Check calibrateIMU(ImuCalibration &result) { return _peripherals.calibrateIMU(result); }
     bool magnetometerPresent() const { return _peripherals.magActive(); }
 

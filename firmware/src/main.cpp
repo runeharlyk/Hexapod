@@ -530,6 +530,13 @@ static void registerHandlers(CommAdapterBase &c) {
                 });
                 break;
             }
+            case socket_message_CorrelationRequest_odometry_get_tag: {
+                res.which_response = socket_message_CorrelationResponse_odometry_tag;
+                const OdometryEstimate e = robot.motion().odometry();
+                res.response.odometry = {e.x, e.y, e.yaw, e.kinematicYaw, e.distance};
+                if (req.request.odometry_get.reset) robot.resetOdometry();
+                break;
+            }
             default: res.status_code = 400; break;
         }
         adapter->emit(res, clientId);

@@ -442,7 +442,8 @@
    "file_read_chunk": "101 api.FileReadChunk",
    "file_delete": "102 api.FileDeleteRequest",
    "animation_validate": "110 socket_message.AnimationValidate",
-   "animation_list_request": "111 socket_message.AnimationListRequest"
+   "animation_list_request": "111 socket_message.AnimationListRequest",
+   "odometry_get": "130 socket_message.OdometryGet"
   },
   "socket_message.CorrelationResponse": {
    "correlation_id": "1 uint32",
@@ -463,7 +464,8 @@
    "empty": "5 api.EmptyMessage",
    "file_chunk": "101 api.FileChunk",
    "animation_report": "110 socket_message.AnimationReport",
-   "animation_list": "111 socket_message.AnimationList"
+   "animation_list": "111 socket_message.AnimationList",
+   "odometry": "130 socket_message.OdometryData"
   },
   "socket_message.FeaturesDataRequest": {},
   "socket_message.FeaturesDataResponse": {
@@ -532,6 +534,16 @@
   },
   "socket_message.ModeData": {
    "mode": "1 socket_message.ModesEnum"
+  },
+  "socket_message.OdometryData": {
+   "x": "1 float",
+   "y": "2 float",
+   "yaw": "3 float",
+   "kinematic_yaw": "4 float",
+   "distance": "5 float"
+  },
+  "socket_message.OdometryGet": {
+   "reset": "1 bool"
   },
   "socket_message.OtaChunk": {
    "index": "1 uint32",
@@ -603,7 +615,12 @@
    "mode": "12 uint32",
    "gait": "13 uint32",
    "mag": "14 repeated float",
-   "mag_fresh": "15 bool"
+   "mag_fresh": "15 bool",
+   "odom_x": "16 float",
+   "odom_y": "17 float",
+   "odom_yaw": "18 float",
+   "odom_kinematic_yaw": "19 float",
+   "odom_distance": "20 float"
   },
   "socket_message.UnsubscribeNotification": {
    "tag": "1 int32"

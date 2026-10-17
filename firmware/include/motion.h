@@ -12,6 +12,7 @@
 #include <utils/math_utils.h>
 #include <gait.h>
 #include <gait_speed.h>
+#include <odometry.h>
 #include <event_bus.h>
 #include <message_types.h>
 #include <policy_runner.h>
@@ -287,11 +288,17 @@ class MotionService {
         return !gaitIsCommanded(gait_state) && !gait.hasPendingStanceChange() && !_postureSettling;
     }
 
-    bool updateMotion() {
+    // imuFresh: the IMU was read on this tick, so its gyro rate is this tick's.
+    bool updateMotion(bool imuFresh) {
         resetCommandIfTimedOut();
         const float dt = getMotionDeltaSeconds();
         const MOTION_STATE state = motionState;
-        if (state != MOTION_STATE::STAND && state != MOTION_STATE::WALK) _atRest = false;
+        if (_odometryResetPending.exchange(false)) _odometry.reset();
+        if (state != MOTION_STATE::STAND && state != MOTION_STATE::WALK) {
+            _atRest = false;
+            // The odometry holds its pose; whatever moves the feet meanwhile is no travel it can measure.
+            _odometry.pause();
+        }
         // Entering and leaving ANIMATE are handled here rather than in handleInputMode so the runner
         // is only ever touched by the control task.
         if ((state == MOTION_STATE::ANIMATE) != _animating) {
@@ -320,6 +327,7 @@ class MotionService {
                 updateAutoGait();
                 _commandRamp.step(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
                 gait.step(gait_state, body_state, dt);
+                updateOdometry(dt, imuFresh);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 noteRestPosture();
                 break;
@@ -359,6 +367,7 @@ class MotionService {
                 updateAutoGait();
                 _commandRamp.step(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
                 gait.step(gait_state, body_state, dt);
+                updateOdometry(dt, imuFresh);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
             }
@@ -374,6 +383,11 @@ class MotionService {
     const gait_state_t &gaitState() const { return gait_state; }
     const BodyStateMsg &bodyCommand() const { return target_body_state; }
 
+    // Any task. Off the control task a read can mix two ticks' poses, as lastCommand's can.
+    OdometryEstimate odometry() const { return _odometry.estimate(); }
+    // Any task. The control task zeroes the pose before its next update; the gyro bias stays.
+    void resetOdometry() { _odometryResetPending = true; }
+
     // The motion's half of a telemetry tick: what it produced and from which command and mode.
     void fillTelemetry(socket_message_TickSample &tick) const {
         std::copy(std::begin(msgAngles.angles), std::end(msgAngles.angles), tick.angles);
@@ -383,6 +397,12 @@ class MotionService {
         tick.command_age_ms = lastCommandMillis == 0 ? 0 : millis() - lastCommandMillis;
         tick.mode = static_cast<uint32_t>(motionState);
         tick.gait = static_cast<uint32_t>(gait_state.gait_type);
+        const OdometryEstimate odometry = _odometry.estimate();
+        tick.odom_x = odometry.x;
+        tick.odom_y = odometry.y;
+        tick.odom_yaw = odometry.yaw;
+        tick.odom_kinematic_yaw = odometry.kinematicYaw;
+        tick.odom_distance = odometry.distance;
     }
 
     void publishState() { EventBus<ServoAnglesMsg>::publish(msgAngles); }
@@ -415,6 +435,8 @@ class MotionService {
     // Commands land here; gait_state eases toward it every tick (issue #7).
     gait_state_t target_gait_state = gait_state;
     GaitCommandRamp _commandRamp; // control task
+    FusedOdometry _odometry;      // control task
+    std::atomic<bool> _odometryResetPending {false};
 
     static constexpr float smoothing_factor = BODY_SMOOTHING;
     // Ramp time constant for the locomotion command: ~0.45 s to settle. Slow enough that a slammed
@@ -600,6 +622,19 @@ class MotionService {
                 return;
             }
         }
+    }
+
+    // Control task, after the gait stepped: the feet it left, the legs it has in stance and the gyro read on this tick.
+    void updateOdometry(float dt, bool imuFresh) {
+        std::array<bool, 6> stance;
+        for (int leg = 0; leg < 6; ++leg) stance[leg] = gait.inStance(gait_state, leg);
+        std::optional<float> gyroZ;
+        if (imuFresh) {
+            float rate[3];
+            _peripherals->gyroRad(rate);
+            gyroZ = rate[2];
+        }
+        _odometry.update(body_state, stance, gyroZ, dt);
     }
 
     // Control task, at the end of a STAND tick. A stand that has taken its posture and holds still is one a walk can

@@ -172,12 +172,33 @@ message TickSample {
   uint32 gait = 13;              // GaitType position
   repeated float mag = 14;       // uT, the compass as the chip read it, before the hard-iron offset; the last reading
   bool mag_fresh = 15;           // the compass was polled on this tick; the chip outputs 15 Hz, so a polled reading can repeat
+
+  // The odometry after this tick, in the body frame of docs/conventions.md that the robot faced at the last reset.
+  float odom_x = 16;             // m, right
+  float odom_y = 17;             // m, forward
+  float odom_yaw = 18;           // rad, counter-clockwise, the gyro fused in
+  float odom_kinematic_yaw = 19; // rad, as odom_yaw, from the feet alone
+  float odom_distance = 20;      // m travelled along the path
 }
 
 message TelemetryBatch {
   uint32 batch_seq = 1;
   uint32 dropped_ticks = 2;      // ticks the ring had no room for, since boot
   repeated TickSample ticks = 3;
+}
+
+// Reads the odometry; with reset, zeroes its pose after the read. The gyro bias it learned stays.
+message OdometryGet {
+  bool reset = 1;
+}
+
+// The odometry pose in the body frame of docs/conventions.md that the robot faced at the last reset.
+message OdometryData {
+  float x = 1;              // m, right
+  float y = 2;              // m, forward
+  float yaw = 3;            // rad, counter-clockwise, the gyro fused in
+  float kinematic_yaw = 4;  // rad, as yaw, from the feet alone
+  float distance = 5;       // m travelled along the path
 }
 
 message CorrelationRequest {
@@ -208,6 +229,7 @@ message CorrelationRequest {
     api.FileDeleteRequest file_delete = 102;
     AnimationValidate animation_validate = 110;
     AnimationListRequest animation_list_request = 111;
+    OdometryGet odometry_get = 130;
   }
 }
 
@@ -233,6 +255,7 @@ message CorrelationResponse {
     api.FileChunk file_chunk = 101;
     AnimationReport animation_report = 110;
     AnimationList animation_list = 111;
+    OdometryData odometry = 130;
   }
 }
 

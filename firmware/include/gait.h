@@ -222,11 +222,13 @@ class GaitController {
 
     void advancePhase(float dt, float velocity) { phase = std::fmod(phase + dt * velocity, 1.0f); }
 
+    float legPhase(const gait_state_t& gait, int leg) const { return std::fmod(phase + gait.offset[leg], 1.0f); }
+
     static float swingProgress(float ph, float standFrac) { return (ph - standFrac) / (1.0f - standFrac); }
 
     void startCycle(const gait_state_t& gait) {
         for (int i = 0; i < 6; i++) {
-            const float ph = std::fmod(phase + gait.offset[i], 1.0f);
+            const float ph = legPhase(gait, i);
             swingEntry[i] = ph >= gait.stand_frac ? swingProgress(ph, gait.stand_frac) : 0.0f;
             // Every swing starts from where its foot stands now. A foot the last cycle left flagged as
             // swinging, as a stance change does with its last foot, would otherwise keep that swing's
@@ -385,7 +387,7 @@ class GaitController {
         COPY_2D_ARRAY_6x4(newFeet, defaultPosition);
 
         for (int i = 0; i < 6; i++) {
-            const float ph = std::fmod(this->phase + gait.offset[i], 1.0f);
+            const float ph = legPhase(gait, i);
             const bool isSwinging = ph >= gait.stand_frac;
             // A foot already standing where it belongs has nothing to fetch, so it holds station
             // rather than taking an empty step while the others catch up. Repositioning only: in
@@ -434,6 +436,12 @@ class GaitController {
 
     void setPhase(float p) { phase = std::fmod(p, 1.0f); }
     float getPhase() const { return phase; }
+
+    // Whether the leg's foot is in the stance part of the cycle the last step walked. A step that ran no cycle eased
+    // the feet home and swung none; a foot it lowers is still in the air for a while (KinematicOdometry::LIFTED_MM).
+    bool inStance(const gait_state_t& gait, int leg) const {
+        return !cycleRunning || legPhase(gait, leg) < gait.stand_frac;
+    }
 
     void step(gait_state_t& gait, BodyStateMsg& body, float dt) {
         const bool isMoving = gaitIsCommanded(gait);

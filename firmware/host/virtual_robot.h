@@ -64,6 +64,16 @@ class VirtualRobot {
     const gait_state_t &gaitState() const { return _robot.motion().gaitState(); }
     // The body pose the motion is easing toward.
     const BodyStateMsg &bodyCommand() const { return _robot.motion().bodyCommand(); }
+    // The odometry as the last tick's telemetry reports it.
+    OdometryEstimate odometry() const {
+        return {.x = _sample.odom_x,
+                .y = _sample.odom_y,
+                .yaw = _sample.odom_yaw,
+                .kinematicYaw = _sample.odom_kinematic_yaw,
+                .distance = _sample.odom_distance};
+    }
+    // Takes effect on the next tick, as a reset from a transport does.
+    void resetOdometry() { _robot.resetOdometry(); }
 
   private:
     Hexapod _robot;
