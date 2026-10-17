@@ -137,6 +137,44 @@ void test_the_compass_reading_survives_the_ring_and_the_wire() {
     }
 }
 
+// The servo write's fields survive the ring and the wire: every pulse up to the PCA9685's 4095, both boards' results,
+// the write time and the dead-man flag.
+void test_the_servo_write_survives_the_ring_and_the_wire() {
+    auto owned = std::make_unique<Telemetry>();
+    Telemetry& telemetry = *owned;
+    telemetry.setRecording(true);
+    for (uint32_t i = 0; i < Telemetry::BATCH_TICKS; ++i) {
+        socket_message_TickSample t = tick(i);
+        for (int s = 0; s < 18; ++s) t.pwm[s] = static_cast<uint16_t>(4095 - 200 * s - i);
+        t.servo_write_us = 1100 + i;
+        t.servo_write_right = socket_message_ServoWrite_SERVO_WRITE_SKIPPED;
+        t.servo_write_left =
+            i % 2 ? socket_message_ServoWrite_SERVO_WRITE_RESTARTED : socket_message_ServoWrite_SERVO_WRITE_OK;
+        t.link_lost = i >= 3;
+        telemetry.record(t);
+    }
+    socket_message_TelemetryBatch batch;
+    TEST_ASSERT_TRUE(telemetry.takeBatch(batch));
+
+    uint8_t wire[socket_message_TelemetryBatch_size];
+    pb_ostream_t out = pb_ostream_from_buffer(wire, sizeof wire);
+    TEST_ASSERT_TRUE(pb_encode(&out, socket_message_TelemetryBatch_fields, &batch));
+    socket_message_TelemetryBatch decoded = socket_message_TelemetryBatch_init_zero;
+    pb_istream_t in = pb_istream_from_buffer(wire, out.bytes_written);
+    TEST_ASSERT_TRUE(pb_decode(&in, socket_message_TelemetryBatch_fields, &decoded));
+
+    for (uint32_t i = 0; i < Telemetry::BATCH_TICKS; ++i) {
+        const socket_message_TickSample& t = decoded.ticks[i];
+        for (int s = 0; s < 18; ++s) TEST_ASSERT_EQUAL_UINT16(4095 - 200 * s - i, t.pwm[s]);
+        TEST_ASSERT_EQUAL_UINT32(1100 + i, t.servo_write_us);
+        TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_SKIPPED, t.servo_write_right);
+        TEST_ASSERT_EQUAL(
+            i % 2 ? socket_message_ServoWrite_SERVO_WRITE_RESTARTED : socket_message_ServoWrite_SERVO_WRITE_OK,
+            t.servo_write_left);
+        TEST_ASSERT_EQUAL(i >= 3, t.link_lost);
+    }
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_nothing_is_recorded_while_nobody_listens);
@@ -145,5 +183,6 @@ int main() {
     RUN_TEST(test_a_new_recording_starts_with_fresh_ticks);
     RUN_TEST(test_two_tasks_lose_no_tick_unaccounted);
     RUN_TEST(test_the_compass_reading_survives_the_ring_and_the_wire);
+    RUN_TEST(test_the_servo_write_survives_the_ring_and_the_wire);
     return UNITY_END();
 }

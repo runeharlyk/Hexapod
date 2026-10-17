@@ -27,7 +27,9 @@ const uint16_t POSE[CHANNELS] = {300, 310, 320, 330, 340, 350, 360, 370, 380, 39
 int64_t now = 0;
 I2CBus& bus() { return I2CBus::instance(); }
 
-bool tick(ServoBoard& board) {
+using Write = ServoBoard::Write;
+
+Write tick(ServoBoard& board) {
     now += TICK_US;
     return board.write(POSE, CHANNELS, now);
 }
@@ -65,12 +67,12 @@ int lastWrite(uint8_t reg, Match match) {
 void startAwake(ServoBoard& board) {
     TEST_ASSERT_TRUE(board.begin(now));
     board.wakeup();
-    TEST_ASSERT_TRUE(tick(board));
+    TEST_ASSERT_EQUAL(Write::OK, tick(board));
 }
 
 void failThreeWrites(ServoBoard& board) {
     bus().absent.insert(ADDR);
-    for (int i = 0; i < 3; i++) TEST_ASSERT_FALSE(tick(board));
+    for (int i = 0; i < 3; i++) TEST_ASSERT_EQUAL(Write::FAILED, tick(board));
     TEST_ASSERT_FALSE(board.answering());
 }
 
@@ -87,21 +89,26 @@ void test_a_board_that_keeps_answering_is_written_once_a_tick_and_never_read() {
     ServoBoard board(ADDR, OSCILLATOR_HZ, PWM_HZ);
     startAwake(board);
     bus().attempts.clear();
-    for (int i = 0; i < 100; i++) TEST_ASSERT_TRUE(tick(board));
+    for (int i = 0; i < 100; i++) TEST_ASSERT_EQUAL(Write::OK, tick(board));
     TEST_ASSERT_EQUAL_INT(100, bus().attempts[ADDR]);
     assertThePoseIsInEveryChannel();
 }
 
 // Three failed writes in a row, then one 0.5 s after the last and one 0.5 s after that: five in 1.5 s
-// of ticks instead of three hundred, and every tick reports its write not made.
+// of ticks instead of three hundred, and every other tick reports its write skipped, not failed.
 void test_a_board_that_stops_answering_is_tried_twice_a_second() {
     ServoBoard board(ADDR, OSCILLATOR_HZ, PWM_HZ);
     startAwake(board);
     bus().absent.insert(ADDR);
     bus().attempts.clear();
-    int written = 0;
-    for (int i = 0; i < 300; i++) written += tick(board);
-    TEST_ASSERT_EQUAL_INT(0, written);
+    int failed = 0, skipped = 0;
+    for (int i = 0; i < 300; i++) {
+        const Write write = tick(board);
+        failed += write == Write::FAILED;
+        skipped += write == Write::SKIPPED;
+    }
+    TEST_ASSERT_EQUAL_INT(5, failed);
+    TEST_ASSERT_EQUAL_INT(295, skipped);
     TEST_ASSERT_EQUAL_INT(5, bus().attempts[ADDR]);
     TEST_ASSERT_FALSE(board.answering());
 }
@@ -116,12 +123,12 @@ void test_a_board_that_answers_again_is_written_every_tick() {
     bus().absent.clear();
 
     int ticksUntilWritten = 1;
-    while (!tick(board) && ticksUntilWritten <= 200) ticksUntilWritten++;
+    while (tick(board) != Write::OK && ticksUntilWritten <= 200) ticksUntilWritten++;
     TEST_ASSERT_LESS_OR_EQUAL_INT(100, ticksUntilWritten);
     TEST_ASSERT_TRUE(board.answering());
 
     bus().attempts.clear();
-    for (int i = 0; i < 10; i++) TEST_ASSERT_TRUE(tick(board));
+    for (int i = 0; i < 10; i++) TEST_ASSERT_EQUAL(Write::OK, tick(board));
     TEST_ASSERT_EQUAL_INT(10, bus().attempts[ADDR]);
     for (size_t i = writesBefore; i < bus().writes.size(); i++) {
         TEST_ASSERT_NOT_EQUAL_UINT8(ALL_LED_OFF_H, bus().writes[i].reg);
@@ -131,7 +138,7 @@ void test_a_board_that_answers_again_is_written_every_tick() {
 
 // A board that lost power answers asleep, at its power-on prescale and without auto-increment: it is
 // started again, the pose reaches every channel before the chip wakes, and the tick that found it
-// reports its write made.
+// reports the restart.
 void test_a_board_that_lost_power_is_started_again_with_the_pose_before_it_wakes() {
     ServoBoard board(ADDR, OSCILLATOR_HZ, PWM_HZ);
     startAwake(board);
@@ -141,7 +148,8 @@ void test_a_board_that_lost_power_is_started_again_with_the_pose_before_it_wakes
     bus().absent.clear();
 
     int ticks = 0;
-    while (!tick(board) && ++ticks < 200) {}
+    while (tick(board) != Write::RESTARTED && ++ticks < 200) {
+    }
     const auto& chip = bus().registers[ADDR];
     TEST_ASSERT_EQUAL_UINT8(PRESCALE_50HZ, chip[PRE_SCALE]);
     TEST_ASSERT_TRUE(chip[MODE1] & MODE1_AI);
@@ -164,7 +172,8 @@ void test_a_sleeping_board_that_lost_power_is_started_again_asleep() {
     bus().absent.clear();
 
     int ticks = 0;
-    while (!tick(board) && ++ticks < 200) {}
+    while (tick(board) != Write::RESTARTED && ++ticks < 200) {
+    }
     const auto& chip = bus().registers[ADDR];
     TEST_ASSERT_TRUE(chip[MODE1] & MODE1_AI);
     TEST_ASSERT_TRUE(chip[MODE1] & MODE1_SLEEP);
@@ -181,7 +190,7 @@ void test_a_board_missing_at_start_is_started_when_it_first_answers() {
     board.wakeup();
     bus().absent.clear();
 
-    TEST_ASSERT_TRUE(tick(board));
+    TEST_ASSERT_EQUAL(Write::RESTARTED, tick(board));
     const auto& chip = bus().registers[ADDR];
     TEST_ASSERT_EQUAL_UINT8(PRESCALE_50HZ, chip[PRE_SCALE]);
     TEST_ASSERT_TRUE(chip[MODE1] & MODE1_AI);

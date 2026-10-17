@@ -51,6 +51,8 @@ class VirtualRobot {
     MOTION_STATE mode() const { return static_cast<MOTION_STATE>(_sample.mode); }
     // The last command as the telemetry reports it, in TickSample.command's order.
     const float *telemetryCommand() const { return _sample.command; }
+    // Whether the last tick's telemetry reports the dead-man stop in force.
+    bool linkLost() const { return _sample.link_lost; }
 
     // What the servos receive: they are driven once the boards are awake and a pose has been sent, to the last pose.
     // The count of poses sent tells a tick that wrote one from a tick that left the servos where they were.

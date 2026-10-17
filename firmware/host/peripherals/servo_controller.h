@@ -9,6 +9,7 @@
 #include <cmath>
 #include <kinematics.h>
 #include <message_types.h>
+#include <platform_shared/message.pb.h>
 
 class ServoController {
   public:
@@ -33,6 +34,9 @@ class ServoController {
         state().writes++;
     }
     void updateServoState() {}
+    // It writes no board, so a tick reports no servo write.
+    void startTick() {}
+    void fillTelemetry(socket_message_TickSample &) const {}
 
   private:
     static Output &state() {

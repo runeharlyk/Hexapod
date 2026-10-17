@@ -74,6 +74,13 @@
    "OTA_FINISHED": 2,
    "OTA_ERROR": 3
   },
+  "socket_message.ServoWrite": {
+   "SERVO_WRITE_NONE": 0,
+   "SERVO_WRITE_OK": 1,
+   "SERVO_WRITE_FAILED": 2,
+   "SERVO_WRITE_SKIPPED": 3,
+   "SERVO_WRITE_RESTARTED": 4
+  },
   "socket_message.SystemCommand": {
    "SYS_NONE": 0,
    "SYS_RESTART": 1,
@@ -665,7 +672,12 @@
    "odom_y": "17 float",
    "odom_yaw": "18 float",
    "odom_kinematic_yaw": "19 float",
-   "odom_distance": "20 float"
+   "odom_distance": "20 float",
+   "pwm": "21 repeated uint32",
+   "servo_write_us": "22 uint32",
+   "servo_write_right": "23 socket_message.ServoWrite",
+   "servo_write_left": "24 socket_message.ServoWrite",
+   "link_lost": "25 bool"
   },
   "socket_message.UnsubscribeNotification": {
    "tag": "1 int32"

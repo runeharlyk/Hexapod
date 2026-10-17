@@ -467,6 +467,26 @@ void test_the_dead_man_timeout_does_not_stop_a_goal() {
     assertAtRest(rig);
 }
 
+// The telemetry's dead-man flag follows the stop: a goal taken after the stop fired ends it, as a command would, the
+// goal runs with it down, and once the goal ends a silent link stops the robot again after the 2 s link timeout.
+void test_a_goal_ends_the_dead_man_stop_and_the_stop_returns_after_it() {
+    Rig &rig = newRig();
+    standUp(rig);
+    rig.robot.setMode(MOTION_STATE::WALK);
+    rig.tick();
+    rig.robot.command({0, 1, 0, 0, 0, 0, 0, 0});
+    rig.run(1.0f);
+    TEST_ASSERT_TRUE(rig.robot.linkLost());
+    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(0.3f), style(), GaitType::TRI_GATE));
+    rig.tick();
+    TEST_ASSERT_FALSE(rig.robot.linkLost());
+    rig.runGoal([&](int) { TEST_ASSERT_FALSE(rig.robot.linkLost()); });
+    TEST_ASSERT_EQUAL(GoalState::REACHED, rig.state());
+    int silent = 0;
+    for (; silent < ticksFor(3.0f) && !rig.robot.linkLost(); ++silent) rig.tick();
+    TEST_ASSERT_INT_WITHIN(1, ticksFor(2.0f), silent);
+}
+
 // Ruling R19: the pose is a running goal's origin, so a reset is refused, and resets nothing, from the goal's
 // acceptance until it ends; one after it is taken.
 void test_an_odometry_reset_is_refused_while_a_goal_runs() {
@@ -735,6 +755,7 @@ int main(int, char **) {
     RUN_TEST(test_a_gait_change_over_the_wire_cancels_the_goal);
     RUN_TEST(test_an_auto_swap_at_rest_does_not_cancel_the_goal);
     RUN_TEST(test_the_dead_man_timeout_does_not_stop_a_goal);
+    RUN_TEST(test_a_goal_ends_the_dead_man_stop_and_the_stop_returns_after_it);
     RUN_TEST(test_a_cancelled_goal_stops_with_no_cadence_left);
     RUN_TEST(test_the_owner_leaving_cancels_the_goal_and_another_client_leaving_does_not);
     RUN_TEST(test_an_owner_that_falls_silent_loses_its_goal);

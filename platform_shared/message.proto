@@ -154,6 +154,15 @@ message OtaChunk {
 }
 message OtaFinish {}
 
+// What a tick's write to one PCA9685 board did.
+enum ServoWrite {
+  SERVO_WRITE_NONE = 0;       // nothing was written: the mode drives no servo
+  SERVO_WRITE_OK = 1;
+  SERVO_WRITE_FAILED = 2;     // attempted and not acknowledged
+  SERVO_WRITE_SKIPPED = 3;    // not attempted: the board is backing off after failed writes
+  SERVO_WRITE_RESTARTED = 4;  // it answered after failing without its configuration, so it was started again
+}
+
 // One 5 ms control tick, as the robot ran it: for comparing the real control loop, IMU and command
 // path with what the simulation assumes (simulation/record.py, report_recording.py).
 message TickSample {
@@ -179,6 +188,15 @@ message TickSample {
   float odom_yaw = 18;           // rad, counter-clockwise, the gyro fused in
   float odom_kinematic_yaw = 19; // rad, as odom_yaw, from the feet alone
   float odom_distance = 20;      // m travelled along the path
+
+  // The servo write of this tick. pwm holds the 18 pulses, in PCA9685 counts of 4096 and in angles' order, that the
+  // tick wrote or meant to write (a failed or skipped board's too), and 0 for a board it did not write.
+  repeated uint32 pwm = 21;
+  uint32 servo_write_us = 22;         // time spent writing both boards; part of compute_us
+  ServoWrite servo_write_right = 23;  // board 0x41, servos 0-8
+  ServoWrite servo_write_left = 24;   // board 0x40, servos 9-17
+  // The dead-man stop is in force: set from the tick it zeroed the command until a command or a goal arrives.
+  bool link_lost = 25;
 }
 
 message TelemetryBatch {

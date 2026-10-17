@@ -472,6 +472,7 @@ class MotionService {
         const float command[9] = {c.lx, c.ly, c.rx, c.ry, c.h, c.s, c.s1, c.fd, c.stride};
         std::copy(std::begin(command), std::end(command), tick.command);
         tick.command_age_ms = lastCommandMillis == 0 ? 0 : millis() - lastCommandMillis;
+        tick.link_lost = commandTimedOut;
         tick.mode = static_cast<uint32_t>(motionState);
         tick.gait = static_cast<uint32_t>(gait_state.gait_type);
         const OdometryEstimate odometry = _odometry.estimate();
@@ -613,6 +614,7 @@ class MotionService {
     unsigned long lastCommandMillis = 0;
     unsigned long lastMotionMicros = 0;
     unsigned long _lastTunedLog = 0;
+    // The dead-man stop is in force: it fired, and no command or goal has come since.
     bool commandTimedOut = false;
     bool steering = false;
     // Written on the command worker, read by the control task for telemetry only; a torn read costs
@@ -840,6 +842,9 @@ class MotionService {
                                                                                      : GoalState::REFUSED;
             if (_goalState == GoalState::SETTLING && mode == MOTION_STATE::STAND)
                 EventBus<ModeMsg>::publish({MOTION_STATE::WALK});
+            // The goal commands the walk from here on, so a dead-man stop is over, and the stop watches the link again
+            // once the goal ends.
+            if (goalActive()) commandTimedOut = false;
             if (!goalActive()) releaseGoalWalk();
             reportGoal();
         } else if (cancelled) {
