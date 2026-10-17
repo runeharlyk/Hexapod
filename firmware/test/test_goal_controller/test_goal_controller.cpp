@@ -306,6 +306,37 @@ void test_it_slows_over_the_last_stretch_down_to_a_floor() {
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.5f, back.ly);
 }
 
+// A fast goal's slowdown zone is the distance its speed covers in two stops' coasts, when that is longer than
+// SLOW_DOWN. It centres its sticks once the remainder is within the coast predicted from the speed its gait walks now,
+// which follows the sticks through the command ramp, so a pass from rest drives even on a remainder shorter than its
+// floor's coast.
+void test_a_fast_goal_slows_early_and_stops_its_coast_short() {
+    constexpr float FAST_MM = 600; // about BI's top at the default posture
+    const float zone = 2 * FAST_MM / 1000 * GoalController::STOP_S;
+    const float coast = FAST_MM / 1000 * GoalController::STOP_S; // after a second at full speed
+    TEST_ASSERT_TRUE(zone > 4 * GoalController::SLOW_DOWN_M);
+    const auto atSpeed = [&](GoalController& goal) {
+        goal.start(forward(1, 1), at(0, 0, 0), FAST_MM, TOP_TURN);
+        for (int i = 0; i < 200; i++) TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1, goal.update(at(0, 0, 0), false, DT).ly);
+    };
+    GoalController goal;
+    atSpeed(goal);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.6f, goal.update(at(0, 1 - 0.6f * zone, 0), false, DT).ly);
+    TEST_ASSERT_TRUE(centred(goal.update(at(0, 1 - 0.9f * coast, 0), false, DT)));
+    TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
+
+    atSpeed(goal);
+    const float remaining = 1.1f * coast;
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, remaining / zone, goal.update(at(0, 1 - remaining, 0), false, DT).ly);
+    TEST_ASSERT_EQUAL(GoalState::RUNNING, goal.state());
+
+    // From rest, 20 mm is less than the floor's coast at speed, but nothing has started to coast yet.
+    goal.start(forward(0.02f, 1), at(0, 0, 0), FAST_MM, TOP_TURN);
+    TEST_ASSERT_TRUE(GoalController::MIN_FRACTION * coast > 0.02f);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, GoalController::MIN_FRACTION, goal.update(at(0, 0, 0), false, DT).ly);
+    TEST_ASSERT_EQUAL(GoalState::RUNNING, goal.state());
+}
+
 // The arc's slowdown is on its remaining angle and slows the forward and turn sticks together.
 void test_an_arc_slows_on_its_remaining_angle() {
     constexpr float RADIUS = 1.0f;
@@ -691,6 +722,7 @@ int main(int, char**) {
     RUN_TEST(test_arcs_land_on_their_end_pose_and_follow_their_circle);
     RUN_TEST(test_a_tight_arc_slows_its_forward_stick_to_keep_its_curvature);
     RUN_TEST(test_it_slows_over_the_last_stretch_down_to_a_floor);
+    RUN_TEST(test_a_fast_goal_slows_early_and_stops_its_coast_short);
     RUN_TEST(test_an_arc_slows_on_its_remaining_angle);
     RUN_TEST(test_heading_hold_steers_against_a_drifting_yaw);
     RUN_TEST(test_straight_walks_hold_their_line_with_signs_by_the_stick_convention);

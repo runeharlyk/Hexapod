@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -265,6 +266,37 @@ void test_an_arc_goal_ends_on_its_arc() {
     assertAtRest(rig);
 }
 
+// A fast goal slows over a zone that grows with its speed and centres its sticks the predicted coast short of its
+// target, so TRI and BI at full speed, BI near 640 mm/s, land within the tolerances in one pass as they do at half of
+// it.
+void test_fast_and_slow_goals_reach_their_targets() {
+    for (const GaitType gait : {GaitType::TRI_GATE, GaitType::BI_GATE}) {
+        for (const float speed : {1.0f, 0.5f}) {
+            for (const bool turning : {false, true}) {
+                Rig &rig = newRig();
+                standUp(rig);
+                const OdometryEstimate start = rig.robot.odometry();
+                const Goal goal = turning ? turn(90 * DEG, speed) : forward(1.0f, speed);
+                TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(goal, style(), gait));
+                rig.runGoal();
+                const OdometryEstimate end = relative(start, rig.robot.odometry());
+                char msg[120];
+                std::snprintf(msg, sizeof(msg), "gait %d speed %.2f %s: %u passes, at %.4f %.4f %.4f", (int)gait, speed,
+                              turning ? "turn" : "forward", (unsigned)rig.robot.goalStatus().passes, end.x, end.y,
+                              end.yaw);
+                TEST_ASSERT_EQUAL_MESSAGE(GoalState::REACHED, rig.state(), msg);
+                TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, rig.robot.goalStatus().passes, msg);
+                if (turning) {
+                    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(GoalController::REACHED_RAD, 90 * DEG, end.yaw, msg);
+                } else {
+                    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(GoalController::REACHED_M, 1.0f, end.y, msg);
+                    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(GoalController::CROSS_REACHED_M, 0, end.x, msg);
+                }
+            }
+        }
+    }
+}
+
 // Review focus 1: the app's heartbeat, the facade's keep-alive and the ESP-NOW controller's centred packets carry a
 // posture, a speed, a stride and a tilt of their own; during a goal none of it changes a single joint angle.
 void test_centred_commands_during_a_goal_change_nothing() {
@@ -361,7 +393,7 @@ void test_an_auto_swap_at_rest_does_not_cancel_the_goal() {
     Rig &rig = newRig();
     standUp(rig);
     TEST_ASSERT_EQUAL(GaitType::TRI_GATE, rig.robot.gait());
-    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(0.5f, 0.25f), style(), GaitType::AUTO));
+    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(0.5f, 1.0f), style(), GaitType::AUTO));
     bool swappedWhileRunning = false;
     GaitType last = rig.robot.gait();
     GoalState lastState = rig.state();
@@ -573,6 +605,7 @@ int main(int, char **) {
     RUN_TEST(test_a_sideways_goal_walks_to_the_right);
     RUN_TEST(test_a_turn_goal_turns_90_degrees_in_place);
     RUN_TEST(test_an_arc_goal_ends_on_its_arc);
+    RUN_TEST(test_fast_and_slow_goals_reach_their_targets);
     RUN_TEST(test_centred_commands_during_a_goal_change_nothing);
     RUN_TEST(test_an_off_centre_stick_cancels_the_goal_and_drives_the_walk);
     RUN_TEST(test_a_mode_change_cancels_the_goal);

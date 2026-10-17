@@ -529,6 +529,7 @@ class MotionService {
     // Ramp time constant for the locomotion command: ~0.45 s to settle. Slow enough that a slammed
     // stick does not jerk the stride, fast enough that the robot still feels directly driven.
     static constexpr float GAIT_COMMAND_TAU_S = 0.15f;
+    static_assert(GoalController::RAMP_TAU_S == GAIT_COMMAND_TAU_S, "a goal predicts its stop from this ramp");
     static constexpr unsigned long COMMAND_TIMEOUT_MS = 2000;
     // A walking robot covers ~0.9 m in COMMAND_TIMEOUT_MS. While a stick drives locomotion the
     // senders repeat it (app heartbeat 200 ms, ESP-NOW controller 50 Hz), so silence for three
