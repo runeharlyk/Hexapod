@@ -5,7 +5,7 @@ import math
 from src.robot.firmware_gait import FEET_EASE_S, GaitCommandRamp, GaitState, gait_is_commanded
 
 from . import speed_model
-from .backends.base import Gait, Goal, GoalKind, Mode, RobotError, RobotTimeout, Velocity
+from .backends.base import Gait, Mode, RobotError, RobotTimeout, Velocity
 
 CONTROL_TICK_S = 0.005  # the firmware's control period (firmware/src/main.cpp)
 
@@ -76,8 +76,7 @@ def move(robot, forward: float, sideways: float, speed: float | None) -> None:
         if speed is not None:
             top = _goal_top(robot.style().gait)
             share = _share(speed, top.vx if sideways == 0 else top.vy)
-        kind, metres = (GoalKind.FORWARD, forward) if sideways == 0 else (GoalKind.SIDEWAYS, sideways)
-        robot.run_goal(Goal(kind, distance=metres), share)
+        robot.walk(forward if sideways == 0 else sideways, sideways=sideways != 0, speed=share)
         return
     top = robot.max_velocity()
     v = speed if speed is not None else (top.vx if sideways == 0 else top.vy) / 2
@@ -90,7 +89,8 @@ def rotate(robot, degrees: float, rate: float | None) -> None:
     """Turns `degrees` counter-clockwise at `rate` rad/s, by default the style's share of the gait's top for a goal and
     half the gait's top otherwise.
 
-    A robot that takes goals closes the turn itself, on its gyro-fused odometry. Otherwise, with an IMU the turn closes
+    A robot that takes goals closes the turn itself, on its gyro-fused odometry, from the heading the goals so far
+    meant (Robot.turn). Otherwise, with an IMU the turn closes
     on the measured yaw: each pass slows over the last SLOW_DOWN_DEG and runs on to within AIM_DEG, then the yaw is
     read again once the gait has settled and another pass turns the rest until it is within TOLERANCE_DEG, up to
     MAX_TURN_PASSES. A pass that stopped at the edge of the tolerance would leave the settle drift free to push the yaw
@@ -103,7 +103,7 @@ def rotate(robot, degrees: float, rate: float | None) -> None:
         return
     if robot.takes_goals():
         share = None if rate is None else _share(rate, _goal_top(robot.style().gait).yaw_rate)
-        robot.run_goal(Goal(GoalKind.TURN, angle=degrees), share)
+        robot.turn(degrees, speed=share)
         return
     top = rate if rate is not None else robot.max_velocity().yaw_rate / 2
     if top <= 0:

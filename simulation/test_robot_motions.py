@@ -18,7 +18,8 @@ class ScriptedBackend:
     per stop of a turn) while the feet settle, a dead-man stop at `drop_at`, a mode switched from elsewhere and no IMU;
     records every command. With `goals` it takes goal moves as the firmware does from STAND or WALK: each settles for
     GOAL_SETTLE_S, runs for `goal_s`, then ends in `goal_ends`, unless another client's goal replaces it at
-    `replaced_at` (seconds into the goal)."""
+    `replaced_at` (seconds into the goal). A goal that is REACHED has moved the pose by exactly its target, an arc
+    only its heading."""
 
     def __init__(self, top=Velocity(0.3, 0.29, 1.5), yaw=0.0, yaw_lag_s=0.0, turn_scale=1.0, drop_at=None,
                  imu=True, mode=Mode.DEACTIVATED, refuse=(), switch_at=None, stop_drifts=(), goals=False, goal_s=1.0,
@@ -26,6 +27,7 @@ class ScriptedBackend:
         self.top, self.turn_scale, self.drop_at, self.imu, self.refuse = top, turn_scale, drop_at, imu, refuse
         self.goals, self.goal_s, self.goal_ends, self.replaced_at = goals, goal_s, goal_ends, replaced_at
         self._goal = None  # (id, goal, start time)
+        self._goal_moved = False
         self._goal_count = 0
         self.stop_drifts = list(stop_drifts)
         self.switch_at = switch_at  # (time, mode): someone else changes the mode, as the app's stop button does
@@ -114,6 +116,7 @@ class ScriptedBackend:
         self.mode = Mode.WALK  # a goal from STAND enters WALK itself
         self._goal_count += 1
         self._goal = (self._goal_count, goal, self.t)
+        self._goal_moved = False
         return self.goal_status()
 
     def goal_cancel(self):
@@ -130,6 +133,15 @@ class ScriptedBackend:
             state, progress = GoalState.RUNNING, (elapsed - GOAL_SETTLE_S) / self.goal_s
         else:
             state, progress = self.goal_ends, 1.0 if self.goal_ends is GoalState.REACHED else 0.5
+            if state is GoalState.REACHED and not self._goal_moved:
+                self._goal_moved = True
+                heading = math.radians(self.yaw)
+                forward, left = (goal.distance, 0.0) if goal.kind is GoalKind.FORWARD else (0.0, goal.distance)
+                if goal.kind in (GoalKind.FORWARD, GoalKind.SIDEWAYS):
+                    self.x += forward * math.cos(heading) - left * math.sin(heading)
+                    self.y += forward * math.sin(heading) + left * math.cos(heading)
+                else:
+                    self.yaw += goal.angle
         target = goal.distance if goal.kind in (GoalKind.FORWARD, GoalKind.SIDEWAYS) else goal.angle
         return GoalStatus(number, state, goal.kind, target, progress, self.x, self.y, self.yaw, 1)
 
@@ -484,3 +496,49 @@ def test_set_gait_is_the_styles_gait():
     robot.walk(0.1)
     (_, style), = backend.logged("goal")
     assert style.gait is Gait.WAVE
+
+
+# Each turn takes up the heading drift of the walks before it, so a square closes on the robot's own heading.
+def test_a_turn_after_a_walk_that_drifted_turns_the_rest_of_the_way():
+    robot, backend = _goals()
+    robot.walk(1.0)
+    backend.yaw += 2.0  # the walk ended 2 deg to the left of its heading
+    robot.turn(90)
+    backend.yaw -= 1.0  # and the turn 1 deg short of its 88
+    robot.walk(1.0)
+    robot.turn(90)
+    robot.arc(0.5, 90)
+    angles = [goal.angle for goal, _ in backend.logged("goal") if goal.kind is not GoalKind.FORWARD]
+    assert angles == pytest.approx([88.0, 91.0, 90.0])
+
+
+def test_a_full_turn_stays_one_and_a_drift_past_the_wrap_is_the_short_way():
+    robot, backend = _goals(yaw=179.0)
+    robot.turn(10)
+    backend.yaw = -168.0  # 192 deg: 3 past the 189 it meant, across the wrap
+    robot.turn(360)
+    angles = [goal.angle for goal, _ in backend.logged("goal")]
+    assert angles == pytest.approx([10.0, 357.0])
+
+
+# The heading a script meant is its own goals' only: a velocity walk moves it, and a reset of the odometry zeroes it.
+def test_the_intended_heading_follows_velocity_walks_and_odometry_resets():
+    robot, backend = _goals()
+    robot.turn(90)
+    robot.set_velocity(0.0, 0.0, 0.5)
+    backend.yaw = 135.0
+    robot.turn(90)
+    robot.reset_odometry()
+    backend.yaw = 4.0  # the odometry zeroed, and the robot since nudged 4 deg
+    robot.turn(-90)
+    angles = [goal.angle for goal, _ in backend.logged("goal")]
+    assert angles == pytest.approx([90.0, 90.0, -94.0])
+
+
+def test_a_turn_that_did_not_end_forgets_the_heading_it_meant():
+    robot, backend = _goals(goal_ends=GoalState.CANCELLED)
+    with pytest.raises(RobotError):
+        robot.turn(90)
+    backend.goal_ends, backend.yaw = GoalState.REACHED, 30.0
+    robot.turn(90)
+    assert backend.logged("goal")[-1][0].angle == pytest.approx(90.0)

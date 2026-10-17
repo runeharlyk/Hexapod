@@ -137,8 +137,8 @@ class FakeRobot:
 
     With `goals` it takes goal moves as the firmware does: a goal_move from STAND or WALK is accepted (202), enters
     WALK, settles for GOAL_SETTLE_S, runs for GOAL_RUN_S and is REACHED; its status is pushed on every change, except
-    the last when `drop_final_push`, as a full bus can drop it. Without, it answers every goal and odometry request
-    400, as a firmware from before goals does."""
+    the last when `drop_final_push`, as a full bus can drop it. Its odometry has turned a goal's angle from the start,
+    exactly. Without, it answers every goal and odometry request 400, as a firmware from before goals does."""
 
     def __init__(self, imu=True, obey=True, reset_on_open=None, goals=False):
         self.imu, self.obey, self.reset_on_open, self.goals = imu, obey, reset_on_open, goals
@@ -226,6 +226,7 @@ class FakeRobot:
                 if self.mode in (pb.STAND, pb.WALK):
                     response.status_code = 202
                     self.goal_count, self.goal_started = self.goal_count + 1, time.monotonic()
+                    self.odometry.yaw += request.goal_move.angle_rad
                     response.goal_status.CopyFrom(self.goal_status())
                     if self.mode == pb.STAND:
                         self.mode = pb.WALK

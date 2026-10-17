@@ -137,8 +137,8 @@ def test_a_goal_walks_a_metre_to_within_6_cm(standing):
     status = robot.walk(1.0)
     position, _ = _moved(start, _pose(backend))
     assert status.state is GoalState.REACHED
-    # MuJoCo's feet slip: TRI walks 4.2-4.8 % beyond its odometry, a simulation contact effect that the user chose not to
-    # calibrate out unless the floor runs need it (measured 2026-10-17), so the simulation's tolerance is 6 cm.
+    # MuJoCo's feet slip: TRI walks 4.2-4.8 % beyond its odometry, a simulation contact effect that the user chose not
+    # to calibrate out unless the floor runs need it (measured 2026-10-17), so the simulation's tolerance is 6 cm.
     assert np.linalg.norm(position - (1.0, 0.0)) < 0.06
 
 
@@ -158,9 +158,8 @@ def test_a_goal_arc_ends_within_5_cm_and_5_degrees(standing):
     assert np.linalg.norm(position - (0.5, 0.5)) < 0.05 and yaw == pytest.approx(90, abs=5)
 
 
-@pytest.mark.xfail(strict=True, reason="measured 2026-10-17 over 8 clock phases: TRI_GATE closes within 5.4-8.2 cm "
-                                       "but 4.1-6.2 deg off, as each walk ends up to 1.6 deg off its heading and each "
-                                       "turn about 0.9 deg over; awaits the controller's ruling")
+# Each turn takes up the heading its walk drifted (Robot.turn). Without, the per-goal tolerances add up, as each walk
+# ends up to 1.6 deg off its heading and each turn about 0.9 deg over, to 4.1-6.2 deg (measured 2026-10-17).
 def test_a_goal_square_closes_within_10_cm_and_5_degrees(standing):
     robot, backend = standing
     start = _pose(backend)
