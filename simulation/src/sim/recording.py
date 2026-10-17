@@ -23,8 +23,12 @@ _RECORD = struct.Struct("<QI")
 
 _SCALARS = ("seq", "t_us", "period_us", "compute_us", "imu_fresh", "command_age_ms", "mode", "gait", "mag_fresh")
 _VECTORS = ("rpy", "gyro", "gravity", "angles", "command", "mag")
-# Kept only where a tick carries a nonzero value: firmware before the odometry sends none, which reads as zeros.
+# Each group is kept only where a tick carries a nonzero value: firmware before it sends none, which reads as zeros.
 _ODOMETRY = ("odom_x", "odom_y", "odom_yaw", "odom_kinematic_yaw", "odom_distance")
+# The servo write (pwm in PCA9685 counts, servo_write_* a message_pb2.ServoWrite per board) and the dead-man stop.
+_SERVO = ("servo_write_us", "servo_write_right", "servo_write_left", "link_lost")
+_SERVO_VECTORS = ("pwm",)
+_OPTIONAL = (_ODOMETRY, (*_SERVO, *_SERVO_VECTORS))
 
 
 @dataclass
@@ -81,7 +85,8 @@ def _read(data: bytes):
 
 def load(path) -> Recording:
     features, records = _read(Path(path).read_bytes())
-    ticks = {name: [] for name in (*_SCALARS, *_VECTORS, *_ODOMETRY)}
+    scalars, vectors = (*_SCALARS, *_ODOMETRY, *_SERVO), (*_VECTORS, *_SERVO_VECTORS)
+    ticks = {name: [] for name in (*scalars, *vectors)}
     batch_rx_us, batch_seqs = [], []
     link_gaps = dropped = 0
     for host_rx_us, frame in records:
@@ -96,14 +101,15 @@ def load(path) -> Recording:
         batch_rx_us.append(host_rx_us)
         dropped = batch.dropped_ticks
         for tick in batch.ticks:
-            for name in (*_SCALARS, *_ODOMETRY):
+            for name in scalars:
                 ticks[name].append(getattr(tick, name))
-            for name in _VECTORS:
+            for name in vectors:
                 ticks[name].append(list(getattr(tick, name)))
     arrays = {name: np.asarray(values) for name, values in ticks.items()}
-    if not any(np.any(arrays[name]) for name in _ODOMETRY):
-        for name in _ODOMETRY:
-            del arrays[name]
+    for group in _OPTIONAL:
+        if not any(np.any(arrays[name]) for name in group):
+            for name in group:
+                del arrays[name]
     seq = arrays["seq"].astype(np.int64)
     batches = np.asarray(batch_seqs, dtype=np.int64)
     # A batch the link could not take is skipped by the robot, and dropped ticks are counted there;

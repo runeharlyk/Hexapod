@@ -23,6 +23,7 @@ All notable changes to this project are documented in this file, following [Keep
 - Adds I2C NACK and timeout counts per device and the number of bus recoveries to the system analytics, listed on the metrics page.
 - Adds a status LED on the board's WS2812: a colour per motion mode, steady with a client connected and blinking without one.
 - Shows each saved robot's firmware version, build and servo calibration state on the start page; a robot that cannot be asked shows its last report, labelled with its age, and `/api/features` now reports `servos_calibrated`.
+- Adds each control tick's servo write to the telemetry (the 18 pulses, the write time and each board's result: written, failed, skipped while backing off or restarted) with the dead-man stop, and `simulation/report_recording.py` reports the failed writes and the ticks the stop fired on.
 
 ### Changed
 
@@ -34,6 +35,7 @@ All notable changes to this project are documented in this file, following [Keep
 - Splits the hosted app's bundle so each page loads its code when opened; the embedded build keeps one bundle.
 - Backs off servo writes to a PCA9685 that stops answering to one every 500 ms, resumes every tick when it answers, and starts it again if it lost power or was missing at boot.
 - Shortens the I2C transfer timeout from 200 ms to 20 ms, so a held bus stalls the 5 ms control loop less.
+- Ends a dead-man stop when a goal is taken, so the stop watches the link again once the goal ends.
 
 ### Fixed
 
