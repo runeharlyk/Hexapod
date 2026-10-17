@@ -47,7 +47,6 @@ class MotionService {
 
     // Control task, at the start of the tick after the gait arrived; the goal it ends was ended on arrival.
     void handleInputGait(GaitType gait) {
-        _gaitTaken = gait;
         _requestedGait = gait;
         // Swapping a schedule mid-stride is the hazard updateAutoGait() documents: offset[] reassigns
         // every leg's phase at once, so a leg at the top of its swing becomes a stance leg and its
@@ -277,6 +276,7 @@ class MotionService {
     bool updateMotion(bool imuFresh) {
         const MotionInbox::Mail mail = _inbox.take(millis());
         _modesTaken = mail.modes;
+        _gaitTaken = mail.gait;
         for (int i = 0; i < mail.modes.count; ++i) handleInputMode(mail.modes.items[i]);
         if (mail.modes.count) _inbox.noteModes({motionState, _borrowedMode, _previousMode}, _animation.busy());
         if (mail.gait) handleInputGait(*mail.gait);
@@ -382,9 +382,7 @@ class MotionService {
                      : m.kind == ModeMsgKind::HANDBACK ? " (hand-back)"
                                                        : "");
         }
-        _modesTaken = {};
         if (_gaitTaken) ESP_LOGI("MotionService", "Gait %d", (int)*_gaitTaken);
-        _gaitTaken.reset();
         if (std::exchange(_tunedLogDue, false)) logTunedCommand(_tunedVelocity, target_gait_state);
     }
 
