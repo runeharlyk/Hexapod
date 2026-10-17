@@ -236,6 +236,31 @@ void test_deactivating_mid_walk_freezes_the_joints() {
     TEST_ASSERT_EQUAL_FLOAT(0.0f, largestStep(robot, ticksFor(0.5f), &FORWARD));
 }
 
+// Only the control task changes the motion (roadmap 9.5): what a transport posts reaches its bus's worker at once
+// (host_bus::drainAll), and the motion takes it at the start of the next tick, never in the middle of one.
+void test_nothing_posted_changes_the_motion_before_the_next_tick() {
+    {
+        VirtualRobot robot;
+        standUp(robot);
+        robot.command({1, 0, 0, 0, 0, 0, 0, 0});
+        host_bus::drainAll();
+        TEST_ASSERT_EQUAL_FLOAT(0.f, robot.bodyCommand().xm);
+        robot.tick();
+        TEST_ASSERT_EQUAL_FLOAT(50.f, robot.bodyCommand().xm);
+    }
+    {
+        VirtualRobot robot;
+        standUp(robot);
+        robot.setMode(MOTION_STATE::WALK);
+        robot.tick();
+        robot.command(FORWARD);
+        host_bus::drainAll();
+        TEST_ASSERT_EQUAL_FLOAT(0.f, robot.gaitCommand().step_y);
+        robot.tick();
+        TEST_ASSERT_GREATER_THAN_FLOAT(GAIT_STRIDE_DEADBAND_MM, robot.gaitCommand().step_y);
+    }
+}
+
 // The joint angles are the control task's alone: the angles the robot publishes for the app are never written back.
 void test_angles_on_the_bus_leave_the_motions_angles_alone() {
     VirtualRobot robot;
@@ -1346,6 +1371,7 @@ int main(int, char **) {
     RUN_TEST(test_no_servo_is_driven_past_its_joint_travel);
     RUN_TEST(test_a_walk_without_commands_comes_to_rest);
     RUN_TEST(test_deactivating_mid_walk_freezes_the_joints);
+    RUN_TEST(test_nothing_posted_changes_the_motion_before_the_next_tick);
     RUN_TEST(test_angles_on_the_bus_leave_the_motions_angles_alone);
     RUN_TEST(test_a_gait_selected_while_standing_is_applied);
     RUN_TEST(test_full_stick_walk_stays_in_travel_for_every_classic_gait);

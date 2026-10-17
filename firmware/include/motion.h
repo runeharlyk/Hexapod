@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <iterator>
+#include <utility>
 #include <esp_log.h>
 #include <kinematics.h>
 #include <peripherals/servo_controller.h>
@@ -36,10 +37,7 @@ class MotionService {
     void begin() {
         _animation.begin(kinematics, default_feet_pos);
         ESP_LOGI("MotionService", "Subscribing to event buses...");
-        _cmdSubHandle = EventBus<CommandMsg>::subscribe([&](CommandMsg const &c) {
-            ESP_LOGD("MotionService", "COMMAND callback called");
-            handleCommand(c);
-        });
+        _cmdSubHandle = EventBus<CommandMsg>::subscribe([&](CommandMsg const &c) { _inbox.postCommand(c, millis()); });
         _modeSubHandle = EventBus<ModeMsg>::subscribe([&](ModeMsg const &c) {
             ESP_LOGD("MotionService", "MODE callback called with mode %d", (int)c.mode);
             handleInputMode(c);
@@ -146,9 +144,9 @@ class MotionService {
 
     void validateAnimation(const char *name, socket_message_AnimationReport &r) { _animation.validate(name, r); }
 
-    void handleCommand(CommandMsg const &c) {
-        if (_inbox.goalKeepsWalk(c)) return;
-        lastCommandMillis = millis();
+    // Control task, at the start of the tick after the command arrived; the dead-man's window runs from its arrival.
+    void handleCommand(CommandMsg const &c, unsigned long arrivalMs) {
+        lastCommandMillis = arrivalMs;
         lastCommand = c;
         commandTimedOut = false;
         const MOTION_STATE mode = motionState;
@@ -226,7 +224,8 @@ class MotionService {
                         tuned_gait::PHASE_RATE_MIN +
                         (a[5] + 1.f) * 0.5f * (tuned_gait::PHASE_RATE_MAX - tuned_gait::PHASE_RATE_MIN);
                     target_body_state.zm = -tuned_gait::RIDE_MM;
-                    logTunedCommand(cmd, target_gait_state);
+                    std::copy(std::begin(cmd), std::end(cmd), std::begin(_tunedVelocity));
+                    _tunedLogDue = true;
                 } else {
                     walkClassic(clamped);
                 }
@@ -287,7 +286,8 @@ class MotionService {
 
     // imuFresh: the IMU was read on this tick, so its DMP packet and gyro rate are this tick's.
     bool updateMotion(bool imuFresh) {
-        const MotionInbox::Mail mail = _inbox.take(millis(), [this] { centreWalk(); });
+        const MotionInbox::Mail mail = _inbox.take(millis());
+        if (mail.command) handleCommand(*mail.command, mail.commandMs);
         takeGoalMail(mail);
         resetCommandIfTimedOut();
         const float dt = getMotionDeltaSeconds();
@@ -375,6 +375,12 @@ class MotionService {
         return true;
     }
 
+    // Control task, after the tick's servo write: the log lines of what the tick took from the inbox, so a slow console
+    // never delays the write.
+    void logMail() {
+        if (std::exchange(_tunedLogDue, false)) logTunedCommand(_tunedVelocity, target_gait_state);
+    }
+
     float *getAngles() { return msgAngles.angles; }
 
     // The locomotion command the gait eases toward, the command it walks now, and the body pose the motion eases
@@ -383,7 +389,7 @@ class MotionService {
     const gait_state_t &gaitState() const { return gait_state; }
     const BodyStateMsg &bodyCommand() const { return target_body_state; }
 
-    // Any task. Off the control task a read can mix two ticks' poses, as lastCommand's can.
+    // Any task. Off the control task a read can mix two ticks' poses.
     OdometryEstimate odometry() const { return _odometry.estimate(); }
     // Any task. The control task zeroes the pose before its next update; the gyro bias stays. Refused, resetting
     // nothing, while a goal drives: the pose is its origin.
@@ -474,8 +480,8 @@ class MotionService {
     GaitCommandRamp _commandRamp; // control task
     FusedOdometry _odometry;      // control task
 
-    // A goal is asked for on an adapter task and walked by the control task. Whoever ends it early, on any task, asks
-    // the control task to through the inbox; only an operator taking the walk back writes it at once (goalKeepsWalk).
+    // What the other tasks post for the control task to take. A goal is asked for on an adapter task and walked by the
+    // control task; whoever ends it early, on any task, asks the control task to through the inbox.
     MotionInbox _inbox;
     // Control task: the goal taken, and how far it got.
     MotionInbox::GoalRequest _goalTaken {};
@@ -527,10 +533,8 @@ class MotionService {
     // stand the walk was entered from (takeRestPosture).
     Posture _walkPosture {};
     std::atomic<bool> _walkPostureValid {false};
-    // The posture of a stand at rest, its lift as an s1, for a walk entered next: the targets the stand holds, which
-    // the control task rewrites unchanged every STAND tick while _atRest holds, so the command worker's read cannot
-    // tear. Anything that moves the robot in WALK before the first classic command takes it consumes it (clears
-    // _atRest).
+    // The posture of a stand at rest, its lift as an s1, for a walk entered next: the targets the stand holds. Anything
+    // that moves the robot in WALK before the first classic command takes it consumes it (clears _atRest).
     Posture _restPosture {};
     std::atomic<bool> _atRest {false};
     // A posture is waiting for the gait to stop, then for the robot to settle; the walk is held at zero meanwhile.
@@ -552,11 +556,13 @@ class MotionService {
     unsigned long lastCommandMillis = 0;
     unsigned long lastMotionMicros = 0;
     unsigned long _lastTunedLog = 0;
+    // The velocity the last TUNED command asked for, logged after the servo write of the tick that took it.
+    float _tunedVelocity[3] = {0.f, 0.f, 0.f};
+    bool _tunedLogDue = false;
     // The dead-man stop is in force: it fired, and no command or goal has come since.
     bool commandTimedOut = false;
     bool steering = false;
-    // Written on the command worker, read by the control task for telemetry only; a torn read costs
-    // one sample's command, never the motion.
+    // The last command taken, for the telemetry.
     CommandMsg lastCommand{};
 
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
@@ -642,7 +648,7 @@ class MotionService {
     void settleWalkPosture() {
         if (gait_state.gait_type == GaitType::TUNED) return;
         if (_posturePending && !gaitIsCommanded(gait_state)) {
-            // Settling is raised first, so the command worker holds the walk at zero throughout.
+            // Settling holds the walk at zero throughout (applyWalkTarget).
             _postureSettling = true;
             _posturePending = false;
             const CommandMsg c = lastWalkCommand_;
@@ -709,9 +715,9 @@ class MotionService {
     bool goalActive() const { return _goalState == GoalState::SETTLING || _goalState == GoalState::RUNNING; }
 
     // Control task, every tick: takes a goal accepted since the last, and ends one whose end was asked for. A goal
-    // ended by anything but an operator's stick leaves the walk centred (the take centres it), so it stops through the
-    // stop ramp.
+    // ended by anything but an operator's stick leaves the walk centred, so it stops through the stop ramp.
     void takeGoalMail(const MotionInbox::Mail &mail) {
+        if (mail.goalDriveEnded) centreWalk();
         const bool cancelled = mail.goalCancelled;
         if (mail.goal) {
             cancelGoalTaken();
@@ -749,10 +755,10 @@ class MotionService {
 
     // Control task: the goal no longer drives the walk; its last sticks are centred unless an operator took them.
     void releaseGoalWalk() {
-        _inbox.endGoalDrive([this] { centreWalk(); });
+        if (_inbox.endGoalDrive()) centreWalk();
     }
 
-    // Under the inbox's lock.
+    // Control task.
     void centreWalk() {
         lastWalkCommand_.lx = lastWalkCommand_.ly = lastWalkCommand_.rx = 0.f;
         applyWalkTarget();
@@ -776,12 +782,12 @@ class MotionService {
             _goalStarted = true;
         } else {
             const GoalSticks sticks = _goal.update(restPose(), !gaitIsCommanded(gait_state) && feetAtRest(), dt);
-            _inbox.whileGoalDrives([&] {
+            if (_inbox.goalDrives()) {
                 lastWalkCommand_.lx = sticks.lx;
                 lastWalkCommand_.ly = sticks.ly;
                 lastWalkCommand_.rx = sticks.rx;
                 applyWalkTarget();
-            });
+            }
         }
         _goalState = _goal.state();
         if (!goalActive()) releaseGoalWalk();
@@ -792,16 +798,13 @@ class MotionService {
     // stand at rest in it starts at once, any other settles first) and its gait through the deferred swap. TUNED steps
     // on the stick it last had, which only a stop ends.
     void takeGoalStyle() {
-        bool newGait = false;
-        const bool driving = _inbox.whileGoalDrives([&] {
-            if (gait_state.gait_type == GaitType::TUNED) stopLocomotionCommand(false);
-            newGait = _requestedGait != _goalTaken.gait;
-            _requestedGait = _goalTaken.gait;
-            lastWalkCommand_ = _goalTaken.style;
-            walkClassic(_goalTaken.style);
-            _goalStyleTaken = true;
-        });
-        if (!driving) return;
+        if (!_inbox.goalDrives()) return;
+        if (gait_state.gait_type == GaitType::TUNED) stopLocomotionCommand(false);
+        const bool newGait = _requestedGait != _goalTaken.gait;
+        _requestedGait = _goalTaken.gait;
+        lastWalkCommand_ = _goalTaken.style;
+        walkClassic(_goalTaken.style);
+        _goalStyleTaken = true;
         // For the app and the controller; MotionService would take its own selection for a wire gait change.
         if (newGait) EventBus<GaitMsg>::publish({_goalTaken.gait}, _gaitSubHandle);
     }
@@ -821,7 +824,7 @@ class MotionService {
         GoalStatusBus::publish(s);
     }
 
-    // Command worker or control task. The envelope measured a level, centred body: the tilt stick and the stand's
+    // Control task. The envelope measured a level, centred body: the tilt stick and the stand's
     // offsets ease out. The envelope sets the cadence; step_speed is left to pace a stance change.
     void walkClassic(const CommandMsg &c) {
         target_body_state.xm = target_body_state.ym = 0;
@@ -887,7 +890,7 @@ class MotionService {
         _atRest = atRest;
     }
 
-    // Command worker, the first classic walk command after a stand at rest. A command that keeps the stand's height
+    // Control task, the first classic walk command after a stand at rest. A command that keeps the stand's height
     // and stance walks at once in it: only the lift differs, and a lift that rises eases in alongside the stroke,
     // which keeps every state between inside the envelope (checked over its walkable grid). One that falls does not:
     // the stand's lift over the posture's stroke can leave travel, so that walk, like any other, settles first.

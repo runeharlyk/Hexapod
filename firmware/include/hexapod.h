@@ -38,6 +38,7 @@ class Hexapod {
             _servoController.setAngles(_motionService.getAngles());
             _servoController.updateServoState();
         }
+        _motionService.logMail();
     }
 
     std::vector<uint8_t> scanI2C() { return _peripherals.scanI2C(); }

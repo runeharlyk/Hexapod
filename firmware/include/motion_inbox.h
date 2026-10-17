@@ -1,8 +1,9 @@
 #pragma once
 
-// What the other tasks hand MotionService's control task, under one mutex: a goal asked for and its end, and an
-// odometry reset. The decisions a reply depends on are made as each arrives; the control task takes what arrived once
-// a tick. Ported in shape from SpotMicroESP32-Leika's esp32/include/motion_inbox.h.
+// What the other tasks hand MotionService's control task, under one mutex: the newest command, a goal asked for and
+// its end, and an odometry reset. The decisions a reply or a goal depends on are made as each arrives, in arrival
+// order; the control task takes what arrived at the start of its next tick, so nothing changes the motion in the
+// middle of one. Ported in shape from SpotMicroESP32-Leika's esp32/include/motion_inbox.h.
 
 #include <cstdint>
 #include <mutex>
@@ -55,8 +56,11 @@ class MotionInbox {
     };
 
     struct Mail {
-        std::optional<GoalRequest> goal; // accepted since the last take
-        bool goalCancelled = false;      // the end of the goal driving the walk was asked for, or its owner fell silent
+        std::optional<CommandMsg> command; // the newest since the last take
+        unsigned long commandMs = 0;       // when it arrived
+        std::optional<GoalRequest> goal;   // accepted since the last take
+        bool goalCancelled = false;  // the end of the goal driving the walk was asked for, or its owner fell silent
+        bool goalDriveEnded = false; // so a goal no longer drives the walk, whose sticks are to be centred
         bool odometryReset = false;
     };
 
@@ -94,16 +98,19 @@ class MotionInbox {
         if (_goalDrives && owner == _goalOwner) _ownerHeardMs = nowMs;
     }
 
-    // Command worker. While a goal drives the walk, a centred command is ignored, its posture and the rest of it too:
-    // the heartbeats of the app, the facade and the ESP-NOW controller. A stick off centre takes the walk back, so the
-    // command walks at once and the goal never writes the sticks again.
-    bool goalKeepsWalk(const CommandMsg &c) {
+    // Command worker. Each command is a full snapshot of the sticks and sliders, so the newest replaces one not yet
+    // taken. While a goal drives the walk, a centred command is no command, its posture and the rest of it too: the
+    // heartbeats of the app, the facade and the ESP-NOW controller. A stick off centre takes the walk back, so the goal
+    // ends and never writes the sticks again, and the command is walked.
+    void postCommand(const CommandMsg &c, unsigned long nowMs) {
         std::lock_guard<std::mutex> lock(_mutex);
-        if (!_goalDrives) return false;
-        if (c.lx == 0.f && c.ly == 0.f && c.rx == 0.f) return true;
-        _goalDrives = false;
-        _goalCancelRequested = true;
-        return false;
+        if (_goalDrives) {
+            if (c.lx == 0.f && c.ly == 0.f && c.rx == 0.f) return;
+            _goalDrives = false;
+            _goalCancelRequested = true;
+        }
+        _command = c;
+        _commandMs = nowMs;
     }
 
     // Any task: the control task zeroes the pose before its next update. Refused while a goal drives: the pose is its
@@ -121,39 +128,31 @@ class MotionInbox {
         return _goal ? goalStatusOf(_goal->id, GoalState::SETTLING, _goal->goal, 0.f, 0) : _goalStatus;
     }
 
-    // Control task, every tick: what arrived since the last take. A goal whose end was asked for no longer drives the
-    // walk; `centre` runs under the lock then, so a command that takes the walk back is applied after it.
-    template <typename Centre>
-    Mail take(unsigned long nowMs, Centre centre) {
+    // Control task, at the start of every tick: what arrived since the last take. A goal whose end was asked for no
+    // longer drives the walk from here on.
+    Mail take(unsigned long nowMs) {
         std::lock_guard<std::mutex> lock(_mutex);
         Mail mail;
+        mail.command = std::exchange(_command, std::nullopt);
+        mail.commandMs = _commandMs;
         mail.goal = std::exchange(_goal, std::nullopt);
         mail.goalCancelled = std::exchange(_goalCancelRequested, false) ||
                              (_goalDrives && _goalOwner.adapter && nowMs - _ownerHeardMs > OWNER_SILENCE_MS);
-        if (mail.goalCancelled && _goalDrives) {
-            _goalDrives = false;
-            centre();
-        }
+        mail.goalDriveEnded = mail.goalCancelled && std::exchange(_goalDrives, false);
         mail.odometryReset = std::exchange(_odometryReset, false);
         return mail;
     }
 
-    // Control task: the goal no longer drives the walk; `centre` runs under the lock unless an operator took it.
-    template <typename Centre>
-    void endGoalDrive(Centre centre) {
+    // Control task: the goal no longer drives the walk. False when it did not, since an operator took the walk back.
+    bool endGoalDrive() {
         std::lock_guard<std::mutex> lock(_mutex);
-        if (!_goalDrives) return;
-        _goalDrives = false;
-        centre();
+        return std::exchange(_goalDrives, false);
     }
 
-    // Control task: runs `steer` under the lock while a goal drives the walk; returns whether it ran.
-    template <typename Steer>
-    bool whileGoalDrives(Steer steer) {
+    // Whether a goal drives the walk's sticks. A command posted after the read takes them back from the next tick.
+    bool goalDrives() const {
         std::lock_guard<std::mutex> lock(_mutex);
-        if (!_goalDrives) return false;
-        steer();
-        return true;
+        return _goalDrives;
     }
 
     // Control task: the status last pushed.
@@ -164,6 +163,8 @@ class MotionInbox {
 
   private:
     mutable std::mutex _mutex;
+    std::optional<CommandMsg> _command;
+    unsigned long _commandMs = 0;
     std::optional<GoalRequest> _goal;
     uint32_t _goalCount = 0;
     GoalOwner _goalOwner {};
