@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
+  import { get } from 'svelte/store'
   import { page } from '$app/state'
   import { Modals, modals } from 'svelte-modals'
   import Toast from '$lib/components/toasts/Toast.svelte'
@@ -17,11 +18,13 @@
     AnimationStatus,
     ControllerInputData,
     ModeData,
-    GaitData
+    GaitData,
+    GoalStatus
   } from '$lib/platform_shared/message'
   import { GaitType } from '$lib/gait'
   import { throttler } from '$lib/utilities'
   import { setAnimationStatus } from '$lib/stores/animation'
+  import { clearGoalStatus, goalStatus, isGoalActive, setGoalStatus } from '$lib/stores/goal'
   import { connectWebsocket, isLinked } from '$lib/stores/link'
   import { COMMAND_HEARTBEAT_MS, needsHeartbeat } from '$lib/control-link'
   import { toControllerInput } from '$lib/controller-input'
@@ -44,6 +47,14 @@
   let stopWatchingUpdate: (() => void) | undefined
 
   let { children }: Props = $props()
+
+  // A goal already running when the link comes up has pushed its status before we listened; a push that
+  // beat the reply is newer than it.
+  const requestRunningGoal = async () => {
+    const res = await dataBroker.request({ goalStatusGet: {} }).catch(() => null)
+    if (res?.goalStatus && isGoalActive(res.goalStatus) && !get(goalStatus))
+      setGoalStatus(res.goalStatus)
+  }
 
   onMount(() => {
     stopWatchingUpdate = watchUpdateOutcome()
@@ -72,6 +83,7 @@
     })
 
     dataBroker.on(AnimationStatus, setAnimationStatus)
+    dataBroker.on(GoalStatus, setGoalStatus)
 
     dataBroker.on(GaitData, data => {
       const nextGait = Object.values(GaitType)[data.gait]
@@ -84,7 +96,12 @@
 
     isLinked.subscribe(value => {
       linked = value
-      if (!value) setAnimationStatus(null)
+      if (!value) {
+        setAnimationStatus(null)
+        clearGoalStatus()
+        return
+      }
+      requestRunningGoal()
     })
 
     commandHeartbeatId = setInterval(() => {
