@@ -792,6 +792,19 @@ static void setupComm() {
     bleAdapter.begin();
 }
 
+static constexpr size_t varintSize(uint64_t value) {
+    size_t bytes = 1;
+    for (; value >= 0x80; value >>= 7) bytes++;
+    return bytes;
+}
+
+// A batch in the Message oneof: the field's tag (number and wire type 2) and its length, then the batch. A frame past
+// PROTO_BUFFER_SIZE still goes out, on a heap buffer that can fail, so the worst batch is held to the stack one.
+static_assert(varintSize((uint64_t(socket_message_Message_telemetry_batch_tag) << 3) | 2) +
+                      varintSize(socket_message_TelemetryBatch_size) + socket_message_TelemetryBatch_size <=
+                  PROTO_BUFFER_SIZE,
+              "a full telemetry batch no longer fits the encode buffer");
+
 // Ships the ticks the control task recorded, whole batches at a time, while anyone subscribes; with
 // nobody listening the control task stops recording and the leftovers are dropped.
 static void sendTelemetry() {
