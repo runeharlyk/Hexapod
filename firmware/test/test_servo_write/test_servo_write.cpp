@@ -155,13 +155,12 @@ void test_a_board_that_lost_power_reports_its_restart_once() {
     for (int t = 0; t < 3; t++) angleTick(c);
     powerOnChip(LEFT_BOARD);
     bus().absent.clear();
-    int restarts = 0, t = 0;
+    int t = 0;
     socket_message_TickSample tick;
     do {
         tick = angleTick(c);
-        restarts += tick.servo_write_left == socket_message_ServoWrite_SERVO_WRITE_RESTARTED;
     } while (tick.servo_write_left != socket_message_ServoWrite_SERVO_WRITE_RESTARTED && ++t < 200);
-    TEST_ASSERT_EQUAL_INT(1, restarts);
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_RESTARTED, tick.servo_write_left);
     for (int i = 0; i < 10; i++)
         TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_OK, angleTick(c).servo_write_left);
 }

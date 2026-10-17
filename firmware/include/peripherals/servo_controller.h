@@ -208,14 +208,17 @@ class ServoController {
   private:
     void writeBoards() {
         const int64_t start = esp_timer_get_time();
-        _leftWrite = writeBoard(_left, left_pwm, start);
-        _rightWrite = writeBoard(_right, right_pwm, start);
+        const bool leftWasAnswering = _left.answering();
+        const bool rightWasAnswering = _right.answering();
+        const ServoBoard::Write left = _left.write(left_pwm, channel_count, start);
+        const ServoBoard::Write right = _right.write(right_pwm, channel_count, start);
+        // The log lines of a transition come after the timestamp: console time is not bus time.
         _writeUs += static_cast<uint32_t>(esp_timer_get_time() - start);
+        _leftWrite = report(_left, leftWasAnswering, left);
+        _rightWrite = report(_right, rightWasAnswering, right);
     }
 
-    socket_message_ServoWrite writeBoard(ServoBoard &board, const uint16_t *pwm, int64_t now) {
-        const bool wasAnswering = board.answering();
-        const ServoBoard::Write write = board.write(pwm, channel_count, now);
+    socket_message_ServoWrite report(const ServoBoard &board, bool wasAnswering, ServoBoard::Write write) {
         if (board.answering() != wasAnswering) {
             if (wasAnswering) {
                 ESP_LOGW(TAG, "servo board 0x%02X stopped answering; retrying every %lld ms", board.address(),
