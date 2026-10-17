@@ -663,7 +663,10 @@ def test_a_goal_starts_from_centred_sticks_and_is_kept_alive_in_its_style(goal_r
     after = [(t, m.input) for t, m in goal_fake.received[asked:] if m.WhichOneof("message") == "input"]
     assert (before[-1].left.x, before[-1].left.y, before[-1].right.x) == (0, 0, 0)
     assert all((d.left.x, d.left.y, d.right.x) == (0, 0, 0) for _, d in after)
-    assert all((d.stride, d.s1, d.height, d.feet_distance) == pytest.approx((0.5, 0.5, -0.2, -0.2)) for _, d in after)
+    # The style is the robot's once it took the goal: a keep-alive sent while the request was in flight still carries
+    # the old one, which the robot ignores as a centred command during the goal; every later one carries the new.
+    styled = [(d.stride, d.s1, d.height, d.feet_distance) == pytest.approx((0.5, 0.5, -0.2, -0.2)) for _, d in after]
+    assert styled.index(True) <= 1 and all(styled[styled.index(True):])
     times = [goal_fake.received[asked][0]] + [t for t, _ in after]
     assert len(after) >= 3 and max(b - a for a, b in zip(times, times[1:])) < 0.35
 
