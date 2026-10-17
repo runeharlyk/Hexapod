@@ -27,7 +27,11 @@ class Hexapod {
         });
     }
 
-    void planMotion() { updatedMotion = _motionService.updateMotion(imuFresh); }
+    // The servo write of a tick happens here (POSE's centre pulses) or in updateActuators.
+    void planMotion() {
+        _servoController.startTick();
+        updatedMotion = _motionService.updateMotion(imuFresh);
+    }
 
     void updateActuators() {
         if (updatedMotion) {
@@ -53,6 +57,7 @@ class Hexapod {
         tick.mag_fresh = magFresh;
         _peripherals.fillTelemetry(tick);
         _motionService.fillTelemetry(tick);
+        _servoController.fillTelemetry(tick);
     }
     bool resting() const { return _motionService.resting(); }
     const MotionService &motion() const { return _motionService; }

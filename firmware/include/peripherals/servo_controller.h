@@ -8,6 +8,7 @@
 #include <event_bus.h>
 #include <message_types.h>
 #include <platform_shared/api.pb.h>
+#include <platform_shared/message.pb.h>
 #include <settings/servo_settings.h>
 #include <peripherals/i2c_bus.h>
 #include <peripherals/servo_board.h>
@@ -186,23 +187,53 @@ class ServoController {
         if (control_state == SERVO_CONTROL_STATE::ANGLE) calculatePWM();
     }
 
-  private:
-    void writeBoards() {
-        const int64_t now = esp_timer_get_time();
-        writeBoard(_left, left_pwm, now);
-        writeBoard(_right, right_pwm, now);
+    // Control task, before the tick's writes: a tick that writes nothing reports no write.
+    void startTick() {
+        _rightWrite = _leftWrite = socket_message_ServoWrite_SERVO_WRITE_NONE;
+        _writeUs = 0;
     }
 
-    void writeBoard(ServoBoard &board, const uint16_t *pwm, int64_t now) {
-        const bool wasAnswering = board.answering();
-        board.write(pwm, channel_count, now);
-        if (board.answering() == wasAnswering) return;
-        if (wasAnswering) {
-            ESP_LOGW(TAG, "servo board 0x%02X stopped answering; retrying every %lld ms", board.address(),
-                     (long long)(WriteBackoff::RETRY_INTERVAL_US / 1000));
-        } else {
-            ESP_LOGI(TAG, "servo board 0x%02X answers again", board.address());
+    // Control task, after the tick's writes: what they did, and the pulses they wrote or meant to write in servo order.
+    void fillTelemetry(socket_message_TickSample &tick) const {
+        tick.servo_write_right = _rightWrite;
+        tick.servo_write_left = _leftWrite;
+        tick.servo_write_us = _writeUs;
+        for (int i = 0; i < NUM_SERVO; i++) {
+            const bool right = i < 9;
+            if ((right ? _rightWrite : _leftWrite) == socket_message_ServoWrite_SERVO_WRITE_NONE) continue;
+            tick.pwm[i] = (right ? right_pwm : left_pwm)[cfg[i].pin];
         }
+    }
+
+  private:
+    void writeBoards() {
+        const int64_t start = esp_timer_get_time();
+        const bool leftWasAnswering = _left.answering();
+        const bool rightWasAnswering = _right.answering();
+        const ServoBoard::Write left = _left.write(left_pwm, channel_count, start);
+        const ServoBoard::Write right = _right.write(right_pwm, channel_count, start);
+        // The log lines of a transition come after the timestamp: console time is not bus time.
+        _writeUs += static_cast<uint32_t>(esp_timer_get_time() - start);
+        _leftWrite = report(_left, leftWasAnswering, left);
+        _rightWrite = report(_right, rightWasAnswering, right);
+    }
+
+    socket_message_ServoWrite report(const ServoBoard &board, bool wasAnswering, ServoBoard::Write write) {
+        if (board.answering() != wasAnswering) {
+            if (wasAnswering) {
+                ESP_LOGW(TAG, "servo board 0x%02X stopped answering; retrying every %lld ms", board.address(),
+                         (long long)(WriteBackoff::RETRY_INTERVAL_US / 1000));
+            } else {
+                ESP_LOGI(TAG, "servo board 0x%02X answers again", board.address());
+            }
+        }
+        switch (write) {
+            case ServoBoard::Write::OK: return socket_message_ServoWrite_SERVO_WRITE_OK;
+            case ServoBoard::Write::FAILED: return socket_message_ServoWrite_SERVO_WRITE_FAILED;
+            case ServoBoard::Write::SKIPPED: return socket_message_ServoWrite_SERVO_WRITE_SKIPPED;
+            case ServoBoard::Write::RESTARTED: return socket_message_ServoWrite_SERVO_WRITE_RESTARTED;
+        }
+        return socket_message_ServoWrite_SERVO_WRITE_NONE;
     }
 
     void pcaWrite(int index, int value) {
@@ -250,6 +281,10 @@ class ServoController {
     float _peakAbs[3] = {0.0f, 0.0f, 0.0f};
     uint8_t _peakLeg[3] = {0, 0, 0};
     float target_angles[NUM_SERVO] = {0};
+    // This tick's write, kept for its telemetry.
+    socket_message_ServoWrite _rightWrite = socket_message_ServoWrite_SERVO_WRITE_NONE;
+    socket_message_ServoWrite _leftWrite = socket_message_ServoWrite_SERVO_WRITE_NONE;
+    uint32_t _writeUs = 0;
 
     EventBus<ServoSignalMsg>::Handle _signalSub;
     EventBus<ServoStateMsg>::Handle _stateSub;

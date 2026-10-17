@@ -188,6 +188,7 @@ A goal ends early, as `CANCELLED`, on:
 - 2 s (`OWNER_SILENCE_MS`) without a frame from the requesting client, for a link that went away without saying so.
 
 While a goal runs, a command with every stick centred is ignored, posture fields included, so the app's heartbeat, the Python keep-alive and the ESP-NOW controller's centred packets do not disturb it, and the dead-man stop does not stop it.
+A goal taken after the dead-man stop fired ends that stop, as a command would, and once the goal ends the stop watches the link again.
 When a goal ends the robot stands at rest with no cadence left.
 
 The status (`GoalStatus`: id, state, kind, target, progress, x, y, yaw, passes) is an observable: `observeStatus` pushes it as `Message` 300 on every state change and every 5 % of progress, never on a timer, and `goal_status_get` (133, reply 131) reads the current one.
@@ -270,6 +271,10 @@ A bridge holds its EventBus subscription only while some client on some transpor
 When the last client on every transport has gone, a playing animation stops, so nothing runs unattended.
 
 Per-tick telemetry (`include/telemetry/telemetry.h`) is recorded by the control task into a lock-free single-producer ring, only while someone subscribes, and shipped in whole batches by the service task; a full ring drops samples and counts them rather than blocking the control loop.
+Each `TickSample` also carries the tick's servo write: the 18 pulses written or meant to be written (`pwm`, in PCA9685 counts), the time the write took (`servo_write_us`) and each board's result (`servo_write_right`, `servo_write_left`).
+A board's result is `OK`, `FAILED` for a write it did not acknowledge, `SKIPPED` for one left out while the board backs off, which never reached the bus, `RESTARTED` for one it took after being started again, and `NONE` for a tick that wrote nothing: a mode that drives no servo, a `WALK_NN` tick on which the policy produced no angles, or a tick on which a servo calibration signal took over the pulses.
+`link_lost` is set from the tick the dead-man stop zeroed the command until a command arrives or a goal takes the walk, so the tick it rises on is the tick the stop fired.
+`simulation/report_recording.py` lists the failed writes and the dead-man stops of a recording.
 
 The **ESP-NOW receiver** (`EspNowAdapter`) is input only: it turns the handheld controller's broadcasts into `CommandMsg`, `ModeMsg` and `GaitMsg` on the EventBus, so the controller drives `MotionService` exactly as the app does.
 ESP-NOW hears only the radio's current channel, so the robot pins its radio to `ESPNOW_WIFI_CHANNEL` unless a station connection holds it elsewhere, and it broadcasts a beacon on whatever channel it is on so the controller can find it.

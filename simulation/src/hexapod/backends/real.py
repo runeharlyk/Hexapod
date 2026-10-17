@@ -17,8 +17,9 @@ Goals: a firmware from before them answers their requests 400, which connect() p
 status on each change, but a push can be dropped, so the status is asked for when none came for CONFIRM_S and to
 confirm the end a push reported.
 
-Dead-man detection: the firmware does not report that timeout, so the client bounds it. Every input is followed by a
-ping on the same socket, and the firmware answers pings in order, so input k reached it no earlier than it was sent
+Dead-man detection: the firmware reports that timeout only in its per-tick telemetry (TickSample.link_lost), which this
+client does not subscribe to, so the client bounds it. Every input is followed by a ping on the same socket, and the
+firmware answers pings in order, so input k reached it no earlier than it was sent
 (s_k) and no later than the pong that followed it arrived (a_k). The silence it saw after a walking input k-1 is
 therefore at most a_k - s_{k-1}; past STEERING_TIMEOUT_S the walk may have been dropped, and link_drops counts it.
 The bound is conservative: a slow but unbroken link can count a drop that did not happen, never miss one that did

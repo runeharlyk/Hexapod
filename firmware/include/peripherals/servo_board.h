@@ -59,14 +59,19 @@ class ServoBoard {
         _pca.sleep();
     }
 
-    // One tick's write of the first `count` channels. False when it failed, and when the board is backed
-    // off and the write was skipped.
-    bool write(const uint16_t* pwm, uint8_t count, int64_t nowUs) {
-        if (!_backoff.due(nowUs)) return false;
+    // What one tick's write did: a write skipped while the board is backed off never reached the bus, unlike a
+    // failed one, and a restarted board took the write after being started again.
+    enum class Write { OK, FAILED, SKIPPED, RESTARTED };
+
+    // One tick's write of the first `count` channels.
+    Write write(const uint16_t* pwm, uint8_t count, int64_t nowUs) {
+        if (!_backoff.due(nowUs)) return Write::SKIPPED;
         bool ok = _pca.setMultiplePWM(pwm, count) == 0;
-        if (ok && _backoff.failing() && _pca.lostConfiguration()) ok = restart(pwm, count);
+        const bool restarted = ok && _backoff.failing() && _pca.lostConfiguration();
+        if (restarted) ok = restart(pwm, count);
         _backoff.record(ok, nowUs);
-        return ok;
+        if (!ok) return Write::FAILED;
+        return restarted ? Write::RESTARTED : Write::OK;
     }
 
     // A single channel, as the calibration page sets it; not backed off, since a person drives it.

@@ -3,7 +3,8 @@
     uv run python report_recording.py recording-20261005-120000.hexrec
 
 Record with the robot standing still for a while to measure the IMU at rest; walking stretches only
-count for the control loop's timing.
+count for the control loop's timing. The report also counts each servo board's failed and skipped
+writes and lists the ticks the dead-man stop fired on.
 """
 import argparse
 
@@ -17,6 +18,7 @@ SIM_GYRO_BIAS_SIGMA = 0.05      # rad/s, per-episode bias
 SIM_GYRO_NOISE = 0.05           # rad/s, per-step noise
 SIM_RPY_NOISE_DEG = 1.5
 SIM_GRAVITY_NOISE = 0.02
+MAX_SEQS = 10  # tick numbers listed per kind of event
 
 
 def _vec(v) -> str:
@@ -54,7 +56,36 @@ def report(path) -> str:
             if measured > assumed
         ]
         lines.append("  outside the trained range: " + (", ".join(outside) if outside else "nothing"))
+    lines += _servo_lines(ts.servo_writes(rec), ts.dead_man_stops(rec))
     return "\n".join(lines)
+
+
+def _seqs(seqs) -> str:
+    shown = ", ".join(str(s) for s in seqs[:MAX_SEQS])
+    return shown + (f" and {len(seqs) - MAX_SEQS} more" if len(seqs) > MAX_SEQS else "")
+
+
+def _servo_lines(writes: ts.ServoWrites | None, stops: ts.DeadManStops | None) -> list[str]:
+    if writes is None:
+        return ["servo writes and dead-man stops: not in this recording (a firmware before them, "
+                "or a robot that drove no servo and never stopped)"]
+    lines = ["servo writes:"]
+    for side, board in writes.boards.items():
+        line = (f"  {side}: {board.ok} ok, {board.failed} failed, {board.skipped} skipped while backing off, "
+                f"{board.restarted} restarted")
+        lines.append(line + (f"; failed at seq {_seqs(board.failed_seqs)}" if board.failed else ""))
+    if writes.write_max_seq >= 0:
+        lines.append(f"  write time p99 {writes.write_p99_us:.0f} us, longest {writes.write_max_us} us "
+                     f"at seq {writes.write_max_seq}")
+    line = f"dead-man stops: {len(stops.fired_seqs)}"
+    if len(stops.fired_seqs):
+        line += f" at seq {_seqs(stops.fired_seqs)}"
+    if len(stops.after_hole_seqs):
+        line += (f" ({_seqs(stops.after_hole_seqs)} right after a hole in the ticks: "
+                 "fired within it or on its first tick)")
+    if stops.in_force_at_start:
+        line += "; one in force when the recording began"
+    return lines + [line + f"; {stops.ticks_in_force} ticks in force"]
 
 
 def main() -> None:

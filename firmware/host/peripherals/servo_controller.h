@@ -9,6 +9,7 @@
 #include <cmath>
 #include <kinematics.h>
 #include <message_types.h>
+#include <platform_shared/message.pb.h>
 
 class ServoController {
   public:
@@ -25,16 +26,26 @@ class ServoController {
     void activate() { state().awake = true; }
     void deactivate() { state().awake = false; }
     // The centre PWMs are the calibration's, which this stand-in does not hold; the joints keep their angles.
-    void setCenterPwm() {}
+    void setCenterPwm() { _write = socket_message_ServoWrite_SERVO_WRITE_OK; }
     // As the robot's controller does: each joint held within its travel, and a non-finite command ignored.
     void setAngles(float angles[NUM_SERVO]) {
         for (int i = 0; i < NUM_SERVO; ++i)
             if (std::isfinite(angles[i])) state().angles[i] = withinTravel(angles[i], i % 3);
         state().writes++;
+        _write = socket_message_ServoWrite_SERVO_WRITE_OK;
     }
     void updateServoState() {}
+    // As the robot's controller does: a tick that sends nothing reports no write, and one that does reports it
+    // succeeded on both boards, which this stand-in never fails.
+    void startTick() { _write = socket_message_ServoWrite_SERVO_WRITE_NONE; }
+    void fillTelemetry(socket_message_TickSample &tick) const {
+        tick.servo_write_right = _write;
+        tick.servo_write_left = _write;
+    }
 
   private:
+    socket_message_ServoWrite _write = socket_message_ServoWrite_SERVO_WRITE_NONE;
+
     static Output &state() {
         static Output output;
         return output;
