@@ -45,6 +45,8 @@ class KinematicOdometry {
     const OdometryEstimate &estimate() const { return current; }
     /** Whether the last tick's turn was seen: two feet or more were down in it and the tick before. */
     bool turnSeen() const { return sawTurn; }
+    /** Whether every foot was on the floor in the last tick: all six in stance and none being lowered. */
+    bool allDown() const { return everyFootDown; }
 
     /** One control tick: the feet the gait left and which legs it has in stance. Returns the step the robot took. */
     BodyStep update(const BodyStateMsg &body, const std::array<bool, 6> &stance) {
@@ -57,6 +59,7 @@ class KinematicOdometry {
             feet[leg][1] = body.feet[leg][1] / 1000.f;
             contact[leg] = stance[leg] && body.feet[leg][2] - lowest < LIFTED_MM;
         }
+        everyFootDown = std::all_of(std::begin(contact), std::end(contact), [](bool down) { return down; });
         sawTurn = false;
         const BodyStep step = primed ? integrate(feet, contact) : BodyStep {};
         for (int leg = 0; leg < 6; leg++) {
@@ -74,6 +77,7 @@ class KinematicOdometry {
     bool previousContact[6] = {};
     bool primed = false;
     bool sawTurn = false;
+    bool everyFootDown = false;
 
     BodyStep integrate(const float feet[6][2], const bool contact[6]) {
         int count = 0;
@@ -118,9 +122,9 @@ class KinematicOdometry {
  *
  * The feet and the gyro each measure the yaw rate. The gyro's z rate has white noise and a residual bias the boot
  * calibration left; the feet's has no bias, but misses what the gait does not command: the walk rocks the body in yaw,
- * and slip makes a turn come up short. While the feet and the body's pose keep still, a scalar Kalman filter estimates
- * the bias from the difference of the two rates; the heading integrates the two rates weighted by their variances, the
- * gyro's while walking and the feet's while standing. The position integrates the feet's steps in the fused heading.
+ * and slip makes a turn come up short. While the robot keeps still, a scalar Kalman filter estimates the bias from the
+ * difference of the two rates; the heading integrates the two rates weighted by their variances, the gyro's while
+ * walking and the feet's while standing. The position integrates the feet's steps in the fused heading.
  *
  * The gyro is read every 25 ms, the control runs every 5: a sample is fused on the tick it was read, over the time
  * since the last one, and the heading follows the feet's turn in between. Without a gyro sample it is the kinematic
@@ -142,14 +146,14 @@ class FusedOdometry {
     static constexpr float KIN_PER_SPEED = 2.0f; // rad/s per m/s
     static constexpr float KIN_PER_TURN = 0.4f;  // rad/s per rad/s
     // The feet's motion counts on, fading with this time constant, once they stop: the body coasts on and the servos
-    // lag the commanded feet.
+    // lag the commanded feet. The robot counts as still only once it has kept still this long.
     static constexpr float SETTLE_S = 0.2f;
-    // Feet whose motion is worth less than this keep the robot still: then, and only then, the gyro shows its bias.
+    // Feet that move on the floor by less than this keep the robot still; a stopped walk's ease home moves them more.
     static constexpr float STILL_RATE = 0.01f; // rad/s
-    // A body pose that moves faster than the gyro resolves (its tilt, and its shift at KIN_PER_SPEED), fading over
-    // SETTLE_S as the feet's motion does, leaves the bias alone: the feet do not show a stand's tilt or shift at all,
-    // but the servos follow it late, and the gyro would read their lag as bias.
-    static constexpr float POSE_STILL_RATE = GYRO_NOISE; // rad/s
+    // The body's yaw over the planted feet (psi, eased back to 0 after an animation) turns the gyro and not the feet:
+    // faster than the gyro resolves, it is no stillness. Tilt and shift turn the body about x and y or not at all, so
+    // they never reach the gyro's z.
+    static constexpr float PSI_STILL_RATE = GYRO_NOISE; // rad/s
     // A sample counts over the time since the sample before, at most this long; a longer gap, a stalled read or a long
     // tick, is left to the feet.
     static constexpr float GYRO_STALE_S = 0.05f;
@@ -158,6 +162,10 @@ class FusedOdometry {
     void reset() {
         kinematic.reset();
         current = {};
+        // The next sample counts from here, so no turn from before the reset lands in the new frame.
+        sinceSampleS = 0;
+        feetTurn = feetTravel = 0;
+        feetSawTurn = true;
     }
 
     /** The motion left the gait for a while: the feet are taken afresh, and no gyro sample spans the gap. */
@@ -178,7 +186,7 @@ class FusedOdometry {
      */
     BodyStep update(const BodyStateMsg &body, const std::array<bool, 6> &stance, std::optional<float> gyroZ, float dt) {
         const BodyStep step = kinematic.update(body, stance);
-        notePose(body, dt);
+        noteStill(body, dt);
         sinceSampleS += dt;
         feetTurn += step.turn;
         feetTravel += std::hypot(step.right, step.forward);
@@ -204,9 +212,9 @@ class FusedOdometry {
     OdometryEstimate current;
     float bias = 0;
     float biasVariance = BIAS_PRIOR * BIAS_PRIOR;
-    float motionVariance = 0;         // of the feet's rate, from their motion
-    float poseVariance = 0;           // of the yaw rate the pose's motion leaves the gyro, as motionVariance
-    std::array<float, 5> lastPose {}; // the body's omega, phi, xm, ym and zm
+    float motionVariance = 0; // of the feet's rate, from their motion
+    float stillS = 0;         // how long every foot has been down under a body yaw that keeps still
+    float lastPsi = 0;
     // Since the last gyro sample: its age, the feet's turn and travel, and whether every tick saw the feet's turn.
     float sinceSampleS = INFINITY;
     float feetTurn = 0, feetTravel = 0;
@@ -214,21 +222,17 @@ class FusedOdometry {
 
     static float square(float value) { return value * value; }
 
-    void notePose(const BodyStateMsg &body, float dt) {
-        const std::array<float, 5> pose {body.omega, body.phi, body.xm, body.ym, body.zm};
-        if (dt > 0) {
-            const float tilt = std::max(std::fabs(pose[0] - lastPose[0]), std::fabs(pose[1] - lastPose[1]));
-            const float shift =
-                std::hypot(pose[2] - lastPose[2], pose[3] - lastPose[3], pose[4] - lastPose[4]) / 1000.f;
-            const float poseRate = std::max(tilt, KIN_PER_SPEED * shift) / dt;
-            poseVariance = std::max(square(poseRate), poseVariance * std::exp(-dt / SETTLE_S));
-        }
-        lastPose = pose;
+    // A gait that cycles swings a foot, and one that stopped sets every stance flag (GaitController::inStance), so
+    // every foot down means the gait is not cycling, no stance change is stepping and no foot is being lowered.
+    void noteStill(const BodyStateMsg &body, float dt) {
+        const bool psiStill = dt > 0 && std::fabs(body.psi - lastPsi) / dt < PSI_STILL_RATE;
+        stillS = kinematic.allDown() && psiStill ? stillS + dt : 0;
+        lastPsi = body.psi;
     }
 
-    // The gyro reads the feet's rate plus the bias, give or take both their noises. On feet that keep still, under a
-    // pose that keeps still, their difference updates the bias; on moving ones it would also carry the feet's
-    // undercount, which is no noise. The two rates, weighted by their variances, give the turn since the last sample.
+    // The gyro reads the feet's rate plus the bias, give or take both their noises. On a robot that keeps still, their
+    // difference updates the bias; on a moving one it would also carry the feet's undercount, which is no noise. The
+    // two rates, weighted by their variances, give the turn since the last sample.
     float fusedTurn(float gyroRate) {
         const float interval = sinceSampleS;
         biasVariance += square(BIAS_WALK) * interval;
@@ -238,7 +242,7 @@ class FusedOdometry {
         motionVariance = std::max(square(KIN_PER_SPEED * speed) + square(KIN_PER_TURN * feetRate),
                                   motionVariance * std::exp(-interval / SETTLE_S));
         const float feetVariance = square(KIN_STILL) + motionVariance;
-        if (motionVariance < square(STILL_RATE) && poseVariance < square(POSE_STILL_RATE)) {
+        if (stillS >= SETTLE_S && motionVariance < square(STILL_RATE)) {
             const float gain = biasVariance / (biasVariance + square(GYRO_NOISE) + feetVariance);
             bias += gain * (gyroRate - feetRate - bias);
             biasVariance *= 1 - gain;

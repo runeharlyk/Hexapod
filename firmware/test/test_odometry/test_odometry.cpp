@@ -36,13 +36,18 @@ BodyStateMsg restingStance(GaitController &gait, gait_state_t still) {
     return body;
 }
 
-// A tripod walked by the gait alone at one cycle per second, its feet and stance flags fed to the odometry as
-// MotionService feeds them: after each step.
+constexpr int SAMPLE_TICKS = 5; // the gyro's 40 Hz in the 200 Hz control loop
+
+// A tripod walked by the gait alone at one cycle per second, its feet and stance flags fed to the odometries as
+// MotionService feeds them, after each step; the fused one gets `gyro` on every fifth tick when it is set.
 struct GaitWalk {
     GaitController gait;
     gait_state_t state {};
     BodyStateMsg body {};
     KinematicOdometry odometry;
+    FusedOdometry fused;
+    std::optional<float> gyro;
+    int ticksRun = 0;
 
     GaitWalk(float stepX, float stepY, float stepAngle) {
         state.gait_type = GaitType::TRI_GATE;
@@ -63,6 +68,7 @@ struct GaitWalk {
             std::array<bool, 6> stance;
             for (int leg = 0; leg < 6; ++leg) stance[leg] = gait.inStance(state, leg);
             odometry.update(body, stance);
+            fused.update(body, stance, ++ticksRun % SAMPLE_TICKS == 0 ? gyro : std::nullopt, DT);
         }
     }
 
@@ -82,6 +88,18 @@ struct GaitWalk {
 constexpr int CYCLES = 4;
 constexpr float STEP_MM = 30.0f;
 constexpr float STEP_ANGLE_RAD = 0.2f;
+// A gyro bias of the size a boot calibration leaves when the robot moved through it (Leika's BIAS_PRIOR scale).
+constexpr float GYRO_BIAS = 0.02f;
+
+// The gyro bias `odometry` learned, read off its heading on a copy: with no foot down the heading is the gyro's less
+// the bias, so on a gyro reading zero it turns by -bias per second, and without feet it learns nothing more.
+float learnedBias(FusedOdometry odometry) {
+    const BodyStateMsg body {};
+    const float start = odometry.estimate().yaw;
+    for (int t = 1; t <= TICKS_PER_SECOND; ++t)
+        odometry.update(body, {}, t % SAMPLE_TICKS == 0 ? std::optional<float>(0.0f) : std::nullopt, DT);
+    return -std::remainder(odometry.estimate().yaw - start, TWO_PI);
+}
 
 } // namespace
 
@@ -188,8 +206,7 @@ void test_feet_moved_while_paused_are_no_travel() {
 // With no foot down to see the turn, the heading is the gyro's, each sample integrated over the time since the last.
 // A sample after a gap longer than GYRO_STALE_S, a stalled read, does not stand for the gap.
 void test_the_gyro_turns_the_heading_only_over_fresh_samples() {
-    constexpr float RATE = 0.5f;    // rad/s
-    constexpr int SAMPLE_TICKS = 5; // 40 Hz
+    constexpr float RATE = 0.5f; // rad/s
     const BodyStateMsg body = GaitWalk(0, 0, 0).body;
     FusedOdometry odometry;
     const auto tick = [&](bool sampled) {
@@ -203,6 +220,94 @@ void test_the_gyro_turns_the_heading_only_over_fresh_samples() {
     for (int t = 1; t <= SAMPLE_TICKS; ++t) tick(t == SAMPLE_TICKS);
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, RATE * 9 * SAMPLE_TICKS * DT, odometry.estimate().yaw);
     TEST_ASSERT_EQUAL_FLOAT(0, odometry.estimate().kinematicYaw);
+}
+
+// A reset between two gyro samples: the next sample turns the new frame only by the time since the reset.
+void test_a_reset_between_gyro_samples_carries_no_turn_into_the_new_frame() {
+    constexpr float RATE = 0.5f; // rad/s
+    const BodyStateMsg body {};
+    FusedOdometry odometry;
+    const auto tick = [&](bool sampled) {
+        odometry.update(body, {}, sampled ? std::optional<float>(RATE) : std::nullopt, DT);
+    };
+    tick(true);
+    for (int t = 1; t <= SAMPLE_TICKS; ++t) tick(t == SAMPLE_TICKS);
+    tick(false);
+    tick(false);
+    odometry.reset();
+    tick(false);
+    tick(false);
+    tick(true);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, RATE * 3 * DT, odometry.estimate().yaw);
+}
+
+// Standing still, the bias is learned; this is what the next tests deny to motions that only look still.
+void test_a_still_stand_learns_the_gyro_bias() {
+    GaitWalk walk(0, 0, 0);
+    walk.gyro = GYRO_BIAS;
+    walk.run(ticksFor(1.0f));
+    TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, GYRO_BIAS, learnedBias(walk.fused));
+}
+
+// A stance change keeps its planted feet still while it swings the others, and the gyro reads the body rocking on
+// them: it is no stillness, nor is the settling for SETTLE_S after it.
+void test_a_gyro_rate_during_a_stance_change_is_not_learned_as_bias() {
+    GaitWalk walk(0, 0, 0);
+    float wide[6][4];
+    for (int leg = 0; leg < 6; ++leg) {
+        for (int j = 0; j < 4; ++j) wide[leg][j] = walk.body.feet[leg][j];
+        wide[leg][0] *= 1.2f;
+    }
+    walk.gait.setDefaultFootTarget(wide);
+    walk.gyro = GYRO_BIAS;
+    int ticks = 0;
+    for (; walk.gait.hasPendingStanceChange() && ticks < ticksFor(3.0f); ++ticks) walk.run(1);
+    TEST_ASSERT_FALSE(walk.gait.hasPendingStanceChange());
+    TEST_ASSERT_GREATER_THAN(ticksFor(0.5f), ticks);
+    walk.run(ticksFor(0.75f * FusedOdometry::SETTLE_S));
+    TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, 0, learnedBias(walk.fused));
+}
+
+// The body's yaw (psi) easing back to 0 over the planted feet, as after an animation, turns the gyro and not the feet.
+void test_an_easing_body_yaw_is_not_learned_as_bias() {
+    GaitWalk walk(0, 0, 0);
+    walk.body.psi = 0.1f;
+    float rate = 0;
+    for (int t = 0; t < ticksFor(0.4f); ++t) {
+        const float before = walk.body.psi;
+        walk.body.psi = lerpf(before, 0.0f, BODY_SMOOTHING);
+        rate = (before - walk.body.psi) / DT;
+        walk.gyro = rate;
+        walk.run(1);
+    }
+    TEST_ASSERT_GREATER_THAN_FLOAT(FusedOdometry::PSI_STILL_RATE, rate);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0, learnedBias(walk.fused));
+}
+
+// Feet the gait moves on the floor without cycling, as a stopped walk eases them home, keep the robot from being still.
+void test_feet_moving_on_the_floor_teach_no_bias() {
+    constexpr float FEET_MM_PER_S = 20.0f;
+    BodyStateMsg body = GaitWalk(0, 0, 0).body;
+    FusedOdometry odometry;
+    for (int t = 1; t <= ticksFor(1.0f); ++t) {
+        for (auto &foot : body.feet) foot[1] += FEET_MM_PER_S * DT;
+        odometry.update(body, ALL_DOWN, t % SAMPLE_TICKS == 0 ? std::optional<float>(GYRO_BIAS) : std::nullopt, DT);
+    }
+    TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, 0, learnedBias(odometry));
+}
+
+// A walk too slow for the feet's motion to tell it from standing (under STILL_RATE / KIN_PER_SPEED) still swings its
+// feet, so a biased gyro teaches it nothing.
+void test_a_slow_walk_teaches_no_bias() {
+    constexpr float SECONDS = 4.0f;
+    GaitWalk walk(0, 2.5f, 0);
+    walk.state.phase_rate = 0.5f;
+    walk.gyro = GYRO_BIAS;
+    walk.run(ticksFor(SECONDS));
+    const float speed = walk.odometry.estimate().distance / SECONDS;
+    TEST_ASSERT_GREATER_THAN_FLOAT(0.001f, speed);
+    TEST_ASSERT_LESS_THAN_FLOAT(FusedOdometry::STILL_RATE / FusedOdometry::KIN_PER_SPEED, speed);
+    TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, 0, learnedBias(walk.fused));
 }
 
 namespace {
@@ -228,10 +333,8 @@ Peripherals::Imu gyroZ(float rate) {
     return imu;
 }
 
-// A gyro bias of the size a boot calibration leaves when the robot moved through it (Leika's BIAS_PRIOR scale).
-constexpr float GYRO_BIAS = 0.02f;
-// The standing time the bias is learned within: ten gyro samples on a still stand.
-constexpr float LEARN_S = 0.25f;
+// The standing time the bias is learned within: SETTLE_S of stillness, then some gyro samples.
+constexpr float LEARN_S = 0.5f;
 constexpr float WALK_S = 2.0f;
 
 // Stands the robot up and holds it still for `seconds`, its gyro reading `rate` from power-on, as a bias does.
@@ -270,7 +373,10 @@ void test_a_tripod_walk_forward_moves_the_odometry_forward_and_straight() {
     TEST_ASSERT_GREATER_THAN_FLOAT(0.1f, commanded);
     TEST_ASSERT_FLOAT_WITHIN(0.03f * commanded, commanded, e.y);
     TEST_ASSERT_FLOAT_WITHIN(0.01f * e.y, 0, e.x);
+    // On a gyro reading zero the fused heading stays; the feet's own turns by about -0.015 rad as every walk starts,
+    // and by none in the steady walk.
     TEST_ASSERT_FLOAT_WITHIN(0.005f, 0, e.yaw);
+    TEST_ASSERT_FLOAT_WITHIN(0.02f, 0, e.kinematicYaw);
 }
 
 // A stance change steps every foot to a new place, but each one only through the air: the robot does not travel.
@@ -321,22 +427,20 @@ void test_a_gyro_bias_seen_standing_is_learned_and_kept_out_of_the_heading() {
     }
 }
 
-// The stand twists the body (phi) over planted feet, which the servos follow late, so the gyro reads a rate the feet
-// do not show. Taken for bias, it would turn the heading of the straight walk after it by nearly that rate. The twist
-// starts as the robot stands up, while the bias is still unknown and one still sample would teach it.
-void test_a_slow_stand_twist_is_not_learned_as_gyro_bias() {
-    constexpr float LAG_RATE = 0.01f;
-    constexpr float TWIST_S = 2.0f;
+// The stand's tilt stick ramps the body's phi, a rotation about y that the gyro's z does not see: a robot that tilts
+// while it stands still learns its bias all the same, and walks straight on it.
+void test_a_stand_tilt_ramp_does_not_keep_the_bias_from_being_learned() {
+    constexpr float TILT_S = 2.0f;
     VirtualRobot robot;
-    robot.setImu(gyroZ(LAG_RATE));
+    robot.setImu(gyroZ(GYRO_BIAS));
     robot.setMode(MOTION_STATE::STAND);
-    for (int t = 0; t < ticksFor(TWIST_S); ++t) {
-        const CommandMsg twist {0, 0, static_cast<float>(t) / ticksFor(TWIST_S), 0, 0, 0, 0, 0};
-        if (t % COMMAND_PERIOD_TICKS == 0) robot.command(twist);
+    for (int t = 0; t < ticksFor(TILT_S); ++t) {
+        const CommandMsg tilt {0, 0, static_cast<float>(t) / ticksFor(TILT_S), 0, 0, 0, 0, 0};
+        if (t % COMMAND_PERIOD_TICKS == 0) robot.command(tilt);
         robot.tick();
     }
     TEST_ASSERT_GREATER_THAN_FLOAT(0.2f, robot.bodyCommand().phi);
-    TEST_ASSERT_FLOAT_WITHIN(0.1f * LAG_RATE * WALK_S, 0, yawWalkedOnGyro(robot, 0));
+    TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS * WALK_S, 0, yawWalkedOnGyro(robot, GYRO_BIAS));
 }
 
 // A mode that steps no gait leaves the pose where the last stepping tick put it.
@@ -385,11 +489,17 @@ int main(int, char **) {
     RUN_TEST(test_every_foot_is_in_stance_once_the_gait_stops_cycling);
     RUN_TEST(test_feet_moved_while_paused_are_no_travel);
     RUN_TEST(test_the_gyro_turns_the_heading_only_over_fresh_samples);
+    RUN_TEST(test_a_reset_between_gyro_samples_carries_no_turn_into_the_new_frame);
+    RUN_TEST(test_a_still_stand_learns_the_gyro_bias);
+    RUN_TEST(test_a_gyro_rate_during_a_stance_change_is_not_learned_as_bias);
+    RUN_TEST(test_an_easing_body_yaw_is_not_learned_as_bias);
+    RUN_TEST(test_feet_moving_on_the_floor_teach_no_bias);
+    RUN_TEST(test_a_slow_walk_teaches_no_bias);
     RUN_TEST(test_a_tripod_walk_forward_moves_the_odometry_forward_and_straight);
     RUN_TEST(test_a_stance_change_at_rest_adds_no_travel);
     RUN_TEST(test_a_stand_tilt_and_shift_are_no_travel);
     RUN_TEST(test_a_gyro_bias_seen_standing_is_learned_and_kept_out_of_the_heading);
-    RUN_TEST(test_a_slow_stand_twist_is_not_learned_as_gyro_bias);
+    RUN_TEST(test_a_stand_tilt_ramp_does_not_keep_the_bias_from_being_learned);
     RUN_TEST(test_the_odometry_holds_its_pose_while_deactivated);
     RUN_TEST(test_resetting_the_odometry_zeroes_the_pose_and_keeps_the_gyro_bias);
     return UNITY_END();
