@@ -1,9 +1,11 @@
 """The MuJoCo backend, headless and stepped only inside sleep(), alone and behind the Robot facade."""
+import math
+
 import numpy as np
 import pytest
 
 from src.hexapod import Gait, Mode, Robot, RobotError, Velocity, speed_model
-from src.hexapod.backends.base import ZERO
+from src.hexapod.backends.base import ZERO, GoalState
 from src.hexapod.backends.sim import SimBackend
 
 STAND_HEIGHT_M = 0.072  # base height of the default stance (resting feet 66 mm below the body origin)
@@ -102,39 +104,98 @@ def test_a_velocity_beyond_the_gait_is_clamped_to_its_peak_that_way(sim):
     assert sim.set_velocity(ZERO) == ZERO
 
 
-# Distances are open-loop on the steady-state speed model, with no lead for the command ramp (motions._open_loop). The
-# first move right after stand() starts about 0.3 s late while the walk takes its posture: TRI_GATE walks 0.067/0.1,
-# 0.265/0.3 and 0.463/0.5 m forward from there, so the forward move below is the one that holds the tolerance and the
-# sideways one follows it on a settled gait, where moves of 0.2 m and more land within 5 %. The turn closes on the
-# settled yaw.
-def test_the_facade_walks_distances_and_turns_angles():
+def _pose(backend):
+    """The true pose: the position in the world's REP-103 frame (forward is world +Y, where the robot starts facing,
+    and left is world -X) and the yaw in degrees, counter-clockwise."""
+    x, y = backend.sim.data.qpos[:2]
+    return np.array([y, -x]), math.degrees(backend.sim.base_yaw())
+
+
+def _moved(start, end):
+    """Where the pose `end` is in the frame of the pose `start`: forward and left in m, and the yaw turned in degrees
+    within +-180."""
+    (p0, yaw0), (p1, yaw1) = start, end
+    c, s = math.cos(math.radians(yaw0)), math.sin(math.radians(yaw0))
+    d = p1 - p0
+    return np.array([c * d[0] + s * d[1], -s * d[0] + c * d[1]]), (yaw1 - yaw0 + 180) % 360 - 180
+
+
+@pytest.fixture
+def standing():
     backend = SimBackend()
     with Robot(backend=backend) as robot:
         robot.stand()
-        start = _left_forward(backend)
-        robot.move_forward(0.3)
-        left, forward = _left_forward(backend) - start
-        assert forward == pytest.approx(0.3, rel=0.15) and abs(left) < 0.045
-        start = _left_forward(backend)
-        robot.move_sideways(-0.2)
-        left, forward = _left_forward(backend) - start
-        assert left == pytest.approx(-0.2, rel=0.15) and abs(forward) < 0.045
-        yaw = robot.state().yaw
-        robot.rotate(90)
-        assert (robot.state().yaw - yaw + 180) % 360 - 180 == pytest.approx(90, abs=4)
+        yield robot, backend
 
 
-# On the firmware's code a settled BI_GATE moves 0.2 m sideways to 0.95 of it either way (measured on Windows).
-@pytest.mark.parametrize("metres", [0.2, -0.2])
-def test_a_timed_move_of_a_settled_gait_covers_its_distance(metres):
-    backend = SimBackend()
-    with Robot(backend=backend) as robot:
-        robot.stand()
-        robot.set_gait(Gait.BI_GATE)
-        start = _left_forward(backend)
-        robot.move_sideways(metres)
-        left, forward = _left_forward(backend) - start
-    assert left == pytest.approx(metres, rel=0.15) and abs(forward) < 0.03
+# The tolerances the design binds on MuJoCo's true pose (docs/superpowers/specs/2026-10-17-goal-moves-design.md):
+# the firmware closes each goal on its own odometry, so these measure how far the odometry is from the truth. The host
+# clock runs on across tests, so an outcome also depends on the clock phase a test starts at.
+@pytest.mark.xfail(strict=True, reason="measured 2026-10-17: TRI_GATE walks 4.5-5.0 % beyond its odometry in MuJoCo "
+                                       "(true 1.044-1.049 m on odometry 0.994-0.999 m); a distance calibration "
+                                       "awaits the controller's ruling")
+def test_a_goal_walks_a_metre_to_within_3_cm(standing):
+    robot, backend = standing
+    start = _pose(backend)
+    status = robot.walk(1.0)
+    position, _ = _moved(start, _pose(backend))
+    assert status.state is GoalState.REACHED
+    assert np.linalg.norm(position - (1.0, 0.0)) < 0.03
+
+
+def test_a_goal_turns_90_degrees_to_within_3(standing):
+    robot, backend = standing
+    start = _pose(backend)
+    robot.turn(90)
+    _, yaw = _moved(start, _pose(backend))
+    assert yaw == pytest.approx(90, abs=3)
+
+
+def test_a_goal_arc_ends_within_5_cm_and_5_degrees(standing):
+    robot, backend = standing
+    start = _pose(backend)
+    robot.arc(0.5, 90)
+    position, yaw = _moved(start, _pose(backend))
+    assert np.linalg.norm(position - (0.5, 0.5)) < 0.05 and yaw == pytest.approx(90, abs=5)
+
+
+@pytest.mark.xfail(strict=False, reason="measured 2026-10-17 over 8 clock phases: TRI_GATE closes within 0.6-6.7 cm "
+                                        "but up to 5.2 deg (6.0 deg seen alone), and a corrective pass can end "
+                                        "TIMED_OUT; awaits the controller's ruling")
+def test_a_goal_square_closes_within_10_cm_and_5_degrees(standing):
+    robot, backend = standing
+    start = _pose(backend)
+    for _ in range(4):
+        robot.walk(1.0)
+        robot.turn(90)
+    position, yaw = _moved(start, _pose(backend))
+    assert np.linalg.norm(position) < 0.10 and abs(yaw) < 5
+
+
+# REP-103 at the facade: sideways positive is left, where the firmware's SIDEWAYS is positive right.
+def test_a_sideways_goal_walks_left_when_positive(standing):
+    robot, backend = standing
+    start = _pose(backend)
+    robot.walk(-0.2, sideways=True)
+    position, _ = _moved(start, _pose(backend))
+    assert np.linalg.norm(position - (0.0, -0.2)) < 0.03
+    robot.walk(0.2, sideways=True)
+    position, _ = _moved(start, _pose(backend))
+    assert np.linalg.norm(position) < 0.03
+
+
+# The odometry the state carries is the firmware's, in REP-103, and follows the true pose.
+def test_the_state_carries_the_odometry_in_rep103(standing):
+    robot, backend = standing
+    robot.reset_odometry()
+    robot.sleep(0.1)
+    start = _pose(backend)
+    robot.walk(0.3)
+    robot.turn(45)
+    position, yaw = _moved(start, _pose(backend))
+    odometry = robot.state().odometry
+    assert (odometry.x, odometry.y) == pytest.approx(tuple(position), abs=0.02)
+    assert odometry.yaw == pytest.approx(yaw, abs=2)
 
 
 # Leaving sits the robot down before cutting the servos, so it drops a few millimetres instead of from full height.

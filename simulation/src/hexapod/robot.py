@@ -5,13 +5,20 @@ Velocities are REP-103 (forward, left, counter-clockwise) in m/s and rad/s, angl
 the mapping onto the robot's X-right, Y-forward body frame. Leaving the `with` block, on an exception or Ctrl-C
 included, stops the robot, sits it down and switches its servos off.
 
+Walks, turns and arcs are goals: the robot walks each to its end on its own odometry, in the style last set.
+
     with Robot("simulation") as robot:
         robot.stand()
-        robot.move_forward(0.3)
-        robot.rotate(90)
+        robot.style(speed=0.8)
+        for _ in range(4):
+            robot.walk(1.0)
+            robot.turn(90)
 """
+from dataclasses import replace
+
 from . import motions
-from .backends.base import ZERO, Backend, Gait, Mode, RobotError, RobotState, Velocity
+from .backends.base import (ZERO, Backend, Gait, Goal, GoalKind, GoalState, GoalStatus, Mode, RobotError, RobotState,
+                            RobotTimeout, Style, Velocity)
 from .servos import ServoCalibration
 
 # The modes a script may walk from. DEACTIVATED is the app's stop button and IDLE, POSE and ANIMATE are the user's:
@@ -19,6 +26,21 @@ from .servos import ServoCalibration
 WALKS_FROM = (Mode.STAND, Mode.WALK)
 HEIGHT_RANGE_MM = 50.0  # motion.h handleCommand: zm = h * 50, and a positive zm lowers the body
 SIT_S = 0.6  # the body's height lerp (0.06 per 5 ms tick) settles well inside this
+STEP_HEIGHT_MM = 20.0  # motion.h: the feet lift (s1 + 1) * 20 mm
+GOAL_POLL_S = 0.05
+
+
+def _height(height_mm: float) -> float:
+    """The firmware's height input for the body `height_mm` above the nominal stance."""
+    if abs(height_mm) > HEIGHT_RANGE_MM:
+        raise ValueError(f"the body moves {HEIGHT_RANGE_MM:g} mm either way, not {height_mm:g}")
+    return -height_mm / HEIGHT_RANGE_MM
+
+
+def _slider(name: str, value: float) -> float:
+    if not -1.0 <= value <= 1.0:
+        raise ValueError(f"{name} is a slider in [-1, 1], not {value:g}")
+    return value
 
 
 class Robot:
@@ -34,7 +56,7 @@ class Robot:
 
                 backend = RealBackend(target)
         self._backend = backend
-        self._gait = gait
+        self._style = Style(gait=gait)
 
     def __enter__(self) -> "Robot":
         self.connect()
@@ -52,7 +74,7 @@ class Robot:
     def connect(self) -> None:
         self._backend.connect()
         try:
-            self._backend.set_gait(self._gait)
+            self._backend.set_gait(self._style.gait)
         except BaseException:
             self.close()
             raise
@@ -61,12 +83,13 @@ class Robot:
         self._backend.close()
 
     def stand(self, height_mm: float = 0.0) -> None:
-        """Stands with the body `height_mm` above the nominal stance, within +-50 mm."""
-        if abs(height_mm) > HEIGHT_RANGE_MM:
-            raise ValueError(f"the body moves {HEIGHT_RANGE_MM:g} mm either way, not {height_mm:g}")
+        """Stands with the body `height_mm` above the nominal stance, within +-50 mm; the style's body height from
+        now."""
+        height = _height(height_mm)
         self.stop()
-        self._backend.set_height(-height_mm / HEIGHT_RANGE_MM)
+        self._backend.set_height(height)
         self._backend.set_mode(Mode.STAND)
+        self._style = replace(self._style, h=height)
 
     def rest(self) -> None:
         """Lowers a standing robot onto its belly, then switches the servos off: a drop of a few millimetres
@@ -98,10 +121,11 @@ class Robot:
         self._backend.set_servo_pwm(servo, pwm)
 
     def set_gait(self, gait: Gait) -> None:
-        """Stops first: the firmware swaps the leg schedule only once the gait has stopped stepping."""
+        """Stops first: the firmware swaps the leg schedule only once the gait has stopped stepping. The style's gait
+        from now."""
         self.stop()
         self._backend.set_gait(gait)
-        self._gait = gait
+        self._style = replace(self._style, gait=gait)
         self._backend.sleep(motions.SETTLE_S)
 
     def set_velocity(self, vx: float, vy: float, yaw_rate: float) -> Velocity:
@@ -119,7 +143,12 @@ class Robot:
         self._backend.set_velocity(ZERO)
 
     def state(self) -> RobotState:
-        return self._backend.state()
+        state = self._backend.state()
+        return replace(state, odometry=self._backend.odometry()) if self.takes_goals() else state
+
+    def reset_odometry(self) -> None:
+        """Zeroes the odometry's pose on the robot's next control tick, in the frame it faces then."""
+        self._backend.reset_odometry()
 
     def max_velocity(self) -> Velocity:
         return self._backend.max_velocity()
@@ -140,3 +169,88 @@ class Robot:
     def rotate(self, degrees: float, rate: float | None = None) -> None:
         """Positive is counter-clockwise seen from above."""
         motions.rotate(self, degrees, rate)
+
+    # --- goals ----------------------------------------------------------------------------------------------------
+    def style(self, gait: Gait | None = None, speed: float | None = None, stride: float | None = None,
+              step_height: float | None = None, body_height: float | None = None,
+              feet_distance: float | None = None) -> Style:
+        """Sets how goals walk; an omitted field keeps its value. `speed` is a share in (0, 1] of the gait's top speed
+        at the posture, `step_height` how high the feet lift in mm (0 to 40), `body_height` mm above the nominal stance
+        (within +-50, as stand()'s), and `stride` and `feet_distance` are the app's sliders in [-1, 1]. Every command
+        after a goal carries its posture, so the robot keeps it. Returns the style in the firmware's terms."""
+        changes = {}
+        if gait is not None:
+            changes["gait"] = gait
+        if speed is not None:
+            if not 0.0 < speed <= 1.0:
+                raise ValueError(f"speed is a share in (0, 1] of the gait's top, not {speed:g}")
+            changes["speed"] = speed
+        if stride is not None:
+            changes["stride"] = _slider("stride", stride)
+        if step_height is not None:
+            if not 0.0 <= step_height <= 2 * STEP_HEIGHT_MM:
+                raise ValueError(f"the feet lift 0 to {2 * STEP_HEIGHT_MM:g} mm, not {step_height:g}")
+            changes["s1"] = step_height / STEP_HEIGHT_MM - 1.0
+        if body_height is not None:
+            changes["h"] = _height(body_height)
+        if feet_distance is not None:
+            changes["fd"] = _slider("feet_distance", feet_distance)
+        self._style = replace(self._style, **changes)
+        return self._style
+
+    def takes_goals(self) -> bool:
+        return self._backend.supports_goals()
+
+    def walk(self, metres: float, sideways: bool = False, on_progress=None) -> GoalStatus | None:
+        """Walks `metres` forward (negative is backwards), or to the left with `sideways` (negative is right)."""
+        if metres == 0:
+            return None
+        return self.run_goal(Goal(GoalKind.SIDEWAYS if sideways else GoalKind.FORWARD, distance=metres),
+                             on_progress=on_progress)
+
+    def turn(self, degrees: float, on_progress=None) -> GoalStatus | None:
+        """Turns in place, counter-clockwise when positive."""
+        if degrees == 0:
+            return None
+        return self.run_goal(Goal(GoalKind.TURN, angle=degrees), on_progress=on_progress)
+
+    def arc(self, radius: float, degrees: float, on_progress=None) -> GoalStatus | None:
+        """Walks forward along a circle of `radius` m through `degrees`, curving left when positive; 360 is a circle."""
+        if radius <= 0:
+            raise ValueError(f"an arc needs a positive radius, not {radius:g}; a negative angle curves right")
+        if degrees == 0:
+            return None
+        return self.run_goal(Goal(GoalKind.ARC, angle=degrees, radius=radius), on_progress=on_progress)
+
+    def run_goal(self, goal: Goal, speed: float | None = None, on_progress=None) -> GoalStatus:
+        """Sends `goal` in the style, at the share `speed` instead of the style's when given, and blocks until it ends.
+        Returns its REACHED status; raises RobotTimeout when it TIMED_OUT, and RobotError when it was CANCELLED or
+        REFUSED or another client's goal replaced it. `on_progress` is called with each new status. Any other
+        exception while it runs, Ctrl-C included, cancels it."""
+        if not self.takes_goals():
+            raise RobotError("the robot's firmware takes no goals")
+        style = self._style if speed is None else replace(self._style, speed=speed)
+        status = self._backend.goal_move(goal, style)
+        number, reported = status.id, None
+        try:
+            while True:
+                if status.id > number:
+                    raise RobotError(f"another goal replaced goal {number}")
+                if status.id == number and status != reported:
+                    reported = status
+                    if on_progress is not None:
+                        on_progress(status)
+                    if status.ended:
+                        break
+                self._backend.sleep(GOAL_POLL_S)
+                status = self._backend.goal_status()
+        except RobotError:
+            raise  # replaced, so no longer this script's, or the link is gone and the robot ends the goal itself
+        except BaseException:
+            self._backend.goal_cancel()
+            raise
+        if status.state is GoalState.REACHED:
+            return status
+        error = RobotTimeout if status.state is GoalState.TIMED_OUT else RobotError
+        raise error(f"the {goal.kind.name} goal ended {status.state.name} at {status.progress:.0%} of "
+                    f"{status.target:g} after {status.passes} passes")

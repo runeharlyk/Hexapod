@@ -1,7 +1,7 @@
 """The firmware's control loop driving the MuJoCo robot: each 5 ms tick the firmware's own Hexapod (virtual_robot.py,
 the code main.cpp's control task runs) reads the simulated IMU and drives the servos, and physics stays locked to the
-tick. Modes, gaits and sticks reach it as a transport delivers them, and the current sticks are sent again every 20 ms,
-as the app's heartbeat does, so a held command outlasts the firmware's dead-man timeout as it does on the robot.
+tick. Modes, gaits, sticks and goals reach it as a transport delivers them, and the current sticks are sent again every
+20 ms, as the app's heartbeat does, so a held command outlasts the firmware's dead-man timeout as it does on the robot.
 """
 import numpy as np
 
@@ -32,6 +32,7 @@ class FirmwareLoop:
         self.ticks = 0
         self.physics_steps = 0
         self._mode = DEACTIVATED
+        self._mode_undelivered = False  # a mode request reaches the motion on the next tick
         self._sticks = None
         self._writes = 0
 
@@ -39,17 +40,41 @@ class FirmwareLoop:
         if mode != self._mode:
             self._mode = mode
             self.robot.set_mode(mode)
+            self._mode_undelivered = True
 
     def walk(self, lx: float, ly: float, rx: float, s: float = 0.0, s1: float = 0.0, h: float = 0.0,
-             stride: float = 0.0) -> None:
+             stride: float = 0.0, fd: float = 0.0) -> None:
         """WALK with these sticks."""
         self.set_mode(WALK)
-        self._send(dict(lx=lx, ly=ly, rx=rx, s=s, s1=s1, h=h, stride=stride))
+        self._send(dict(lx=lx, ly=ly, rx=rx, s=s, s1=s1, h=h, stride=stride, fd=fd))
 
-    def hold(self, h: float = 0.0) -> None:
-        """STAND with centred sticks: no stride, only the height."""
+    def hold(self, h: float = 0.0, s1: float = 0.0, fd: float = 0.0, stride: float = 0.0) -> None:
+        """STAND with centred sticks: the posture only."""
         self.set_mode(STAND)
-        self._send(dict(h=h))
+        self._send(dict(h=h, s1=s1, fd=fd, stride=stride))
+
+    def goal_move(self, kind: int, distance: float, angle: float, radius: float, speed: float, gait: int,
+                  stride: float, s1: float, h: float, fd: float) -> int:
+        """VirtualRobot.goal_move, after the last mode request, as a transport's round trip has it. An accepted goal
+        takes a standing robot into WALK."""
+        if self._mode_undelivered:
+            self.tick()
+        status = self.robot.goal_move(kind, distance, angle, radius, speed, gait, stride, s1, h, fd)
+        if status == 202 and self._mode == STAND:
+            self._mode = WALK
+        return status
+
+    def goal_cancel(self) -> None:
+        self.robot.goal_cancel()
+
+    def goal_status(self) -> list[float]:
+        return self.robot.goal_status()
+
+    def odometry(self) -> list[float]:
+        return self.robot.odometry()
+
+    def reset_odometry(self) -> None:
+        self.robot.reset_odometry()
 
     def select_gait(self, gait: int) -> None:
         self.robot.set_gait(gait)
@@ -64,6 +89,7 @@ class FirmwareLoop:
         if self.robot.servo_writes() != self._writes:
             self._writes = self.robot.servo_writes()
             self.sim.set_joint_targets(np.radians(self.robot.servo_angles()))
+        self._mode_undelivered = False
         self.ticks += 1
         # 5 ms is not a whole number of physics steps, so keep physics time locked to tick time.
         due = int(round(self.ticks * FIRMWARE_DT / self.sim.model.opt.timestep))

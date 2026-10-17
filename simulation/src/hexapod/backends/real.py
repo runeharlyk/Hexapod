@@ -8,6 +8,13 @@ so the mode is unknown until the first push or set_mode.
 Keep-alive: while the robot is in a mode the app heartbeats (STAND, WALK, WALK_NN; app/src/lib/control-link.ts), the
 last input is re-sent every KEEPALIVE_S. The firmware drops a walk command after 600 ms without input while a stick
 is deflected, and zeroes the whole command after 2 s otherwise (motion.h STEERING_TIMEOUT_MS, COMMAND_TIMEOUT_MS).
+Every input carries the style's posture and stride, the last goal's once one was sent, so the robot keeps them. A goal
+ignores centred sticks and is cancelled by any other, and by 2 s without a frame from the client that sent it, so the
+keep-alive goes on through it with centred sticks.
+
+Goals: a firmware from before them answers their requests 400, which connect() probes. The robot pushes a goal's
+status on each change, but a push can be dropped, so the status is asked for when none came for CONFIRM_S and to
+confirm the end a push reported.
 
 Dead-man detection: the firmware does not report that timeout, so the client bounds it. Every input is followed by a
 ping on the same socket, and the firmware answers pings in order, so input k reached it no earlier than it was sent
@@ -21,12 +28,14 @@ import collections
 import math
 import threading
 import time
+from dataclasses import replace
 
 import websockets
 from google.protobuf.message import DecodeError
 
 from .. import speed_model
-from .base import Gait, Mode, RobotDisconnected, RobotError, RobotState, RobotTimeout, Velocity
+from .base import (Gait, Goal, GoalStatus, Mode, Odometry, RobotDisconnected, RobotError, RobotState, RobotTimeout,
+                   Style, Velocity)
 from .messages import pb
 from .serial_link import READY_TIMEOUT_S, SerialLink, is_serial_port
 
@@ -36,6 +45,7 @@ HEARTBEAT_MODES = (Mode.STAND, Mode.WALK, Mode.WALK_NN)
 WALKING_MODES = (Mode.WALK, Mode.WALK_NN)
 REPLY_TIMEOUT_S = 3.0
 SILENCE_S = 2.0  # pongs arrive every KEEPALIVE_S: this long without a frame means the link is gone
+CONFIRM_S = 1.0
 # The DMP yaw (mpu6050.h dmpGetYawPitchRoll) is atan2(2(xy - wz), 2(w^2 + x^2) - 1), clockwise-positive about the
 # chip's Z axis, and the chip's Z points up (its gravity vector reads world-up at rest, peripherals.h).
 IMU_YAW_SIGN = -1.0
@@ -43,6 +53,10 @@ IMU_YAW_SIGN = -1.0
 
 def _tag(name: str) -> int:
     return pb.Message.DESCRIPTOR.fields_by_name[name].number
+
+
+def _goal_status(s: pb.GoalStatus) -> GoalStatus:
+    return GoalStatus.from_body(s.id, s.state, s.kind, s.target, s.progress, s.x, s.y, s.yaw, s.passes)
 
 
 class WebSocketTransport:
@@ -120,7 +134,10 @@ class RealBackend:
         self._gait: Gait | None = None
         self._yaw: float | None = None
         self._sticks = speed_model.CENTRED
-        self._height = 0.0
+        self._style = Style()  # the posture and stride every input carries: set_height's height, then each goal's
+        self._goals = False
+        self._goal: GoalStatus | None = None  # the newest status heard, pushed or asked for, and when
+        self._goal_heard = 0.0
         self._drops = 0
         # Per ping in flight, after an input: when the input before that one was sent, and whether it walked.
         self._pings: collections.deque[tuple[float, bool] | None] = collections.deque()
@@ -134,6 +151,8 @@ class RealBackend:
             self._run(self._open(), READY_TIMEOUT_S + 1)
             features = self._run(self._ask(pb.CorrelationRequest(features_data_request=pb.FeaturesDataRequest())))
             self._imu = features.features_data_response.imu
+            probe = self._run(self._ask(pb.CorrelationRequest(goal_status_get=pb.GoalStatusGet()), check=False))
+            self._goals = probe.status_code < 400 and probe.WhichOneof("response") == "goal_status"
             if self._imu:
                 self._wait(lambda: self._yaw is not None, "the robot reports an IMU but sends no angles")
         except BaseException:
@@ -158,7 +177,7 @@ class RealBackend:
 
     async def _open(self) -> None:
         await self._transport.open()
-        for name in ("mode", "gait", "imu"):
+        for name in ("mode", "gait", "imu", "goal_status"):
             await self._send(pb.Message(sub_notif=pb.SubscribeNotification(tag=_tag(name))))
         self._tasks = [self._loop.create_task(self._read()), self._loop.create_task(self._keep_alive())]
 
@@ -182,12 +201,18 @@ class RealBackend:
     def _receive(self, message: pb.Message, arrived: float) -> None:
         kind = message.WhichOneof("message")
         if kind == "correlation_response":
-            future = self._replies.pop(message.correlation_response.correlation_id, None)
+            reply = message.correlation_response
+            if reply.status_code < 400 and reply.WhichOneof("response") == "goal_status":
+                with self._changed:
+                    self._hear_goal(reply.goal_status, arrived)
+            future = self._replies.pop(reply.correlation_id, None)
             if future is not None and not future.done():
-                future.set_result(message.correlation_response)
+                future.set_result(reply)
             return
         with self._changed:
-            if kind == "mode":
+            if kind == "goal_status":
+                self._hear_goal(message.goal_status, arrived)
+            elif kind == "mode":
                 self._mode = Mode(message.mode.mode)
             elif kind == "gait":
                 self._gait = Gait(message.gait.gait)
@@ -199,6 +224,10 @@ class RealBackend:
                     self._drops += 1
             self._changed.notify_all()
 
+    # Pushes and replies are handled in the order they arrived, so the last heard is the newest.
+    def _hear_goal(self, status: pb.GoalStatus, arrived: float) -> None:
+        self._goal, self._goal_heard = _goal_status(status), arrived
+
     async def _keep_alive(self) -> None:
         while self._error is None:
             await asyncio.sleep(KEEPALIVE_S)
@@ -207,12 +236,13 @@ class RealBackend:
     # The input and the ping after it go out back to back on the loop's thread, so nothing interleaves.
     async def _send_input(self, heartbeat: bool = False) -> None:
         with self._changed:
-            s, height, mode = self._sticks, self._height, self._mode
+            s, style, mode = self._sticks, self._style, self._mode
         previous = None
         try:
             if not heartbeat or mode in HEARTBEAT_MODES:
                 data = pb.ControllerInputData(left=pb.Vector(x=s.lx, y=s.ly), right=pb.Vector(x=s.rx, y=0.0),
-                                              height=height, stride=speed_model.STRIDE)
+                                              height=style.h, s1=style.s1, feet_distance=style.fd,
+                                              stride=style.stride)
                 await self._send(pb.Message(input=data))
                 previous = self._last_input
                 self._last_input = time.monotonic(), mode in WALKING_MODES and s != speed_model.CENTRED
@@ -226,15 +256,16 @@ class RealBackend:
     async def _send(self, message: pb.Message) -> None:
         await self._transport.send(message)
 
-    async def _ask(self, request: pb.CorrelationRequest) -> pb.CorrelationResponse:
+    async def _ask(self, request: pb.CorrelationRequest, check: bool = True) -> pb.CorrelationResponse:
         request.correlation_id = self._next_id
         self._next_id += 1
         future = self._loop.create_future()
         self._replies[request.correlation_id] = future
         await self._send(pb.Message(correlation_request=request))
         reply = await asyncio.wait_for(future, REPLY_TIMEOUT_S)
-        if reply.status_code >= 400:
-            raise RobotError(f"the robot refused the request with status {reply.status_code}")
+        if check and reply.status_code >= 400:
+            reason = f": {reply.error_message}" if reply.error_message else ""
+            raise RobotError(f"the robot refused the request with status {reply.status_code}{reason}")
         return reply
 
     # --- synchronous helpers -----------------------------------------------------------------------------------
@@ -271,7 +302,7 @@ class RealBackend:
 
     def set_height(self, height: float) -> None:
         with self._changed:
-            self._height = height
+            self._style = replace(self._style, h=height)
         self._run(self._send_input())
 
     def set_velocity(self, velocity: Velocity) -> Velocity:
@@ -293,6 +324,37 @@ class RealBackend:
 
     def now(self) -> float:
         return time.monotonic()
+
+    def supports_goals(self) -> bool:
+        return self._goals
+
+    def goal_move(self, goal: Goal, style: Style) -> GoalStatus:
+        with self._changed:
+            self._sticks, self._style = speed_model.CENTRED, style
+        self._run(self._send_input())
+        kind, distance, angle, radius = goal.in_body_frame()
+        move = pb.GoalMove(kind=int(kind), distance_m=distance, angle_rad=angle, radius_m=radius, speed=style.speed,
+                           gait=int(style.gait), stride=style.stride, s1=style.s1, h=style.h, fd=style.fd)
+        return _goal_status(self._run(self._ask(pb.CorrelationRequest(goal_move=move))).goal_status)
+
+    def goal_cancel(self) -> None:
+        self._run(self._ask(pb.CorrelationRequest(goal_cancel=pb.GoalCancel())))
+
+    def goal_status(self) -> GoalStatus:
+        with self._changed:
+            if self._error is not None:
+                raise self._error
+            heard, at = self._goal, self._goal_heard
+        if heard is not None and not heard.ended and time.monotonic() - at < CONFIRM_S:
+            return heard
+        return _goal_status(self._run(self._ask(pb.CorrelationRequest(goal_status_get=pb.GoalStatusGet()))).goal_status)
+
+    def odometry(self) -> Odometry:
+        o = self._run(self._ask(pb.CorrelationRequest(odometry_get=pb.OdometryGet()))).odometry
+        return Odometry.from_body(o.x, o.y, o.yaw, o.kinematic_yaw, o.distance)
+
+    def reset_odometry(self) -> None:
+        self._run(self._ask(pb.CorrelationRequest(odometry_get=pb.OdometryGet(reset=True))))
 
     def sleep(self, seconds: float) -> None:
         deadline = time.monotonic() + seconds

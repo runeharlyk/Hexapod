@@ -73,6 +73,9 @@ def _library() -> ctypes.CDLL:
     lib.autoWalk.argtypes = [ctypes.c_int, *floats(8), ctypes.POINTER(ctypes.c_float)]
     lib.autoWalk.restype = ctypes.c_int
     lib.clampPosture.argtypes = [ctypes.POINTER(ctypes.c_float)]
+    lib.goalMove.argtypes = [ctypes.c_int, *floats(4), ctypes.c_int, *floats(4), ctypes.c_int]
+    lib.goalMove.restype = ctypes.c_int
+    lib.goalStatus.argtypes = lib.odometry.argtypes = [ctypes.POINTER(ctypes.c_float)]
     return lib
 
 
@@ -123,3 +126,29 @@ class VirtualRobot:
     def servo_writes(self) -> int:
         """Poses sent to the servos since the robot started over."""
         return self._lib.servoWrites()
+
+    def goal_move(self, kind: int, distance: float, angle: float, radius: float, speed: float, gait: int,
+                  stride: float, s1: float, h: float, fd: float) -> int:
+        """A GoalMove request in the body frame (m and rad) from a client with no transport, so no silence ends it:
+        the reply's status, 202 when the goal starts on the next tick."""
+        return self._lib.goalMove(kind, distance, angle, radius, speed, gait, stride, s1, h, fd, 0)
+
+    def goal_cancel(self) -> None:
+        self._lib.goalCancel()
+
+    def goal_status(self) -> list[float]:
+        """The newest goal's GoalStatus fields in their protobuf order: id, state, kind, target, progress, x, y, yaw
+        and passes."""
+        out = (ctypes.c_float * 9)()
+        self._lib.goalStatus(out)
+        return list(out)
+
+    def odometry(self) -> list[float]:
+        """After the last tick, in the body frame: x, y, yaw, kinematic yaw and distance."""
+        out = (ctypes.c_float * 5)()
+        self._lib.odometry(out)
+        return list(out)
+
+    def reset_odometry(self) -> None:
+        """Takes effect on the next tick."""
+        self._lib.resetOdometry()

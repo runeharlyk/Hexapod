@@ -4,22 +4,29 @@ from collections import deque
 
 import pytest
 
-from src.hexapod import Gait, Mode, Robot, RobotError, RobotTimeout, Velocity
+from src.hexapod import Gait, Mode, Robot, RobotError, RobotTimeout, Velocity, speed_model
 from src.hexapod import motions
-from src.hexapod.backends.base import ZERO, RobotState
+from src.hexapod.backends.base import ZERO, Goal, GoalKind, GoalState, GoalStatus, Odometry, RobotState, Style
 
 DT = 0.01
+GOAL_SETTLE_S = 0.1  # the scripted goal's SETTLING before it runs
 
 
 class ScriptedBackend:
     """Integrates the commanded REP-103 velocity into a pose while walking, optionally with a yaw that arrives late,
     a gait that turns slower than commanded, a yaw that drifts by `stop_drifts` (degrees, in the turn's direction, one
     per stop of a turn) while the feet settle, a dead-man stop at `drop_at`, a mode switched from elsewhere and no IMU;
-    records every command."""
+    records every command. With `goals` it takes goal moves as the firmware does from STAND or WALK: each settles for
+    GOAL_SETTLE_S, runs for `goal_s`, then ends in `goal_ends`, unless another client's goal replaces it at
+    `replaced_at` (seconds into the goal)."""
 
     def __init__(self, top=Velocity(0.3, 0.29, 1.5), yaw=0.0, yaw_lag_s=0.0, turn_scale=1.0, drop_at=None,
-                 imu=True, mode=Mode.DEACTIVATED, refuse=(), switch_at=None, stop_drifts=()):
+                 imu=True, mode=Mode.DEACTIVATED, refuse=(), switch_at=None, stop_drifts=(), goals=False, goal_s=1.0,
+                 goal_ends=GoalState.REACHED, replaced_at=None):
         self.top, self.turn_scale, self.drop_at, self.imu, self.refuse = top, turn_scale, drop_at, imu, refuse
+        self.goals, self.goal_s, self.goal_ends, self.replaced_at = goals, goal_s, goal_ends, replaced_at
+        self._goal = None  # (id, goal, start time)
+        self._goal_count = 0
         self.stop_drifts = list(stop_drifts)
         self.switch_at = switch_at  # (time, mode): someone else changes the mode, as the app's stop button does
         self.link_drops = 0
@@ -96,6 +103,41 @@ class ScriptedBackend:
 
     def logged(self, what):
         return [value for _, what_, value in self.log if what_ == what]
+
+    def supports_goals(self):
+        return self.goals
+
+    def goal_move(self, goal, style):
+        self.log.append((self.t, "goal", (goal, style)))
+        if self.mode not in (Mode.STAND, Mode.WALK):
+            raise RobotError("the robot refused the request with status 409")
+        self.mode = Mode.WALK  # a goal from STAND enters WALK itself
+        self._goal_count += 1
+        self._goal = (self._goal_count, goal, self.t)
+        return self.goal_status()
+
+    def goal_cancel(self):
+        self.log.append((self.t, "cancel", None))
+
+    def goal_status(self):
+        number, goal, start = self._goal
+        elapsed = self.t - start
+        if self.replaced_at is not None and elapsed >= self.replaced_at:
+            number, state, progress = number + 1, GoalState.SETTLING, 0.0
+        elif elapsed < GOAL_SETTLE_S:
+            state, progress = GoalState.SETTLING, 0.0
+        elif elapsed < GOAL_SETTLE_S + self.goal_s:
+            state, progress = GoalState.RUNNING, (elapsed - GOAL_SETTLE_S) / self.goal_s
+        else:
+            state, progress = self.goal_ends, 1.0 if self.goal_ends is GoalState.REACHED else 0.5
+        target = goal.distance if goal.kind in (GoalKind.FORWARD, GoalKind.SIDEWAYS) else goal.angle
+        return GoalStatus(number, state, goal.kind, target, progress, self.x, self.y, self.yaw, 1)
+
+    def odometry(self):
+        return Odometry(self.x, self.y, self.yaw, self.yaw, 0.0)
+
+    def reset_odometry(self):
+        self.log.append((self.t, "reset odometry", None))
 
 
 def _robot(**options):
@@ -280,3 +322,165 @@ def test_a_failed_sit_still_deactivates():
         pass
     assert backend.logged("mode") == [Mode.STAND, Mode.DEACTIVATED] and backend.mode is Mode.DEACTIVATED
     assert backend.closed
+
+
+# --- goal moves ----------------------------------------------------------------------------------------------------
+
+def _goals(**options):
+    return _robot(mode=Mode.STAND, goals=True, **options)
+
+
+def test_walk_turn_and_arc_send_rep103_goals_in_the_style():
+    robot, backend = _goals()
+    style = robot.style(gait=Gait.BI_GATE, speed=0.8, stride=0.5, step_height=30, body_height=10, feet_distance=-0.2)
+    assert style == Style(gait=Gait.BI_GATE, speed=0.8, stride=0.5, s1=0.5, h=-0.2, fd=-0.2)
+    robot.walk(1.0)
+    robot.walk(-0.3, sideways=True)
+    robot.turn(90)
+    robot.arc(0.5, -180)
+    assert backend.logged("goal") == [
+        (Goal(GoalKind.FORWARD, distance=1.0), style), (Goal(GoalKind.SIDEWAYS, distance=-0.3), style),
+        (Goal(GoalKind.TURN, angle=90), style), (Goal(GoalKind.ARC, angle=-180, radius=0.5), style)]
+
+
+def test_a_style_keeps_the_fields_it_is_not_given():
+    robot, _ = _goals()
+    robot.style(speed=0.3, feet_distance=0.4)
+    assert robot.style(step_height=10) == Style(speed=0.3, s1=-0.5, fd=0.4)
+
+
+@pytest.mark.parametrize("field, value", [
+    ("speed", 0.0), ("speed", 1.5), ("stride", 1.2), ("step_height", 41), ("step_height", -1), ("body_height", 60),
+    ("feet_distance", -1.1)])
+def test_a_style_outside_the_sliders_is_refused(field, value):
+    robot, _ = _goals()
+    with pytest.raises(ValueError):
+        robot.style(**{field: value})
+    assert robot.style() == Style()
+
+
+def test_stand_sets_the_styles_body_height():
+    robot, backend = _goals()
+    robot.stand(height_mm=25)
+    robot.walk(0.2)
+    (_, style), = backend.logged("goal")
+    assert style.h == -0.5
+
+
+def test_a_goal_blocks_until_reached_and_reports_each_change():
+    robot, backend = _goals(goal_s=1.0)
+    seen = []
+    status = robot.walk(0.5, on_progress=seen.append)
+    assert status.state is GoalState.REACHED and seen[-1] == status
+    assert backend.t >= GOAL_SETTLE_S + 1.0
+    states = [s.state for s in seen]
+    assert states[0] is GoalState.SETTLING and GoalState.RUNNING in states
+    assert all(a != b for a, b in zip(seen, seen[1:]))  # only changes are reported
+    progress = [s.progress for s in seen]
+    assert progress == sorted(progress) and len(set(progress)) > 5
+
+
+@pytest.mark.parametrize("ending, error", [
+    (GoalState.CANCELLED, RobotError), (GoalState.TIMED_OUT, RobotTimeout), (GoalState.REFUSED, RobotError)])
+def test_a_goal_that_does_not_reach_raises(ending, error):
+    robot, _ = _goals(goal_ends=ending)
+    with pytest.raises(error, match=ending.name) as raised:
+        robot.turn(45)
+    assert (type(raised.value) is RobotTimeout) == (ending is GoalState.TIMED_OUT)
+
+
+def test_a_goal_replaced_by_another_clients_raises():
+    robot, _ = _goals(replaced_at=0.5)
+    with pytest.raises(RobotError, match="another goal"):
+        robot.walk(1.0)
+
+
+# Ctrl-C while a goal runs must not leave the robot walking it.
+def test_an_interrupted_goal_is_cancelled():
+    robot, backend = _goals()
+
+    def interrupt(status):
+        if status.state is GoalState.RUNNING:
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        robot.walk(1.0, on_progress=interrupt)
+    assert len(backend.logged("cancel")) == 1
+
+
+def test_a_goal_the_robot_refuses_raises():
+    robot, backend = _robot(mode=Mode.DEACTIVATED, goals=True)
+    with pytest.raises(RobotError, match="409"):
+        robot.walk(0.3)
+    assert backend.logged("cancel") == []
+
+
+def test_nothing_to_walk_sends_no_goal_and_an_arc_needs_a_radius():
+    robot, backend = _goals()
+    robot.walk(0)
+    robot.turn(0)
+    robot.arc(0.5, 0)
+    with pytest.raises(ValueError):
+        robot.arc(0, 90)
+    with pytest.raises(ValueError):
+        robot.arc(-0.5, 90)
+    assert backend.logged("goal") == []
+
+
+def test_a_backend_without_goals_refuses_goal_moves():
+    robot, backend = _robot(mode=Mode.STAND)
+    with pytest.raises(RobotError, match="goal"):
+        robot.walk(0.3)
+    assert backend.velocity == ZERO
+
+
+# m/s and rad/s become a share of the style's gait's top speed; with none given, the style's own share.
+def test_moves_and_turns_take_goals_at_their_speed_as_a_share():
+    robot, backend = _goals()
+    top = speed_model.max_velocity(Gait.TRI_GATE)
+    robot.move_forward(0.6, speed=0.1)
+    robot.move_sideways(0.2)
+    robot.move_forward(-0.3, speed=5.0)
+    robot.rotate(-45, rate=0.5)
+    sent = [(goal, style.speed) for goal, style in backend.logged("goal")]
+    assert sent == [(Goal(GoalKind.FORWARD, distance=0.6), pytest.approx(0.1 / top.vx)),
+                    (Goal(GoalKind.SIDEWAYS, distance=0.2), 0.5),
+                    (Goal(GoalKind.FORWARD, distance=-0.3), 1.0),
+                    (Goal(GoalKind.TURN, angle=-45), pytest.approx(0.5 / top.yaw_rate))]
+    assert backend.logged("velocity") == []
+
+
+def test_a_sideways_share_is_of_the_lateral_top_and_auto_walks_bis():
+    robot, backend = _goals()
+    robot.style(gait=Gait.AUTO)
+    robot.move_sideways(0.2, speed=0.1)
+    (_, style), = backend.logged("goal")
+    assert style.speed == pytest.approx(0.1 / speed_model.max_velocity(Gait.BI_GATE).vy)
+    assert style.gait is Gait.AUTO
+
+
+def test_a_goal_move_without_speed_is_refused():
+    robot, backend = _goals()
+    with pytest.raises(ValueError):
+        robot.move_forward(0.1, speed=0)
+    with pytest.raises(ValueError):
+        robot.rotate(10, rate=-1)
+    assert backend.logged("goal") == []
+
+
+def test_the_state_carries_the_odometry_and_it_can_be_reset():
+    robot, backend = _goals()
+    backend.x, backend.y, backend.yaw = 0.4, -0.1, 30.0
+    assert robot.state().odometry == Odometry(0.4, -0.1, 30.0, 30.0, 0.0)
+    robot.reset_odometry()
+    assert len(backend.logged("reset odometry")) == 1
+    plain, _ = _robot()
+    assert plain.state().odometry is None
+
+
+def test_set_gait_is_the_styles_gait():
+    robot, backend = _goals()
+    robot.set_gait(Gait.WAVE)
+    robot.walk(0.1)
+    (_, style), = backend.logged("goal")
+    assert style.gait is Gait.WAVE
