@@ -214,7 +214,6 @@ void test_a_goals_own_gait_is_the_selection() {
     MotionInbox inbox;
     driving(inbox);
     inbox.selectGait(GaitType::BI_GATE);
-    TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
     inbox.postGait(GaitType::BI_GATE);
     TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
 }

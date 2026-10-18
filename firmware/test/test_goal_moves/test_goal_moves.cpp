@@ -435,6 +435,21 @@ void test_a_client_sending_the_goals_own_gait_keeps_the_goal() {
     TEST_ASSERT_EQUAL(GoalState::RUNNING, rig.state());
 }
 
+// The goal's own gait replaced the operator's as the selection, so the operator's gait, sent again, is a gait change
+// and ends the goal.
+void test_the_operators_earlier_gait_sent_during_a_goal_cancels_it() {
+    Rig &rig = newRig();
+    standUp(rig);
+    TEST_ASSERT_EQUAL(GaitType::TRI_GATE, rig.robot.gait());
+    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(1.0f), style(), GaitType::BI_GATE));
+    rig.run(1.5f);
+    TEST_ASSERT_EQUAL(GoalState::RUNNING, rig.state());
+    TEST_ASSERT_EQUAL(GaitType::BI_GATE, rig.robot.gait());
+    rig.robot.setGait(GaitType::TRI_GATE);
+    rig.tick();
+    TEST_ASSERT_EQUAL(GoalState::CANCELLED, rig.state());
+}
+
 // AUTO picks the gait from the goal's own sticks and swaps it while the gait is at rest; that is no gait change.
 void test_an_auto_swap_at_rest_does_not_cancel_the_goal() {
     Rig &rig = newRig();
@@ -791,6 +806,7 @@ int main(int, char **) {
     RUN_TEST(test_a_mode_change_cancels_the_goal);
     RUN_TEST(test_a_gait_change_over_the_wire_cancels_the_goal);
     RUN_TEST(test_a_client_sending_the_goals_own_gait_keeps_the_goal);
+    RUN_TEST(test_the_operators_earlier_gait_sent_during_a_goal_cancels_it);
     RUN_TEST(test_an_auto_swap_at_rest_does_not_cancel_the_goal);
     RUN_TEST(test_the_dead_man_timeout_does_not_stop_a_goal);
     RUN_TEST(test_a_goal_ends_the_dead_man_stop_and_the_stop_returns_after_it);
