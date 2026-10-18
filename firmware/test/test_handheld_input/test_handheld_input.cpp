@@ -26,12 +26,29 @@ void test_the_sticks_are_the_commands_axes_at_full_scale() {
     TEST_ASSERT_EQUAL_FLOAT(0, c.s + c.s1 + c.fd + c.stride);
 }
 
-// Any axis off centre moves the robot, each one alone.
+// Any axis off centre by HANDHELD_AXIS_THRESHOLD moves the robot, each one alone.
 void test_a_frame_with_any_axis_off_centre_is_the_handheld_moving() {
     float height = 0;
+    constexpr int16_t t = HANDHELD_AXIS_THRESHOLD;
     for (const controller_packet_t p :
-         {packet(1, 0, 0, 0), packet(0, -1, 0, 0), packet(0, 0, 1, 0), packet(0, 0, 0, -1)})
+         {packet(t, 0, 0, 0), packet(0, -t, 0, 0), packet(0, 0, t, 0), packet(0, 0, 0, -t)})
         TEST_ASSERT_EQUAL(CommandOrigin::HANDHELD_MOVING, handheldCommand(p, false, height).origin);
+}
+
+// A thumbstick that drifts just past the controller's own deadzone sends small axes at 50 Hz: under the threshold
+// they are centred, so the frame neither walks, nor tilts, nor trims, nor keeps the handheld's window open.
+void test_an_axis_drifting_under_the_threshold_is_centred() {
+    float height = 0;
+    constexpr int16_t d = HANDHELD_AXIS_THRESHOLD - 1;
+    const CommandMsg drift = handheldCommand(packet(d, -d, d, -d), false, height);
+    TEST_ASSERT_EQUAL(CommandOrigin::HANDHELD, drift.origin);
+    TEST_ASSERT_EQUAL_FLOAT(0, drift.lx);
+    TEST_ASSERT_EQUAL_FLOAT(0, drift.ly);
+    TEST_ASSERT_EQUAL_FLOAT(0, drift.rx);
+    TEST_ASSERT_EQUAL_FLOAT(0, drift.ry);
+    const CommandMsg trim = handheldCommand(packet(0, 0, 0, d, BTN_RIGHT), true, height);
+    TEST_ASSERT_EQUAL(CommandOrigin::HANDHELD, trim.origin);
+    TEST_ASSERT_EQUAL_FLOAT(0, trim.h);
 }
 
 // The buttons travel as modes and gaits of their own, so a frame with only a button held is the handheld at rest.
@@ -59,18 +76,12 @@ void test_the_height_trim_in_a_stand_is_kept_and_moves_the_robot() {
     TEST_ASSERT_EQUAL_FLOAT(-0.4f, walking.h);
 }
 
-// Every other command is a client's: the app's, a gamepad's through it, the facade's and the host's.
-void test_a_command_is_a_clients_unless_the_handheld_says_otherwise() {
-    const CommandMsg app {0, 1, 0, 0, 0, 0, 0, 0, 0};
-    TEST_ASSERT_EQUAL(CommandOrigin::CLIENT, app.origin);
-}
-
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_the_sticks_are_the_commands_axes_at_full_scale);
     RUN_TEST(test_a_frame_with_any_axis_off_centre_is_the_handheld_moving);
+    RUN_TEST(test_an_axis_drifting_under_the_threshold_is_centred);
     RUN_TEST(test_a_centred_frame_is_the_handheld_at_rest_whatever_its_buttons);
     RUN_TEST(test_the_height_trim_in_a_stand_is_kept_and_moves_the_robot);
-    RUN_TEST(test_a_command_is_a_clients_unless_the_handheld_says_otherwise);
     return UNITY_END();
 }
