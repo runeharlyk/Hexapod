@@ -41,7 +41,7 @@ class FSPersistencePB {
             const std::string backup = std::string(_filePath) + ".bak";
             ESP_LOGW(TAG_PERSISTENCE, "Invalid settings in %s, kept as %s, restoring defaults", _filePath,
                      backup.c_str());
-            replaceFile(_filePath, backup.c_str());
+            FileSystem::replaceFile(_filePath, backup.c_str());
         }
         applyDefaults();
         writeToFS();
@@ -71,7 +71,7 @@ class FSPersistencePB {
 
         const bool written = fwrite(buffer.data(), 1, stream.bytes_written, file) == stream.bytes_written;
         const bool closed = fclose(file) == 0;
-        if (!written || !closed || !replaceFile(temp.c_str(), _filePath)) {
+        if (!written || !closed || !FileSystem::replaceFile(temp.c_str(), _filePath)) {
             ESP_LOGE(TAG_PERSISTENCE, "Failed to write %s", _filePath);
             std::remove(temp.c_str());
             return false;
@@ -119,10 +119,6 @@ class FSPersistencePB {
                _statefulService->updateWithoutPropagation(
                    [this, &protoMsg](T &state) { return _stateUpdater(protoMsg, state); }) != StateUpdateResult::ERROR;
     }
-
-    // LittleFS renames over an existing file in one step. Removing the target and retrying would lose the stored
-    // settings whenever the rename failed for a reason that persists, such as a full file system.
-    static bool replaceFile(const char *from, const char *to) { return std::rename(from, to) == 0; }
 
     ProtoStateReader _stateReader;
     ProtoStateUpdater _stateUpdater;

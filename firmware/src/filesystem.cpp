@@ -33,6 +33,10 @@ bool mkdirRecursive(const char *path) {
     return true;
 }
 
+// LittleFS commits a rename over an existing file in the same directory as one metadata commit that deletes the
+// destination's entry and moves the source's into its place (lfs_rename_ in littlefs's lfs.c).
+bool replaceFile(const char *from, const char *to) { return std::rename(from, to) == 0; }
+
 bool init() {
     esp_vfs_littlefs_conf_t conf = {
         .base_path = MOUNT_POINT,
