@@ -1,5 +1,6 @@
 import { savedAddresses } from '$lib/stores/robots'
 import { Message } from '$lib/platform_shared/message'
+import { socketUrl } from '$lib/transport/websocket-adapter'
 
 const PROBE_TIMEOUT_MS = 1500
 // Chromium delays a page's new sockets after many of its sockets failed: right after a socket-only
@@ -13,8 +14,10 @@ const SWEEP_CONCURRENCY = 16
 const SWEEP_FIRST_HOST = 1
 const SWEEP_LAST_HOST = 254
 
-// Default mDNS hostname is "esp32" (firmware/include/settings/mdns_settings.h); "hexapod"
-// covers a renamed device. 192.168.4.1 is the SoftAP address when the robot hosts its own network.
+// The factory mDNS hostname is "hexapod" (firmware/include/settings/mdns_settings.h). A robot set up
+// by firmware from before July 2026 stored "esp32", and answers to it until it runs firmware that
+// replaces that stored name.
+// 192.168.4.1 is the SoftAP address when the robot hosts its own network.
 const WELL_KNOWN_HOSTS = ['esp32.local', 'hexapod.local', '192.168.4.1']
 
 const PRIVATE_IPV4 = /^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/
@@ -73,7 +76,7 @@ export const probeAddress = (
 
     let socket: WebSocket
     try {
-      socket = new WebSocket(`ws://${address}/api/ws`)
+      socket = new WebSocket(socketUrl(address))
     } catch {
       resolve(false)
       return

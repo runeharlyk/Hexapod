@@ -78,12 +78,13 @@ void MDNSService::addServices() {
         }
     }
 
-    for (size_t i = 0; i < state().global_txt_records_count; i++) {
-        const auto &txt = state().global_txt_records[i];
-        for (size_t j = 0; j < state().services_count; j++) {
-            const auto &service = state().services[j];
+    for (size_t j = 0; j < state().services_count; j++) {
+        const auto &service = state().services[j];
+        for (size_t i = 0; i < state().global_txt_records_count; i++) {
+            const auto &txt = state().global_txt_records[i];
             mdns_service_txt_item_set(service.service, service.protocol, txt.key, txt.value);
         }
+        mdns_service_txt_item_set(service.service, service.protocol, MDNS_FIRMWARE_VERSION_KEY, APP_VERSION);
     }
 }
 
@@ -100,6 +101,12 @@ void MDNSService::statusProto(api_MDNSStatus &status) {
     status.global_txt_records_count = state().global_txt_records_count;
     for (size_t i = 0; i < state().global_txt_records_count; i++) {
         status.global_txt_records[i] = state().global_txt_records[i];
+    }
+    constexpr size_t txtCapacity = sizeof(status.global_txt_records) / sizeof(status.global_txt_records[0]);
+    if (status.global_txt_records_count < txtCapacity) {
+        auto &version = status.global_txt_records[status.global_txt_records_count++];
+        strncpy(version.key, MDNS_FIRMWARE_VERSION_KEY, sizeof(version.key) - 1);
+        strncpy(version.value, APP_VERSION, sizeof(version.value) - 1);
     }
 }
 

@@ -145,7 +145,7 @@
   const addManual = async () => {
     const address = normalizeRobotAddress(manualAddress)
     if (!address) {
-      notifications.error('Enter an address like 192.168.1.42 or esp32.local', 4000)
+      notifications.error('Enter an address like 192.168.1.42 or hexapod.local', 4000)
       return
     }
     manualAddress = ''

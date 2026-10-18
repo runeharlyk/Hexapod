@@ -10,8 +10,17 @@
 #endif
 
 #ifndef FACTORY_MDNS_INSTANCE
-#define FACTORY_MDNS_INSTANCE "ESP32 Device"
+#define FACTORY_MDNS_INSTANCE "Hexapod"
 #endif
+
+// Advertised from the running build by MDNSService, never stored: a stored copy goes stale with every
+// firmware update.
+constexpr const char* MDNS_FIRMWARE_VERSION_KEY = "Firmware Version";
+
+// The factory names of the ESP32 template the firmware grew from, which earlier firmware stored. No
+// version of the app could change them, so a stored copy is a leftover rather than a choice.
+constexpr const char* MDNS_LEGACY_HOSTNAME = "esp32";
+constexpr const char* MDNS_LEGACY_INSTANCE = "ESP32 Device";
 
 using MDNSTxtRecord = api_MDNSTxtRecord;
 using MDNSServiceDef = api_MDNSServiceDef;
@@ -33,10 +42,6 @@ inline MDNSSettings MDNSSettings_defaults() {
     strncpy(settings.services[1].protocol, "_tcp", sizeof(settings.services[1].protocol) - 1);
     settings.services[1].port = 80;
     settings.services[1].txt_records_count = 0;
-
-    settings.global_txt_records_count = 1;
-    strncpy(settings.global_txt_records[0].key, "Firmware Version", sizeof(settings.global_txt_records[0].key) - 1);
-    strncpy(settings.global_txt_records[0].value, APP_VERSION, sizeof(settings.global_txt_records[0].value) - 1);
 
     return settings;
 }
@@ -84,13 +89,27 @@ inline void MDNS_ensureUnderscore(char (&label)[N]) {
     label[0] = '_';
 }
 
+template <size_t N>
+inline void MDNS_replaceIf(char (&field)[N], const char* unwanted, const char* replacement) {
+    if (strncmp(field, unwanted, N) != 0) return;
+    strncpy(field, replacement, N - 1);
+    field[N - 1] = '\0';
+}
+
 inline StateUpdateResult MDNSSettings_update(const MDNSSettings& proto, MDNSSettings& settings) {
     MDNSSettings candidate = proto;
 
-    if (strnlen(candidate.hostname, sizeof(candidate.hostname)) == 0) {
-        strncpy(candidate.hostname, FACTORY_MDNS_HOSTNAME, sizeof(candidate.hostname) - 1);
-        candidate.hostname[sizeof(candidate.hostname) - 1] = '\0';
+    MDNS_replaceIf(candidate.hostname, "", FACTORY_MDNS_HOSTNAME);
+    MDNS_replaceIf(candidate.hostname, MDNS_LEGACY_HOSTNAME, FACTORY_MDNS_HOSTNAME);
+    MDNS_replaceIf(candidate.instance, MDNS_LEGACY_INSTANCE, FACTORY_MDNS_INSTANCE);
+
+    pb_size_t keptTxt = 0;
+    for (pb_size_t i = 0; i < candidate.global_txt_records_count; i++) {
+        const MDNSTxtRecord& txt = candidate.global_txt_records[i];
+        if (strncmp(txt.key, MDNS_FIRMWARE_VERSION_KEY, sizeof(txt.key)) == 0) continue;
+        candidate.global_txt_records[keptTxt++] = txt;
     }
+    candidate.global_txt_records_count = keptTxt;
 
     // A service without a name, protocol or port cannot be registered, so it is dropped rather than
     // failing mdns_service_add on every restart.

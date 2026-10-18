@@ -24,7 +24,7 @@ So the origin serving the app decides which transports exist at all:
 | Origin | Web Bluetooth | `ws://` to robot | camera MJPEG |
 | --- | --- | --- | --- |
 | `https://…github.io/Hexapod/` (Pages) | yes | **blocked** | **blocked** |
-| `http://esp32.local` (`EMBED_WEBAPP=1`) | **no** | yes | yes |
+| `http://hexapod.local` (`EMBED_WEBAPP=1`) | **no** | yes | yes |
 | `http://localhost:5173` (dev) | yes | yes | yes |
 
 Corollaries that keep coming up:

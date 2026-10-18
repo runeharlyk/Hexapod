@@ -61,7 +61,7 @@
 </script>
 
 {#if settings}
-  <div class="collapse bg-base-100 border-base-300 border">
+  <div class="collapse-arrow bg-base-200 border-base-300 rounded-box collapse border">
     <input type="checkbox" />
     <div class="collapse-title font-semibold">Configuration</div>
     <div class="collapse-content text-sm">

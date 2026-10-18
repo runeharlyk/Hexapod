@@ -78,6 +78,6 @@
       {/each}
     {/if}
   </div>
-</SettingsCard>
 
-<I2CSetting />
+  <I2CSetting />
+</SettingsCard>
