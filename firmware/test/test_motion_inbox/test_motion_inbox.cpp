@@ -100,6 +100,21 @@ void test_an_owner_silent_past_the_limit_loses_its_goal_at_the_take() {
     TEST_ASSERT_TRUE(mail.goalDriveEnded);
 }
 
+// The control task reads the clock before the take locks the inbox, so an owner heard, or a goal posted, after that
+// read and before the lock carries a time later than the take's. That is no silence.
+void test_an_owner_heard_after_the_takes_clock_read_keeps_its_goal() {
+    MotionInbox inbox;
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, OWNER, 1000);
+    inbox.take(1000);
+    inbox.ownerHeard(OWNER, 5001);
+    TEST_ASSERT_FALSE(inbox.take(5000).goalCancelled);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, OWNER, 7001);
+    const MotionInbox::Mail mail = inbox.take(7000);
+    TEST_ASSERT_TRUE(mail.goal.has_value());
+    TEST_ASSERT_FALSE(mail.goalCancelled);
+    TEST_ASSERT_TRUE(inbox.goalDrives());
+}
+
 // A goal with no transport has no owner to fall silent.
 void test_a_goal_without_an_owner_never_falls_silent() {
     MotionInbox inbox;
@@ -312,6 +327,7 @@ int main(int, char **) {
     RUN_TEST(test_a_cancel_ends_only_the_goal_driving_when_it_arrives);
     RUN_TEST(test_an_odometry_reset_is_refused_while_a_goal_drives_and_accepted_once_it_ends);
     RUN_TEST(test_an_owner_silent_past_the_limit_loses_its_goal_at_the_take);
+    RUN_TEST(test_an_owner_heard_after_the_takes_clock_read_keeps_its_goal);
     RUN_TEST(test_a_goal_without_an_owner_never_falls_silent);
     RUN_TEST(test_the_owner_leaving_ends_its_goal_and_another_client_leaving_does_not);
     RUN_TEST(test_a_command_is_taken_once_with_its_arrival_and_the_newest_wins);

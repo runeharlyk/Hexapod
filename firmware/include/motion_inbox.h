@@ -223,9 +223,11 @@ class MotionInbox {
     }
 
     // Control task, at the start of every tick: what arrived since the last take. A goal whose end was asked for no
-    // longer drives the walk from here on.
+    // longer drives the walk from here on. Its clock is read before the lock, so an owner heard in between is heard
+    // after it: the silence is a signed difference.
     Mail take(unsigned long nowMs) {
         std::lock_guard<std::mutex> lock(_mutex);
+        const long ownerSilenceMs = static_cast<long>(nowMs - _ownerHeardMs);
         Mail mail;
         mail.modes = std::exchange(_modes, Modes {});
         // The control task applies them now; until it reports what they left, they are taken to leave the prediction.
@@ -234,8 +236,9 @@ class MotionInbox {
         mail.commandMs = _commandMs;
         mail.gait = std::exchange(_gait, std::nullopt);
         mail.goal = std::exchange(_goal, std::nullopt);
-        mail.goalCancelled = std::exchange(_goalCancelRequested, false) ||
-                             (_goalDrives && _goalOwner.adapter && nowMs - _ownerHeardMs > OWNER_SILENCE_MS);
+        mail.goalCancelled =
+            std::exchange(_goalCancelRequested, false) ||
+            (_goalDrives && _goalOwner.adapter && ownerSilenceMs > static_cast<long>(OWNER_SILENCE_MS));
         mail.goalDriveEnded = mail.goalCancelled && std::exchange(_goalDrives, false);
         mail.odometryReset = std::exchange(_odometryReset, false);
         return mail;
