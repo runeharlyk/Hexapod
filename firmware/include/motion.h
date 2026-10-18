@@ -82,6 +82,14 @@ class MotionService {
             EventBus<ModeMsg>::publish({motionState, ModeMsgKind::APPLIED});
     }
 
+    // Control task. Whether the handheld drives is reported with the mode, so a change of it reports the mode applied
+    // again: the mode's observers see the same mode, and the app's bridge reads the flag as it pushes the report.
+    void reportHandheldDriving(bool driving) {
+        if (driving == _handheldReported) return;
+        _handheldReported = driving;
+        EventBus<ModeMsg>::publish({motionState, ModeMsgKind::APPLIED});
+    }
+
     // Control task.
     void applyMode(MOTION_STATE mode) {
         const bool enteringWalk = mode == MOTION_STATE::WALK && motionState != MOTION_STATE::WALK;
@@ -283,6 +291,7 @@ class MotionService {
         _modesTaken = mail.modes;
         _gaitTaken = mail.gait;
         for (int i = 0; i < mail.modes.count; ++i) handleInputMode(mail.modes.items[i]);
+        reportHandheldDriving(mail.handheldDriving);
         if (mail.gait) handleInputGait(*mail.gait);
         if (mail.command) handleCommand(*mail.command, mail.commandMs);
         takeGoalMail(mail);
@@ -400,6 +409,8 @@ class MotionService {
 
     // Any task: the pose of the last tick, whole.
     OdometryEstimate odometry() const { return _inbox.odometry(); }
+    // Any task: whether the ESP-NOW handheld drove at the start of the last tick, which the mode's report carries.
+    bool handheldDriving() const { return _inbox.handheldDriving(); }
     // Any task. The control task zeroes the pose before its next update; the gyro bias stays. Refused, resetting
     // nothing, while a goal drives: the pose is its origin.
     bool resetOdometry() { return _inbox.requestOdometryReset(); }
@@ -473,6 +484,7 @@ class MotionService {
     bool _borrowedMode = false;
     bool _handbackSent = false;              // a hand-back is queued; cleared by any mode taken
     bool _animating = false;                 // control task only: whether the last tick ran ANIMATE
+    bool _handheldReported = false;          // control task only: whether the handheld drove, as last reported
 
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
     BodyStateMsg target_body_state = {0, 0, 0, 0, 0, 0};

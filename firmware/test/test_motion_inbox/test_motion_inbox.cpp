@@ -520,6 +520,20 @@ void test_only_a_clients_centred_command_after_the_window_ends_the_wait() {
     TEST_ASSERT_FALSE(inbox.take(2100 + WINDOW_MS).command.has_value());
 }
 
+// Each take says whether the handheld drives, from the take after its first moving frame to the first take past the
+// window, and keeps it for the replies.
+void test_the_take_says_whether_the_handheld_drives() {
+    MotionInbox inbox;
+    TEST_ASSERT_FALSE(inbox.take(1000).handheldDriving);
+    inbox.postCommand(HANDHELD_FORWARD, 1000);
+    TEST_ASSERT_FALSE(inbox.handheldDriving());
+    TEST_ASSERT_TRUE(inbox.take(1000).handheldDriving);
+    TEST_ASSERT_TRUE(inbox.handheldDriving());
+    TEST_ASSERT_TRUE(inbox.take(1000 + WINDOW_MS - 1).handheldDriving);
+    TEST_ASSERT_FALSE(inbox.take(1000 + WINDOW_MS).handheldDriving);
+    TEST_ASSERT_FALSE(inbox.handheldDriving());
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_goal_is_taken_once_and_reported_settling_until_then);
@@ -555,5 +569,6 @@ int main(int, char **) {
     RUN_TEST(test_the_handheld_window_spans_the_clocks_wrap);
     RUN_TEST(test_after_the_handheld_window_a_clients_stick_waits_for_a_centred_command);
     RUN_TEST(test_only_a_clients_centred_command_after_the_window_ends_the_wait);
+    RUN_TEST(test_the_take_says_whether_the_handheld_drives);
     return UNITY_END();
 }

@@ -47,7 +47,12 @@ message ControllerInputData {
   float stride = 7;  // -1 the shortest stroke, 0 (unsent) each gait's speed-optimal one, 1 the longest
 }
 
-message ModeData { ModesEnum mode = 1; }
+// Pushed as the robot applies a mode, and as the ESP-NOW handheld starts or stops driving: while it drives, the other
+// sources' sticks are dropped and a goal is refused (423). A request sets the mode alone.
+message ModeData {
+  ModesEnum mode = 1;
+  bool handheld = 2;
+}
 message GaitData { GaitEnum gait = 1; }
 message AnglesData { repeated int32 angles = 1; } // 18 servos
 message IMUData {

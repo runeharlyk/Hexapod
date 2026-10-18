@@ -88,6 +88,7 @@ class MotionInbox {
         bool goalCancelled = false;  // the end of the goal driving the walk was asked for, or its owner fell silent
         bool goalDriveEnded = false; // so a goal no longer drives the walk, whose sticks are to be centred
         bool odometryReset = false;
+        bool handheldDriving = false; // the handheld has moved a stick within HANDHELD_PRIORITY_MS
     };
 
     // The facade and the app send every 0.2 s; an owner silent ten times as long has gone, whether or not its transport
@@ -277,7 +278,14 @@ class MotionInbox {
             (_goalDrives && _goalOwner.adapter && ownerSilenceMs > static_cast<long>(OWNER_SILENCE_MS));
         mail.goalDriveEnded = mail.goalCancelled && std::exchange(_goalDrives, false);
         mail.odometryReset = std::exchange(_odometryReset, false);
+        mail.handheldDriving = _handheldDriving = handheldDrivingLocked(nowMs);
         return mail;
+    }
+
+    // Any task: whether the handheld drove at the last take, as the robot reports it.
+    bool handheldDriving() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _handheldDriving;
     }
 
     // Control task: the goal no longer drives the walk. False when it did not, since an operator took the walk back.
@@ -321,6 +329,7 @@ class MotionInbox {
     bool _handheldMoved = false;
     // From the handheld's moving until a client's centred command after its window.
     bool _clientsWaitForCentre = false;
+    bool _handheldDriving = false; // at the last take
 
     void cancelGoalLocked() {
         if (_goalDrives) _goalCancelRequested = true;

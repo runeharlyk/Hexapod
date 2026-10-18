@@ -745,6 +745,7 @@ static void setupComm() {
         if (m.kind != ModeMsgKind::APPLIED) return;
         socket_message_ModeData out = socket_message_ModeData_init_zero;
         out.mode = static_cast<socket_message_ModesEnum>(m.mode);
+        out.handheld = robot.motion().handheldDriving();
         emitAll(out);
     });
 

@@ -62,6 +62,8 @@ class VirtualRobot {
     // The joint angles the motion produced on the last tick, in degrees, three per leg in leg order.
     const float *angles() const { return _sample.angles; }
     MOTION_STATE mode() const { return static_cast<MOTION_STATE>(_sample.mode); }
+    // Whether the handheld drives, as main.cpp's mode bridge reads it.
+    bool handheldDriving() const { return _robot.motion().handheldDriving(); }
     // The last command as the telemetry reports it, in TickSample.command's order.
     const float *telemetryCommand() const { return _sample.command; }
     // Whether the last tick's telemetry reports the dead-man stop in force.

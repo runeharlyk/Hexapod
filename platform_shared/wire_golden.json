@@ -585,7 +585,8 @@
    "goal_status": "300 socket_message.GoalStatus"
   },
   "socket_message.ModeData": {
-   "mode": "1 socket_message.ModesEnum"
+   "mode": "1 socket_message.ModesEnum",
+   "handheld": "2 bool"
   },
   "socket_message.OdometryData": {
    "x": "1 float",

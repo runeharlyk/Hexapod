@@ -17,7 +17,8 @@ import {
 
 export const requestMode = (nextMode: MotionModes) => {
   modeStore.set(nextMode)
-  dataBroker.emit(ModeData, { mode: Object.values(MotionModes).indexOf(nextMode) })
+  // The robot reads the mode alone; whether the handheld drives is its own to report.
+  dataBroker.emit(ModeData, { mode: Object.values(MotionModes).indexOf(nextMode), handheld: false })
 }
 
 export const requestGait = (nextGait: GaitType) => {

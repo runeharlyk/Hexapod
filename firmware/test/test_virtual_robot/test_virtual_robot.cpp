@@ -337,6 +337,39 @@ void test_a_stale_stick_stream_does_not_resume_the_walk_after_the_handheld() {
     TEST_ASSERT_GREATER_THAN_FLOAT(GAIT_STRIDE_DEADBAND_MM, robot.gaitCommand().step_y);
 }
 
+// The robot reports whether the handheld drives with its mode (ModeData.handheld): on each change of it the control
+// task reports the mode applied again, and main.cpp's bridge reads the flag as it pushes the report. While the flag
+// holds, nothing more is reported.
+void test_the_handheld_driving_is_reported_with_the_mode_on_each_change() {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setMode(MOTION_STATE::WALK);
+    robot.tick();
+    struct Report {
+        int tick;
+        MOTION_STATE mode;
+        bool handheld;
+    };
+    std::vector<Report> reports;
+    int t = 0;
+    auto listener = EventBus<ModeMsg>::subscribe([&](const ModeMsg &m) {
+        if (m.kind == ModeMsgKind::APPLIED) reports.push_back({t, m.mode, robot.handheldDriving()});
+    });
+    const int release = ticksFor(1.0f);
+    for (; t < ticksFor(2.5f); ++t) {
+        if (t < release && t % HANDHELD_PERIOD_TICKS == 0) robot.handheld(handheldFrame(0, 0.5f));
+        if (t == release) robot.handheld(handheldFrame(0, 0));
+        robot.tick();
+    }
+    TEST_ASSERT_EQUAL_size_t(2, reports.size());
+    TEST_ASSERT_EQUAL_INT(0, reports[0].tick);
+    TEST_ASSERT_EQUAL(MOTION_STATE::WALK, reports[0].mode);
+    TEST_ASSERT_TRUE(reports[0].handheld);
+    TEST_ASSERT_EQUAL_INT(release - HANDHELD_PERIOD_TICKS + ticksFor(0.6f), reports[1].tick);
+    TEST_ASSERT_EQUAL(MOTION_STATE::WALK, reports[1].mode);
+    TEST_ASSERT_FALSE(reports[1].handheld);
+}
+
 // The telemetry reports the write of its own tick: none in a mode that sends no pose, a success in a stand, and an idle
 // tick after a stand tick does not inherit the stand's write (Hexapod::planMotion starts each tick's record).
 void test_the_telemetry_reports_the_servo_write_of_its_own_tick() {
@@ -1645,6 +1678,7 @@ int main(int, char **) {
     RUN_TEST(test_the_app_is_heard_again_600_ms_after_the_handheld_lets_go);
     RUN_TEST(test_the_dead_man_stops_a_handheld_walk_whose_link_drops_under_the_apps_heartbeat);
     RUN_TEST(test_a_stale_stick_stream_does_not_resume_the_walk_after_the_handheld);
+    RUN_TEST(test_the_handheld_driving_is_reported_with_the_mode_on_each_change);
     RUN_TEST(test_the_telemetry_reports_the_servo_write_of_its_own_tick);
     RUN_TEST(test_a_height_only_command_is_obeyed_for_2_s_after_silence);
     RUN_TEST(test_no_servo_is_driven_past_its_joint_travel);
