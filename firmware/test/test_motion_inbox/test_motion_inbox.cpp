@@ -482,6 +482,44 @@ void test_the_handheld_window_spans_the_clocks_wrap() {
     TEST_ASSERT_TRUE(inbox.take(moved + WINDOW_MS).command.has_value());
 }
 
+// The robot stays stopped after the handheld lets go: from the window's end, a client's stick off centre, the stale
+// stream of a script or of a stick the app held through the drive, is dropped until a client sends a centred command,
+// which is taken. A stick after it is obeyed.
+void test_after_the_handheld_window_a_clients_stick_waits_for_a_centred_command() {
+    MotionInbox inbox;
+    inbox.postCommand(HANDHELD_FORWARD, 1000);
+    inbox.take(1000);
+    inbox.postCommand(FORWARD_STICK, 1000 + WINDOW_MS);
+    TEST_ASSERT_FALSE(inbox.take(1000 + WINDOW_MS).command.has_value());
+    inbox.postCommand(FORWARD_STICK, 5000);
+    TEST_ASSERT_FALSE(inbox.take(5000).command.has_value());
+    inbox.postCommand(CENTRED, 5100);
+    MotionInbox::Mail mail = inbox.take(5100);
+    TEST_ASSERT_TRUE(mail.command.has_value());
+    TEST_ASSERT_EQUAL_FLOAT(0, mail.command->ly);
+    inbox.postCommand(FORWARD_STICK, 5200);
+    mail = inbox.take(5200);
+    TEST_ASSERT_TRUE(mail.command.has_value());
+    TEST_ASSERT_EQUAL_FLOAT(1, mail.command->ly);
+}
+
+// Only a centred command after the window counts: one dropped within it, and the handheld's own centred frames, leave
+// a client's stick waiting. The handheld moving again sets the wait again.
+void test_only_a_clients_centred_command_after_the_window_ends_the_wait() {
+    MotionInbox inbox;
+    inbox.postCommand(HANDHELD_FORWARD, 1000);
+    inbox.postCommand(CENTRED, 1100);
+    inbox.postCommand(HANDHELD_CENTRED, 1000 + WINDOW_MS + 50);
+    inbox.take(1000 + WINDOW_MS + 50);
+    inbox.postCommand(FORWARD_STICK, 1000 + WINDOW_MS + 100);
+    TEST_ASSERT_FALSE(inbox.take(1000 + WINDOW_MS + 100).command.has_value());
+    inbox.postCommand(CENTRED, 2000);
+    inbox.postCommand(HANDHELD_FORWARD, 2100);
+    inbox.take(2100);
+    inbox.postCommand(FORWARD_STICK, 2100 + WINDOW_MS);
+    TEST_ASSERT_FALSE(inbox.take(2100 + WINDOW_MS).command.has_value());
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_goal_is_taken_once_and_reported_settling_until_then);
@@ -515,5 +553,7 @@ int main(int, char **) {
     RUN_TEST(test_a_handheld_moving_frame_ends_a_goal_though_its_walk_sticks_are_centred);
     RUN_TEST(test_a_mode_within_the_handheld_window_is_queued);
     RUN_TEST(test_the_handheld_window_spans_the_clocks_wrap);
+    RUN_TEST(test_after_the_handheld_window_a_clients_stick_waits_for_a_centred_command);
+    RUN_TEST(test_only_a_clients_centred_command_after_the_window_ends_the_wait);
     return UNITY_END();
 }

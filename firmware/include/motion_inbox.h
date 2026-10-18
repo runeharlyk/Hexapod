@@ -134,21 +134,31 @@ class MotionInbox {
     // Command worker. Each command is a full snapshot of the sticks and sliders, so the newest replaces one not yet
     // taken. While the handheld drives, a client's command is dropped, centred or not: the app's heartbeat would stop
     // the handheld's walk for a tick and move its posture. The handheld's own centred frame is its stop, and is walked.
-    // A command dropped is no command to the dead-man either. While a goal drives the walk, a centred command is no
-    // command, its posture and the rest of it too: the heartbeats of the app, the facade and the ESP-NOW controller. A
-    // stick off centre, or the handheld moving any of its own, takes the walk back, so the goal ends and never writes
-    // the sticks again, and the command is walked.
+    // After the window the robot stays stopped: a client's stick off centre is dropped until a client has sent a
+    // centred command, so neither a script's keep-alive nor a stick the app held through the drive walks the robot
+    // again by itself. Commands carry no client's identity, so one centred command ends the wait for every client, as
+    // the app and the scripts are last-writer between themselves anyway. A command dropped is no command to the
+    // dead-man either. While a goal drives the walk, a centred command is no command, its posture and the rest of it
+    // too: the heartbeats of the app, the facade and the ESP-NOW controller. A stick off centre, or the handheld moving
+    // any of its own, takes the walk back, so the goal ends and never writes the sticks again, and the command is
+    // walked.
     void postCommand(const CommandMsg &c, unsigned long nowMs) {
         std::lock_guard<std::mutex> lock(_mutex);
         const bool handheldMoving = c.origin == CommandOrigin::HANDHELD_MOVING;
+        const bool steers = c.lx != 0.f || c.ly != 0.f || c.rx != 0.f;
         if (handheldMoving) {
             _handheldMovedMs = nowMs;
             _handheldMoved = true;
-        } else if (c.origin == CommandOrigin::CLIENT && handheldDrivingLocked(nowMs)) {
-            return;
+            _clientsWaitForCentre = true;
+        } else if (c.origin == CommandOrigin::CLIENT) {
+            if (handheldDrivingLocked(nowMs)) return;
+            if (_clientsWaitForCentre) {
+                if (steers) return;
+                _clientsWaitForCentre = false;
+            }
         }
         if (_goalDrives) {
-            if (!handheldMoving && c.lx == 0.f && c.ly == 0.f && c.rx == 0.f) return;
+            if (!handheldMoving && !steers) return;
             _goalDrives = false;
             _goalCancelRequested = true;
         }
@@ -309,6 +319,8 @@ class MotionInbox {
     // The arrival of the handheld's last frame with a stick off centre, once there was one.
     unsigned long _handheldMovedMs = 0;
     bool _handheldMoved = false;
+    // From the handheld's moving until a client's centred command after its window.
+    bool _clientsWaitForCentre = false;
 
     void cancelGoalLocked() {
         if (_goalDrives) _goalCancelRequested = true;
