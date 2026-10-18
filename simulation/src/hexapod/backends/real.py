@@ -2,8 +2,9 @@
 platform_shared/message.proto frames; both links carry the same messages, so only the transport differs.
 
 One thread runs an asyncio loop that owns the link; the public methods are synchronous. Once subscribed, the robot
-pushes its mode and gait on every change and its IMU angles at up to 40 Hz. Its mode is asked for once at connect; a
-firmware from before that request answers it 400, and the mode is then unknown until the first push.
+pushes its mode and gait on every change and its IMU angles at up to 40 Hz. Its mode is asked for at connect, and
+polled for the handheld's report (below); a firmware from before that request answers it 400, and the mode is then
+unknown until the first push, and never polled.
 
 Keep-alive: while the robot is in a mode the app heartbeats (STAND, WALK, WALK_NN; app/src/lib/control-link.ts), the
 last input is re-sent every KEEPALIVE_S. The firmware drops a walk command after 600 ms without input while a stick
@@ -18,7 +19,9 @@ Handheld: while the ESP-NOW handheld controller drives, the robot drops this cli
 centred, so the robot stays stopped once the handheld lets go, and a walk in progress raises a RobotError at its next
 sleep or set_velocity; a goal ends CANCELLED. A walk while the handheld drives is refused at once. After the handheld,
 the robot ignores this client's sticks until it has sent a centred one, so the first stick after a takeover, and the
-first of a connection, is sent after a centred input.
+first of a connection, is sent after a centred input. The report is pushed only on a change, and a push can be
+dropped, so while the keep-alive runs or the handheld drives the mode is asked for every MODE_POLL_S; a reply is
+dropped when a push arrived since its request, which is the newer.
 
 Goals: a firmware from before them answers their requests 400, which connect() probes. The robot pushes a goal's
 status on each change, but a push can be dropped, so the status is asked for when none came for CONFIRM_S and to
@@ -55,6 +58,8 @@ WALKING_MODES = (Mode.WALK, Mode.WALK_NN)
 REPLY_TIMEOUT_S = 3.0
 SILENCE_S = 2.0  # pongs arrive every KEEPALIVE_S: this long without a frame means the link is gone
 CONFIRM_S = 1.0
+# Under the handheld's 600 ms window (motion_inbox.h HANDHELD_PRIORITY_MS), so a poll falls inside every drive.
+MODE_POLL_S = 0.4
 RESET_POLL_S = 0.02
 ODOMETRY_ZERO = 1e-4  # m and rad: what a reset pose reads, a still robot's tick having moved it by less
 # The DMP yaw (mpu6050.h dmpGetYawPitchRoll) is atan2(2(xy - wz), 2(w^2 + x^2) - 1), clockwise-positive about the
@@ -146,6 +151,8 @@ class RealBackend:
         self._yaw: float | None = None
         self._sticks = speed_model.CENTRED
         self._handheld = False
+        self._polls_mode = False  # the firmware answers the mode request
+        self._mode_pushes = 0
         self._taken_over = False  # the handheld took over a walk, which the script has not been told of yet
         self._centre_first = True  # the robot may be waiting for this client to send a centred stick
         self._style = Style()  # the posture and stride every input carries: set_height's height, then each goal's
@@ -167,7 +174,7 @@ class RealBackend:
             self._imu = features.features_data_response.imu
             probe = self._run(self._ask(pb.CorrelationRequest(goal_status_get=pb.GoalStatusGet()), check=False))
             self._goals = probe.status_code < 400 and probe.WhichOneof("response") == "goal_status"
-            self._run(self._ask(pb.CorrelationRequest(mode_get=pb.ModeGet()), check=False))
+            self._polls_mode = self._run(self._ask_mode())
             if self._imu:
                 self._wait(lambda: self._yaw is not None, "the robot reports an IMU but sends no angles")
         except BaseException:
@@ -194,7 +201,7 @@ class RealBackend:
         await self._transport.open()
         for name in ("mode", "gait", "imu", "goal_status"):
             await self._send(pb.Message(sub_notif=pb.SubscribeNotification(tag=_tag(name))))
-        self._tasks = [self._loop.create_task(self._read()), self._loop.create_task(self._keep_alive())]
+        self._tasks = [self._loop.create_task(task()) for task in (self._read, self._keep_alive, self._confirm_mode)]
 
     async def _read(self) -> None:
         try:
@@ -220,12 +227,6 @@ class RealBackend:
             if reply.status_code < 400 and reply.WhichOneof("response") == "goal_status":
                 with self._changed:
                     self._hear_goal(reply.goal_status, arrived)
-            # A mode pushed before the reply is the newer: the robot pushes every change.
-            if reply.status_code < 400 and reply.WhichOneof("response") == "mode":
-                with self._changed:
-                    if self._mode is None:
-                        self._mode = Mode(reply.mode.mode)
-                        self._hear_handheld(reply.mode.handheld)
             future = self._replies.pop(reply.correlation_id, None)
             if future is not None and not future.done():
                 future.set_result(reply)
@@ -234,6 +235,7 @@ class RealBackend:
             if kind == "goal_status":
                 self._hear_goal(message.goal_status, arrived)
             elif kind == "mode":
+                self._mode_pushes += 1
                 self._mode = Mode(message.mode.mode)
                 self._hear_handheld(message.mode.handheld)
             elif kind == "gait":
@@ -262,6 +264,31 @@ class RealBackend:
     # Pushes and replies are handled in the order they arrived, so the last heard is the newest.
     def _hear_goal(self, status: pb.GoalStatus, arrived: float) -> None:
         self._goal, self._goal_heard = _goal_status(status), arrived
+
+    # A mode pushed after the request was sent is the newer: the robot pushes every change. False when the firmware
+    # predates the request.
+    async def _ask_mode(self) -> bool:
+        with self._changed:
+            pushes = self._mode_pushes
+        reply = await self._ask(pb.CorrelationRequest(mode_get=pb.ModeGet()), check=False)
+        answered = reply.status_code < 400 and reply.WhichOneof("response") == "mode"
+        with self._changed:
+            if answered and self._mode_pushes == pushes:
+                self._mode = Mode(reply.mode.mode)
+                self._hear_handheld(reply.mode.handheld)
+                self._changed.notify_all()
+        return answered
+
+    async def _confirm_mode(self) -> None:
+        while self._error is None:
+            await asyncio.sleep(MODE_POLL_S)
+            with self._changed:
+                due = self._polls_mode and (self._handheld or self._mode in HEARTBEAT_MODES)
+            if due:
+                try:
+                    await self._ask_mode()
+                except (RobotError, asyncio.TimeoutError):
+                    pass  # the reader reports a link that is gone; the next poll asks again
 
     async def _keep_alive(self) -> None:
         while self._error is None:

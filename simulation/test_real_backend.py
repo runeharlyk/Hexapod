@@ -314,10 +314,13 @@ class FakeRobot:
                 previous = t if mode == pb.WALK and steering else None
         return longest
 
-    def push_mode(self, mode, handheld=False):
+    def push_mode(self, mode, handheld=False, lost=False):
         """A mode change from elsewhere, as the app's stop button or the handheld controller makes; with `handheld`,
-        the report that the ESP-NOW handheld drives."""
-        self.mode, self.pushed_at = mode, time.monotonic()
+        the report that the ESP-NOW handheld drives, which the mode request answers from then on. With `lost` the push
+        is dropped, as a full BLE queue or WebSocket send buffer drops one."""
+        self.mode, self.handheld, self.pushed_at = mode, handheld, time.monotonic()
+        if lost:
+            return
         frame = pb.Message(mode=pb.ModeData(mode=mode, handheld=handheld)).SerializeToString()
         asyncio.run_coroutine_threadsafe(self._push(frame), self._loop).result(5)
 
@@ -573,6 +576,46 @@ def test_the_next_walk_after_the_handheld_lets_go_is_obeyed(robot, fake):
     first_walking = next(i for i, data in enumerate(after) if data.left.y)
     assert first_walking > 0 and not any((after[first_walking - 1].left.y, after[first_walking - 1].left.x))
     robot.stop()
+
+
+# A push can be dropped, so the handheld's report is confirmed by a mode request every MODE_POLL_S while the keep-alive
+# runs or the handheld drives. A lost report that it let go clears within one poll, and the script walks again.
+def test_a_lost_report_that_the_handheld_let_go_clears_within_one_poll(robot, fake):
+    robot.stand()
+    fake.push_mode(pb.WALK, True)
+    _eventually(lambda: robot.state().handheld)
+    fake.push_mode(pb.WALK, False, lost=True)
+    _eventually(lambda: not robot.state().handheld, timeout=real.MODE_POLL_S + 0.3)
+    robot.set_velocity(0.1, 0.0, 0.0)
+    _eventually(lambda: any(data.left.y for t, data in fake.inputs() if t > fake.pushed_at))
+    robot.stop()
+
+
+# A lost report that the handheld took over is found within one poll too: the keep-alive's stick is centred from then
+# on, so the app's centred heartbeat cannot hand the robot back to it, and the walk raises.
+def test_a_lost_report_that_the_handheld_took_over_still_centres_the_walk(robot, fake):
+    robot.stand()
+    robot.set_velocity(0.1, 0.0, 0.0)
+    threading.Timer(0.3, fake.push_mode, (pb.WALK, True), {"lost": True}).start()
+    with pytest.raises(RobotError, match="handheld controller took over"):
+        robot.sleep(0.3 + real.MODE_POLL_S + 0.3)
+    assert robot.state().handheld
+    robot.sleep(real.MODE_POLL_S + 0.5)
+    confirmed = fake.pushed_at + real.MODE_POLL_S + 0.1
+    assert len([t for t, _ in fake.inputs() if t > confirmed]) >= 2  # the keep-alive goes on
+    assert not any(data.left.y for t, data in fake.inputs() if t > confirmed)
+
+
+# The poll keeps the link light: none while the robot rests outside the keep-alive's modes with no handheld driving,
+# one per MODE_POLL_S while the keep-alive runs.
+def test_the_mode_is_polled_only_while_the_keep_alive_runs(robot, fake):
+    time.sleep(3 * real.MODE_POLL_S)
+    assert len(fake.requests("mode_get")) == 1  # connect()'s
+    robot.stand()
+    since = time.monotonic()
+    time.sleep(3 * real.MODE_POLL_S)
+    polls = len([t for t, _ in fake.requests("mode_get") if t > since])
+    assert 2 <= polls <= 4
 
 
 # The first stick of a connection is sent after a centred one too: the firmware may still be waiting for this client to
