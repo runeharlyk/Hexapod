@@ -11,6 +11,7 @@
 #include <event_bus.h>
 #include <message_types.h>
 #include <communication/controller_packet.h>
+#include <communication/handheld_input.h>
 #include <feature_flags.h>
 
 static const char* TAG = "espnow";
@@ -34,22 +35,8 @@ static void handlePacket(const uint8_t* data, int len) {
     memcpy(&pkt, data, sizeof(pkt));
     if (pkt.version != CONTROLLER_PACKET_VERSION) return;
 
-    const bool rightHeld = pkt.buttons & BTN_RIGHT;
     const bool inStand = s_mode.load(std::memory_order_relaxed) == MOTION_STATE::STAND;
-
-    constexpr float k = 1.0f / AXIS_FULL_SCALE;
-    CommandMsg cmd {};
-    cmd.lx = pkt.left_x * k;
-    cmd.ly = pkt.left_y * k;
-    cmd.rx = pkt.right_x * k;
-    cmd.ry = pkt.right_y * k;
-
-    if (inStand && rightHeld) {
-        s_height = cmd.ry;
-        cmd.ry = 0.0f;
-    }
-    cmd.h = s_height;
-    cmd.s = cmd.s1 = cmd.fd = cmd.stride = 0.0f;
+    CommandMsg cmd = handheldCommand(pkt, inStand, s_height);
     if (cmd.sanitize()) EventBus<CommandMsg>::publish(cmd);
 
     static uint8_t prev = 0;
