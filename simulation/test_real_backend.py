@@ -150,6 +150,7 @@ class FakeRobot:
         self.imu, self.obey, self.reset_on_open, self.goals = imu, obey, reset_on_open, goals
         self.mode_request = mode_request
         self.stale_mode_reply = None
+        self.handheld = False
         self.drop_final_push = False
         self.goal_count, self.goal_started = 0, None
         self.odometry = pb.OdometryData()
@@ -231,7 +232,7 @@ class FakeRobot:
                 response.features_data_response.imu = self.imu
             elif asked == "mode_get" and self.mode_request:
                 if self.stale_mode_reply is None:
-                    response.mode.mode = self.mode
+                    response.mode.mode, response.mode.handheld = self.mode, self.handheld
                 else:
                     yield pb.Message(mode=pb.ModeData(mode=self.mode))
                     response.mode.mode = self.stale_mode_reply
@@ -313,11 +314,16 @@ class FakeRobot:
                 previous = t if mode == pb.WALK and steering else None
         return longest
 
-    def push_mode(self, mode):
-        """A mode change from elsewhere, as the app's stop button or the handheld controller makes."""
+    def push_mode(self, mode, handheld=False):
+        """A mode change from elsewhere, as the app's stop button or the handheld controller makes; with `handheld`,
+        the report that the ESP-NOW handheld drives."""
         self.mode, self.pushed_at = mode, time.monotonic()
-        frame = pb.Message(mode=pb.ModeData(mode=mode)).SerializeToString()
-        asyncio.run_coroutine_threadsafe(self._link.send(frame), self._loop).result(5)
+        frame = pb.Message(mode=pb.ModeData(mode=mode, handheld=handheld)).SerializeToString()
+        asyncio.run_coroutine_threadsafe(self._push(frame), self._loop).result(5)
+
+    async def _push(self, frame):
+        self.pushed_index = len(self.received)  # on the thread that handles the frames, so in their order
+        await self._link.send(frame)
 
     def drop(self):
         """The WebSocket closes, or the USB cable comes out."""
@@ -521,6 +527,74 @@ def test_a_move_the_app_deactivated_midway_is_reported_and_not_resumed(robot, fa
     assert robot.state().link_drops == 0
     assert any(data.left.y for t, data in fake.inputs() if t < fake.pushed_at)
     assert not any(data.left.y for t, data in fake.inputs() if t > fake.pushed_at + 0.1)
+
+
+# The handheld drives: the firmware drops this client's sticks, so a walk in progress ends with a clear error at its
+# next check and its keep-alive goes on centred, which leaves the robot stopped once the handheld lets go.
+def test_a_walk_the_handheld_takes_over_raises_and_its_keep_alive_centres(robot, fake):
+    robot.stand()
+    robot.set_velocity(0.1, 0.0, 0.0)
+    threading.Timer(0.3, fake.push_mode, (pb.WALK, True)).start()
+    with pytest.raises(RobotError, match="handheld controller took over"):
+        robot.sleep(2.0)
+    assert robot.state().handheld
+    robot.sleep(0.5)
+    assert any(data.left.y for t, data in fake.inputs() if t < fake.pushed_at)
+    assert not any(data.left.y for t, data in fake.inputs() if t > fake.pushed_at + 0.1)
+    assert len([t for t, _ in fake.inputs() if t > fake.pushed_at]) >= 2  # the keep-alive goes on
+
+
+def test_a_timed_move_the_handheld_takes_over_raises(robot, fake):
+    robot.stand()
+    threading.Timer(0.3, fake.push_mode, (pb.WALK, True)).start()
+    with pytest.raises(RobotError, match="handheld controller took over"):
+        robot.move_forward(0.3)
+
+
+# The walk the handheld took over is reported once, and while the handheld drives a walk is refused at once rather
+# than dropped unseen. Once the handheld has let go the next walk works, its stick sent after a centred one, which ends
+# the firmware's wait for this client to centre.
+def test_the_next_walk_after_the_handheld_lets_go_is_obeyed(robot, fake):
+    robot.stand()
+    robot.set_velocity(0.1, 0.0, 0.0)
+    fake.push_mode(pb.WALK, True)
+    _eventually(lambda: robot.state().handheld)
+    with pytest.raises(RobotError, match="handheld controller took over"):
+        robot.set_velocity(0.1, 0.0, 0.0)
+    with pytest.raises(RobotError, match="handheld controller is driving"):
+        robot.set_velocity(0.1, 0.0, 0.0)
+    robot.sleep(0.1)  # told once
+    robot.stop()  # a stop always passes
+    fake.push_mode(pb.WALK, False)
+    _eventually(lambda: not robot.state().handheld)
+    robot.set_velocity(0.1, 0.0, 0.0)
+    robot.sleep(0.3)
+    after = [m.input for _, m in fake.received[fake.pushed_index:] if m.WhichOneof("message") == "input"]
+    first_walking = next(i for i, data in enumerate(after) if data.left.y)
+    assert first_walking > 0 and not any((after[first_walking - 1].left.y, after[first_walking - 1].left.x))
+    robot.stop()
+
+
+# The first stick of a connection is sent after a centred one too: the firmware may still be waiting for this client to
+# centre from a handheld drive before it connected.
+def test_the_first_walk_of_a_connection_follows_a_centred_input(fake, target, monkeypatch):
+    monkeypatch.setattr(real, "KEEPALIVE_S", 60.0)
+    fake.mode = pb.WALK
+    with Robot(target) as robot:
+        robot.set_velocity(0.1, 0.0, 0.0)
+        _eventually(lambda: any(data.left.y for _, data in fake.inputs()))
+        inputs = [data for _, data in fake.inputs()]
+        first_walking = next(i for i, data in enumerate(inputs) if data.left.y)
+        assert first_walking > 0 and inputs[first_walking - 1].left.y == 0
+
+
+# Connecting while the handheld drives, the reply to the mode request says so.
+def test_a_connection_made_while_the_handheld_drives_knows_it(fake, target, monkeypatch):
+    fake.mode, fake.handheld = pb.WALK, True
+    with Robot(target) as robot:
+        assert robot.state().handheld
+        with pytest.raises(RobotError, match="handheld controller is driving"):
+            robot.set_velocity(0.1, 0.0, 0.0)
 
 
 def test_a_healthy_move_reports_no_drop(robot, fake):

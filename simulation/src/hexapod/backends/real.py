@@ -13,6 +13,13 @@ its speed: a goal ignores centred commands, so the speed slider would reach only
 model was measured at the slider's 0. A goal is cancelled by any stick off centre, and by 2 s without a frame from the
 client that sent it, so the keep-alive goes on through it with centred sticks.
 
+Handheld: while the ESP-NOW handheld controller drives, the robot drops this client's sticks and refuses its goals
+(423), and it reports so with its mode (ModeData.handheld). When that report rises, the keep-alive's sticks are
+centred, so the robot stays stopped once the handheld lets go, and a walk in progress raises a RobotError at its next
+sleep or set_velocity; a goal ends CANCELLED. A walk while the handheld drives is refused at once. After the handheld,
+the robot ignores this client's sticks until it has sent a centred one, so the first stick after a takeover, and the
+first of a connection, is sent after a centred input.
+
 Goals: a firmware from before them answers their requests 400, which connect() probes. The robot pushes a goal's
 status on each change, but a push can be dropped, so the status is asked for when none came for CONFIRM_S and to
 confirm the end a push reported.
@@ -138,6 +145,9 @@ class RealBackend:
         self._gait: Gait | None = None
         self._yaw: float | None = None
         self._sticks = speed_model.CENTRED
+        self._handheld = False
+        self._taken_over = False  # the handheld took over a walk, which the script has not been told of yet
+        self._centre_first = True  # the robot may be waiting for this client to send a centred stick
         self._style = Style()  # the posture and stride every input carries: set_height's height, then each goal's
         self._goals = False
         self._goal: GoalStatus | None = None  # the newest status heard, pushed or asked for, and when
@@ -215,6 +225,7 @@ class RealBackend:
                 with self._changed:
                     if self._mode is None:
                         self._mode = Mode(reply.mode.mode)
+                        self._hear_handheld(reply.mode.handheld)
             future = self._replies.pop(reply.correlation_id, None)
             if future is not None and not future.done():
                 future.set_result(reply)
@@ -224,6 +235,7 @@ class RealBackend:
                 self._hear_goal(message.goal_status, arrived)
             elif kind == "mode":
                 self._mode = Mode(message.mode.mode)
+                self._hear_handheld(message.mode.handheld)
             elif kind == "gait":
                 self._gait = Gait(message.gait.gait)
             elif kind == "imu":
@@ -233,6 +245,19 @@ class RealBackend:
                 if previous is not None and previous[1] and arrived - previous[0] > STEERING_TIMEOUT_S:
                     self._drops += 1
             self._changed.notify_all()
+
+    # The robot drops the sticks of a walk the handheld took over and walks none of them after it, so they are centred.
+    def _hear_handheld(self, driving: bool) -> None:
+        if driving and not self._handheld:
+            self._taken_over = self._sticks != speed_model.CENTRED
+            self._sticks = speed_model.CENTRED
+            self._centre_first = True
+        self._handheld = driving
+
+    def _raise_if_taken_over(self) -> None:
+        if self._taken_over:
+            self._taken_over = False
+            raise RobotError("the handheld controller took over: the robot dropped this script's walk")
 
     # Pushes and replies are handled in the order they arrived, so the last heard is the newest.
     def _hear_goal(self, status: pb.GoalStatus, arrived: float) -> None:
@@ -247,13 +272,22 @@ class RealBackend:
     async def _send_input(self, heartbeat: bool = False) -> None:
         with self._changed:
             s, style, mode = self._sticks, self._style, self._mode
+            sending = not heartbeat or mode in HEARTBEAT_MODES
+            centre_first = sending and self._centre_first and s != speed_model.CENTRED
+            # Sent while the handheld drives, a centred stick is dropped too, so it is no end of the robot's wait.
+            if sending and not self._handheld:
+                self._centre_first = False
         previous = None
         try:
-            if not heartbeat or mode in HEARTBEAT_MODES:
-                data = pb.ControllerInputData(left=pb.Vector(x=s.lx, y=s.ly), right=pb.Vector(x=s.rx, y=0.0),
-                                              height=style.h, s1=style.s1, feet_distance=style.fd,
-                                              stride=style.stride)
-                await self._send(pb.Message(input=data))
+            if sending:
+                def input_of(sticks):
+                    return pb.ControllerInputData(left=pb.Vector(x=sticks.lx, y=sticks.ly),
+                                                  right=pb.Vector(x=sticks.rx, y=0.0), height=style.h, s1=style.s1,
+                                                  feet_distance=style.fd, stride=style.stride)
+
+                if centre_first:
+                    await self._send(pb.Message(input=input_of(speed_model.CENTRED)))
+                await self._send(pb.Message(input=input_of(s)))
                 previous = self._last_input
                 self._last_input = time.monotonic(), mode in WALKING_MODES and s != speed_model.CENTRED
             else:
@@ -315,9 +349,16 @@ class RealBackend:
             self._style = replace(self._style, h=height)
         self._run(self._send_input())
 
+    # A stop always passes, and ends a walk the handheld took over without an error.
     def set_velocity(self, velocity: Velocity) -> Velocity:
         sticks = speed_model.sticks_for(self._gait, velocity)
         with self._changed:
+            if sticks == speed_model.CENTRED:
+                self._taken_over = False
+            else:
+                self._raise_if_taken_over()
+                if self._handheld:
+                    raise RobotError("the handheld controller is driving: the robot drops this script's sticks")
             self._sticks = sticks
         self._run(self._send_input())
         return speed_model.velocity_of(self._gait, sticks)
@@ -330,7 +371,7 @@ class RealBackend:
             if self._error is not None:
                 raise self._error
             return RobotState(t=time.monotonic(), mode=self._mode, gait=self._gait,
-                              yaw=self._yaw if self._imu else None, link_drops=self._drops)
+                              yaw=self._yaw if self._imu else None, link_drops=self._drops, handheld=self._handheld)
 
     def now(self) -> float:
         return time.monotonic()
@@ -341,6 +382,7 @@ class RealBackend:
     def goal_move(self, goal: Goal, style: Style) -> GoalStatus:
         with self._changed:
             self._sticks = speed_model.CENTRED
+            self._taken_over = False
         self._run(self._send_input())
         kind, distance, angle, radius = goal.in_body_frame()
         move = pb.GoalMove(kind=int(kind), distance_m=distance, angle_rad=angle, radius_m=radius, speed=style.speed,
@@ -388,6 +430,8 @@ class RealBackend:
             while (left := deadline - time.monotonic()) > 0:
                 if self._error is not None:
                     raise self._error
+                self._raise_if_taken_over()
                 self._changed.wait(left)
             if self._error is not None:
                 raise self._error
+            self._raise_if_taken_over()
