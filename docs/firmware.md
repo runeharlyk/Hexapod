@@ -140,7 +140,8 @@ Waking or sleeping the two PCA9685 boards waits 5 ms per board (`include/periphe
 `deactivateServos()` in `main.cpp` publishes `DEACTIVATED` and waits 50 ms before a restart, a reset or a deep sleep.
 The control task takes the mode within the rest of its period and the next tick's sensor read, and writes the second board's sleep bit about 5 ms after the first, so both are asleep at most about 12 ms after the publish; the 50 ms leaves room for one I2C transfer timing out on the way (20 ms), not two.
 `MotionService` publishes every mode it applies, and the mode a refused borrow keeps, as `ModeMsgKind::APPLIED`, after it is in force and noted for the replies.
-The robot reports a mode only then: the app bridge, the status LED and the ESP-NOW adapter's mode mirror take `APPLIED` alone, so a client never sees a mode the robot is not in, and one that waits for the report finds it in force.
+The robot reports a mode only then: the app bridge and the ESP-NOW adapter's mode mirror take `APPLIED` alone, so a client never sees a mode the robot is not in, and one that waits for the report finds it in force.
+The status LED shows the latest mode message only if it is `APPLIED`, so it can lag during a graceful leave.
 
 The gait and kinematics math has two mirrors outside the firmware.
 `simulation/src/robot/firmware_gait.py` is the port the simulation's research modes run on and must stay in step, enforced by `simulation/test_firmware_gait_parity.py`; the app draws the robot with its own forward kinematics, which the firmware has none of.
@@ -252,7 +253,7 @@ The board's WS2812 on `WS2812_PIN` (GPIO 48) shows the motion mode and whether a
 
 The colour is steady while a client is connected over WebSocket, BLE or the USB serial link, and blinks once a second, half on and half off, while none is.
 A USB host counts as a client, as it does for stopping an animation when the last client goes; the ESP-NOW controller does not, since it only broadcasts.
-The mode shown is the latest `ModeMsg` APPLIED, the mode the robot is in and the app is shown.
+The LED shows the latest mode message on the bus only if that message is `APPLIED`, so it can lag during a graceful leave.
 Red is kept out of the mode colours for the battery warning, which becomes one more input to the pattern in `include/peripherals/status_led_pattern.h` once a battery signal exists (roadmap 2.1).
 
 The service task drives the LED every 100 ms and sends a colour only when it changes, through the IDF's RMT TX driver and its bytes encoder: one RMT channel, no DMA and no LED-strip component.
