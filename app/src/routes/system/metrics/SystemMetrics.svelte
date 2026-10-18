@@ -8,6 +8,14 @@
   import { daisyColor } from '$lib/utilities'
   import { analytics } from '$lib/stores/analytics'
   import { AnalyticsData } from '$lib/platform_shared/message'
+  import {
+    STATE_NOTE,
+    taskRows,
+    taskSummary,
+    watchTaskStats,
+    TASK_STATS_REFRESH_MS,
+    type TaskStatsView
+  } from '$lib/stores/task-stats'
   import { dataBroker } from '$lib/transport/databroker'
   import { Metrics } from '$lib/components/icons'
 
@@ -24,6 +32,10 @@
 
   let temperatureChartElement: HTMLCanvasElement
   let temperatureChart: Chart
+
+  let taskView: TaskStatsView = { stats: null, error: null, loading: false }
+  let autoRefresh = false
+  const taskFeed = watchTaskStats(dataBroker, view => (taskView = view))
 
   onMount(() => {
     const unsubscribe = dataBroker.on(AnalyticsData, data => analytics.addData(data))
@@ -288,9 +300,11 @@
       }
     })
     const interval = setInterval(updateData, 500)
+    taskFeed.refresh()
     return () => {
       unsubscribe()
       clearInterval(interval)
+      taskFeed.stop()
     }
   })
 
@@ -378,5 +392,51 @@
       </tbody>
     </table>
     <div class="px-2 text-sm">Bus recoveries: {$analytics.i2c_bus_recoveries}</div>
+  </div>
+  <div class="w-full overflow-x-auto">
+    <div class="flex items-center justify-between gap-2 px-2">
+      <label class="label cursor-pointer gap-2 text-sm">
+        <input
+          type="checkbox"
+          class="toggle toggle-sm"
+          bind:checked={autoRefresh}
+          onchange={() => taskFeed.setAuto(autoRefresh)}
+        />
+        Refresh every {TASK_STATS_REFRESH_MS / 1000} s
+      </label>
+      <button class="btn btn-sm" disabled={taskView.loading} onclick={() => taskFeed.refresh()}>
+        Refresh
+      </button>
+    </div>
+    <table class="table table-sm">
+      <thead>
+        <tr>
+          <th>Task</th>
+          <th>Least free stack</th>
+          <th>CPU</th>
+          <th>Core</th>
+          <th>Priority</th>
+          <th title={STATE_NOTE} class="cursor-help underline decoration-dotted">State</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each taskView.stats ? taskRows(taskView.stats) : [] as task (task.key)}
+          <tr>
+            <td>{task.name}</td>
+            <td>{task.stack}</td>
+            <td>{task.cpu}</td>
+            <td>{task.core}</td>
+            <td>{task.priority}</td>
+            <td>{task.state}</td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+    {#if taskView.stats}
+      <div class="px-2 text-sm">{taskSummary(taskView.stats)}</div>
+    {/if}
+    {#if taskView.error}
+      <div class="px-2 text-sm text-error">Task table failed: {taskView.error}</div>
+    {/if}
   </div>
 </SettingsCard>

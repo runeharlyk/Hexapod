@@ -86,6 +86,13 @@
    "SYS_RESTART": 1,
    "SYS_RESET": 2,
    "SYS_SLEEP": 3
+  },
+  "socket_message.TaskState": {
+   "TASK_RUNNING": 0,
+   "TASK_READY": 1,
+   "TASK_BLOCKED": 2,
+   "TASK_SUSPENDED": 3,
+   "TASK_DELETED": 4
   }
  },
  "messages": {
@@ -469,7 +476,8 @@
    "goal_move": "131 socket_message.GoalMove",
    "goal_cancel": "132 socket_message.GoalCancel",
    "goal_status_get": "133 socket_message.GoalStatusGet",
-   "mode_get": "134 socket_message.ModeGet"
+   "mode_get": "134 socket_message.ModeGet",
+   "task_stats_request": "140 socket_message.TaskStatsRequest"
   },
   "socket_message.CorrelationResponse": {
    "correlation_id": "1 uint32",
@@ -493,7 +501,8 @@
    "animation_list": "111 socket_message.AnimationList",
    "odometry": "130 socket_message.OdometryData",
    "goal_status": "131 socket_message.GoalStatus",
-   "mode": "132 socket_message.ModeData"
+   "mode": "132 socket_message.ModeData",
+   "task_stats": "140 socket_message.TaskStats"
   },
   "socket_message.FeaturesDataRequest": {},
   "socket_message.FeaturesDataResponse": {
@@ -651,6 +660,23 @@
    "analytics_data": "1 socket_message.AnalyticsData",
    "static_system_information": "2 socket_message.StaticSystemInformation"
   },
+  "socket_message.TaskEntry": {
+   "name": "1 string",
+   "number": "2 uint32",
+   "state": "3 socket_message.TaskState",
+   "priority": "4 uint32",
+   "base_priority": "5 uint32",
+   "core": "6 sint32",
+   "stack_free_min": "7 uint32",
+   "cpu_percent": "8 float"
+  },
+  "socket_message.TaskStats": {
+   "window_us": "1 uint32",
+   "snapshot_us": "2 uint32",
+   "task_count": "3 uint32",
+   "tasks": "4 repeated socket_message.TaskEntry"
+  },
+  "socket_message.TaskStatsRequest": {},
   "socket_message.TelemetryBatch": {
    "batch_seq": "1 uint32",
    "dropped_ticks": "2 uint32",

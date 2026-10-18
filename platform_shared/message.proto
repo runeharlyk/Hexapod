@@ -123,6 +123,35 @@ message SystemInformationResponse {
   StaticSystemInformation static_system_information = 2;
 }
 
+// The FreeRTOS task table, a measurement read by request (the metrics page asks when it opens and on its refresh).
+message TaskStatsRequest {}
+// eTaskState's positions. A snapshot sees only its own core's task as running, which is the transport task answering
+// the request, so the other core's running task shows as ready.
+enum TaskState {
+  TASK_RUNNING = 0;
+  TASK_READY = 1;
+  TASK_BLOCKED = 2;
+  TASK_SUSPENDED = 3;  // also a task waiting for a notification without a timeout
+  TASK_DELETED = 4;    // ended, its memory not yet freed by the idle task
+}
+message TaskEntry {
+  string name = 1;
+  uint32 number = 2;          // FreeRTOS's task number, unique since boot; the EventBus workers share one name
+  TaskState state = 3;
+  uint32 priority = 4;        // current, raised by priority inheritance while the task holds a mutex
+  uint32 base_priority = 5;
+  sint32 core = 6;            // the core the task is pinned to, -1 for either
+  uint32 stack_free_min = 7;  // bytes: the least free stack since the task started
+  float cpu_percent = 8;      // of one core over the window; 0 when window_us is 0
+}
+// A request within 10 s of the last snapshot gets that reply again: a snapshot masks interrupts on both cores.
+message TaskStats {
+  uint32 window_us = 1;       // since the robot's previous snapshot, from any client; 0 on the first, which has no CPU
+  uint32 snapshot_us = 2;     // from the call to the snapshot's end, about how long it held the kernel's lock
+  uint32 task_count = 3;      // tasks on the robot; more than tasks lists when the roomiest stacks were cut
+  repeated TaskEntry tasks = 4;  // the least free stack first
+}
+
 message FeaturesDataRequest {}
 message FeaturesDataResponse {
   string firmware_name = 1;
@@ -306,6 +335,7 @@ message CorrelationRequest {
     GoalCancel goal_cancel = 132;
     GoalStatusGet goal_status_get = 133;
     ModeGet mode_get = 134;
+    TaskStatsRequest task_stats_request = 140;
   }
 }
 
@@ -334,6 +364,7 @@ message CorrelationResponse {
     OdometryData odometry = 130;
     GoalStatus goal_status = 131;
     ModeData mode = 132;
+    TaskStats task_stats = 140;
   }
 }
 

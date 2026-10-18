@@ -31,10 +31,15 @@ CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
 # (communication/serial_adapter.h), so log output must not be mirrored onto it.
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
-# FreeRTOS run-time stats: per-core CPU usage in analytics (idle-task counters over esp_timer)
+# FreeRTOS run-time stats: per-core CPU usage in analytics (idle-task counters over esp_timer) and the metrics page's
+# task table (include/task_stats.h). The core ID puts each task's pinned core in uxTaskGetSystemState's snapshot, read
+# under the kernel's lock; its Kconfig depends on the formatting functions, which GENERATE_RUN_TIME_STATS selects and
+# which nothing calls, so the linker drops them. The explicit line only states the dependency.
 CONFIG_FREERTOS_USE_TRACE_FACILITY=y
 CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
 CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
+CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=y
+CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID=y
 
 # Software AES + SHA. The hardware crypto drivers allocate DMA buffers from internal RAM, which is
 # exhausted once BLE + WiFi(STA+AP) + coexistence + camera are up, failing the WPA2 handshake
