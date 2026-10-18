@@ -1,5 +1,6 @@
 import { savedAddresses } from '$lib/stores/robots'
 import { Message } from '$lib/platform_shared/message'
+import { socketUrl } from '$lib/transport/websocket-adapter'
 
 const PROBE_TIMEOUT_MS = 1500
 // Chromium delays a page's new sockets after many of its sockets failed: right after a socket-only
@@ -75,7 +76,7 @@ export const probeAddress = (
 
     let socket: WebSocket
     try {
-      socket = new WebSocket(`ws://${address}/api/ws`)
+      socket = new WebSocket(socketUrl(address))
     } catch {
       resolve(false)
       return

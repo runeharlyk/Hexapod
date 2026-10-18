@@ -5,6 +5,8 @@ import { canReachRobot, location } from '$lib/stores/location-store'
 const RECONNECT_MIN_MS = 1000
 const RECONNECT_MAX_MS = 15000
 
+export const socketUrl = (host: string) => `ws://${host}/api/ws`
+
 function createWebSocketAdapter(): ITransport {
   const dataCallbacks: ((data: Uint8Array) => void)[] = []
   const connectCallbacks: (() => void)[] = []
@@ -41,7 +43,7 @@ function createWebSocketAdapter(): ITransport {
 
     let socket: WebSocket
     try {
-      socket = new WebSocket(`ws://${host}/api/ws`)
+      socket = new WebSocket(socketUrl(host))
     } catch (error) {
       status.set('disconnected')
       // A browser without Chromium's local network exemption may refuse ws:// from an https page here;
