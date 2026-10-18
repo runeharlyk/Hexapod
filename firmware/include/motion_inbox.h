@@ -184,10 +184,11 @@ class MotionInbox {
         _gait = gait;
     }
 
-    // Control task: a goal's own gait becomes the selection, which ends nothing; its publish is not delivered back.
+    // Control task: a goal's own gait becomes the selection, which ends nothing; its publish is not delivered back. A
+    // gait posted since the take has ended the goal and is the one the next take puts in force, so it stays selected.
     void selectGait(GaitType gait) {
         std::lock_guard<std::mutex> lock(_mutex);
-        _selection = gait;
+        if (!_gait) _selection = gait;
     }
 
     // Any task: the control task zeroes the pose before its next update. Refused while a goal drives: the pose is its

@@ -219,6 +219,23 @@ void test_a_goals_own_gait_is_the_selection() {
     TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
 }
 
+// A gait posted between a take and the goal style's selection has ended that goal and is the gait the next take puts
+// in force, so it stays the selection: a client re-sending it ends nothing, and a change back to the goal's gait does.
+void test_a_gait_posted_before_the_goals_selection_stays_the_selection() {
+    MotionInbox inbox;
+    driving(inbox);
+    inbox.postGait(GaitType::BI_GATE);
+    inbox.selectGait(GaitType::WAVE);
+    const MotionInbox::Mail mail = inbox.take(0);
+    TEST_ASSERT_EQUAL(GaitType::BI_GATE, *mail.gait);
+    TEST_ASSERT_TRUE(mail.goalCancelled);
+    driving(inbox);
+    inbox.postGait(GaitType::BI_GATE);
+    TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
+    inbox.postGait(GaitType::WAVE);
+    TEST_ASSERT_TRUE(inbox.take(0).goalCancelled);
+}
+
 // A borrow and a hand-back are decided against the mode they find, so modes are taken in the order they arrived, none
 // merged: a DEACTIVATED and a borrow posted in one tick are two, the deactivation first. An APPLIED is no request.
 void test_modes_are_taken_in_arrival_order_none_merged() {
@@ -336,6 +353,7 @@ int main(int, char **) {
     RUN_TEST(test_a_gait_is_taken_once_and_the_newest_wins);
     RUN_TEST(test_a_gait_other_than_the_selection_ends_the_goal);
     RUN_TEST(test_a_goals_own_gait_is_the_selection);
+    RUN_TEST(test_a_gait_posted_before_the_goals_selection_stays_the_selection);
     RUN_TEST(test_modes_are_taken_in_arrival_order_none_merged);
     RUN_TEST(test_a_full_mode_queue_drops_the_oldest_and_keeps_a_newest_deactivation);
     RUN_TEST(test_the_predicted_mode_follows_the_queue_through_the_arbiter);
