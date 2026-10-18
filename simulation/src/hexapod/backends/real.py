@@ -17,11 +17,11 @@ client that sent it, so the keep-alive goes on through it with centred sticks.
 Handheld: while the ESP-NOW handheld controller drives, the robot drops this client's sticks and refuses its goals
 (423), and it reports so with its mode (ModeData.handheld). When that report rises, the keep-alive's sticks are
 centred, so the robot stays stopped once the handheld lets go, and a walk in progress raises a RobotError at its next
-sleep or set_velocity; a goal ends CANCELLED. A walk while the handheld drives is refused at once. After the handheld,
-the robot ignores this client's sticks until it has sent a centred one, so the first stick after a takeover, and the
-first of a connection, is sent after a centred input. The report is pushed only on a change, and a push can be
-dropped, so while the keep-alive runs or the handheld drives the mode is asked for every MODE_POLL_S; a reply is
-dropped when a push arrived since its request, which is the newer.
+sleep or set_velocity, or at the next goal_move; a goal ends CANCELLED. A walk while the handheld drives is refused at
+once. After the handheld, the robot ignores this client's sticks until it has sent a centred one, so the first stick
+after a takeover, and the first of a connection, is sent after a centred input. The report is pushed only on a change,
+and a push can be dropped, so while the keep-alive runs or the handheld drives the mode is asked for every
+MODE_POLL_S; a reply is dropped when a push arrived since its request, which is the newer.
 
 Goals: a firmware from before them answers their requests 400, which connect() probes. The robot pushes a goal's
 status on each change, but a push can be dropped, so the status is asked for when none came for CONFIRM_S and to
@@ -408,8 +408,8 @@ class RealBackend:
 
     def goal_move(self, goal: Goal, style: Style) -> GoalStatus:
         with self._changed:
+            self._raise_if_taken_over()
             self._sticks = speed_model.CENTRED
-            self._taken_over = False
         self._run(self._send_input())
         kind, distance, angle, radius = goal.in_body_frame()
         move = pb.GoalMove(kind=int(kind), distance_m=distance, angle_rad=angle, radius_m=radius, speed=style.speed,

@@ -287,7 +287,7 @@ The first move sent the moment `stand()` returns starts about 0.3 s late while t
 A per-gait distance offset is future work.
 On the real robot the input is re-sent every 200 ms inside the firmware's 600 ms dead-man, and a timed move raises if the link may have stalled past that or someone switched the robot out of WALK.
 While the ESP-NOW handheld controller drives, the robot drops the script's sticks and refuses its goals (423, a `RobotError`), and `state().handheld` is true.
-A velocity walk or a timed move it takes over raises `RobotError` ("the handheld controller took over") at its next `sleep()` or `set_velocity()`, a goal ends `CANCELLED`, and a walk asked for while the handheld drives is refused at once.
+A velocity walk or a timed move it takes over raises `RobotError` ("the handheld controller took over") at its next `sleep()`, `set_velocity()` or goal move, a goal ends `CANCELLED`, and a walk asked for while the handheld drives is refused at once.
 The keep-alive goes on with centred sticks, so the robot stays stopped once the handheld lets go, and the script's next move is obeyed.
 The robot pushes that report only on a change and a push can be dropped, so while the keep-alive runs or the handheld drives the backend also asks for the mode every 0.4 s (`MODE_POLL_S`), shorter than the handheld's 600 ms window: a lost report is corrected within one poll.
 A mode change returns once the robot reports it applied, so a goal sent right after `stand()` is accepted; during an animation the robot applies it only after the clip's exit, and an exit longer than the 3 s reply timeout raises `RobotTimeout` although the robot still switches.

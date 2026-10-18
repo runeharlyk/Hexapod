@@ -866,6 +866,20 @@ def test_the_odometry_is_read_in_rep103_and_reset(goal_robot, goal_fake):
 
 
 # The robot keeps the posture of the goals it took: a refused goal's style must not reach the keep-alive.
+# A goal asked for after the handheld took over a walk, before the script was told, reports the takeover first, as the
+# next walk would.
+def test_a_goal_after_a_takeover_reports_it(goal_robot, goal_fake):
+    goal_robot.stand()
+    goal_robot.set_velocity(0.1, 0.0, 0.0)
+    goal_fake.push_mode(pb.WALK, True)
+    _eventually(lambda: goal_robot.state().handheld)
+    goal_fake.push_mode(pb.WALK, False)
+    _eventually(lambda: not goal_robot.state().handheld)
+    with pytest.raises(RobotError, match="handheld controller took over"):
+        goal_robot.walk(0.3)
+    assert goal_fake.requests("goal_move") == []
+
+
 def test_a_refused_goal_leaves_the_posture_the_inputs_carry(goal_robot, goal_fake):
     goal_robot.stand()
     goal_fake.mode = pb.DEACTIVATED  # the app's stop button, which the client has not heard of yet
