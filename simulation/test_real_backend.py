@@ -140,17 +140,23 @@ class FakeRobot:
     WALK, settles for GOAL_SETTLE_S, runs for GOAL_RUN_S and is REACHED; its status is pushed on every change, except
     the last when `drop_final_push`, as a full bus can drop it. Its odometry has turned a goal's angle from the start,
     exactly, and is zeroed RESET_LAG_S after a reset's reply, as the control task's next tick does it. Without, it
-    answers every goal and odometry request 400, as a firmware from before goals does."""
+    answers every goal and odometry request 400, as a firmware from before goals does.
 
-    def __init__(self, imu=True, obey=True, reset_on_open=None, goals=False):
+    It boots DEACTIVATED and answers the request for its mode, unless `mode_request=False`, as a firmware from before
+    that request does; with `stale_mode_reply` it pushes its mode first and then answers with that stale one, as a push
+    that overtook the reply."""
+
+    def __init__(self, imu=True, obey=True, reset_on_open=None, goals=False, mode_request=True):
         self.imu, self.obey, self.reset_on_open, self.goals = imu, obey, reset_on_open, goals
+        self.mode_request = mode_request
+        self.stale_mode_reply = None
         self.drop_final_push = False
         self.goal_count, self.goal_started = 0, None
         self.odometry = pb.OdometryData()
         self.reset_at = None
         self.status, self.silent = 200, False
         self.yaw_rad = 0.3
-        self.mode = None
+        self.mode = pb.DEACTIVATED
         self.subscribed = set()
         self.received = []  # (monotonic time handled, Message)
         self.lost_in_boot = 0
@@ -223,6 +229,12 @@ class FakeRobot:
             asked = request.WhichOneof("request")
             if asked == "features_data_request":
                 response.features_data_response.imu = self.imu
+            elif asked == "mode_get" and self.mode_request:
+                if self.stale_mode_reply is None:
+                    response.mode.mode = self.mode
+                else:
+                    yield pb.Message(mode=pb.ModeData(mode=self.mode))
+                    response.mode.mode = self.stale_mode_reply
             elif not self.goals:
                 response.status_code = 400
             elif asked == "goal_move":
@@ -366,7 +378,7 @@ def test_connecting_subscribes_sets_the_gait_and_reads_the_imu(robot, fake):
     assert {_tag("mode"), _tag("gait"), _tag("imu")} <= fake.subscribed
     assert [m.gait.gait for _, m in fake.received if m.WhichOneof("message") == "gait"] == [pb.TRI_GATE]
     state = robot.state()
-    assert state.mode is None and state.gait is Gait.TRI_GATE  # the firmware pushes its mode only on a change
+    assert state.mode is Mode.DEACTIVATED and state.gait is Gait.TRI_GATE  # the mode asked for once, at connect
     assert state.yaw == pytest.approx(-math.degrees(0.3))  # the DMP yaw is clockwise-positive
 
 
@@ -382,6 +394,29 @@ def test_the_websocket_link_keeps_its_keep_alive(fake):
             await link.close()
 
     assert asyncio.run(opened_interval()) is not None
+
+
+# A firmware from before the mode request answers it 400: the mode is unknown until the robot pushes one.
+def test_a_firmware_without_the_mode_request_leaves_the_mode_unknown(transport, monkeypatch):
+    fake = FakeRobot(mode_request=False)
+    try:
+        with Robot(_target(fake, transport, monkeypatch)) as robot:
+            assert robot.state().mode is None
+            fake.push_mode(pb.STAND)
+            _eventually(lambda: robot.state().mode is Mode.STAND)
+    finally:
+        fake.stop()
+
+
+# The mode is pushed on every change, so a push that arrived before the reply to the request is the newer of the two.
+def test_a_mode_pushed_before_the_reply_wins_over_it(transport, monkeypatch):
+    fake = FakeRobot()
+    fake.mode, fake.stale_mode_reply = pb.STAND, pb.IDLE
+    try:
+        with Robot(_target(fake, transport, monkeypatch)) as robot:
+            assert robot.state().mode is Mode.STAND
+    finally:
+        fake.stop()
 
 
 def test_a_robot_without_an_imu_has_no_yaw(transport, monkeypatch):

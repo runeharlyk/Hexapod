@@ -468,7 +468,8 @@
    "odometry_get": "130 socket_message.OdometryGet",
    "goal_move": "131 socket_message.GoalMove",
    "goal_cancel": "132 socket_message.GoalCancel",
-   "goal_status_get": "133 socket_message.GoalStatusGet"
+   "goal_status_get": "133 socket_message.GoalStatusGet",
+   "mode_get": "134 socket_message.ModeGet"
   },
   "socket_message.CorrelationResponse": {
    "correlation_id": "1 uint32",
@@ -491,7 +492,8 @@
    "animation_report": "110 socket_message.AnimationReport",
    "animation_list": "111 socket_message.AnimationList",
    "odometry": "130 socket_message.OdometryData",
-   "goal_status": "131 socket_message.GoalStatus"
+   "goal_status": "131 socket_message.GoalStatus",
+   "mode": "132 socket_message.ModeData"
   },
   "socket_message.FeaturesDataRequest": {},
   "socket_message.FeaturesDataResponse": {
@@ -588,6 +590,7 @@
    "mode": "1 socket_message.ModesEnum",
    "handheld": "2 bool"
   },
+  "socket_message.ModeGet": {},
   "socket_message.OdometryData": {
    "x": "1 float",
    "y": "2 float",

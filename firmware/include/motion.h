@@ -591,6 +591,9 @@ class MotionService {
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
 
   public:
+    // Any task: the mode the control task applied last, the one the robot reports.
+    MOTION_STATE appliedMode() const { return _inbox.appliedMode(); }
+
     // Adapter task. Lying on its belly with the legs limp or folded, in the mode the control task applied last: still
     // enough to calibrate the IMU against.
     bool resting() const {

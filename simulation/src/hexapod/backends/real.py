@@ -2,8 +2,8 @@
 platform_shared/message.proto frames; both links carry the same messages, so only the transport differs.
 
 One thread runs an asyncio loop that owns the link; the public methods are synchronous. Once subscribed, the robot
-pushes its mode and gait on every change and its IMU angles at up to 40 Hz. It has no request for its current mode,
-so the mode is unknown until the first push or set_mode.
+pushes its mode and gait on every change and its IMU angles at up to 40 Hz. Its mode is asked for once at connect; a
+firmware from before that request answers it 400, and the mode is then unknown until the first push.
 
 Keep-alive: while the robot is in a mode the app heartbeats (STAND, WALK, WALK_NN; app/src/lib/control-link.ts), the
 last input is re-sent every KEEPALIVE_S. The firmware drops a walk command after 600 ms without input while a stick
@@ -157,6 +157,7 @@ class RealBackend:
             self._imu = features.features_data_response.imu
             probe = self._run(self._ask(pb.CorrelationRequest(goal_status_get=pb.GoalStatusGet()), check=False))
             self._goals = probe.status_code < 400 and probe.WhichOneof("response") == "goal_status"
+            self._run(self._ask(pb.CorrelationRequest(mode_get=pb.ModeGet()), check=False))
             if self._imu:
                 self._wait(lambda: self._yaw is not None, "the robot reports an IMU but sends no angles")
         except BaseException:
@@ -209,6 +210,11 @@ class RealBackend:
             if reply.status_code < 400 and reply.WhichOneof("response") == "goal_status":
                 with self._changed:
                     self._hear_goal(reply.goal_status, arrived)
+            # A mode pushed before the reply is the newer: the robot pushes every change.
+            if reply.status_code < 400 and reply.WhichOneof("response") == "mode":
+                with self._changed:
+                    if self._mode is None:
+                        self._mode = Mode(reply.mode.mode)
             future = self._replies.pop(reply.correlation_id, None)
             if future is not None and not future.done():
                 future.set_result(reply)

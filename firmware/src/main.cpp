@@ -581,6 +581,12 @@ static void registerHandlers(CommAdapterBase &c) {
                 res.response.goal_status = robot.motion().goalStatus();
                 break;
             }
+            case socket_message_CorrelationRequest_mode_get_tag: {
+                res.which_response = socket_message_CorrelationResponse_mode_tag;
+                res.response.mode.mode = static_cast<socket_message_ModesEnum>(robot.motion().appliedMode());
+                res.response.mode.handheld = robot.motion().handheldDriving();
+                break;
+            }
             default: res.status_code = 400; break;
         }
         adapter->emit(res, clientId);
