@@ -370,6 +370,66 @@ void test_the_handheld_driving_is_reported_with_the_mode_on_each_change() {
     TEST_ASSERT_FALSE(reports[1].handheld);
 }
 
+// The app walks, re-sending its command every 200 ms, while a handheld that is switched on but untouched sends its
+// centred frames, `handheldPeriodTicks` apart, none when 0: per tick, as walkWithHeartbeatUntil samples it. The app's
+// sliders sit at the posture the handheld's frames carry, since the posture between the two is roadmap 11.1b's.
+std::vector<MotionSample> appWalkBesideAnIdleHandheld(int handheldPeriodTicks, float seconds) {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setMode(MOTION_STATE::WALK);
+    const CommandMsg walk {0, 0.8f, 0, 0, 0, 0.5f, 0, 0, 0.3f};
+    std::vector<MotionSample> trace;
+    for (int t = 0; t < ticksFor(seconds); ++t) {
+        if (t % APP_HEARTBEAT_TICKS == 0) robot.command(walk);
+        if (handheldPeriodTicks && t % handheldPeriodTicks == 1) robot.handheld(handheldFrame(0, 0));
+        robot.tick();
+        MotionSample sample;
+        std::copy_n(robot.angles(), 18, sample.begin());
+        sample[18] = robot.bodyCommand().zm;
+        sample[19] = robot.gaitCommand().step_y;
+        trace.push_back(sample);
+    }
+    return trace;
+}
+
+// An idle handheld sends centred frames at 5 Hz, and at 50 Hz while a button is held. Outside its window they are no
+// walk command, so the app's walk runs exactly as with the app alone, its speed and stride included, where each frame
+// used to stop it until the app's next heartbeat.
+void test_an_idle_handhelds_centred_frames_leave_the_apps_walk_alone() {
+    const std::vector<MotionSample> alone = appWalkBesideAnIdleHandheld(0, 3.0f);
+    TEST_ASSERT_GREATER_THAN_FLOAT(GAIT_STRIDE_DEADBAND_MM, alone.back()[19]);
+    for (const int period : {APP_HEARTBEAT_TICKS, HANDHELD_PERIOD_TICKS}) {
+        const std::vector<MotionSample> beside = appWalkBesideAnIdleHandheld(period, 3.0f);
+        for (size_t t = 0; t < alone.size(); ++t) {
+            char msg[48];
+            std::snprintf(msg, sizeof(msg), "handheld every %d ticks, tick %u", period, (unsigned)t);
+            TEST_ASSERT_EQUAL_FLOAT_ARRAY_MESSAGE(alone[t].data(), beside[t].data(), 20, msg);
+        }
+    }
+}
+
+// Nor are they a command to the dead-man: an app whose link drops mid-walk beside an idle handheld is stopped 600 ms
+// after its last command, with the link reported lost for as long as no source steers.
+void test_an_idle_handheld_keeps_no_lost_apps_walk_alive() {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setMode(MOTION_STATE::WALK);
+    const int lastCommand = ticksFor(1.0f);
+    int fired = -1;
+    for (int t = 0; t <= lastCommand + ticksFor(2.0f); ++t) {
+        if (t <= lastCommand && t % APP_HEARTBEAT_TICKS == 0) robot.command(FORWARD);
+        if (t % APP_HEARTBEAT_TICKS == 1) robot.handheld(handheldFrame(0, 0));
+        robot.tick();
+        if (fired < 0 && robot.linkLost()) fired = t;
+        if (fired >= 0) TEST_ASSERT_TRUE_MESSAGE(robot.linkLost(), "an idle frame hid the lost link");
+        if (t > COMMAND_PERIOD_TICKS && fired < 0)
+            TEST_ASSERT_GREATER_THAN_FLOAT_MESSAGE(0, robot.gaitCommand().step_y,
+                                                   "the walk stopped before the dead-man");
+    }
+    TEST_ASSERT_EQUAL_INT(lastCommand + ticksFor(0.6f), fired);
+    TEST_ASSERT_EQUAL_FLOAT(0, robot.gaitCommand().step_y);
+}
+
 // The telemetry reports the write of its own tick: none in a mode that sends no pose, a success in a stand, and an idle
 // tick after a stand tick does not inherit the stand's write (Hexapod::planMotion starts each tick's record).
 void test_the_telemetry_reports_the_servo_write_of_its_own_tick() {
@@ -1679,6 +1739,8 @@ int main(int, char **) {
     RUN_TEST(test_the_dead_man_stops_a_handheld_walk_whose_link_drops_under_the_apps_heartbeat);
     RUN_TEST(test_a_stale_stick_stream_does_not_resume_the_walk_after_the_handheld);
     RUN_TEST(test_the_handheld_driving_is_reported_with_the_mode_on_each_change);
+    RUN_TEST(test_an_idle_handhelds_centred_frames_leave_the_apps_walk_alone);
+    RUN_TEST(test_an_idle_handheld_keeps_no_lost_apps_walk_alive);
     RUN_TEST(test_the_telemetry_reports_the_servo_write_of_its_own_tick);
     RUN_TEST(test_a_height_only_command_is_obeyed_for_2_s_after_silence);
     RUN_TEST(test_no_servo_is_driven_past_its_joint_travel);

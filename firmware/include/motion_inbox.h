@@ -40,6 +40,16 @@ static_assert((int)GoalKind::FORWARD == socket_message_GoalKind_GOAL_FORWARD &&
                   (int)GoalKind::ARC == socket_message_GoalKind_GOAL_ARC,
               "GoalStatus.kind and GoalMove.kind carry GoalKind by value");
 
+// A command's walk, as against its posture: its sticks and the walk's speed and stride, the walk's of `walk`.
+inline CommandMsg withWalkOf(CommandMsg posture, const CommandMsg &walk) {
+    posture.lx = walk.lx;
+    posture.ly = walk.ly;
+    posture.rx = walk.rx;
+    posture.s = walk.s;
+    posture.stride = walk.stride;
+    return posture;
+}
+
 inline socket_message_GoalStatus goalStatusOf(uint32_t id, GoalState state, const Goal &goal, float progress,
                                               int passes) {
     socket_message_GoalStatus s = socket_message_GoalStatus_init_zero;
@@ -82,7 +92,8 @@ class MotionInbox {
     struct Mail {
         Modes modes;
         std::optional<CommandMsg> command; // the newest since the last take
-        unsigned long commandMs = 0;       // when it arrived
+        unsigned long commandMs = 0;       // when the newest that is a walk command arrived
+        bool commandKeepsWalk = false;     // the command is an idle handheld's posture: the walk stays the one in force
         std::optional<GaitType> gait;      // the newest since the last take
         std::optional<GoalRequest> goal;   // accepted since the last take
         bool goalCancelled = false;  // the end of the goal driving the walk was asked for, or its owner fell silent
@@ -137,16 +148,20 @@ class MotionInbox {
     // the handheld's walk for a tick and move its posture. The handheld's own centred frame is its stop, and is walked.
     // After the window the robot stays stopped: a client's stick off centre is dropped until a client has sent a
     // centred command, so neither a script's keep-alive nor a stick the app held through the drive walks the robot
-    // again by itself. Commands carry no client's identity, so one centred command ends the wait for every client, as
-    // the app and the scripts are last-writer between themselves anyway. A command dropped is no command to the
-    // dead-man either. While a goal drives the walk, a centred command is no command, its posture and the rest of it
-    // too: the heartbeats of the app, the facade and the ESP-NOW controller. A stick off centre, or the handheld moving
-    // any of its own, takes the walk back, so the goal ends and never writes the sticks again, and the command is
-    // walked.
+    // again by itself while that client is the only one. Commands carry no client's identity, so one centred command
+    // ends the wait for every client, as the app and the scripts are last-writer between themselves anyway. A command
+    // dropped is no command to the dead-man either. Outside the window the handheld's centred frames, which it sends
+    // whenever it is switched on, are no walk command: they keep the walk of the command before them, a pending one's
+    // merged in, and carry only their posture, every command's posture being last-writer (roadmap 11.1b); nor are they
+    // a command to the dead-man. While a goal drives the walk, a centred command is no command, its posture and the
+    // rest of it too: the heartbeats of the app, the facade and the ESP-NOW controller. A stick off centre, or the
+    // handheld moving any of its own, takes the walk back, so the goal ends and never writes the sticks again, and the
+    // command is walked.
     void postCommand(const CommandMsg &c, unsigned long nowMs) {
         std::lock_guard<std::mutex> lock(_mutex);
         const bool handheldMoving = c.origin == CommandOrigin::HANDHELD_MOVING;
         const bool steers = c.lx != 0.f || c.ly != 0.f || c.rx != 0.f;
+        const bool keepsWalk = c.origin == CommandOrigin::HANDHELD && !handheldDrivingLocked(nowMs);
         if (handheldMoving) {
             _handheldMovedMs = nowMs;
             _handheldMoved = true;
@@ -163,8 +178,13 @@ class MotionInbox {
             _goalDrives = false;
             _goalCancelRequested = true;
         }
+        if (keepsWalk && _command && !_commandKeepsWalk) {
+            _command = withWalkOf(c, *_command);
+            return;
+        }
         _command = c;
-        _commandMs = nowMs;
+        _commandKeepsWalk = keepsWalk;
+        if (!keepsWalk) _commandMs = nowMs;
     }
 
     // Mode worker, and the control task for its own hand-back, which so queues behind every mode that arrived before
@@ -271,6 +291,7 @@ class MotionInbox {
         mail.modes = std::exchange(_modes, Modes {});
         mail.command = std::exchange(_command, std::nullopt);
         mail.commandMs = _commandMs;
+        mail.commandKeepsWalk = std::exchange(_commandKeepsWalk, false);
         mail.gait = std::exchange(_gait, std::nullopt);
         mail.goal = std::exchange(_goal, std::nullopt);
         mail.goalCancelled =
@@ -312,6 +333,7 @@ class MotionInbox {
     ModeState _applied; // as the control task noted it last
     std::optional<CommandMsg> _command;
     unsigned long _commandMs = 0;
+    bool _commandKeepsWalk = false;
     std::optional<GaitType> _gait;
     GaitType _selection = GaitType::TRI_GATE; // the gait selected last, from the gait MotionService starts in
     std::optional<GoalRequest> _goal;

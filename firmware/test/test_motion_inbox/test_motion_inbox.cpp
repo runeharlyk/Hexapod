@@ -457,14 +457,36 @@ void test_a_handheld_moving_frame_ends_a_goal_though_its_walk_sticks_are_centred
     TEST_ASSERT_FALSE(inbox.goalDrives());
 }
 
-// A stop is never gated: a mode from any source, DEACTIVATED above all, is queued while the handheld drives.
-void test_a_mode_within_the_handheld_window_is_queued() {
+// Outside its window an idle handheld's centred frame is no walk command: it carries its posture, and the walk, the
+// sticks, speed and stride, stays the one of the command before it, a pending one's merged in, whose arrival the
+// dead-man keeps counting from. Within the window the same frame is the handheld's stop, taken whole.
+void test_an_idle_handhelds_frame_outside_its_window_keeps_the_walk() {
     MotionInbox inbox;
-    inbox.postCommand(HANDHELD_FORWARD, 1000);
-    inbox.postMode({MOTION_STATE::DEACTIVATED}, false);
-    const MotionInbox::Mail mail = inbox.take(1010);
-    TEST_ASSERT_EQUAL_INT(1, mail.modes.count);
-    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, mail.modes.items[0].mode);
+    const CommandMsg walk {0.1f, 1, 0.2f, 0, 0.6f, 0.5f, 0, 0, 0.3f};
+    inbox.postCommand(walk, 1000);
+    inbox.postCommand(HANDHELD_CENTRED, 1010);
+    MotionInbox::Mail mail = inbox.take(1015);
+    TEST_ASSERT_TRUE(mail.command.has_value());
+    TEST_ASSERT_FALSE(mail.commandKeepsWalk);
+    TEST_ASSERT_EQUAL_UINT32(1000, mail.commandMs);
+    TEST_ASSERT_EQUAL_FLOAT(0.1f, mail.command->lx);
+    TEST_ASSERT_EQUAL_FLOAT(1, mail.command->ly);
+    TEST_ASSERT_EQUAL_FLOAT(0.2f, mail.command->rx);
+    TEST_ASSERT_EQUAL_FLOAT(0.5f, mail.command->s);
+    TEST_ASSERT_EQUAL_FLOAT(0.3f, mail.command->stride);
+    TEST_ASSERT_EQUAL_FLOAT(HANDHELD_CENTRED.h, mail.command->h);
+    inbox.postCommand(HANDHELD_CENTRED, 1100);
+    mail = inbox.take(1105);
+    TEST_ASSERT_TRUE(mail.command.has_value());
+    TEST_ASSERT_TRUE(mail.commandKeepsWalk);
+    TEST_ASSERT_EQUAL_UINT32(1000, mail.commandMs);
+    inbox.postCommand(HANDHELD_FORWARD, 2000);
+    inbox.take(2000);
+    inbox.postCommand(HANDHELD_CENTRED, 2100);
+    mail = inbox.take(2100);
+    TEST_ASSERT_FALSE(mail.commandKeepsWalk);
+    TEST_ASSERT_EQUAL_UINT32(2100, mail.commandMs);
+    TEST_ASSERT_EQUAL_FLOAT(0, mail.command->ly);
 }
 
 // The clock wraps after 49 days; the window is a difference, so it spans the wrap. A poster reads its clock before the
@@ -565,7 +587,7 @@ int main(int, char **) {
     RUN_TEST(test_a_robot_that_never_saw_the_handheld_move_takes_every_command);
     RUN_TEST(test_a_goal_within_the_handheld_window_is_refused);
     RUN_TEST(test_a_handheld_moving_frame_ends_a_goal_though_its_walk_sticks_are_centred);
-    RUN_TEST(test_a_mode_within_the_handheld_window_is_queued);
+    RUN_TEST(test_an_idle_handhelds_frame_outside_its_window_keeps_the_walk);
     RUN_TEST(test_the_handheld_window_spans_the_clocks_wrap);
     RUN_TEST(test_after_the_handheld_window_a_clients_stick_waits_for_a_centred_command);
     RUN_TEST(test_only_a_clients_centred_command_after_the_window_ends_the_wait);
