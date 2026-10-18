@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <optional>
 #include <peripherals/i2c_bus.h>
 #include <utils/math_utils.h>
 
@@ -146,6 +147,8 @@ class MPU6050Driver {
     static constexpr uint8_t REG_WHO_AM_I = 0x75;
 
     static constexpr uint16_t DMP_PACKET_SIZE = 28;
+    static constexpr uint16_t FIFO_OVERFLOW = 200;
+    static constexpr int MAX_DRAIN_PASSES = 3;
     static constexpr uint16_t DMP_CODE_SIZE = 3062;
 
     static constexpr uint8_t dmpMemory[DMP_CODE_SIZE] = {
@@ -345,10 +348,11 @@ class MPU6050Driver {
 
     void setDMPEnabled(bool enabled) { writeBit(REG_USER_CTRL, 7, enabled ? 1 : 0); }
 
-    uint16_t getFIFOCount() {
+    // Nothing when the read failed: the buffer then holds whatever the stack did.
+    std::optional<uint16_t> getFIFOCount() {
         uint8_t buf[2];
-        I2CBus::instance().readReg(_addr, REG_FIFO_COUNT_H, buf, 2);
-        return (buf[0] << 8) | buf[1];
+        if (I2CBus::instance().readReg(_addr, REG_FIFO_COUNT_H, buf, 2) != ESP_OK) return std::nullopt;
+        return (uint16_t)((buf[0] << 8) | buf[1]);
     }
 
     void resetFIFO() {
@@ -426,32 +430,36 @@ class MPU6050Driver {
         return 0;
     }
 
+    // The newest whole packet, or nothing fresh. Each pass discards the packets ahead of it and counts again; a
+    // FIFO that is still too full after MAX_DRAIN_PASSES is restarted, so no run of replies keeps the 5 ms
+    // control loop here.
     bool dmpGetCurrentFIFOPacket(uint8_t* data) {
-        int16_t fifoC = getFIFOCount();
+        for (int pass = 0;; ++pass) {
+            const std::optional<uint16_t> count = getFIFOCount();
+            if (!count) return false;
 
-        if (fifoC > 200) {
-            // Overflowed: the contents are misaligned. Reset and let a later control tick read the next
-            // packet rather than blocking the 5 ms loop until one arrives.
-            resetFIFO();
-            return false;
-        }
-        if (fifoC > DMP_PACKET_SIZE) {
+            if (*count > FIFO_OVERFLOW) {
+                // Overflowed: the contents are misaligned. Reset and let a later control tick read the next
+                // packet rather than blocking the 5 ms loop until one arrives.
+                resetFIFO();
+                return false;
+            }
+            if (*count < DMP_PACKET_SIZE) return false;
+            if (*count == DMP_PACKET_SIZE) break;
+            if (pass == MAX_DRAIN_PASSES) {
+                resetFIFO();
+                return false;
+            }
+
             uint8_t trash[32];
-            while ((fifoC = getFIFOCount()) > DMP_PACKET_SIZE) {
-                uint16_t toRemove = fifoC - DMP_PACKET_SIZE;
-                while (toRemove > 0) {
-                    uint8_t chunk = (toRemove < 32) ? toRemove : 32;
-                    I2CBus::instance().readReg(_addr, REG_FIFO_R_W, trash, chunk);
-                    toRemove -= chunk;
-                }
+            for (uint16_t toRemove = *count - DMP_PACKET_SIZE; toRemove > 0;) {
+                const uint8_t chunk = (toRemove < 32) ? toRemove : 32;
+                I2CBus::instance().readReg(_addr, REG_FIFO_R_W, trash, chunk);
+                toRemove -= chunk;
             }
         }
 
-        if (!fifoC) return false;
-        if (fifoC != DMP_PACKET_SIZE) return false;
-
-        I2CBus::instance().readReg(_addr, REG_FIFO_R_W, data, DMP_PACKET_SIZE);
-        return true;
+        return I2CBus::instance().readReg(_addr, REG_FIFO_R_W, data, DMP_PACKET_SIZE) == ESP_OK;
     }
 
     void dmpGetQuaternion(float* q, const uint8_t* packet) {

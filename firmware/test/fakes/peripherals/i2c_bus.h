@@ -4,11 +4,14 @@
 // Each device is a 256-byte register file; every write is recorded so a test can check the order in
 // which a driver touched the chip, not only where it left it. A device answers while it has registers
 // and is not marked absent, so a test can unplug a chip and plug it back with its registers intact. Each transfer,
-// answered or not, takes transferUs of the host clock, so a test can time what a driver spends on the bus.
+// answered or not, takes transferUs of the host clock, so a test can time what a driver spends on the bus. A read
+// override answers a read in place of the register file, so a test can script a chip's replies, failures included.
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <map>
+#include <optional>
 #include <set>
 #include <vector>
 #include <host_clock.h>
@@ -40,6 +43,7 @@ class I2CBus {
         writes.clear();
         absent.clear();
         attempts.clear();
+        readOverride = nullptr;
         transferUs = 0;
     }
 
@@ -60,6 +64,9 @@ class I2CBus {
 
     esp_err_t readReg(uint8_t addr, uint8_t reg, uint8_t* data, size_t len) {
         transfer(addr);
+        if (readOverride) {
+            if (const std::optional<esp_err_t> answer = readOverride(addr, reg, data, len)) return *answer;
+        }
         if (!probe(addr)) return ESP_FAIL;
         for (size_t i = 0; i < len; i++) data[i] = registers[addr][(reg + i) & 0xFF];
         return ESP_OK;
@@ -70,6 +77,8 @@ class I2CBus {
     std::set<uint8_t> absent;
     // Register transfers addressed to each device, answered or not.
     std::map<uint8_t, int> attempts;
+    // Answers a read, filling `data` as the chip would, or declines it to the register file.
+    std::function<std::optional<esp_err_t>(uint8_t addr, uint8_t reg, uint8_t* data, size_t len)> readOverride;
     int64_t transferUs = 0;
 
   private:
