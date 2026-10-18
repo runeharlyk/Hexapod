@@ -294,7 +294,7 @@ Nothing is sent while the pose is unchanged; the firmware holds the last pose.
 The last pose is sent again when a `ModeData` reports ANIMATE, because the robot drops a pose that arrives before it has applied the mode, and when `AnimationStatus` returns to IDLE, because a play leaves the robot at stance.
 Switching it off, losing the link, or leaving the editor cancels the stream.
 The robot stays in the explicit, sticky ANIMATE (spec section 3) holding the last pose; the way back is a mode change from the controller page.
-A STAND or walking mode eases the pose home before the mode switches; DEACTIVATED, IDLE and POSE apply at once (see [Mode, borrow and hand-back](#mode-borrow-and-hand-back)).
+A STAND or walking mode eases the pose home before the mode switches; DEACTIVATED, IDLE and POSE apply at the next tick, even mid-play (see [Mode, borrow and hand-back](#mode-borrow-and-hand-back)).
 
 "Play on robot" uploads the current document, overwriting any robot file of the same name, then plays it with the Animation panel's preview values.
 Stop sends `animation_stop`.
