@@ -56,24 +56,24 @@
         datasets: [
           {
             label: 'x',
-            borderColor: daisyColor('--p'),
-            backgroundColor: daisyColor('--p', 50),
+            borderColor: daisyColor('primary'),
+            backgroundColor: daisyColor('primary', 50),
             borderWidth: 2,
             data: $imu.x,
             yAxisID: 'y'
           },
           {
             label: 'y',
-            borderColor: daisyColor('--s'),
-            backgroundColor: daisyColor('--s', 50),
+            borderColor: daisyColor('secondary'),
+            backgroundColor: daisyColor('secondary', 50),
             borderWidth: 2,
             data: $imu.y,
             yAxisID: 'y'
           },
           {
             label: 'z',
-            borderColor: daisyColor('--a'),
-            backgroundColor: daisyColor('--a', 50),
+            borderColor: daisyColor('accent'),
+            backgroundColor: daisyColor('accent', 50),
             borderWidth: 2,
             data: $imu.z,
             yAxisID: 'y'
@@ -100,10 +100,10 @@
         scales: {
           x: {
             grid: {
-              color: daisyColor('--bc', 10)
+              color: daisyColor('base-content', 10)
             },
             ticks: {
-              color: daisyColor('--bc')
+              color: daisyColor('base-content')
             },
             display: false
           },
@@ -112,7 +112,7 @@
             title: {
               display: true,
               text: 'Angle [°]',
-              color: daisyColor('--bc'),
+              color: daisyColor('base-content'),
               font: {
                 size: 16,
                 weight: 'bold'
@@ -121,9 +121,9 @@
             position: 'left',
             min: 0,
             max: 10,
-            grid: { color: daisyColor('--bc', 10) },
-            ticks: { color: daisyColor('--bc') },
-            border: { color: daisyColor('--bc', 10) }
+            grid: { color: daisyColor('base-content', 10) },
+            ticks: { color: daisyColor('base-content') },
+            border: { color: daisyColor('base-content', 10) }
           }
         }
       }
@@ -134,8 +134,8 @@
         datasets: [
           {
             label: 'Barometer temperature',
-            borderColor: daisyColor('--s'),
-            backgroundColor: daisyColor('--s', 50),
+            borderColor: daisyColor('secondary'),
+            backgroundColor: daisyColor('secondary', 50),
             borderWidth: 2,
             data: $imu.bmp_temp,
             yAxisID: 'y'
@@ -162,10 +162,10 @@
         scales: {
           x: {
             grid: {
-              color: daisyColor('--bc', 10)
+              color: daisyColor('base-content', 10)
             },
             ticks: {
-              color: daisyColor('--bc')
+              color: daisyColor('base-content')
             },
             display: false
           },
@@ -174,7 +174,7 @@
             title: {
               display: true,
               text: 'Temperature [C°]',
-              color: daisyColor('--bc'),
+              color: daisyColor('base-content'),
               font: {
                 size: 16,
                 weight: 'bold'
@@ -183,9 +183,9 @@
             position: 'left',
             min: 0,
             max: 10,
-            grid: { color: daisyColor('--bc', 10) },
-            ticks: { color: daisyColor('--bc') },
-            border: { color: daisyColor('--bc', 10) }
+            grid: { color: daisyColor('base-content', 10) },
+            ticks: { color: daisyColor('base-content') },
+            border: { color: daisyColor('base-content', 10) }
           }
         }
       }
@@ -196,8 +196,8 @@
         datasets: [
           {
             label: 'Altitude',
-            borderColor: daisyColor('--p'),
-            backgroundColor: daisyColor('--p', 50),
+            borderColor: daisyColor('primary'),
+            backgroundColor: daisyColor('primary', 50),
             borderWidth: 2,
             data: $imu.altitude,
             yAxisID: 'y'
@@ -224,10 +224,10 @@
         scales: {
           x: {
             grid: {
-              color: daisyColor('--bc', 10)
+              color: daisyColor('base-content', 10)
             },
             ticks: {
-              color: daisyColor('--bc')
+              color: daisyColor('base-content')
             },
             display: false
           },
@@ -236,7 +236,7 @@
             title: {
               display: true,
               text: 'Altitude [M]',
-              color: daisyColor('--bc'),
+              color: daisyColor('base-content'),
               font: {
                 size: 16,
                 weight: 'bold'
@@ -245,9 +245,9 @@
             position: 'left',
             min: 0,
             max: 10,
-            grid: { color: daisyColor('--bc', 10) },
-            ticks: { color: daisyColor('--bc') },
-            border: { color: daisyColor('--bc', 10) }
+            grid: { color: daisyColor('base-content', 10) },
+            ticks: { color: daisyColor('base-content') },
+            border: { color: daisyColor('base-content', 10) }
           }
         }
       }

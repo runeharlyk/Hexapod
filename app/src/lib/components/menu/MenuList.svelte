@@ -30,7 +30,7 @@
       <li>
         {#if menuItem.submenu}
           <details open={menuItem.submenu.some(subItem => subItem.active)}>
-            <summary class="font-bold">
+            <summary class="font-bold" class:text-lg={level === 0} class:text-base={level === 1}>
               <menuItem.icon class="h-6 w-6" />
               {menuItem.title}
             </summary>
@@ -44,7 +44,7 @@
             class="font-bold"
             class:bg-base-100={menuItem.active}
             class:text-lg={level === 0}
-            class:text-md={level === 1}
+            class:text-base={level === 1}
             onclick={() => selectMenuItem(menuItem.title)}
           >
             <menuItem.icon class="h-6 w-6" />
