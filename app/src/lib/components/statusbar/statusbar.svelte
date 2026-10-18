@@ -5,6 +5,7 @@
   import FullscreenButton from './FullscreenButton.svelte'
   import ViewSelector from './ViewSelector.svelte'
   import { Hamburger } from '../icons'
+  import { handheldDriving } from '$lib/stores/robot-mode'
 </script>
 
 <div
@@ -24,6 +25,15 @@
       <h1 class="truncate px-2 text-xl font-bold lg:text-2xl">{page.data.title}</h1>
     {/if}
   </div>
+
+  {#if $handheldDriving}
+    <span
+      class="badge badge-warning badge-sm whitespace-nowrap"
+      title="The robot ignores this app's sticks and refuses goals while the handheld controller drives"
+    >
+      Handheld driving
+    </span>
+  {/if}
 
   <UpdateIndicator />
 
