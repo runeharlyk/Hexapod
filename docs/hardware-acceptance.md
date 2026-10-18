@@ -64,3 +64,10 @@ Neither the hung boot nor the missing rejoin is proven to follow from this, and 
 | Restart after an HTTP upload | HTTP, UART console | fail before 32f18c3: the reply was 200 but the restart task found no memory, so the robot kept running the old image and answered later uploads with 409; pass after it: 8 of 8, and 4 of 4 on this image |
 | Gait and mode requests echoed through the buses, IMU angles pushed | WebSocket | pass |
 | Idle on WiFi, 15 min | HTTP every 10 s, UART console | pass: 77 of 77 polls over 13 min answered, nothing on the console; no disconnect happened, so the rejoin after one is still untested |
+
+## Open checks
+
+Checks that wait for the robot, with the procedure that settles each.
+
+- The task watchdog restarts a board whose control task hangs, with the watchdog's message in the core dump (roadmap 10.14): a build with `DEBUG_HANG_CONTROL_S` set, as "Checking it on the robot" in `docs/firmware.md` describes.
+  Note the time from the hang to limp servos, which `docs/firmware.md` only estimates.
