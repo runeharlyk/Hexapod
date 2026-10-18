@@ -133,6 +133,9 @@ A stick pushed past the top of the gait in effect therefore walks at that top un
 Mode changes are decided by the pure function in `include/animation/mode_arbiter.h` and applied only by the control task, in the order the modes arrived, which makes it the one place the mode changes.
 An animation play borrows `ANIMATE` from the current mode, and the control task asks for the mode back when the clip ends by posting the hand-back into its own inbox, behind every mode that arrived before it.
 `DEACTIVATED`, `IDLE` and `POSE` always apply at the next tick, even mid-play, which is the safety property.
+Waking or sleeping the two PCA9685 boards waits 5 ms per board (`include/peripherals/drivers/pca9685.h`), so the tick that enters or leaves `DEACTIVATED` overruns its 5 ms period by about 10 ms, two ticks, on which the robot is not being driven.
+`deactivateServos()` in `main.cpp` publishes `DEACTIVATED` and waits 50 ms before a restart, a reset or a deep sleep.
+The control task takes the mode within the rest of its period and the next tick's sensor read, and writes the second board's sleep bit about 5 ms after the first, so both are asleep at most about 12 ms after the publish; the 50 ms leaves room for one I2C transfer timing out on the way (20 ms), not two.
 `MotionService` publishes every mode it applies, and the mode a refused borrow keeps, as `ModeMsgKind::APPLIED`, after it is in force and noted for the replies.
 The robot reports a mode only then: the app bridge, the status LED and the ESP-NOW adapter's mode mirror take `APPLIED` alone, so a client never sees a mode the robot is not in, and one that waits for the report finds it in force.
 
