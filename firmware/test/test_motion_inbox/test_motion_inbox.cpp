@@ -14,6 +14,7 @@ const CommandMsg FORWARD_STICK {0, 1, 0, 0, 0, 0, 0, 0, 0};
 const CommandMsg HANDHELD_FORWARD {0, 0.5f, 0, 0, 0, 0, 0, 0, 0, CommandOrigin::HANDHELD_MOVING};
 const CommandMsg HANDHELD_CENTRED {0, 0, 0, 0, 0.2f, 0, 0, 0, 0, CommandOrigin::HANDHELD};
 constexpr unsigned long WINDOW_MS = MotionInbox::HANDHELD_PRIORITY_MS;
+constexpr unsigned long IN_FORCE_MS = MotionInbox::CLIENT_IN_FORCE_MS;
 int owners[2];
 const GoalOwner OWNER {&owners[0], 7};
 const GoalOwner OTHER_ID {&owners[0], 8};
@@ -458,36 +459,92 @@ void test_a_handheld_moving_frame_ends_a_goal_though_its_walk_sticks_are_centred
     TEST_ASSERT_FALSE(inbox.goalDrives());
 }
 
-// Outside its window an idle handheld's centred frame is no walk command: it carries its posture, and the walk, the
-// sticks, speed and stride, stays the one of the command before it, a pending one's merged in, whose arrival the
-// dead-man keeps counting from. Within the window the same frame is the handheld's stop, taken whole.
-void test_an_idle_handhelds_frame_outside_its_window_keeps_the_walk() {
+// Outside its window an idle handheld's centred frame is dropped whole, its posture too, while a client's command is in
+// force: for CLIENT_IN_FORCE_MS after that command's arrival, to the millisecond. Then it is the handheld's command,
+// taken whole with its arrival, as the dead-man counts it.
+void test_an_idle_handhelds_frame_is_dropped_while_a_clients_command_is_in_force() {
     MotionInbox inbox;
     const CommandMsg walk {0.1f, 1, 0.2f, 0, 0.6f, 0.5f, 0, 0, 0.3f};
     inbox.postCommand(walk, 1000);
     inbox.postCommand(HANDHELD_CENTRED, 1010);
     MotionInbox::Mail mail = inbox.take(1015);
     TEST_ASSERT_TRUE(mail.command.has_value());
-    TEST_ASSERT_FALSE(mail.commandKeepsWalk);
+    TEST_ASSERT_EQUAL(CommandOrigin::CLIENT, mail.command->origin);
+    TEST_ASSERT_EQUAL_FLOAT(walk.h, mail.command->h);
     TEST_ASSERT_EQUAL_UINT32(1000, mail.commandMs);
-    TEST_ASSERT_EQUAL_FLOAT(0.1f, mail.command->lx);
-    TEST_ASSERT_EQUAL_FLOAT(1, mail.command->ly);
-    TEST_ASSERT_EQUAL_FLOAT(0.2f, mail.command->rx);
-    TEST_ASSERT_EQUAL_FLOAT(0.5f, mail.command->s);
-    TEST_ASSERT_EQUAL_FLOAT(0.3f, mail.command->stride);
-    TEST_ASSERT_EQUAL_FLOAT(HANDHELD_CENTRED.h, mail.command->h);
-    inbox.postCommand(HANDHELD_CENTRED, 1100);
-    mail = inbox.take(1105);
+    inbox.postCommand(HANDHELD_CENTRED, 1000 + IN_FORCE_MS - 1);
+    TEST_ASSERT_FALSE(inbox.take(1000 + IN_FORCE_MS - 1).command.has_value());
+    inbox.postCommand(HANDHELD_CENTRED, 1000 + IN_FORCE_MS);
+    mail = inbox.take(1000 + IN_FORCE_MS);
     TEST_ASSERT_TRUE(mail.command.has_value());
-    TEST_ASSERT_TRUE(mail.commandKeepsWalk);
-    TEST_ASSERT_EQUAL_UINT32(1000, mail.commandMs);
-    inbox.postCommand(HANDHELD_FORWARD, 2000);
-    inbox.take(2000);
-    inbox.postCommand(HANDHELD_CENTRED, 2100);
-    mail = inbox.take(2100);
-    TEST_ASSERT_FALSE(mail.commandKeepsWalk);
-    TEST_ASSERT_EQUAL_UINT32(2100, mail.commandMs);
+    TEST_ASSERT_EQUAL(CommandOrigin::HANDHELD, mail.command->origin);
+    TEST_ASSERT_EQUAL_FLOAT(HANDHELD_CENTRED.h, mail.command->h);
+    TEST_ASSERT_EQUAL_UINT32(1000 + IN_FORCE_MS, mail.commandMs);
+}
+
+// With no client heard, the handheld's centred frames are its commands, each one refreshing the dead-man.
+void test_a_lone_idle_handhelds_frames_are_its_commands() {
+    MotionInbox inbox;
+    for (const unsigned long at : {1000UL, 1200UL, 5000UL}) {
+        inbox.postCommand(HANDHELD_CENTRED, at);
+        const MotionInbox::Mail mail = inbox.take(at);
+        TEST_ASSERT_TRUE(mail.command.has_value());
+        TEST_ASSERT_EQUAL_FLOAT(HANDHELD_CENTRED.h, mail.command->h);
+        TEST_ASSERT_EQUAL_UINT32(at, mail.commandMs);
+    }
+}
+
+// Within its window the handheld's centred frame is its stop, taken though a client's command is in force.
+void test_the_handhelds_centred_frame_within_its_window_is_taken_beside_a_client() {
+    MotionInbox inbox;
+    inbox.postCommand(FORWARD_STICK, 1000);
+    inbox.postCommand(HANDHELD_FORWARD, 1100);
+    inbox.postCommand(HANDHELD_CENTRED, 1100 + WINDOW_MS - 1);
+    const MotionInbox::Mail mail = inbox.take(1100 + WINDOW_MS - 1);
+    TEST_ASSERT_TRUE(mail.command.has_value());
+    TEST_ASSERT_EQUAL(CommandOrigin::HANDHELD, mail.command->origin);
     TEST_ASSERT_EQUAL_FLOAT(0, mail.command->ly);
+}
+
+// Only a client's command the handheld left through puts it in force: one dropped within the window, or a stick
+// waiting for a centred command after it, does not, so the handheld's centred frames stay its commands.
+void test_a_clients_command_dropped_for_the_handheld_puts_no_client_in_force() {
+    MotionInbox inbox;
+    inbox.postCommand(HANDHELD_FORWARD, 1000);
+    inbox.postCommand(CENTRED, 1100);
+    inbox.take(1100);
+    inbox.postCommand(FORWARD_STICK, 1000 + WINDOW_MS);
+    inbox.postCommand(HANDHELD_CENTRED, 1000 + WINDOW_MS + 10);
+    const MotionInbox::Mail mail = inbox.take(1000 + WINDOW_MS + 10);
+    TEST_ASSERT_TRUE(mail.command.has_value());
+    TEST_ASSERT_EQUAL(CommandOrigin::HANDHELD, mail.command->origin);
+}
+
+// A centred heartbeat a goal swallows is a client's command arriving: the client is in force through the goal and
+// after it, so the handheld's centred frame is dropped once the goal ends.
+void test_a_heartbeat_a_goal_swallows_keeps_its_client_in_force() {
+    MotionInbox inbox;
+    inbox.postCommand(CENTRED, 0);
+    inbox.take(0);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, 100);
+    inbox.take(100);
+    inbox.postCommand(CENTRED, IN_FORCE_MS);
+    TEST_ASSERT_FALSE(inbox.take(IN_FORCE_MS).command.has_value());
+    inbox.cancelGoal();
+    TEST_ASSERT_TRUE(inbox.take(IN_FORCE_MS + 10).goalDriveEnded);
+    inbox.postCommand(HANDHELD_CENTRED, IN_FORCE_MS + 20);
+    TEST_ASSERT_FALSE(inbox.take(IN_FORCE_MS + 20).command.has_value());
+}
+
+// A client's command, once out of force, stays so: half the clock's range after it, where the signed difference turns
+// negative, the handheld's centred frame is still taken.
+void test_a_lapsed_clients_command_does_not_return_to_force_half_a_clock_later() {
+    MotionInbox inbox;
+    inbox.postCommand(CENTRED, 1000);
+    inbox.take(1000 + IN_FORCE_MS);
+    const unsigned long later = 1000 + static_cast<unsigned long>(std::numeric_limits<long>::max()) + 6;
+    inbox.postCommand(HANDHELD_CENTRED, later);
+    TEST_ASSERT_TRUE(inbox.take(later).command.has_value());
 }
 
 // The clock wraps after 49 days; the window is a difference, so it spans the wrap. A poster reads its clock before the
@@ -604,7 +661,12 @@ int main(int, char **) {
     RUN_TEST(test_a_robot_that_never_saw_the_handheld_move_takes_every_command);
     RUN_TEST(test_a_goal_within_the_handheld_window_is_refused);
     RUN_TEST(test_a_handheld_moving_frame_ends_a_goal_though_its_walk_sticks_are_centred);
-    RUN_TEST(test_an_idle_handhelds_frame_outside_its_window_keeps_the_walk);
+    RUN_TEST(test_an_idle_handhelds_frame_is_dropped_while_a_clients_command_is_in_force);
+    RUN_TEST(test_a_lone_idle_handhelds_frames_are_its_commands);
+    RUN_TEST(test_the_handhelds_centred_frame_within_its_window_is_taken_beside_a_client);
+    RUN_TEST(test_a_clients_command_dropped_for_the_handheld_puts_no_client_in_force);
+    RUN_TEST(test_a_heartbeat_a_goal_swallows_keeps_its_client_in_force);
+    RUN_TEST(test_a_lapsed_clients_command_does_not_return_to_force_half_a_clock_later);
     RUN_TEST(test_the_handheld_window_spans_the_clocks_wrap);
     RUN_TEST(test_a_lapsed_handheld_window_does_not_reopen_half_a_clock_later);
     RUN_TEST(test_after_the_handheld_window_a_clients_stick_waits_for_a_centred_command);

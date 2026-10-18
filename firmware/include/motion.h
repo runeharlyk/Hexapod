@@ -147,20 +147,10 @@ class MotionService {
     // Control task, at the start of the tick after the command arrived; the dead-man's window runs from its arrival.
     void handleCommand(CommandMsg const &c, unsigned long arrivalMs) {
         lastCommandMillis = arrivalMs;
-        commandTimedOut = false;
-        steering = isWalkingMode(motionState) && (c.lx != 0.f || c.ly != 0.f || c.rx != 0.f);
-        applyCommand(c);
-    }
-
-    // An idle handheld's frame outside its window (MotionInbox::postCommand): its posture, with the walk of the last
-    // command, none once the dead-man stopped it. No command to the dead-man, whose window and flag stay as they were.
-    void handlePosture(CommandMsg const &posture) {
-        applyCommand(withWalkOf(posture, commandTimedOut ? CommandMsg {} : lastCommand));
-    }
-
-    void applyCommand(CommandMsg const &c) {
         lastCommand = c;
+        commandTimedOut = false;
         const MOTION_STATE mode = motionState;
+        steering = isWalkingMode(mode) && (c.lx != 0.f || c.ly != 0.f || c.rx != 0.f);
         CommandMsg clamped = c;
         clampPosture(clamped.s1, clamped.h, clamped.fd);
         // The searched gait rides at its own height, outside the grid the envelope was measured on.
@@ -303,10 +293,7 @@ class MotionService {
         for (int i = 0; i < mail.modes.count; ++i) handleInputMode(mail.modes.items[i]);
         reportHandheldDriving(mail.handheldDriving);
         if (mail.gait) handleInputGait(*mail.gait);
-        if (mail.command && mail.commandKeepsWalk)
-            handlePosture(*mail.command);
-        else if (mail.command)
-            handleCommand(*mail.command, mail.commandMs);
+        if (mail.command) handleCommand(*mail.command, mail.commandMs);
         takeGoalMail(mail);
         resetCommandIfTimedOut();
         const float dt = getMotionDeltaSeconds();
@@ -547,6 +534,8 @@ class MotionService {
     static constexpr unsigned long STEERING_TIMEOUT_MS = 600;
     static_assert(MotionInbox::HANDHELD_PRIORITY_MS == STEERING_TIMEOUT_MS,
                   "the handheld drives for as long as the walk obeys its last stick");
+    static_assert(MotionInbox::CLIENT_IN_FORCE_MS == COMMAND_TIMEOUT_MS,
+                  "a client's command is in force for as long as the dead-man obeys any command");
 
     float default_feet_pos[6][4];
 

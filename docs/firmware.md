@@ -129,7 +129,7 @@ The IMU's roll and pitch, turned into the body frame (`include/imu_frame.h`), ar
 
 Commands arrive asynchronously and only set targets.
 If no command arrives within a timeout, `MotionService` applies a zero command; the timeout is shorter while a stick is steering, because the senders repeat their command while one is held.
-A command the inbox drops is no command to this dead-man, nor is an idle handheld's centred frame outside its window (Handheld priority): its window runs from the arrival of the last walk command taken.
+A command the inbox drops is no command to this dead-man: its window runs from the arrival of the last command taken.
 Gait changes are deferred until the gait is not commanded, not repositioning and not settling a posture, because swapping the phase schedule mid-stride drops a swinging foot.
 `GaitType::AUTO` picks a gait from the commanded speed at the same safe moments.
 That speed is the stick's share of BI's top speed at the posture and stride, whichever gait walks it, and AUTO picks the slowest of `RIPPLE`, `TRI_GATE` and `BI_GATE` whose top speed covers it.
@@ -165,10 +165,12 @@ With a second client connected a stale stick can therefore walk again: the app's
 The app's heartbeat, centred while its sticks are untouched, ends the wait within 200 ms in `STAND`, `WALK` and `WALK_NN`, the modes it heartbeats in; in `IDLE` or `DEACTIVATED` the wait lasts until its first centred send, so the first stick pushed after a switch to `STAND` can be dropped.
 Modes, gaits, animation plays, poses, servo writes and settings from any source are not gated, so the stops always pass: `DEACTIVATED`, `goal_cancel` and `AnimationStop`.
 Whether the handheld drives is reported with the mode, as `ModeData.handheld`: the control task reports the mode applied again, as `APPLIED`, on each change of the flag, so the mode's other observers see an unchanged mode, and `mode_get` (request 134, reply 132) reads both for a client that connects between pushes.
-Outside the window the handheld's centred frames, which it sends at 5 Hz whenever it is switched on and at 50 Hz while a button is held, are no walk command: they keep the sticks, speed and stride of the command in force, none once the dead-man stopped it, and are no command to the dead-man.
-So an idle handheld neither stops another source's walk nor keeps a lost one alive.
-Their posture still applies, last-writer as every command's: the height the handheld's trim set, and zero lift (`s1`), feet distance and tilt, against the app's sliders.
-With both connected and a slider or the trim moved, the posture so flips between the two, and a classic walk stops between steps to settle into each change (roadmap 11.1b).
+Outside the window the handheld's centred frames, which it sends at 5 Hz whenever it is switched on and at 50 Hz while a button is held, are dropped whole, posture included, while a client's command is in force (roadmap 11.1b).
+A client's command is in force for `MotionInbox::CLIENT_IN_FORCE_MS` (2 s, equal to `COMMAND_TIMEOUT_MS`, the dead-man's longest window) after its arrival, if the handheld let it through; a centred heartbeat that a goal swallows counts, as the goal is a client's.
+So an idle handheld beside the app or a script neither stops its walk nor moves its posture: the height, lift (`s1`), feet distance and tilt are the client's.
+A dropped frame is no command to the dead-man, so it keeps no lost walk alive: a lost client's stick is still stopped after 600 ms, with `link_lost` set until the handheld's frames are taken again, 2 s after the client's last command.
+With no client in force the frames are the handheld's commands, taken whole: a handheld on its own holds its height trim and refreshes the dead-man, so it ends no session with a dead-man stop.
+The live client therefore wins the posture: after a trim with the app open, the app's height returns once the window ends, 600 ms after the release.
 A stick that drifts 3 % or more past the controller's deadzone holds the window open: the app is muted and goals are refused while the app shows "Handheld driving"; switching the handheld off, or raising its deadzone (`deadzone <n>` on its CLI), ends it.
 
 ## Odometry and goal moves
@@ -319,7 +321,7 @@ When the last client on every transport has gone, a playing animation stops, so 
 Per-tick telemetry (`include/telemetry/telemetry.h`) is recorded by the control task into a lock-free single-producer ring, only while someone subscribes, and shipped in whole batches by the service task; a full ring drops samples and counts them rather than blocking the control loop.
 Each `TickSample` also carries the tick's servo write: the 18 pulses written or meant to be written (`pwm`, in PCA9685 counts), the time the write took (`servo_write_us`) and each board's result (`servo_write_right`, `servo_write_left`).
 A board's result is `OK`, `FAILED` for a write it did not acknowledge, `SKIPPED` for one left out while the board backs off, which never reached the bus, `RESTARTED` for one it took after being started again, and `NONE` for a tick that wrote nothing: a mode that drives no servo, a `WALK_NN` tick on which the policy produced no angles, or a tick on which a servo calibration signal took over the pulses.
-`link_lost` is set from the tick the dead-man stop zeroed the command until a walk command arrives or a goal takes the walk, so the tick it rises on is the tick the stop fired.
+`link_lost` is set from the tick the dead-man stop zeroed the command until a command arrives or a goal takes the walk, so the tick it rises on is the tick the stop fired.
 `simulation/report_recording.py` lists the failed writes and the dead-man stops of a recording.
 
 The **ESP-NOW receiver** (`EspNowAdapter`) is input only: it turns the handheld controller's broadcasts into `CommandMsg`, `ModeMsg` and `GaitMsg` on the EventBus, so the controller drives `MotionService` as the app does, with priority over the other sources' sticks and goals while it moves a stick (Handheld priority).

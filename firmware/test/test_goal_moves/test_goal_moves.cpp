@@ -394,6 +394,26 @@ void test_the_handheld_moving_a_stick_cancels_the_goal() {
     TEST_ASSERT_EQUAL(GoalState::CANCELLED, rig.state());
 }
 
+// A client walks and asks for a goal with its stick still off centre; once the goal is reached, the frames of a
+// handheld switched on beside it walk no stale stick, whether they are dropped for the client's command in force or
+// taken as the handheld's own centred commands.
+void test_an_idle_handheld_after_a_goal_walks_no_stale_stick() {
+    Rig &rig = newRig();
+    standUp(rig);
+    rig.robot.setMode(MOTION_STATE::WALK);
+    rig.tick();
+    rig.robot.command({0, 0.6f, 0, 0, 0, 0, 0, 0, 0});
+    rig.run(0.2f);
+    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(0.15f), style(), GaitType::TRI_GATE));
+    rig.runGoal();
+    TEST_ASSERT_EQUAL(GoalState::REACHED, rig.state());
+    for (int t = 0; t < ticksFor(3.0f); ++t) {
+        if (t % 40 == 0) rig.robot.handheld(handheldFrame(0, 0));
+        rig.tick();
+        TEST_ASSERT_EQUAL_FLOAT(0, rig.robot.gaitCommand().step_y);
+    }
+}
+
 // Review focus 1: any stick off centre, from any source, cancels the goal and walks as the operator asks at once.
 void test_an_off_centre_stick_cancels_the_goal_and_drives_the_walk() {
     for (int axis = 0; axis < 3; ++axis) {
@@ -846,6 +866,7 @@ int main(int, char **) {
     RUN_TEST(test_an_off_centre_stick_cancels_the_goal_and_drives_the_walk);
     RUN_TEST(test_a_goal_is_refused_while_the_handheld_drives);
     RUN_TEST(test_the_handheld_moving_a_stick_cancels_the_goal);
+    RUN_TEST(test_an_idle_handheld_after_a_goal_walks_no_stale_stick);
     RUN_TEST(test_a_mode_change_cancels_the_goal);
     RUN_TEST(test_a_gait_change_over_the_wire_cancels_the_goal);
     RUN_TEST(test_a_client_sending_the_goals_own_gait_keeps_the_goal);
