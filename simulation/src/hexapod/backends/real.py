@@ -21,7 +21,7 @@ sleep or set_velocity, or at the next goal_move; a goal ends CANCELLED. A walk w
 once. After the handheld, the robot ignores this client's sticks until it has sent a centred one, so the first stick
 after a takeover, and the first of a connection, is sent after a centred input. The report is pushed only on a change,
 and a push can be dropped, so while the keep-alive runs or the handheld drives the mode is asked for every
-MODE_POLL_S; a reply is dropped when a push arrived since its request, which is the newer.
+MODE_POLL_S, answered or not; a reply is dropped when a push arrived since its request, which is the newer.
 
 Goals: a firmware from before them answers their requests 400, which connect() probes. The robot pushes a goal's
 status on each change, but a push can be dropped, so the status is asked for when none came for CONFIRM_S and to
@@ -279,16 +279,29 @@ class RealBackend:
                 self._changed.notify_all()
         return answered
 
+    # Each poll goes out MODE_POLL_S after the last, answered or not, so neither the round trip nor a lost reply
+    # stretches the period past the handheld's window.
     async def _confirm_mode(self) -> None:
-        while self._error is None:
-            await asyncio.sleep(MODE_POLL_S)
-            with self._changed:
-                due = self._polls_mode and (self._handheld or self._mode in HEARTBEAT_MODES)
-            if due:
-                try:
-                    await self._ask_mode()
-                except (RobotError, asyncio.TimeoutError):
-                    pass  # the reader reports a link that is gone; the next poll asks again
+        polls: set[asyncio.Task] = set()
+        try:
+            while self._error is None:
+                await asyncio.sleep(MODE_POLL_S)
+                with self._changed:
+                    due = self._polls_mode and (self._handheld or self._mode in HEARTBEAT_MODES)
+                if due:
+                    poll = asyncio.create_task(self._poll_mode())
+                    polls.add(poll)
+                    poll.add_done_callback(polls.discard)
+        finally:
+            for poll in polls:
+                poll.cancel()
+            await asyncio.gather(*polls, return_exceptions=True)
+
+    async def _poll_mode(self) -> None:
+        try:
+            await self._ask_mode()
+        except (RobotError, asyncio.TimeoutError):
+            pass  # the reader reports a link that is gone; the next poll asks again
 
     async def _keep_alive(self) -> None:
         while self._error is None:
@@ -332,8 +345,11 @@ class RealBackend:
         self._next_id += 1
         future = self._loop.create_future()
         self._replies[request.correlation_id] = future
-        await self._send(pb.Message(correlation_request=request))
-        reply = await asyncio.wait_for(future, REPLY_TIMEOUT_S)
+        try:
+            await self._send(pb.Message(correlation_request=request))
+            reply = await asyncio.wait_for(future, REPLY_TIMEOUT_S)
+        finally:
+            self._replies.pop(request.correlation_id, None)  # a lost reply leaves no entry behind
         if check and reply.status_code >= 400:
             reason = f": {reply.error_message}" if reply.error_message else ""
             raise RobotError(f"the robot refused the request with status {reply.status_code}{reason}")

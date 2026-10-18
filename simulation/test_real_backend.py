@@ -144,12 +144,14 @@ class FakeRobot:
 
     It boots DEACTIVATED and answers the request for its mode, unless `mode_request=False`, as a firmware from before
     that request does; with `stale_mode_reply` it pushes its mode first and then answers with that stale one, as a push
-    that overtook the reply."""
+    that overtook the reply. It loses the replies to the next `lost_mode_replies` of those requests, as a full BLE queue
+    drops them."""
 
     def __init__(self, imu=True, obey=True, reset_on_open=None, goals=False, mode_request=True):
         self.imu, self.obey, self.reset_on_open, self.goals = imu, obey, reset_on_open, goals
         self.mode_request = mode_request
         self.stale_mode_reply = None
+        self.lost_mode_replies = 0
         self.handheld = False
         self.drop_final_push = False
         self.goal_count, self.goal_started = 0, None
@@ -231,6 +233,9 @@ class FakeRobot:
             if asked == "features_data_request":
                 response.features_data_response.imu = self.imu
             elif asked == "mode_get" and self.mode_request:
+                if self.lost_mode_replies:
+                    self.lost_mode_replies -= 1
+                    return
                 if self.stale_mode_reply is None:
                     response.mode.mode, response.mode.handheld = self.mode, self.handheld
                 else:
@@ -625,6 +630,15 @@ def test_the_mode_is_polled_only_while_the_keep_alive_runs(robot, fake):
     time.sleep(3 * real.MODE_POLL_S)
     polls = len([t for t, _ in fake.requests("mode_get") if t > since])
     assert 2 <= polls <= 4
+
+
+# A lost reply delays no poll: the polls go out every MODE_POLL_S whether or not the last was answered, so a report
+# that the handheld took over, its push lost, is found by the next poll, not after the reply timeout.
+def test_a_lost_poll_reply_delays_the_next_poll_by_nothing(robot, fake):
+    robot.stand()
+    fake.lost_mode_replies = 1
+    fake.push_mode(pb.STAND, True, lost=True)
+    _eventually(lambda: robot.state().handheld, timeout=2 * real.MODE_POLL_S + 0.3)
 
 
 # The first stick of a connection is sent after a centred one too: the firmware may still be waiting for this client to
