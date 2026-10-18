@@ -7,7 +7,8 @@
 
   import { daisyColor } from '$lib/utilities'
   import { analytics } from '$lib/stores/analytics'
-  import { AnalyticsData } from '$lib/platform_shared/message'
+  import { AnalyticsData, type TaskStats } from '$lib/platform_shared/message'
+  import { pollTaskStats, taskRows, taskSummary } from '$lib/stores/task-stats'
   import { dataBroker } from '$lib/transport/databroker'
   import { Metrics } from '$lib/components/icons'
 
@@ -24,6 +25,8 @@
 
   let temperatureChartElement: HTMLCanvasElement
   let temperatureChart: Chart
+
+  let taskStats: TaskStats | null = null
 
   onMount(() => {
     const unsubscribe = dataBroker.on(AnalyticsData, data => analytics.addData(data))
@@ -288,9 +291,11 @@
       }
     })
     const interval = setInterval(updateData, 500)
+    const stopTaskStats = pollTaskStats(dataBroker, stats => (taskStats = stats))
     return () => {
       unsubscribe()
       clearInterval(interval)
+      stopTaskStats()
     }
   })
 
@@ -378,5 +383,34 @@
       </tbody>
     </table>
     <div class="px-2 text-sm">Bus recoveries: {$analytics.i2c_bus_recoveries}</div>
+  </div>
+  <div class="w-full overflow-x-auto">
+    <table class="table table-sm">
+      <thead>
+        <tr>
+          <th>Task</th>
+          <th>Least free stack</th>
+          <th>CPU</th>
+          <th>Core</th>
+          <th>Priority</th>
+          <th>State</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each taskStats ? taskRows(taskStats) : [] as task (task.key)}
+          <tr>
+            <td>{task.name}</td>
+            <td>{task.stack}</td>
+            <td>{task.cpu}</td>
+            <td>{task.core}</td>
+            <td>{task.priority}</td>
+            <td>{task.state}</td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+    {#if taskStats}
+      <div class="px-2 text-sm">{taskSummary(taskStats)}</div>
+    {/if}
   </div>
 </SettingsCard>
