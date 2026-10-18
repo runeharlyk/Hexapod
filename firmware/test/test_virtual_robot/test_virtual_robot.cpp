@@ -291,6 +291,29 @@ void test_the_app_is_heard_again_600_ms_after_the_handheld_lets_go() {
     TEST_ASSERT_EQUAL_FLOAT(bodyHeightMm(0.5f), robot.bodyCommand().zm);
 }
 
+// A handheld whose link drops mid-walk sends no stop: the dead-man stops the walk 600 ms after its last frame, and the
+// telemetry reports the link lost, though the app's heartbeat goes on arriving. A dropped heartbeat is no
+// command to the dead-man, so it neither keeps the handheld's last stick walking nor hides the loss.
+void test_the_dead_man_stops_a_handheld_walk_whose_link_drops_under_the_apps_heartbeat() {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setMode(MOTION_STATE::WALK);
+    const CommandMsg heartbeat {0, 0, 0, 0, 0, 0, 0, 0, 0};
+    const int lastFrame = ticksFor(1.0f);
+    int fired = -1;
+    for (int t = 0; t <= lastFrame + ticksFor(1.0f); ++t) {
+        if (t <= lastFrame && t % HANDHELD_PERIOD_TICKS == 0) robot.handheld(handheldFrame(0, 0.8f));
+        if (t > lastFrame && (t - lastFrame) % APP_HEARTBEAT_TICKS == 10) robot.command(heartbeat);
+        robot.tick();
+        if (fired < 0 && robot.linkLost()) fired = t;
+        if (t > HANDHELD_PERIOD_TICKS && fired < 0)
+            TEST_ASSERT_GREATER_THAN_FLOAT_MESSAGE(0, robot.gaitCommand().step_y,
+                                                   "the walk stopped before the dead-man");
+    }
+    TEST_ASSERT_EQUAL_INT(lastFrame + ticksFor(0.6f), fired);
+    TEST_ASSERT_EQUAL_FLOAT(0, robot.gaitCommand().step_y);
+}
+
 // The telemetry reports the write of its own tick: none in a mode that sends no pose, a success in a stand, and an idle
 // tick after a stand tick does not inherit the stand's write (Hexapod::planMotion starts each tick's record).
 void test_the_telemetry_reports_the_servo_write_of_its_own_tick() {
@@ -1597,6 +1620,7 @@ int main(int, char **) {
     RUN_TEST(test_the_dead_man_window_runs_from_the_commands_arrival_not_its_take);
     RUN_TEST(test_the_apps_heartbeat_leaves_a_handheld_walk_alone);
     RUN_TEST(test_the_app_is_heard_again_600_ms_after_the_handheld_lets_go);
+    RUN_TEST(test_the_dead_man_stops_a_handheld_walk_whose_link_drops_under_the_apps_heartbeat);
     RUN_TEST(test_the_telemetry_reports_the_servo_write_of_its_own_tick);
     RUN_TEST(test_a_height_only_command_is_obeyed_for_2_s_after_silence);
     RUN_TEST(test_no_servo_is_driven_past_its_joint_travel);
