@@ -1,43 +1,87 @@
-import { TaskState, type TaskEntry, type TaskStats } from '$lib/platform_shared/message'
+import { TaskState, type TaskStats } from '$lib/platform_shared/message'
+
+type TaskStatsReply = { statusCode: number; errorMessage: string; taskStats?: TaskStats }
 
 /** What the task table needs of the data broker (transport/databroker.ts): one request, which it can abort. */
 export interface TaskStatsLink {
   request(
     payload: { taskStatsRequest: object },
     opts?: { signal?: AbortSignal }
-  ): Promise<{ taskStats?: TaskStats }>
+  ): Promise<TaskStatsReply>
 }
 
 /**
- * How often the open metrics page asks: the period of the analytics stream, so the table moves with the CPU chart.
- * The robot measures CPU over the time between two snapshots, and each snapshot holds its kernel's lock for a
- * millisecond or two, so a shorter period would cost the control loop more for no steadier figure.
+ * How often the table refreshes itself when asked to: the robot's own minimum between two snapshots, since a snapshot
+ * masks interrupts on both cores for milliseconds (firmware/include/task_table.h) and the robot hands a request that
+ * comes sooner the last reply.
  */
-export const TASK_STATS_PERIOD_MS = 2000
+export const TASK_STATS_REFRESH_MS = 10_000
 
-/**
- * Asks for the task table now, and again one period after each reply or failure, so a slow link never stacks
- * requests; hands each table to `show`. Returns the function that stops, which aborts a request in flight.
- */
-export const pollTaskStats = (
+/** What the page shows: the last good table, kept when a later request fails, and why that one did. */
+export interface TaskStatsView {
+  stats: TaskStats | null
+  error: string | null
+  loading: boolean
+}
+
+export interface TaskStatsFeed {
+  /** Asks for the table now; does nothing while a request is outstanding. */
+  refresh(): void
+  /** Turns the refresh, TASK_STATS_REFRESH_MS after each reply or failure, on or off. */
+  setAuto(on: boolean): void
+  /** Aborts the request in flight and cancels the refresh; the page calls it on close. */
+  stop(): void
+}
+
+const failureOf = (reply: TaskStatsReply) => {
+  if (reply.statusCode !== 200)
+    return reply.errorMessage || `the robot answered with status ${reply.statusCode}`
+  return reply.taskStats ? null : 'the robot answered without a task table'
+}
+
+/** Hands `show` the page's view on every change; nothing is requested until `refresh` is called. */
+export const watchTaskStats = (
   broker: TaskStatsLink,
-  show: (stats: TaskStats) => void,
-  periodMs = TASK_STATS_PERIOD_MS
-) => {
+  show: (view: TaskStatsView) => void
+): TaskStatsFeed => {
   const aborter = new AbortController()
+  let view: TaskStatsView = { stats: null, error: null, loading: false }
+  let auto = false
   let timer: ReturnType<typeof setTimeout> | undefined
-  const ask = async () => {
-    const reply = await broker
-      .request({ taskStatsRequest: {} }, { signal: aborter.signal })
-      .catch(() => null)
-    if (aborter.signal.aborted) return
-    if (reply?.taskStats) show(reply.taskStats)
-    timer = setTimeout(ask, periodMs)
+
+  const update = (change: Partial<TaskStatsView>) => {
+    view = { ...view, ...change }
+    show(view)
   }
-  ask()
-  return () => {
-    aborter.abort()
+  const schedule = () => {
     clearTimeout(timer)
+    if (auto && !aborter.signal.aborted) timer = setTimeout(refresh, TASK_STATS_REFRESH_MS)
+  }
+  async function refresh() {
+    if (view.loading || aborter.signal.aborted) return
+    clearTimeout(timer)
+    update({ loading: true })
+    try {
+      const reply = await broker.request({ taskStatsRequest: {} }, { signal: aborter.signal })
+      if (aborter.signal.aborted) return
+      const error = failureOf(reply)
+      update({ loading: false, error, ...(error ? {} : { stats: reply.taskStats }) })
+    } catch (e) {
+      if (aborter.signal.aborted) return
+      update({ loading: false, error: e instanceof Error ? e.message : String(e) })
+    }
+    schedule()
+  }
+  return {
+    refresh,
+    setAuto: on => {
+      auto = on
+      if (!view.loading) schedule()
+    },
+    stop: () => {
+      aborter.abort()
+      clearTimeout(timer)
+    }
   }
 }
 
@@ -59,17 +103,13 @@ const STATE_NAMES: Record<number, string> = {
   [TaskState.TASK_DELETED]: 'deleted'
 }
 
-// As the robot orders them (firmware/include/task_table.h): the stack closest to an overflow first.
-const tightestFirst = (a: TaskEntry, b: TaskEntry) =>
-  a.stackFreeMin - b.stackFreeMin ||
-  (a.name < b.name ? -1
-  : a.name > b.name ? 1
-  : 0) ||
-  a.number - b.number
+/** What the State column's header says: the one running task is the one that took the snapshot. */
+export const STATE_NOTE =
+  'The transport task answering this request always shows as running. A task running on the other core shows as ready.'
 
-/** The table's rows, the least free stack first; a reply without a window has no CPU figures. */
+/** The table's rows in the robot's order, the least free stack first; a reply without a window has no CPU figures. */
 export const taskRows = (stats: TaskStats): TaskRow[] =>
-  [...stats.tasks].sort(tightestFirst).map(task => ({
+  stats.tasks.map(task => ({
     key: task.number,
     name: task.name,
     state: STATE_NAMES[task.state] ?? 'unknown',
@@ -82,15 +122,24 @@ export const taskRows = (stats: TaskStats): TaskRow[] =>
     cpu: stats.windowUs > 0 ? `${task.cpuPercent.toFixed(1)} %` : '-'
   }))
 
-/** The line under the table: how many tasks it lists, what its CPU figures cover, and what the snapshot cost. */
+/** The untouched stack bytes the snapshot scanned, which uxTaskGetSystemState reads one at a time under its lock. */
+export const scannedBytes = (stats: TaskStats) =>
+  stats.tasks.reduce((sum, task) => sum + task.stackFreeMin, 0)
+
+/**
+ * The line under the table: how many tasks it lists, what its CPU figures cover, and what the snapshot cost beside the
+ * bytes it scanned, so the first reading on a robot gives the cost of a byte. The robot cuts the roomiest stacks from
+ * a long list, and those are the longest scans, so for a cut table the bytes are a lower bound.
+ */
 export const taskSummary = (stats: TaskStats) => {
+  const cut = stats.tasks.length < stats.taskCount
   const listed =
-    stats.tasks.length < stats.taskCount ?
-      `${stats.tasks.length} of ${stats.taskCount} tasks`
-    : `${stats.taskCount} tasks`
+    cut ? `${stats.tasks.length} of ${stats.taskCount} tasks` : `${stats.taskCount} tasks`
   const window =
     stats.windowUs > 0 ?
       `CPU of one core over ${(stats.windowUs / 1e6).toFixed(1)} s`
     : 'CPU from the next reply'
-  return `${listed}, ${window}, snapshot ${(stats.snapshotUs / 1000).toFixed(2)} ms`
+  const snapshot = `snapshot ${(stats.snapshotUs / 1000).toFixed(2)} ms`
+  const scanned = `${cut ? 'at least ' : ''}${scannedBytes(stats)} B of free stack scanned`
+  return `${listed}, ${window}, ${snapshot}, ${scanned}`
 }
