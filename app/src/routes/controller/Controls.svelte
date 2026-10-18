@@ -2,7 +2,15 @@
   import nipplejs from 'nipplejs'
   import { onDestroy, onMount } from 'svelte'
   import { capitalize } from '$lib/utilities'
-  import { input, outControllerData, mode, gait } from '$lib/stores'
+  import { input } from '$lib/stores'
+  import {
+    drive,
+    driveGait,
+    driveMode,
+    drivenGait,
+    drivenMode,
+    drivesSimulation
+  } from '$lib/stores/drive'
   import { isLinked } from '$lib/stores/link'
   import { goalLine, goalStatus } from '$lib/stores/goal'
   import type { ControllerInput, vector } from '$lib/types/models'
@@ -11,7 +19,6 @@
   import { GaitType, strideApplies } from '$lib/gait'
   import { notifications } from '$lib/components/toasts/notifications'
   import { gamepadAxes, gamepadButtons, hasGamepad } from '$lib/stores/gamepad'
-  import { requestGait, requestMode } from '$lib/control'
   import { shapeStick } from '$lib/utilities/stick'
   import { commandOf } from '$lib/controller-input'
 
@@ -20,7 +27,8 @@
   let left: nipplejs.JoystickManager
   let right: nipplejs.JoystickManager
 
-  const syncCommand = (i: ControllerInput) => outControllerData.set(commandOf(i))
+  // While the simulation view is shown, the controls drive its robot and never the real one (stores/drive.ts).
+  const syncCommand = (i: ControllerInput) => drive(commandOf(i))
 
   $effect(() => {
     if ($hasGamepad) notifications.success('🎮 Gamepad connected', 3000)
@@ -54,10 +62,10 @@
 
   $effect(() => {
     if ($gamepadButtons.length === 0) return
-    if ($gamepadButtons[0].pressed) requestMode(MotionModes.DEACTIVATED)
-    else if ($gamepadButtons[1].pressed) requestMode(MotionModes.IDLE)
-    else if ($gamepadButtons[2].pressed) requestMode(MotionModes.STAND)
-    else if ($gamepadButtons[3].pressed) requestMode(MotionModes.WALK)
+    if ($gamepadButtons[0].pressed) driveMode(MotionModes.DEACTIVATED)
+    else if ($gamepadButtons[1].pressed) driveMode(MotionModes.IDLE)
+    else if ($gamepadButtons[2].pressed) driveMode(MotionModes.STAND)
+    else if ($gamepadButtons[3].pressed) driveMode(MotionModes.WALK)
   })
 
   onMount(() => {
@@ -152,8 +160,6 @@
     })
   }
 
-  const changeGait = (gaitValue: GaitType) => requestGait(gaitValue)
-
   const goalText = $derived($goalStatus ? goalLine($goalStatus) : null)
 </script>
 
@@ -216,19 +222,19 @@
         {#each Object.values(MotionModes) as modeValue}
           <button
             class="btn join-item btn-sm lg:btn-md"
-            class:btn-primary={$mode === modeValue && modeValue !== MotionModes.DEACTIVATED}
-            class:btn-error={$mode === modeValue && modeValue === MotionModes.DEACTIVATED}
-            onclick={() => requestMode(modeValue)}
+            class:btn-primary={$drivenMode === modeValue && modeValue !== MotionModes.DEACTIVATED}
+            class:btn-error={$drivenMode === modeValue && modeValue === MotionModes.DEACTIVATED}
+            onclick={() => driveMode(modeValue)}
           >
             {capitalize(modeValue)}
           </button>
         {/each}
-        {#if $mode === MotionModes.WALK}
+        {#if $drivenMode === MotionModes.WALK}
           <select
             class="select select-primary select-sm lg:select-md w-auto"
             aria-label="Gait"
-            value={$gait}
-            onchange={e => changeGait((e.target as HTMLSelectElement).value as GaitType)}
+            value={$drivenGait}
+            onchange={e => driveGait((e.target as HTMLSelectElement).value as GaitType)}
           >
             {#each Object.values(GaitType) as gaitValue}
               <option value={gaitValue}>
@@ -239,7 +245,7 @@
         {/if}
       </div>
 
-      {#if $mode === MotionModes.WALK}
+      {#if $drivenMode === MotionModes.WALK}
         <div class="flex gap-4">
           <div>
             <div class="flex items-baseline justify-between gap-2">
@@ -271,7 +277,7 @@
               step="0.01"
               max="1"
               value={$input.stride}
-              disabled={!strideApplies($gait)}
+              disabled={!strideApplies($drivenGait)}
               oninput={e => handleRange(e, 'stride')}
               class="range range-sm range-primary"
             />
@@ -297,7 +303,11 @@
       {/if}
     </div>
 
-    {#if !$isLinked}
+    {#if $drivesSimulation}
+      <div class="bg-base-300/70 flex shrink-0 items-center gap-2 rounded-tr-xl p-3">
+        <span class="badge badge-info badge-sm shrink-0">Simulation only</span>
+      </div>
+    {:else if !$isLinked}
       <div class="bg-base-300/70 flex shrink-0 items-center gap-2 rounded-tr-xl p-3">
         <span class="badge badge-warning badge-sm shrink-0">Preview</span>
       </div>

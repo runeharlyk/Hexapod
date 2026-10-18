@@ -4,7 +4,7 @@
   import { Box3, Group, Mesh, Object3D, Vector3 } from 'three'
   import type { URDFRobot } from 'urdf-loader'
   import SceneBuilder from '$lib/sceneBuilder'
-  import { gait, mode, outControllerData } from '$lib/stores'
+  import { driveSimulation, simulation } from '$lib/stores/drive'
   import { loadModel } from '$lib/utilities/model-utilities'
   import { MotionModes, urdfJointOrder } from '$lib/motion'
   import { GaitType } from '$lib/gait'
@@ -48,8 +48,8 @@
       ;[model, jointNames] = urdf.inner
       placeModel(model)
       unsubscribers = [
-        mode.subscribe(m => robot?.setMode(Object.values(MotionModes).indexOf(m))),
-        gait.subscribe(g => robot?.setGait(Object.values(GaitType).indexOf(g)))
+        simulation.mode.subscribe(m => robot?.setMode(Object.values(MotionModes).indexOf(m))),
+        simulation.gait.subscribe(g => robot?.setGait(Object.values(GaitType).indexOf(g)))
       ]
       lastFrame = performance.now()
       status = 'running'
@@ -90,7 +90,7 @@
   function frame() {
     if (!sim || !robot) return
     const now = performance.now()
-    robot.command(get(outControllerData))
+    robot.command(get(simulation.command))
     sim.step((now - lastFrame) / 1000)
     lastFrame = now
     update()
@@ -110,11 +110,13 @@
 
   const reset = () => {
     sim?.reset()
-    robot?.setMode(Object.values(MotionModes).indexOf(get(mode)))
+    robot?.setMode(Object.values(MotionModes).indexOf(get(simulation.mode)))
     lastFrame = performance.now()
   }
 
   onMount(() => {
+    // The view is a robot of its own: while it is shown the controls drive it, and never the real robot.
+    driveSimulation(true)
     sceneManager
       .addRenderer({ antialias: true, canvas, alpha: true })
       .addPerspectiveCamera({ x: -30, y: 25, z: 40 })
@@ -137,6 +139,7 @@
 
   onDestroy(() => {
     destroyed = true
+    driveSimulation(false)
     unsubscribers.forEach(unsubscribe => unsubscribe())
     sceneManager.dispose()
     resize?.disconnect()
