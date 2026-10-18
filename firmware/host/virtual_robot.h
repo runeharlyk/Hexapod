@@ -83,6 +83,8 @@ class VirtualRobot {
     const gait_state_t &gaitState() const { return _robot.motion().gaitState(); }
     // The body pose the motion is easing toward.
     const BodyStateMsg &bodyCommand() const { return _robot.motion().bodyCommand(); }
+    // The body pose and feet the last tick solved the legs for.
+    const BodyStateMsg &bodyState() const { return _robot.motion().bodyState(); }
     // The odometry as the last tick's telemetry reports it.
     OdometryEstimate odometry() const {
         return {.x = _sample.odom_x,

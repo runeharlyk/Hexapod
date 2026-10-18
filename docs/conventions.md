@@ -62,6 +62,27 @@ Under the convention above that means +ly walks forward, +lx strafes left and +r
 The simulation measured exactly this (`simulation/src/hexapod/speed_model.py`).
 The fixture records the mapping as it stands, so right strafe is the stick `lx = -0.5`; the Python and app tests assert it, while the native test cannot reach `MotionService` and covers only the gait layer.
 
+## Stand stick signs
+
+In STAND the sticks pose the body over its planted feet instead of walking it, in the same `MotionService::handleCommand`: `xm = 50 lx`, `ym = -50 ly` (mm), `phi = 0.254 rx` and `omega = 0.254 ry` (rad).
+`get_transformation_matrix` (`firmware/include/kinematics.h`) maps the feet into the body, so the body moves by the inverse of that pose: a positive `xm` moves it -x, a positive `ym` moves it -y, a positive `phi` turns it about +y by `-phi`, and a positive `omega` turns it about +x by `-omega`.
+
+| Stick | Body shift over its feet | Body tilt |
+| --- | --- | --- |
+| left stick right, `lx > 0` | -x, toward its left | none |
+| left stick up, `ly > 0` | +y, forward | none |
+| right stick right, `rx > 0` | none | left side down |
+| right stick up, `ry > 0` | none | nose down |
+
+The lateral sign is the walk's: a stick pushed right strafes the robot to its left and shifts a standing body to its left.
+Seen by someone facing the robot, its left is on their right, so the body follows the stick toward their right and the side on their right goes down.
+A floor check on 2026-10-18 reported the left stick pushed right shifting the body right and the right stick pushed right putting the right side down, which is this mapping seen from in front of the robot.
+Only that reading agrees with the self-levelling: `rx` and the measured tilt both feed `phi` (`levelAttitude`, `firmware/include/self_level.h`), so if a positive `phi` lowered the robot's right side, the levelling would push a low right side further down instead of reaching down with it, as the floor check of 2026-10-16 found it does.
+Self-levelling also takes back part of a commanded tilt on flat ground, since it adds the measured tilt to the command: the simulation settles at 3.6 deg for a half stick that commands 7.3 deg.
+
+The fixture's `stand` rows hold each stick from a settled stand and store the signs of the body's shift and tilt.
+The native test (`firmware/test/test_sign_convention`) and the app test (`app/tests/unit/sign-convention.spec.ts`) read them from the feet the firmware's kinematics solves the legs for, through the virtual robot; the simulation test (`simulation/test_sign_convention.py`) reads them from the MuJoCo robot's base under the firmware's control loop and self-levelling.
+
 ## Floor confirmation
 
 Floor confirmation: performed on 2026-10-16, after the wiring fix below.

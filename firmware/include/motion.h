@@ -401,11 +401,12 @@ class MotionService {
 
     float *getAngles() { return msgAngles.angles; }
 
-    // The locomotion command the gait eases toward, the command it walks now, and the body pose the motion eases
-    // toward, for the virtual robot's tests.
+    // The locomotion command the gait eases toward, the command it walks now, the body pose the motion eases
+    // toward, and the body pose and feet the last tick solved the legs for, for the virtual robot's tests.
     const gait_state_t &gaitCommand() const { return target_gait_state; }
     const gait_state_t &gaitState() const { return gait_state; }
     const BodyStateMsg &bodyCommand() const { return target_body_state; }
+    const BodyStateMsg &bodyState() const { return body_state; }
 
     // Any task: the pose of the last tick, whole.
     OdometryEstimate odometry() const { return _inbox.odometry(); }
