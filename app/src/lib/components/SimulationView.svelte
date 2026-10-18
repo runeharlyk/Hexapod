@@ -11,10 +11,10 @@
   import { loadSimulation } from '$lib/simulation/load'
   import { HexapodSim } from '$lib/simulation/hexapod-sim'
   import type { VirtualRobot } from '$lib/simulation/virtual-robot'
+  import { mountModel } from '$lib/simulation/model-mount'
 
-  // The 3D view draws 12 mm per scene unit, and its URDF model at 120 mm per URDF unit.
+  // The 3D view draws 12 mm per scene unit.
   const SCENE_UNITS_PER_METRE = 1000 / 12
-  const METRES_PER_URDF_UNIT = 0.12
 
   let canvas: HTMLCanvasElement
   let status = $state<'loading' | 'running' | 'error'>('loading')
@@ -68,10 +68,7 @@
     const world = new Group()
     world.rotation.x = -Math.PI / 2
     world.scale.setScalar(SCENE_UNITS_PER_METRE)
-    urdf.position.set(0, 0, 0)
-    urdf.rotation.set(0, 0, 0)
-    urdf.scale.setScalar(METRES_PER_URDF_UNIT)
-    pose.add(urdf)
+    mountModel(urdf, pose)
     world.add(pose)
     sceneManager.scene.add(world)
     update()

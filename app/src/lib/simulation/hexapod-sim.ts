@@ -24,6 +24,7 @@ export class HexapodSim {
   private readonly dofAdr: number[]
   private readonly baseFriction: number[]
   private readonly gyroAdr: number
+  private readonly feet: number[]
   private readonly targets = new Float64Array(18)
   private ticks = 0
   private steps = 0
@@ -49,6 +50,7 @@ export class HexapodSim {
     this.dofAdr = joints.map(j => this.model.jnt_dofadr[j])
     this.baseFriction = this.dofAdr.map(dof => this.model.dof_frictionloss[dof])
     this.gyroAdr = this.model.sensor_adr[id(mjtObj.mjOBJ_SENSOR.value, 'imu_gyro')]
+    this.feet = [0, 1, 2, 3, 4, 5].map(leg => id(mjtObj.mjOBJ_GEOM.value, `foot_${leg}`))
     // As HexapodSim: the gear friction's constraint as stiff as MuJoCo allows, so a held joint neither creeps
     // nor overshoots.
     for (const dof of this.dofAdr) {
@@ -109,6 +111,12 @@ export class HexapodSim {
     return this.qposAdr.map(adr => this.data.qpos[adr])
   }
 
+  /** World positions of the foot spheres' centres in metres, z up, in leg order. */
+  footPositions(): [number, number, number][] {
+    const xpos = this.data.geom_xpos
+    return this.feet.map(geom => [xpos[geom * 3], xpos[geom * 3 + 1], xpos[geom * 3 + 2]])
+  }
+
   /** Tilted beyond 60 degrees; a robot lying flat after its servos went limp has not fallen. */
   hasFallen(): boolean {
     const [, x, y] = this.baseQuaternion()
@@ -148,15 +156,7 @@ export class HexapodSim {
 
   // The foot spheres are the robot's lowest points in the stand pose.
   private lowestFoot(): number {
-    let lowest = Infinity
-    for (let leg = 0; leg < 6; leg++) {
-      const geom = this.mujoco.mj_name2id(
-        this.model,
-        this.mujoco.mjtObj.mjOBJ_GEOM.value,
-        `foot_${leg}`
-      )
-      lowest = Math.min(lowest, this.data.geom_xpos[geom * 3 + 2] - this.model.geom_size[geom * 3])
-    }
-    return lowest
+    const feet = this.footPositions()
+    return Math.min(...this.feet.map((geom, leg) => feet[leg][2] - this.model.geom_size[geom * 3]))
   }
 }

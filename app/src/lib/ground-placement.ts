@@ -1,9 +1,8 @@
-import { Euler, Quaternion, Vector3 } from 'three'
+import { Quaternion, Vector3 } from 'three'
 import type { Ground } from '$lib/kinematic'
 import { stanceToScene } from '$lib/animation/handles'
+import { LEVEL } from '$lib/model-frame'
 
-// The URDF's orientation for a level, unturned body; the scene is y up (see handles.ts for the axes).
-const LEVEL = new Quaternion().setFromEuler(new Euler(-Math.PI / 2, 0, Math.PI / 2))
 const UP = new Vector3(0, 1, 0)
 
 export interface Placement {
