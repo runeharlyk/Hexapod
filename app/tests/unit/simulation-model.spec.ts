@@ -4,7 +4,8 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { Object3D, Vector3 } from 'three'
+import { Mesh, Object3D, Vector3 } from 'three'
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import URDFLoader, { type URDFRobot } from 'urdf-loader'
 import { XacroParser } from 'xacro-parser'
 import loadMujoco, { type MainModule } from '@mujoco/mujoco'
@@ -19,19 +20,23 @@ const fixture: { legs: string[]; stance_mm: number[][] } = JSON.parse(
   readFileSync(path.join(repo, 'platform_shared/sign_convention.json'), 'utf8')
 )
 const STAND = 3
-// A middle leg sits at y = 0 in the convention, so only its side is compared.
-const sign = (v: number) => Math.sign(Math.round(v * 1e3))
+// The URDF's meshes are not the MuJoCo model's geometry: a drawn toe lies within this of the simulated foot.
+const TOE_TO_FOOT_M = 0.03
 
 let mujoco: MainModule
 let robot: VirtualRobot
 
-// The URDF model as the app loads it, its meshes left out.
+// The URDF model as the app loads it, with its meshes. Its link frames sit off the physical joints, so only the
+// meshes show where a foot is drawn.
 async function loadUrdf(): Promise<URDFRobot> {
   const parser = new XacroParser()
   parser.getFileContents = async file => readFileSync(file, 'utf8')
   const xml = await parser.parse(readFileSync(path.join(repo, 'app/static/model.xacro'), 'utf8'))
   const loader = new URDFLoader()
-  loader.loadMeshCb = (_path, _manager, done) => done(new Object3D())
+  loader.packages = { hex: path.join(repo, 'app/static/hex') }
+  const stl = new STLLoader()
+  loader.loadMeshCb = (file, _manager, done) =>
+    done(new Mesh(stl.parse(readFileSync(file).buffer as ArrayBuffer)))
   return loader.parse(xml)
 }
 
@@ -45,13 +50,27 @@ function shoulderOfLeg(jointNames: string[]): string[] {
   return shoulders
 }
 
+// The lowest point of a link's meshes in the frame of `body`: the drawn toe of a foot link.
+function toe(link: Object3D, body: Object3D): Vector3 {
+  let lowest: Vector3 | undefined
+  link.traverse(part => {
+    if (!(part instanceof Mesh)) return
+    const vertices = part.geometry.attributes.position
+    for (let i = 0; i < vertices.count; i++) {
+      const v = body.worldToLocal(part.localToWorld(new Vector3().fromBufferAttribute(vertices, i)))
+      if (!lowest || v.z < lowest.z) lowest = v
+    }
+  })
+  return lowest!
+}
+
 describe('the simulation view', () => {
   beforeAll(async () => {
     mujoco = await loadMujoco()
     robot = await loadVirtualRobot()
   })
 
-  it("draws each leg where MuJoCo simulates it and on the convention's side", async () => {
+  it("draws each foot where MuJoCo simulates it and on the convention's side", async () => {
     const sim = new HexapodSim(mujoco, sceneXml, robot)
     robot.setMode(STAND)
     for (let t = 0; t < 1.5; t += 0.02) sim.step(0.02)
@@ -70,18 +89,19 @@ describe('the simulation view', () => {
     jointNames.forEach((name, i) => urdf.joints[name].setJointValue(angles[i]))
     body.updateMatrixWorld(true)
 
-    const base = new Vector3(x, y, z)
     const shoulders = shoulderOfLeg(jointNames)
     fixture.legs.forEach((leg, i) => {
-      const link = shoulders[i].replace(/_shoulder$/, '_foot_link')
-      const drawn = urdf.links[link].getWorldPosition(new Vector3()).sub(base)
-      const simulated = [0, 1].map(a => sim.footPositions()[i][a] - base.getComponent(a))
-      const expected = fixture.stance_mm[i].slice(0, 2).map(Math.sign)
-      expect(sign(simulated[0]), `${leg}: MuJoCo side`).toBe(expected[0])
-      expect(sign(drawn.x), `${leg}: drawn side`).toBe(expected[0])
-      if (expected[1] === 0) return
-      expect(sign(simulated[1]), `${leg}: MuJoCo front or rear`).toBe(expected[1])
-      expect(sign(drawn.y), `${leg}: drawn front or rear`).toBe(expected[1])
+      const drawn = toe(urdf.links[shoulders[i].replace(/_shoulder$/, '_foot_link')], body)
+      const simulated = body.worldToLocal(new Vector3(...sim.footPositions()[i]))
+      const side = fixture.stance_mm[i].slice(0, 2).map(Math.sign)
+      expect(Math.sign(simulated.x), `${leg}: MuJoCo side`).toBe(side[0])
+      expect(Math.sign(drawn.x), `${leg}: drawn side`).toBe(side[0])
+      if (side[1] !== 0) {
+        expect(Math.sign(simulated.y), `${leg}: MuJoCo front or rear`).toBe(side[1])
+        expect(Math.sign(drawn.y), `${leg}: drawn front or rear`).toBe(side[1])
+      }
+      const apart = Math.hypot(drawn.x - simulated.x, drawn.y - simulated.y)
+      expect(apart, `${leg}: drawn toe to MuJoCo foot (m)`).toBeLessThan(TOE_TO_FOOT_M)
     })
     sim.dispose()
   })
