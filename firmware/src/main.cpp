@@ -7,6 +7,7 @@
 #include <esp_idf_version.h>
 #include <esp_flash.h>
 #include <esp_sleep.h>
+#include <esp_task_wdt.h>
 #include <esp_littlefs.h>
 #include <esp_app_desc.h>
 #include <driver/temperature_sensor.h>
@@ -829,11 +830,24 @@ static void sendTelemetry() {
 
 static void controlLoop(void *) {
     robot.initialize();
+    // A tick that does not end leaves the servos holding their last pulses, and a DEACTIVATED published meanwhile is
+    // never applied. The task watchdog restarts the board instead, whose start puts both PCA9685 boards to sleep with
+    // every channel off. Watched from here, after the IMU's start (about 0.5 s); a tick that is not hung stalls for
+    // 2.2 s at the very worst (docs/firmware.md, Task watchdog).
+    ESP_ERROR_CHECK(esp_task_wdt_add(nullptr));
+#if DEBUG_HANG_CONTROL_S
+    ESP_LOGW(TAG, "debug build: the control task hangs %d s after boot", DEBUG_HANG_CONTROL_S);
+#endif
     TickType_t last = xTaskGetTickCount();
     uint32_t seq = 0;
     int64_t previousStartUs = esp_timer_get_time();
     for (;;) {
+        esp_task_wdt_reset();
         const int64_t startUs = esp_timer_get_time();
+#if DEBUG_HANG_CONTROL_S
+        // Blocked for good, as in a deadlock: the idle task goes on running, so only the subscription above notices.
+        if (startUs >= DEBUG_HANG_CONTROL_S * 1000000LL) vTaskSuspend(nullptr);
+#endif
         robot.readSensors();
         robot.planMotion();
         robot.updateActuators();
