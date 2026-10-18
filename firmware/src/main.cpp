@@ -142,6 +142,7 @@ static const char *goalRefusal(uint32_t status) {
         case 400: return "A malformed goal or style";
         case 409: return "Only a standing or walking robot takes a goal, and not while updating";
         case 422: return "No goal walks in this style: TUNED, or no speed at its posture";
+        case 423: return "The handheld controller is driving";
         default: return "";
     }
 }
@@ -580,6 +581,12 @@ static void registerHandlers(CommAdapterBase &c) {
                 res.response.goal_status = robot.motion().goalStatus();
                 break;
             }
+            case socket_message_CorrelationRequest_mode_get_tag: {
+                res.which_response = socket_message_CorrelationResponse_mode_tag;
+                res.response.mode.mode = static_cast<socket_message_ModesEnum>(robot.motion().appliedMode());
+                res.response.mode.handheld = robot.motion().handheldDriving();
+                break;
+            }
             default: res.status_code = 400; break;
         }
         adapter->emit(res, clientId);
@@ -744,6 +751,7 @@ static void setupComm() {
         if (m.kind != ModeMsgKind::APPLIED) return;
         socket_message_ModeData out = socket_message_ModeData_init_zero;
         out.mode = static_cast<socket_message_ModesEnum>(m.mode);
+        out.handheld = robot.motion().handheldDriving();
         emitAll(out);
     });
 

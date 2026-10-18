@@ -147,12 +147,13 @@ ZERO = Velocity(0.0, 0.0, 0.0)
 @dataclass(frozen=True)
 class RobotState:
     t: float  # seconds on the backend's clock
-    mode: Mode | None  # None until the robot has reported one: the firmware pushes its mode only on a change
+    mode: Mode | None  # None until the robot has reported one; a firmware without the mode request does on a change
     gait: Gait | None
     yaw: float | None  # degrees counter-clockwise, None without an IMU
     link_drops: int  # times the robot's dead-man stop may have fired since connecting
     roll: float | None = None  # degrees, left side up (REP-103), None without an IMU
     odometry: Odometry | None = None  # None from a robot that takes no goals
+    handheld: bool = False  # the ESP-NOW handheld drives: the robot drops this client's sticks; never in the simulation
 
 
 class RobotError(Exception):

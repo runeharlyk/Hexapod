@@ -13,16 +13,12 @@
   import { serial } from '$lib/transport/serial-adapter'
   import { ble } from '$lib/transport/ble-adapter'
   import { websocket } from '$lib/transport/websocket-adapter'
-  import {
-    AnimationStatus,
-    ControllerInputData,
-    ModeData,
-    GaitData
-  } from '$lib/platform_shared/message'
+  import { AnimationStatus, ControllerInputData, GaitData } from '$lib/platform_shared/message'
   import { GaitType } from '$lib/gait'
   import { throttler } from '$lib/utilities'
   import { setAnimationStatus } from '$lib/stores/animation'
   import { followGoalStatus } from '$lib/stores/goal'
+  import { followMode } from '$lib/stores/robot-mode'
   import { connectWebsocket, isLinked } from '$lib/stores/link'
   import { COMMAND_HEARTBEAT_MS, needsHeartbeat } from '$lib/control-link'
   import { toControllerInput } from '$lib/controller-input'
@@ -44,6 +40,7 @@
   let commandHeartbeatId: ReturnType<typeof setInterval> | undefined
   let stopWatchingUpdate: (() => void) | undefined
   let stopFollowingGoal: (() => void) | undefined
+  let stopFollowingMode: (() => void) | undefined
 
   let { children }: Props = $props()
 
@@ -68,10 +65,7 @@
       }
     })
 
-    dataBroker.on(ModeData, data => {
-      const nextMode = Object.values(MotionModes)[data.mode]
-      if (nextMode !== undefined) mode.set(nextMode)
-    })
+    stopFollowingMode = followMode(dataBroker, isLinked)
 
     dataBroker.on(AnimationStatus, setAnimationStatus)
     stopFollowingGoal = followGoalStatus(dataBroker, isLinked)
@@ -101,6 +95,7 @@
     if (commandHeartbeatId) clearInterval(commandHeartbeatId)
     stopWatchingUpdate?.()
     stopFollowingGoal?.()
+    stopFollowingMode?.()
   })
 
   let menuOpen = $state(false)

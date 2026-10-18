@@ -88,22 +88,36 @@ class MotionInbox {
         bool goalCancelled = false;  // the end of the goal driving the walk was asked for, or its owner fell silent
         bool goalDriveEnded = false; // so a goal no longer drives the walk, whose sticks are to be centred
         bool odometryReset = false;
+        bool handheldDriving = false; // the handheld has moved a stick within HANDHELD_PRIORITY_MS
     };
 
     // The facade and the app send every 0.2 s; an owner silent ten times as long has gone, whether or not its transport
     // has said so. A goal with no transport, the host's own, has no owner to fall silent.
     static constexpr unsigned long OWNER_SILENCE_MS = 2000;
 
+    // The ESP-NOW handheld drives for this long after its last frame with a stick off centre: as long as the walk obeys
+    // its last stick (MotionService's STEERING_TIMEOUT_MS), so a handheld whose link drops mid-stride is stopped by the
+    // dead-man at the moment the other sources are heard again.
+    static constexpr unsigned long HANDHELD_PRIORITY_MS = 600;
+
+    // A client's command is in force, and an idle handheld's frame dropped, for this long after its arrival: the
+    // dead-man's longest window (MotionService's COMMAND_TIMEOUT_MS), so a client's posture outlasts every stall the
+    // dead-man forgives. A dropped frame is no command to the dead-man, so a lost client's stick still stops at the
+    // steering timeout.
+    static constexpr unsigned long CLIENT_IN_FORCE_MS = 2000;
+
     // Adapter task: a goal accepted, replacing one not yet taken. It drives the walk's sticks from now until it ends or
-    // an operator takes the walk back.
-    void postGoal(const Goal &goal, const CommandMsg &style, GaitType gait, GoalOwner owner, unsigned long nowMs) {
+    // an operator takes the walk back. Refused, false, while the handheld drives.
+    bool postGoal(const Goal &goal, const CommandMsg &style, GaitType gait, GoalOwner owner, unsigned long nowMs) {
         std::lock_guard<std::mutex> lock(_mutex);
+        if (handheldDrivingLocked(nowMs)) return false;
         _goal = GoalRequest {goal, style, gait, ++_goalCount};
         _goalOwner = owner;
         _ownerHeardMs = nowMs;
         _goalDrives = true;
         // Whatever ended the goal before is done with: a cancel from now on is this goal's.
         _goalCancelRequested = false;
+        return true;
     }
 
     // Any task: ends the goal driving the walk, if any.
@@ -125,13 +139,41 @@ class MotionInbox {
     }
 
     // Command worker. Each command is a full snapshot of the sticks and sliders, so the newest replaces one not yet
-    // taken. While a goal drives the walk, a centred command is no command, its posture and the rest of it too: the
-    // heartbeats of the app, the facade and the ESP-NOW controller. A stick off centre takes the walk back, so the goal
-    // ends and never writes the sticks again, and the command is walked.
+    // taken. While the handheld drives, a client's command is dropped, centred or not: the app's heartbeat would stop
+    // the handheld's walk for a tick and move its posture. The handheld's own centred frame is its stop, and is walked.
+    // After the window the robot stays stopped: a client's stick off centre is dropped until a client has sent a
+    // centred command, so neither a script's keep-alive nor a stick the app held through the drive walks the robot
+    // again by itself while that client is the only one. Commands carry no client's identity, so one centred command
+    // ends the wait for every client, as the app and the scripts are last-writer between themselves anyway. A command
+    // dropped is no command to the dead-man either. Outside the window the handheld's centred frames, which it sends
+    // whenever it is switched on, are dropped whole while a client's command is in force, one the handheld left
+    // through, a goal's swallowed heartbeat included, so an idle handheld neither stops that client's walk nor moves
+    // its posture; with no client in force they are the handheld's commands, so a handheld on its own holds its trim
+    // and the dead-man watches it (roadmap 11.1b). While a goal drives the walk, a centred command is no command, its
+    // posture and the rest of it too: the heartbeats of the app, the facade and the ESP-NOW controller. A stick off
+    // centre, or the handheld moving any of its own, takes the walk back, so the goal ends and never writes the sticks
+    // again, and the command is walked.
     void postCommand(const CommandMsg &c, unsigned long nowMs) {
         std::lock_guard<std::mutex> lock(_mutex);
+        const bool handheldMoving = c.origin == CommandOrigin::HANDHELD_MOVING;
+        const bool steers = c.lx != 0.f || c.ly != 0.f || c.rx != 0.f;
+        if (handheldMoving) {
+            _handheldMovedMs = nowMs;
+            _handheldMoved = true;
+            _clientsWaitForCentre = true;
+        } else if (c.origin == CommandOrigin::CLIENT) {
+            if (handheldDrivingLocked(nowMs)) return;
+            if (_clientsWaitForCentre) {
+                if (steers) return;
+                _clientsWaitForCentre = false;
+            }
+            _clientHeardMs = nowMs;
+            _clientHeard = true;
+        } else if (!handheldDrivingLocked(nowMs) && clientInForceLocked(nowMs)) {
+            return;
+        }
         if (_goalDrives) {
-            if (c.lx == 0.f && c.ly == 0.f && c.rx == 0.f) return;
+            if (!handheldMoving && !steers) return;
             _goalDrives = false;
             _goalCancelRequested = true;
         }
@@ -250,7 +292,17 @@ class MotionInbox {
             (_goalDrives && _goalOwner.adapter && ownerSilenceMs > static_cast<long>(OWNER_SILENCE_MS));
         mail.goalDriveEnded = mail.goalCancelled && std::exchange(_goalDrives, false);
         mail.odometryReset = std::exchange(_odometryReset, false);
+        mail.handheldDriving = _handheldDriving = handheldDrivingLocked(nowMs);
+        // A lapsed window is forgotten, or the signed difference would reopen it half the clock's range later.
+        if (!_handheldDriving) _handheldMoved = false;
+        if (!clientInForceLocked(nowMs)) _clientHeard = false;
         return mail;
+    }
+
+    // Any task: whether the handheld drove at the last take, as the robot reports it.
+    bool handheldDriving() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _handheldDriving;
     }
 
     // Control task: the goal no longer drives the walk. False when it did not, since an operator took the walk back.
@@ -289,8 +341,28 @@ class MotionInbox {
     socket_message_GoalStatus _goalStatus = socket_message_GoalStatus_init_zero;
     bool _odometryReset = false;
     OdometryEstimate _odometry {};
+    // The arrival of the handheld's last frame with a stick off centre, until the first take past its window.
+    unsigned long _handheldMovedMs = 0;
+    bool _handheldMoved = false;
+    // From the handheld's moving until a client's centred command after its window.
+    bool _clientsWaitForCentre = false;
+    bool _handheldDriving = false; // at the last take
+    // The arrival of a client's last command that the handheld left through, until the first take past
+    // CLIENT_IN_FORCE_MS.
+    unsigned long _clientHeardMs = 0;
+    bool _clientHeard = false;
 
     void cancelGoalLocked() {
         if (_goalDrives) _goalCancelRequested = true;
+    }
+
+    // A poster reads its clock before the lock, so a frame posted after that read carries a later time: the difference
+    // is signed, as the owner's silence is.
+    bool handheldDrivingLocked(unsigned long nowMs) const {
+        return _handheldMoved && static_cast<long>(nowMs - _handheldMovedMs) < static_cast<long>(HANDHELD_PRIORITY_MS);
+    }
+
+    bool clientInForceLocked(unsigned long nowMs) const {
+        return _clientHeard && static_cast<long>(nowMs - _clientHeardMs) < static_cast<long>(CLIENT_IN_FORCE_MS);
     }
 };

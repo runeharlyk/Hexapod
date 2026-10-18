@@ -2,8 +2,9 @@
 platform_shared/message.proto frames; both links carry the same messages, so only the transport differs.
 
 One thread runs an asyncio loop that owns the link; the public methods are synchronous. Once subscribed, the robot
-pushes its mode and gait on every change and its IMU angles at up to 40 Hz. It has no request for its current mode,
-so the mode is unknown until the first push or set_mode.
+pushes its mode and gait on every change and its IMU angles at up to 40 Hz. Its mode is asked for at connect, and
+polled for the handheld's report (below); a firmware from before that request answers it 400, and the mode is then
+unknown until the first push, and never polled.
 
 Keep-alive: while the robot is in a mode the app heartbeats (STAND, WALK, WALK_NN; app/src/lib/control-link.ts), the
 last input is re-sent every KEEPALIVE_S. The firmware drops a walk command after 600 ms without input while a stick
@@ -12,6 +13,15 @@ Every input carries the style's posture and stride, the last goal's once one was
 its speed: a goal ignores centred commands, so the speed slider would reach only the velocity walks, and the speed
 model was measured at the slider's 0. A goal is cancelled by any stick off centre, and by 2 s without a frame from the
 client that sent it, so the keep-alive goes on through it with centred sticks.
+
+Handheld: while the ESP-NOW handheld controller drives, the robot drops this client's sticks and refuses its goals
+(423), and it reports so with its mode (ModeData.handheld). When that report rises, the keep-alive's sticks are
+centred, so the robot stays stopped once the handheld lets go, and a walk in progress raises a RobotError at its next
+sleep or set_velocity, or at the next goal_move; a goal ends CANCELLED. A walk while the handheld drives is refused at
+once. After the handheld, the robot ignores this client's sticks until it has sent a centred one, so the first stick
+after a takeover, and the first of a connection, is sent after a centred input. The report is pushed only on a change,
+and a push can be dropped, so while the keep-alive runs or the handheld drives the mode is asked for every
+MODE_POLL_S, answered or not; a reply is dropped when a push arrived since its request, which is the newer.
 
 Goals: a firmware from before them answers their requests 400, which connect() probes. The robot pushes a goal's
 status on each change, but a push can be dropped, so the status is asked for when none came for CONFIRM_S and to
@@ -48,6 +58,8 @@ WALKING_MODES = (Mode.WALK, Mode.WALK_NN)
 REPLY_TIMEOUT_S = 3.0
 SILENCE_S = 2.0  # pongs arrive every KEEPALIVE_S: this long without a frame means the link is gone
 CONFIRM_S = 1.0
+# Under the handheld's 600 ms window (motion_inbox.h HANDHELD_PRIORITY_MS), so a poll falls inside every drive.
+MODE_POLL_S = 0.4
 RESET_POLL_S = 0.02
 ODOMETRY_ZERO = 1e-4  # m and rad: what a reset pose reads, a still robot's tick having moved it by less
 # The DMP yaw (mpu6050.h dmpGetYawPitchRoll) is atan2(2(xy - wz), 2(w^2 + x^2) - 1), clockwise-positive about the
@@ -138,6 +150,11 @@ class RealBackend:
         self._gait: Gait | None = None
         self._yaw: float | None = None
         self._sticks = speed_model.CENTRED
+        self._handheld = False
+        self._polls_mode = False  # the firmware answers the mode request
+        self._mode_pushes = 0
+        self._taken_over = False  # the handheld took over a walk, which the script has not been told of yet
+        self._centre_first = True  # the robot may be waiting for this client to send a centred stick
         self._style = Style()  # the posture and stride every input carries: set_height's height, then each goal's
         self._goals = False
         self._goal: GoalStatus | None = None  # the newest status heard, pushed or asked for, and when
@@ -157,6 +174,7 @@ class RealBackend:
             self._imu = features.features_data_response.imu
             probe = self._run(self._ask(pb.CorrelationRequest(goal_status_get=pb.GoalStatusGet()), check=False))
             self._goals = probe.status_code < 400 and probe.WhichOneof("response") == "goal_status"
+            self._polls_mode = self._run(self._ask_mode())
             if self._imu:
                 self._wait(lambda: self._yaw is not None, "the robot reports an IMU but sends no angles")
         except BaseException:
@@ -183,7 +201,7 @@ class RealBackend:
         await self._transport.open()
         for name in ("mode", "gait", "imu", "goal_status"):
             await self._send(pb.Message(sub_notif=pb.SubscribeNotification(tag=_tag(name))))
-        self._tasks = [self._loop.create_task(self._read()), self._loop.create_task(self._keep_alive())]
+        self._tasks = [self._loop.create_task(task()) for task in (self._read, self._keep_alive, self._confirm_mode)]
 
     async def _read(self) -> None:
         try:
@@ -217,7 +235,9 @@ class RealBackend:
             if kind == "goal_status":
                 self._hear_goal(message.goal_status, arrived)
             elif kind == "mode":
+                self._mode_pushes += 1
                 self._mode = Mode(message.mode.mode)
+                self._hear_handheld(message.mode.handheld)
             elif kind == "gait":
                 self._gait = Gait(message.gait.gait)
             elif kind == "imu":
@@ -228,9 +248,60 @@ class RealBackend:
                     self._drops += 1
             self._changed.notify_all()
 
+    # The robot drops the sticks of a walk the handheld took over and walks none of them after it, so they are centred.
+    def _hear_handheld(self, driving: bool) -> None:
+        if driving and not self._handheld:
+            self._taken_over = self._sticks != speed_model.CENTRED
+            self._sticks = speed_model.CENTRED
+            self._centre_first = True
+        self._handheld = driving
+
+    def _raise_if_taken_over(self) -> None:
+        if self._taken_over:
+            self._taken_over = False
+            raise RobotError("the handheld controller took over: the robot dropped this script's walk")
+
     # Pushes and replies are handled in the order they arrived, so the last heard is the newest.
     def _hear_goal(self, status: pb.GoalStatus, arrived: float) -> None:
         self._goal, self._goal_heard = _goal_status(status), arrived
+
+    # A mode pushed after the request was sent is the newer: the robot pushes every change. False when the firmware
+    # predates the request.
+    async def _ask_mode(self) -> bool:
+        with self._changed:
+            pushes = self._mode_pushes
+        reply = await self._ask(pb.CorrelationRequest(mode_get=pb.ModeGet()), check=False)
+        answered = reply.status_code < 400 and reply.WhichOneof("response") == "mode"
+        with self._changed:
+            if answered and self._mode_pushes == pushes:
+                self._mode = Mode(reply.mode.mode)
+                self._hear_handheld(reply.mode.handheld)
+                self._changed.notify_all()
+        return answered
+
+    # Each poll goes out MODE_POLL_S after the last, answered or not, so neither the round trip nor a lost reply
+    # stretches the period past the handheld's window.
+    async def _confirm_mode(self) -> None:
+        polls: set[asyncio.Task] = set()
+        try:
+            while self._error is None:
+                await asyncio.sleep(MODE_POLL_S)
+                with self._changed:
+                    due = self._polls_mode and (self._handheld or self._mode in HEARTBEAT_MODES)
+                if due:
+                    poll = asyncio.create_task(self._poll_mode())
+                    polls.add(poll)
+                    poll.add_done_callback(polls.discard)
+        finally:
+            for poll in polls:
+                poll.cancel()
+            await asyncio.gather(*polls, return_exceptions=True)
+
+    async def _poll_mode(self) -> None:
+        try:
+            await self._ask_mode()
+        except (RobotError, asyncio.TimeoutError):
+            pass  # the reader reports a link that is gone; the next poll asks again
 
     async def _keep_alive(self) -> None:
         while self._error is None:
@@ -241,13 +312,22 @@ class RealBackend:
     async def _send_input(self, heartbeat: bool = False) -> None:
         with self._changed:
             s, style, mode = self._sticks, self._style, self._mode
+            sending = not heartbeat or mode in HEARTBEAT_MODES
+            centre_first = sending and self._centre_first and s != speed_model.CENTRED
+            # Sent while the handheld drives, a centred stick is dropped too, so it is no end of the robot's wait.
+            if sending and not self._handheld:
+                self._centre_first = False
         previous = None
         try:
-            if not heartbeat or mode in HEARTBEAT_MODES:
-                data = pb.ControllerInputData(left=pb.Vector(x=s.lx, y=s.ly), right=pb.Vector(x=s.rx, y=0.0),
-                                              height=style.h, s1=style.s1, feet_distance=style.fd,
-                                              stride=style.stride)
-                await self._send(pb.Message(input=data))
+            if sending:
+                def input_of(sticks):
+                    return pb.ControllerInputData(left=pb.Vector(x=sticks.lx, y=sticks.ly),
+                                                  right=pb.Vector(x=sticks.rx, y=0.0), height=style.h, s1=style.s1,
+                                                  feet_distance=style.fd, stride=style.stride)
+
+                if centre_first:
+                    await self._send(pb.Message(input=input_of(speed_model.CENTRED)))
+                await self._send(pb.Message(input=input_of(s)))
                 previous = self._last_input
                 self._last_input = time.monotonic(), mode in WALKING_MODES and s != speed_model.CENTRED
             else:
@@ -265,8 +345,11 @@ class RealBackend:
         self._next_id += 1
         future = self._loop.create_future()
         self._replies[request.correlation_id] = future
-        await self._send(pb.Message(correlation_request=request))
-        reply = await asyncio.wait_for(future, REPLY_TIMEOUT_S)
+        try:
+            await self._send(pb.Message(correlation_request=request))
+            reply = await asyncio.wait_for(future, REPLY_TIMEOUT_S)
+        finally:
+            self._replies.pop(request.correlation_id, None)  # a lost reply leaves no entry behind
         if check and reply.status_code >= 400:
             reason = f": {reply.error_message}" if reply.error_message else ""
             raise RobotError(f"the robot refused the request with status {reply.status_code}{reason}")
@@ -309,9 +392,16 @@ class RealBackend:
             self._style = replace(self._style, h=height)
         self._run(self._send_input())
 
+    # A stop always passes, and ends a walk the handheld took over without an error.
     def set_velocity(self, velocity: Velocity) -> Velocity:
         sticks = speed_model.sticks_for(self._gait, velocity)
         with self._changed:
+            if sticks == speed_model.CENTRED:
+                self._taken_over = False
+            else:
+                self._raise_if_taken_over()
+                if self._handheld:
+                    raise RobotError("the handheld controller is driving: the robot drops this script's sticks")
             self._sticks = sticks
         self._run(self._send_input())
         return speed_model.velocity_of(self._gait, sticks)
@@ -324,7 +414,7 @@ class RealBackend:
             if self._error is not None:
                 raise self._error
             return RobotState(t=time.monotonic(), mode=self._mode, gait=self._gait,
-                              yaw=self._yaw if self._imu else None, link_drops=self._drops)
+                              yaw=self._yaw if self._imu else None, link_drops=self._drops, handheld=self._handheld)
 
     def now(self) -> float:
         return time.monotonic()
@@ -334,6 +424,7 @@ class RealBackend:
 
     def goal_move(self, goal: Goal, style: Style) -> GoalStatus:
         with self._changed:
+            self._raise_if_taken_over()
             self._sticks = speed_model.CENTRED
         self._run(self._send_input())
         kind, distance, angle, radius = goal.in_body_frame()
@@ -382,6 +473,8 @@ class RealBackend:
             while (left := deadline - time.monotonic()) > 0:
                 if self._error is not None:
                     raise self._error
+                self._raise_if_taken_over()
                 self._changed.wait(left)
             if self._error is not None:
                 raise self._error
+            self._raise_if_taken_over()

@@ -82,6 +82,14 @@ class MotionService {
             EventBus<ModeMsg>::publish({motionState, ModeMsgKind::APPLIED});
     }
 
+    // Control task. Whether the handheld drives is reported with the mode, so a change of it reports the mode applied
+    // again: the mode's observers see the same mode, and the app's bridge reads the flag as it pushes the report.
+    void reportHandheldDriving(bool driving) {
+        if (driving == _handheldReported) return;
+        _handheldReported = driving;
+        EventBus<ModeMsg>::publish({motionState, ModeMsgKind::APPLIED});
+    }
+
     // Control task.
     void applyMode(MOTION_STATE mode) {
         const bool enteringWalk = mode == MOTION_STATE::WALK && motionState != MOTION_STATE::WALK;
@@ -283,6 +291,7 @@ class MotionService {
         _modesTaken = mail.modes;
         _gaitTaken = mail.gait;
         for (int i = 0; i < mail.modes.count; ++i) handleInputMode(mail.modes.items[i]);
+        reportHandheldDriving(mail.handheldDriving);
         if (mail.gait) handleInputGait(*mail.gait);
         if (mail.command) handleCommand(*mail.command, mail.commandMs);
         takeGoalMail(mail);
@@ -400,14 +409,17 @@ class MotionService {
 
     // Any task: the pose of the last tick, whole.
     OdometryEstimate odometry() const { return _inbox.odometry(); }
+    // Any task: whether the ESP-NOW handheld drove at the start of the last tick, which the mode's report carries.
+    bool handheldDriving() const { return _inbox.handheldDriving(); }
     // Any task. The control task zeroes the pose before its next update; the gyro bias stays. Refused, resetting
     // nothing, while a goal drives: the pose is its origin.
     bool resetOdometry() { return _inbox.requestOdometryReset(); }
 
     // Adapter task: the reply to a goal, 202 when the control task is to walk it from its next tick. A malformed goal
-    // or style is 400, a robot that is neither standing nor walking 409, and a style whose speed envelope is empty
-    // 422: TUNED, which has none, or a posture none of whose cells walks the goal's axes. The style's posture is
-    // clamped as the sliders' is and its sticks are the goal's. A goal accepted while another runs replaces it.
+    // or style is 400, a robot that is neither standing nor walking 409, a style whose speed envelope is empty 422:
+    // TUNED, which has none, or a posture none of whose cells walks the goal's axes, and a goal while the handheld
+    // drives 423. The style's posture is clamped as the sliders' is and its sticks are the goal's. A goal accepted
+    // while another runs replaces it.
     int startGoal(const Goal &goal, const CommandMsg &style, GaitType gait, GoalOwner owner) {
         CommandMsg s = style;
         if (!GoalController::valid(goal) || !s.sanitize() || (int)gait < 0 || (int)gait > (int)GaitType::AUTO)
@@ -420,8 +432,7 @@ class MotionService {
         // A full stick walks the gait's top speed, which the goal's speed is a share of.
         s.lx = s.ly = s.rx = s.ry = 0.f;
         s.s = 1.f;
-        _inbox.postGoal(goal, s, gait, owner, millis());
-        return 202;
+        return _inbox.postGoal(goal, s, gait, owner, millis()) ? 202 : 423;
     }
 
     // Any task.
@@ -473,6 +484,7 @@ class MotionService {
     bool _borrowedMode = false;
     bool _handbackSent = false;              // a hand-back is queued; cleared by any mode taken
     bool _animating = false;                 // control task only: whether the last tick ran ANIMATE
+    bool _handheldReported = false;          // control task only: whether the handheld drove, as last reported
 
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
     BodyStateMsg target_body_state = {0, 0, 0, 0, 0, 0};
@@ -520,6 +532,10 @@ class MotionService {
     // senders repeat it (app heartbeat 200 ms, ESP-NOW controller 50 Hz), so silence for three
     // heartbeats means the link is gone and the robot must stop walking.
     static constexpr unsigned long STEERING_TIMEOUT_MS = 600;
+    static_assert(MotionInbox::HANDHELD_PRIORITY_MS == STEERING_TIMEOUT_MS,
+                  "the handheld drives for as long as the walk obeys its last stick");
+    static_assert(MotionInbox::CLIENT_IN_FORCE_MS == COMMAND_TIMEOUT_MS,
+                  "a client's command is in force for as long as the dead-man obeys any command");
 
     float default_feet_pos[6][4];
 
@@ -577,6 +593,9 @@ class MotionService {
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
 
   public:
+    // Any task: the mode the control task applied last, the one the robot reports.
+    MOTION_STATE appliedMode() const { return _inbox.appliedMode(); }
+
     // Adapter task. Lying on its belly with the legs limp or folded, in the mode the control task applied last: still
     // enough to calibrate the IMU against.
     bool resting() const {
