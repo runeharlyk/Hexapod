@@ -46,6 +46,7 @@
 #include <peripherals/i2c_bus.h>
 #include <peripherals/status_led.h>
 #include <cpu_stats.h>
+#include <task_stats.h>
 #include <filesystem_service.h>
 #include <camera_service.h>
 #include <servo_settings_service.h>
@@ -88,6 +89,7 @@ Hexapod robot;
 EspNowAdapter espNow;
 #endif
 CpuMonitor cpuMonitor;
+TaskStats taskStats;
 static temperature_sensor_handle_t coreTempSensor = nullptr;
 
 // Control-loop iterations since boot. The OTA image is only confirmed once this shows the loop has
@@ -588,6 +590,13 @@ static void registerHandlers(CommAdapterBase &c) {
                 res.response.mode.handheld = robot.motion().handheldDriving();
                 break;
             }
+            case socket_message_CorrelationRequest_task_stats_request_tag: {
+                res.which_response = socket_message_CorrelationResponse_task_stats_tag;
+                res.status_code = taskStats.fill(res.response.task_stats);
+                if (res.status_code != 200)
+                    strncpy(res.error_message, "No room for the task snapshot", sizeof(res.error_message) - 1);
+                break;
+            }
             default: res.status_code = 400; break;
         }
         adapter->emit(res, clientId);
@@ -811,6 +820,16 @@ static_assert(varintSize((uint64_t(socket_message_Message_telemetry_batch_tag) <
                       varintSize(socket_message_TelemetryBatch_size) + socket_message_TelemetryBatch_size <=
                   PROTO_BUFFER_SIZE,
               "a full telemetry batch no longer fits the encode buffer");
+
+// A full task table as a reply: the correlation id and the status (a tag and at most five bytes each), then the table
+// in the response oneof, all in the Message oneof. A refusal carries its error message and no table.
+static constexpr size_t TASK_STATS_RESPONSE_SIZE =
+    2 * (1 + 5) + varintSize((uint64_t(socket_message_CorrelationResponse_task_stats_tag) << 3) | 2) +
+    varintSize(socket_message_TaskStats_size) + socket_message_TaskStats_size;
+static_assert(varintSize((uint64_t(socket_message_Message_correlation_response_tag) << 3) | 2) +
+                      varintSize(TASK_STATS_RESPONSE_SIZE) + TASK_STATS_RESPONSE_SIZE <=
+                  PROTO_BUFFER_SIZE,
+              "a full task table no longer fits the encode buffer");
 
 // Ships the ticks the control task recorded, whole batches at a time, while anyone subscribes; with
 // nobody listening the control task stops recording and the leftovers are dropped.

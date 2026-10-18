@@ -35,3 +35,10 @@ socket_message.AnimationValidate.name max_size:33
 socket_message.AnimationReport.error max_size:96
 socket_message.AnimationList.entries max_count:32
 socket_message.AnimationEntry.name max_size:33
+# Some 35 tasks run; 40 keep the worst-case reply within the 2048-byte encode buffer (src/main.cpp), and a robot with
+# more lists the 40 tightest stacks. The name holds configMAX_TASK_NAME_LEN, terminator included.
+socket_message.TaskStats.tasks max_count:40
+socket_message.TaskEntry.name max_size:16
+socket_message.TaskEntry.priority int_size:IS_8
+socket_message.TaskEntry.base_priority int_size:IS_8
+socket_message.TaskEntry.core int_size:IS_8
