@@ -235,6 +235,23 @@ void test_a_gait_posted_before_the_goals_selection_stays_the_selection() {
     TEST_ASSERT_TRUE(inbox.take(0).goalCancelled);
 }
 
+// A gait posted equal to the selection ended nothing, but the goal's own gait then differs from the one the next take
+// puts in force, so the goal would wait for a gait it is not in: it ends, rather than timing out unstarted.
+void test_a_pending_gait_other_than_the_goals_own_ends_the_goal() {
+    MotionInbox inbox;
+    driving(inbox);
+    inbox.postGait(GaitType::TRI_GATE);
+    inbox.selectGait(GaitType::BI_GATE);
+    const MotionInbox::Mail mail = inbox.take(0);
+    TEST_ASSERT_EQUAL(GaitType::TRI_GATE, *mail.gait);
+    TEST_ASSERT_TRUE(mail.goalCancelled);
+    // The goal's own gait pending is no change.
+    driving(inbox);
+    inbox.postGait(GaitType::TRI_GATE);
+    inbox.selectGait(GaitType::TRI_GATE);
+    TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
+}
+
 // A borrow and a hand-back are decided against the mode they find, so modes are taken in the order they arrived, none
 // merged: a DEACTIVATED and a borrow posted in one tick are two, the deactivation first. An APPLIED is no request.
 void test_modes_are_taken_in_arrival_order_none_merged() {
@@ -353,6 +370,7 @@ int main(int, char **) {
     RUN_TEST(test_a_gait_other_than_the_selection_ends_the_goal);
     RUN_TEST(test_a_goals_own_gait_is_the_selection);
     RUN_TEST(test_a_gait_posted_before_the_goals_selection_stays_the_selection);
+    RUN_TEST(test_a_pending_gait_other_than_the_goals_own_ends_the_goal);
     RUN_TEST(test_modes_are_taken_in_arrival_order_none_merged);
     RUN_TEST(test_a_full_mode_queue_drops_the_oldest_and_keeps_a_newest_deactivation);
     RUN_TEST(test_the_replies_judge_the_mode_the_control_task_noted_last);
