@@ -278,6 +278,16 @@ describe('watchTaskStats', () => {
     expect(last().stats).toBeNull()
   })
 
+  // A firmware from before the task table answers a request it does not know with a bare 400.
+  it('says the firmware has no task table when the robot answers 400 without a message', async () => {
+    const fake = fakeBroker()
+    start(fake.broker)
+    feed.refresh()
+    fake.replies[0]({ statusCode: 400, errorMessage: '' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(last().error).toBe("the robot's firmware has no task table; update it to see the tasks")
+  })
+
   it('keeps the last good table when a request fails, and clears the error on the next good one', async () => {
     const fake = fakeBroker()
     start(fake.broker)

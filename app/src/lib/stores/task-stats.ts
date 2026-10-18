@@ -34,9 +34,13 @@ export interface TaskStatsFeed {
 }
 
 const failureOf = (reply: TaskStatsReply) => {
-  if (reply.statusCode !== 200)
-    return reply.errorMessage || `the robot answered with status ${reply.statusCode}`
-  return reply.taskStats ? null : 'the robot answered without a task table'
+  if (reply.statusCode === 200)
+    return reply.taskStats ? null : 'the robot answered without a task table'
+  if (reply.errorMessage) return reply.errorMessage
+  // The request has no fields to get wrong: a bare 400 is a firmware that does not know it.
+  if (reply.statusCode === 400)
+    return "the robot's firmware has no task table; update it to see the tasks"
+  return `the robot answered with status ${reply.statusCode}`
 }
 
 /** Hands `show` the page's view on every change; nothing is requested until `refresh` is called. */
