@@ -70,18 +70,24 @@ Everything else reaches the motion through the EventBus or through the few `Hexa
 
 The app's system metrics page lists every FreeRTOS task with its least free stack since it started, its CPU share, the core it is pinned to, its current and base priority and its state, the tightest stack first.
 It is where the stack high-water marks are read: a stack that never came near its end can be trimmed by what it never used, and one near zero is the next overflow.
-The page sends a `TaskStatsRequest` when it opens and 2 s after each reply while it stays open, as a measurement is read by request and never pushed.
+The page sends a `TaskStatsRequest` when it opens and on its Refresh button, and every 10 s while its auto-refresh toggle, off by default, is on; a measurement is read by request and never pushed.
+A refused or failed request leaves the last table in place and shows the error under it.
 `TaskStats` (`include/task_stats.h`) answers it on the transport's task, never the control task, from one `uxTaskGetSystemState` snapshot into PSRAM buffers allocated on the first request; `include/task_table.h` holds the arithmetic, tested on the host in `test/test_task_table/`.
 A task's CPU share is its run time between the robot's previous snapshot and this one, as a percentage of one core, so the shares of all tasks, both idle tasks among them, add up to 200 %.
-The previous snapshot is the robot's, whichever client asked for it, so two open pages each see a shorter window.
+The previous snapshot is the robot's, whichever client asked for it.
+The robot takes a snapshot at most once per 10 s (`task_table::MIN_SNAPSHOT_INTERVAL_US`) and answers a request that comes sooner with the last reply, its CPU window and `snapshot_us` included, so the cost below is bounded whatever the number of pages, transports or looping clients.
 The first request after boot has no window and reports no CPU, and so does one 71.6 min or more after the previous, the span of the 32-bit run-time counters (`CONFIG_FREERTOS_RUN_TIME_COUNTER_TYPE_U32` on the esp_timer clock); within a shorter window a counter's wrap is taken modulo 2^32.
 Tasks are told apart by their FreeRTOS task number, which no later task reuses as it can reuse a handle's memory, so a task started within the window counts its run time since it started, and each `evtbus` worker gets a row of its own.
 Each task's core comes from the snapshot itself (`CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID`), read under the same lock as the rest.
 The reply lists at most 40 tasks, the roomiest stacks cut, which keeps it within the 2048-byte encode buffer, and says how many tasks there are.
 
-The snapshot holds the kernel's lock with interrupts masked on its core while it counts every task's untouched stack bytes, and the other core waits for the lock at its next tick, so both cores stall for as long as it takes; the reply's `snapshot_us`, shown under the table, measures it.
-Estimated from the IDF 5.4 sources, the scan loop takes six or seven cycles a byte, 25 to 30 ns at 240 MHz and more for the stacks in PSRAM, over the some 35 tasks' 70 to 90 KB of untouched stack: 1.5 to 4 ms.
-The control loop can therefore run one tick late by up to that much each time the page asks, which the telemetry's `period_us` shows.
+The snapshot holds the kernel's lock with interrupts masked on its core while it counts every task's untouched stack bytes, and the other core waits for the lock at its next tick, so both cores stall for as long as it takes.
+The reply's `snapshot_us` measures it, and the page shows it under the table beside the sum of the listed tasks' least free stack, the bytes the scan read, so one reading on the robot gives the cost of a byte.
+That sum is a lower bound when the reply cut tasks, as the cut ones have the roomiest stacks.
+Estimated from the disassembled scan loop in the built ELF, it takes six or seven cycles a byte, 25 to 30 ns at 240 MHz and more for the stacks in PSRAM, over the some 35 tasks' 70 to 90 KB of untouched stack: 2 to 4 ms, against the control loop's 5 ms period.
+The control loop can therefore run one tick late by up to that much each time a snapshot is taken, which the telemetry's `period_us` shows.
+The level-3 interrupt of the BLE controller on core 0 is masked as well, and whether a stall of that length costs BLE connection events is not known.
+**Open: `snapshot_us` has not been measured on the robot.** The figures above are estimates until a flashed robot's metrics page has been read: `snapshot_us`, the scanned bytes and the task count, and the telemetry's `period_us` around a refresh.
 
 ## EventBus
 
