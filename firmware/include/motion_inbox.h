@@ -300,6 +300,8 @@ class MotionInbox {
         mail.goalDriveEnded = mail.goalCancelled && std::exchange(_goalDrives, false);
         mail.odometryReset = std::exchange(_odometryReset, false);
         mail.handheldDriving = _handheldDriving = handheldDrivingLocked(nowMs);
+        // A lapsed window is forgotten, or the signed difference would reopen it half the clock's range later.
+        if (!_handheldDriving) _handheldMoved = false;
         return mail;
     }
 
@@ -346,7 +348,7 @@ class MotionInbox {
     socket_message_GoalStatus _goalStatus = socket_message_GoalStatus_init_zero;
     bool _odometryReset = false;
     OdometryEstimate _odometry {};
-    // The arrival of the handheld's last frame with a stick off centre, once there was one.
+    // The arrival of the handheld's last frame with a stick off centre, until the first take past its window.
     unsigned long _handheldMovedMs = 0;
     bool _handheldMoved = false;
     // From the handheld's moving until a client's centred command after its window.

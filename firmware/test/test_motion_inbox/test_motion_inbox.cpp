@@ -2,6 +2,7 @@
 // arrives, and what the control task takes once a tick. Time is the argument the inbox is given.
 
 #include <unity.h>
+#include <limits>
 #include <motion_inbox.h>
 
 namespace {
@@ -504,6 +505,22 @@ void test_the_handheld_window_spans_the_clocks_wrap() {
     TEST_ASSERT_TRUE(inbox.take(moved + WINDOW_MS).command.has_value());
 }
 
+// The window, once lapsed, stays closed: half the clock's range after the handheld's last moving frame, where the
+// signed difference turns negative, a client's command is still taken, a goal accepted and no drive reported.
+void test_a_lapsed_handheld_window_does_not_reopen_half_a_clock_later() {
+    MotionInbox inbox;
+    inbox.postCommand(HANDHELD_FORWARD, 1000);
+    inbox.take(1000 + WINDOW_MS);
+    inbox.postCommand(CENTRED, 1000 + WINDOW_MS);
+    inbox.take(1000 + WINDOW_MS);
+    const unsigned long later = 1000 + static_cast<unsigned long>(std::numeric_limits<long>::max()) + 6;
+    inbox.postCommand(FORWARD_STICK, later);
+    const MotionInbox::Mail mail = inbox.take(later);
+    TEST_ASSERT_TRUE(mail.command.has_value());
+    TEST_ASSERT_FALSE(mail.handheldDriving);
+    TEST_ASSERT_TRUE(inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, later));
+}
+
 // The robot stays stopped after the handheld lets go: from the window's end, a client's stick off centre, the stale
 // stream of a script or of a stick the app held through the drive, is dropped until a client sends a centred command,
 // which is taken. A stick after it is obeyed.
@@ -589,6 +606,7 @@ int main(int, char **) {
     RUN_TEST(test_a_handheld_moving_frame_ends_a_goal_though_its_walk_sticks_are_centred);
     RUN_TEST(test_an_idle_handhelds_frame_outside_its_window_keeps_the_walk);
     RUN_TEST(test_the_handheld_window_spans_the_clocks_wrap);
+    RUN_TEST(test_a_lapsed_handheld_window_does_not_reopen_half_a_clock_later);
     RUN_TEST(test_after_the_handheld_window_a_clients_stick_waits_for_a_centred_command);
     RUN_TEST(test_only_a_clients_centred_command_after_the_window_ends_the_wait);
     RUN_TEST(test_the_take_says_whether_the_handheld_drives);
