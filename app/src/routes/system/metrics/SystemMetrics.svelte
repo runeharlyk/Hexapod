@@ -34,24 +34,24 @@
         datasets: [
           {
             label: 'Cpu usage core 0',
-            borderColor: daisyColor('--p'),
-            backgroundColor: daisyColor('--p', 50),
+            borderColor: daisyColor('primary'),
+            backgroundColor: daisyColor('primary', 50),
             borderWidth: 2,
             data: $analytics.cpu0_usage,
             yAxisID: 'y'
           },
           {
             label: 'Cpu usage core 1',
-            borderColor: daisyColor('--a'),
-            backgroundColor: daisyColor('--a', 50),
+            borderColor: daisyColor('accent'),
+            backgroundColor: daisyColor('accent', 50),
             borderWidth: 2,
             data: $analytics.cpu1_usage,
             yAxisID: 'y'
           },
           {
             label: 'Cpu usage total',
-            borderColor: daisyColor('--s'),
-            backgroundColor: daisyColor('--s', 50),
+            borderColor: daisyColor('secondary'),
+            backgroundColor: daisyColor('secondary', 50),
             borderWidth: 2,
             data: $analytics.cpu_usage,
             yAxisID: 'y'
@@ -68,8 +68,8 @@
         elements: { point: { radius: 0 } },
         scales: {
           x: {
-            grid: { color: daisyColor('--bc', 10) },
-            ticks: { color: daisyColor('--bc') },
+            grid: { color: daisyColor('base-content', 10) },
+            ticks: { color: daisyColor('base-content') },
             display: false
           },
           y: {
@@ -77,15 +77,15 @@
             title: {
               display: true,
               text: 'Cpu usage [%]',
-              color: daisyColor('--bc'),
+              color: daisyColor('base-content'),
               font: { size: 16, weight: 'bold' }
             },
             position: 'left',
             min: 0,
             max: 100,
-            grid: { color: daisyColor('--bc', 10) },
-            ticks: { color: daisyColor('--bc') },
-            border: { color: daisyColor('--bc', 10) }
+            grid: { color: daisyColor('base-content', 10) },
+            ticks: { color: daisyColor('base-content') },
+            border: { color: daisyColor('base-content', 10) }
           }
         }
       }
@@ -97,8 +97,8 @@
         datasets: [
           {
             label: 'Used Heap',
-            borderColor: daisyColor('--p'),
-            backgroundColor: daisyColor('--p', 50),
+            borderColor: daisyColor('primary'),
+            backgroundColor: daisyColor('primary', 50),
             borderWidth: 2,
             data: $analytics.used_heap,
             fill: true,
@@ -126,10 +126,10 @@
         scales: {
           x: {
             grid: {
-              color: daisyColor('--bc', 10)
+              color: daisyColor('base-content', 10)
             },
             ticks: {
-              color: daisyColor('--bc')
+              color: daisyColor('base-content')
             },
             display: false
           },
@@ -138,7 +138,7 @@
             title: {
               display: true,
               text: 'Heap [kb]',
-              color: daisyColor('--bc'),
+              color: daisyColor('base-content'),
               font: {
                 size: 16,
                 weight: 'bold'
@@ -147,11 +147,11 @@
             position: 'left',
             min: 0,
             max: Math.round($analytics.total_heap[0]),
-            grid: { color: daisyColor('--bc', 10) },
+            grid: { color: daisyColor('base-content', 10) },
             ticks: {
-              color: daisyColor('--bc')
+              color: daisyColor('base-content')
             },
-            border: { color: daisyColor('--bc', 10) }
+            border: { color: daisyColor('base-content', 10) }
           }
         }
       }
@@ -163,8 +163,8 @@
         datasets: [
           {
             label: 'File System Used',
-            borderColor: daisyColor('--p'),
-            backgroundColor: daisyColor('--p', 50),
+            borderColor: daisyColor('primary'),
+            backgroundColor: daisyColor('primary', 50),
             borderWidth: 2,
             data: $analytics.fs_used,
             fill: true,
@@ -192,10 +192,10 @@
         scales: {
           x: {
             grid: {
-              color: daisyColor('--bc', 10)
+              color: daisyColor('base-content', 10)
             },
             ticks: {
-              color: daisyColor('--bc')
+              color: daisyColor('base-content')
             },
             display: false
           },
@@ -204,7 +204,7 @@
             title: {
               display: true,
               text: 'File System [kb]',
-              color: daisyColor('--bc'),
+              color: daisyColor('base-content'),
               font: {
                 size: 16,
                 weight: 'bold'
@@ -213,11 +213,11 @@
             position: 'left',
             min: 0,
             max: Math.round($analytics.fs_total[0]),
-            grid: { color: daisyColor('--bc', 10) },
+            grid: { color: daisyColor('base-content', 10) },
             ticks: {
-              color: daisyColor('--bc')
+              color: daisyColor('base-content')
             },
-            border: { color: daisyColor('--bc', 10) }
+            border: { color: daisyColor('base-content', 10) }
           }
         }
       }
@@ -229,8 +229,8 @@
         datasets: [
           {
             label: 'Core Temperature',
-            borderColor: daisyColor('--p'),
-            backgroundColor: daisyColor('--p', 50),
+            borderColor: daisyColor('primary'),
+            backgroundColor: daisyColor('primary', 50),
             borderWidth: 2,
             data: $analytics.core_temp,
             yAxisID: 'y'
@@ -257,10 +257,10 @@
         scales: {
           x: {
             grid: {
-              color: daisyColor('--bc', 10)
+              color: daisyColor('base-content', 10)
             },
             ticks: {
-              color: daisyColor('--bc')
+              color: daisyColor('base-content')
             },
             display: false
           },
@@ -269,7 +269,7 @@
             title: {
               display: true,
               text: 'Core Temperature [°C]',
-              color: daisyColor('--bc'),
+              color: daisyColor('base-content'),
               font: {
                 size: 16,
                 weight: 'bold'
@@ -278,11 +278,11 @@
             position: 'left',
             suggestedMin: 20,
             suggestedMax: 100,
-            grid: { color: daisyColor('--bc', 10) },
+            grid: { color: daisyColor('base-content', 10) },
             ticks: {
-              color: daisyColor('--bc')
+              color: daisyColor('base-content')
             },
-            border: { color: daisyColor('--bc', 10) }
+            border: { color: daisyColor('base-content', 10) }
           }
         }
       }
