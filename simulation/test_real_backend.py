@@ -620,16 +620,30 @@ def test_a_lost_report_that_the_handheld_took_over_still_centres_the_walk(robot,
     assert not any(data.left.y for t, data in fake.inputs() if t > confirmed)
 
 
-# The poll keeps the link light: none while the robot rests outside the keep-alive's modes with no handheld driving,
-# one per MODE_POLL_S while the keep-alive runs.
-def test_the_mode_is_polled_only_while_the_keep_alive_runs(robot, fake):
-    time.sleep(3 * real.MODE_POLL_S)
-    assert len(fake.requests("mode_get")) == 1  # connect()'s
-    robot.stand()
+def _polls_over(fake, seconds):
     since = time.monotonic()
-    time.sleep(3 * real.MODE_POLL_S)
-    polls = len([t for t, _ in fake.requests("mode_get") if t > since])
-    assert 2 <= polls <= 4
+    time.sleep(seconds)
+    return len([t for t, _ in fake.requests("mode_get") if t > since])
+
+
+# The poll keeps the link light: none while the robot rests outside the keep-alive's modes with no handheld driving,
+# one per MODE_POLL_S while the keep-alive runs or the handheld drives, and none again once both have ended. A poll
+# sent before a change may still be handled after it, so each count starts a poll period after the change.
+def test_the_mode_is_polled_only_while_the_keep_alive_runs_or_the_handheld_drives(robot, fake):
+    assert _polls_over(fake, 3 * real.MODE_POLL_S) == 0
+    robot.stand()
+    assert 2 <= _polls_over(fake, 3 * real.MODE_POLL_S) <= 4
+    fake.push_mode(pb.IDLE)
+    _eventually(lambda: robot.state().mode is Mode.IDLE)
+    time.sleep(real.MODE_POLL_S)
+    assert _polls_over(fake, 3 * real.MODE_POLL_S) == 0
+    fake.push_mode(pb.IDLE, True)
+    _eventually(lambda: robot.state().handheld)
+    assert 2 <= _polls_over(fake, 3 * real.MODE_POLL_S) <= 4
+    fake.push_mode(pb.IDLE, False)
+    _eventually(lambda: not robot.state().handheld)
+    time.sleep(real.MODE_POLL_S)
+    assert _polls_over(fake, 3 * real.MODE_POLL_S) == 0
 
 
 # A lost reply delays no poll: the polls go out every MODE_POLL_S whether or not the last was answered, so a report
@@ -888,7 +902,6 @@ def test_the_odometry_is_read_in_rep103_and_reset(goal_robot, goal_fake):
     assert resets[:2] == [False, True] and len(resets) >= 4 and not any(resets[2:])
 
 
-# The robot keeps the posture of the goals it took: a refused goal's style must not reach the keep-alive.
 # A goal asked for after the handheld took over a walk, before the script was told, reports the takeover first, as the
 # next walk would.
 def test_a_goal_after_a_takeover_reports_it(goal_robot, goal_fake):
@@ -903,6 +916,7 @@ def test_a_goal_after_a_takeover_reports_it(goal_robot, goal_fake):
     assert goal_fake.requests("goal_move") == []
 
 
+# The robot keeps the posture of the goals it took: a refused goal's style must not reach the keep-alive.
 def test_a_refused_goal_leaves_the_posture_the_inputs_carry(goal_robot, goal_fake):
     goal_robot.stand()
     goal_fake.mode = pb.DEACTIVATED  # the app's stop button, which the client has not heard of yet
