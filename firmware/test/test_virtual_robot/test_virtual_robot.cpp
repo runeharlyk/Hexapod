@@ -195,6 +195,29 @@ void test_the_telemetry_flags_the_dead_man_stop_from_the_tick_it_fires() {
     TEST_ASSERT_FALSE(robot.linkLost());
 }
 
+// The dead-man's window runs from the command's arrival, not from the tick that takes it: a command delivered and then
+// left in the inbox for 100 ms, as an overrun of the tick in progress leaves it, still stops the walk 600 ms after it
+// arrived.
+void test_the_dead_man_window_runs_from_the_commands_arrival_not_its_take() {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setMode(MOTION_STATE::WALK);
+    largestStep(robot, ticksFor(0.5f), &FORWARD);
+    robot.command(FORWARD);
+    host_bus::drainAll();
+    constexpr int64_t HELD_US = 100000;
+    host_clock::advance(HELD_US);
+    robot.tick();
+    TEST_ASSERT_FALSE(robot.linkLost());
+    int ticks = 0;
+    while (!robot.linkLost() && ticks < ticksFor(2.0f)) {
+        robot.tick();
+        ++ticks;
+    }
+    const int sinceArrival = (HELD_US + VirtualRobot::TICK_US * (ticks + 1)) / VirtualRobot::TICK_US;
+    TEST_ASSERT_EQUAL_INT(ticksFor(0.6f), sinceArrival);
+}
+
 // The telemetry reports the write of its own tick: none in a mode that sends no pose, a success in a stand, and an idle
 // tick after a stand tick does not inherit the stand's write (Hexapod::planMotion starts each tick's record).
 void test_the_telemetry_reports_the_servo_write_of_its_own_tick() {
@@ -1450,6 +1473,7 @@ int main(int, char **) {
     RUN_TEST(test_a_stick_held_in_walk_steps_the_legs);
     RUN_TEST(test_a_walk_obeys_its_last_command_for_600_ms_and_no_longer);
     RUN_TEST(test_the_telemetry_flags_the_dead_man_stop_from_the_tick_it_fires);
+    RUN_TEST(test_the_dead_man_window_runs_from_the_commands_arrival_not_its_take);
     RUN_TEST(test_the_telemetry_reports_the_servo_write_of_its_own_tick);
     RUN_TEST(test_a_height_only_command_is_obeyed_for_2_s_after_silence);
     RUN_TEST(test_no_servo_is_driven_past_its_joint_travel);
