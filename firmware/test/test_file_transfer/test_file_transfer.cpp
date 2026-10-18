@@ -4,11 +4,16 @@
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 #include <file_transfer.h>
+#include <filesystem.h>
 
 namespace {
+
+// Whether the file system moves a finished upload over its destination, as a full one does not.
+bool moveRefused = false;
 
 std::string tmpFile() {
     static int n = 0;
@@ -28,7 +33,19 @@ std::vector<uint8_t> contents(const std::string &path) {
 
 }  // namespace
 
-void setUp() {}
+namespace FileSystem {
+
+// Moves over an existing destination, as LittleFS does; the Windows C runtime's rename refuses to.
+bool replaceFile(const char *from, const char *to) {
+    if (moveRefused) return false;
+    std::error_code error;
+    std::filesystem::rename(from, to, error);
+    return !error;
+}
+
+}  // namespace FileSystem
+
+void setUp() { moveRefused = false; }
 void tearDown() {}
 
 void test_paths_must_be_absolute_inside_the_mount() {
@@ -81,6 +98,21 @@ void test_an_unfinished_upload_leaves_the_previous_file_intact() {
     TEST_ASSERT_EQUAL(200, file_transfer::write(path.c_str(), 0, 3, old, 3));
     // The new upload declares four bytes and stops after two, as a dropped link would.
     TEST_ASSERT_EQUAL(200, file_transfer::write(path.c_str(), 0, 4, fresh, 2));
+    const std::vector<uint8_t> got = contents(path);
+    TEST_ASSERT_EQUAL(3, got.size());
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(old, got.data(), 3);
+    remove(path.c_str());
+    remove(file_transfer::partPath(path.c_str()).c_str());
+}
+
+// The last chunk is written in full and the file system then refuses to move it into place: the upload fails, and
+// the previous file stays as it was rather than being removed before a move that cannot succeed.
+void test_a_refused_move_keeps_the_previous_file() {
+    const std::string path = tmpFile();
+    const uint8_t old[3] = {5, 6, 7}, fresh[2] = {1, 2};
+    TEST_ASSERT_EQUAL(200, file_transfer::write(path.c_str(), 0, 3, old, 3));
+    moveRefused = true;
+    TEST_ASSERT_EQUAL(500, file_transfer::write(path.c_str(), 0, 2, fresh, 2));
     const std::vector<uint8_t> got = contents(path);
     TEST_ASSERT_EQUAL(3, got.size());
     TEST_ASSERT_EQUAL_UINT8_ARRAY(old, got.data(), 3);
@@ -143,6 +175,7 @@ int main(int, char **) {
     RUN_TEST(test_chunks_assemble_the_file_in_order);
     RUN_TEST(test_a_complete_upload_replaces_a_longer_previous_file);
     RUN_TEST(test_an_unfinished_upload_leaves_the_previous_file_intact);
+    RUN_TEST(test_a_refused_move_keeps_the_previous_file);
     RUN_TEST(test_a_chunk_past_the_total_or_past_the_end_is_refused);
     RUN_TEST(test_a_refused_chunk_touches_no_file);
     RUN_TEST(test_read_returns_the_window_and_the_total);
