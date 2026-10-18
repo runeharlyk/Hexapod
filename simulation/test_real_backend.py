@@ -556,26 +556,35 @@ def test_a_timed_move_the_handheld_takes_over_raises(robot, fake):
 
 # The walk the handheld took over is reported once, and while the handheld drives a walk is refused at once rather
 # than dropped unseen. Once the handheld has let go the next walk works, its stick sent after a centred one, which ends
-# the firmware's wait for this client to centre.
-def test_the_next_walk_after_the_handheld_lets_go_is_obeyed(robot, fake):
-    robot.stand()
-    robot.set_velocity(0.1, 0.0, 0.0)
-    fake.push_mode(pb.WALK, True)
-    _eventually(lambda: robot.state().handheld)
-    with pytest.raises(RobotError, match="handheld controller took over"):
+# the firmware's wait for this client to centre. No keep-alive runs, so no centred heartbeat can land between the
+# report and the walk in that centred input's place.
+def test_the_next_walk_after_the_handheld_lets_go_is_obeyed(fake, target, monkeypatch):
+    monkeypatch.setattr(real, "KEEPALIVE_S", 60.0)
+    with Robot(target) as robot:
+        robot.stand()
         robot.set_velocity(0.1, 0.0, 0.0)
-    with pytest.raises(RobotError, match="handheld controller is driving"):
+        fake.push_mode(pb.WALK, True)
+        _eventually(lambda: robot.state().handheld)
+        with pytest.raises(RobotError, match="handheld controller took over"):
+            robot.set_velocity(0.1, 0.0, 0.0)
+        with pytest.raises(RobotError, match="handheld controller is driving"):
+            robot.set_velocity(0.1, 0.0, 0.0)
+        robot.sleep(0.1)  # told once
+        stopped = len(fake.inputs())
+        robot.stop()  # a stop always passes
+        _eventually(lambda: len(fake.inputs()) > stopped)  # handled before the report, so not counted after it
+        fake.push_mode(pb.WALK, False)
+        _eventually(lambda: not robot.state().handheld)
         robot.set_velocity(0.1, 0.0, 0.0)
-    robot.sleep(0.1)  # told once
-    robot.stop()  # a stop always passes
-    fake.push_mode(pb.WALK, False)
-    _eventually(lambda: not robot.state().handheld)
-    robot.set_velocity(0.1, 0.0, 0.0)
-    robot.sleep(0.3)
-    after = [m.input for _, m in fake.received[fake.pushed_index:] if m.WhichOneof("message") == "input"]
-    first_walking = next(i for i, data in enumerate(after) if data.left.y)
-    assert first_walking > 0 and not any((after[first_walking - 1].left.y, after[first_walking - 1].left.x))
-    robot.stop()
+
+        def inputs_after():
+            return [m.input for _, m in fake.received[fake.pushed_index:] if m.WhichOneof("message") == "input"]
+
+        _eventually(lambda: any(data.left.y for data in inputs_after()))
+        after = inputs_after()
+        first_walking = next(i for i, data in enumerate(after) if data.left.y)
+        assert first_walking > 0 and not any((after[first_walking - 1].left.y, after[first_walking - 1].left.x))
+        robot.stop()
 
 
 # A push can be dropped, so the handheld's report is confirmed by a mode request every MODE_POLL_S while the keep-alive
