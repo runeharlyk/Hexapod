@@ -66,6 +66,23 @@ Other tasks are created by the components that need them:
 The control loop owns `MotionService`, `Peripherals` and `ServoController` through `Hexapod` (`include/hexapod.h`).
 Everything else reaches the motion through the EventBus or through the few `Hexapod` methods the message handlers call (animation play, stop and pose, IMU calibration, I2C scan).
 
+### Task table
+
+The app's system metrics page lists every FreeRTOS task with its least free stack since it started, its CPU share, the core it is pinned to, its current and base priority and its state, the tightest stack first.
+It is where the stack high-water marks are read: a stack that never came near its end can be trimmed by what it never used, and one near zero is the next overflow.
+The page sends a `TaskStatsRequest` when it opens and 2 s after each reply while it stays open, as a measurement is read by request and never pushed.
+`TaskStats` (`include/task_stats.h`) answers it on the transport's task, never the control task, from one `uxTaskGetSystemState` snapshot into PSRAM buffers allocated on the first request; `include/task_table.h` holds the arithmetic, tested on the host in `test/test_task_table/`.
+A task's CPU share is its run time between the robot's previous snapshot and this one, as a percentage of one core, so the shares of all tasks, both idle tasks among them, add up to 200 %.
+The previous snapshot is the robot's, whichever client asked for it, so two open pages each see a shorter window.
+The first request after boot has no window and reports no CPU, and so does one 71.6 min or more after the previous, the span of the 32-bit run-time counters (`CONFIG_FREERTOS_RUN_TIME_COUNTER_TYPE_U32` on the esp_timer clock); within a shorter window a counter's wrap is taken modulo 2^32.
+Tasks are told apart by their FreeRTOS task number, which no later task reuses as it can reuse a handle's memory, so a task started within the window counts its run time since it started, and each `evtbus` worker gets a row of its own.
+Each task's core comes from the snapshot itself (`CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID`), read under the same lock as the rest.
+The reply lists at most 40 tasks, the roomiest stacks cut, which keeps it within the 2048-byte encode buffer, and says how many tasks there are.
+
+The snapshot holds the kernel's lock with interrupts masked on its core while it counts every task's untouched stack bytes, and the other core waits for the lock at its next tick, so both cores stall for as long as it takes; the reply's `snapshot_us`, shown under the table, measures it.
+Estimated from the IDF 5.4 sources, the scan loop takes six or seven cycles a byte, 25 to 30 ns at 240 MHz and more for the stacks in PSRAM, over the some 35 tasks' 70 to 90 KB of untouched stack: 1.5 to 4 ms.
+The control loop can therefore run one tick late by up to that much each time the page asks, which the telemetry's `period_us` shows.
+
 ## EventBus
 
 `include/event_bus.h` is a typed publish/subscribe channel; each message type `Msg` is its own `EventBus<Msg>` specialisation with its own static FreeRTOS queue, subscriber table and worker task.
@@ -430,6 +447,7 @@ On 2026-10-15 `logHeap("camera")` read 32.4 KB of internal RAM free, largest blo
 The bring-up order follows from the budget: the soft AP claims its buffers first, because its driver does not null-check its allocations and panics when starved, while BLE, the camera and ESP-NOW degrade cleanly and come later.
 `sdkconfig.defaults` (repository root) moves what it can out of internal RAM: WiFi, LWIP, NimBLE host and TLS buffers into PSRAM, WiFi and BT controller code into flash, smaller WiFi buffer pools and a peripheral-only BLE controller, and software AES and SHA so the crypto drivers allocate no DMA buffers.
 Large one-off buffers in the firmware (telemetry ring, animation clips) are allocated so they land in PSRAM.
+Every task's least free stack, the internal stacks and those in PSRAM alike, is listed on the app's system metrics page (Task table), the measured figure to trim a stack by.
 
 An edit to `sdkconfig.defaults` does nothing once a build has run.
 PlatformIO generates `sdkconfig.esp32-wroom-camera` (gitignored) from it on the first build and treats that file as the configuration afterwards, silently ignoring new defaults.
