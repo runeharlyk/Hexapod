@@ -230,7 +230,7 @@ static void redactedApSettings(api_APSettings &out) {
 
 // Drops the servos before the chip goes down: the PCA9685 keeps its last outputs across an ESP reset
 // and deep sleep, so a restart would otherwise leave the legs energised while the firmware reports
-// DEACTIVATED. The mode is applied on the EventBus worker, so give it a moment to reach the driver.
+// DEACTIVATED. The control task applies the mode at its next tick, so give it a moment to reach the driver.
 static void deactivateServos() {
     EventBus<ModeMsg>::publish({MOTION_STATE::DEACTIVATED});
     vTaskDelay(pdMS_TO_TICKS(50));
@@ -624,16 +624,13 @@ static bool anyClientConnected() {
 #ifdef WS2812_PIN
 static StatusLed statusLed;
 
-// Driven from the service task, whose stack is in internal RAM. The mode shown is the latest REQUEST or
-// APPLIED, as the app is shown it; a BORROW or HANDBACK is only a question to MotionService, which
-// answers it with an APPLIED.
+// Driven from the service task, whose stack is in internal RAM. The mode shown is the latest APPLIED, the
+// mode the robot is in, as the app is shown it; a request is not the robot's mode until MotionService
+// reports it applied.
 static void showStatus() {
     static MOTION_STATE mode = MOTION_STATE::DEACTIVATED;
     ModeMsg latest;
-    if (EventBus<ModeMsg>::peek(latest) &&
-        (latest.kind == ModeMsgKind::REQUEST || latest.kind == ModeMsgKind::APPLIED)) {
-        mode = latest.mode;
-    }
+    if (EventBus<ModeMsg>::peek(latest) && latest.kind == ModeMsgKind::APPLIED) mode = latest.mode;
     statusLed.show(status_led::colourAt({mode, anyClientConnected()}, esp_timer_get_time()));
 }
 #endif
@@ -740,10 +737,11 @@ static void setupComm() {
     });
 
     // Mode and gait also change from the ESP-NOW controller and from other clients, so every
-    // change is pushed rather than assumed to originate from the viewing app. A borrow or hand-back
-    // is only a question to MotionService; its answer arrives as APPLIED.
+    // change is pushed rather than assumed to originate from the viewing app. The mode pushed is the
+    // one MotionService reports applied, so a client that waits for it finds the robot in it; a
+    // request, a borrow or a hand-back is only a question to MotionService.
     addBridge<ModeMsg>(MessageTraits<socket_message_ModeData>::tag, [](const ModeMsg &m) {
-        if (m.kind != ModeMsgKind::REQUEST && m.kind != ModeMsgKind::APPLIED) return;
+        if (m.kind != ModeMsgKind::APPLIED) return;
         socket_message_ModeData out = socket_message_ModeData_init_zero;
         out.mode = static_cast<socket_message_ModesEnum>(m.mode);
         emitAll(out);

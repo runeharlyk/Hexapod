@@ -421,6 +421,35 @@ void test_a_gait_change_over_the_wire_cancels_the_goal() {
     assertAtRest(rig);
 }
 
+// The gait a goal walks becomes the selection: a client sending it, as the app sends the gait it was shown, is no gait
+// change.
+void test_a_client_sending_the_goals_own_gait_keeps_the_goal() {
+    Rig &rig = newRig();
+    standUp(rig);
+    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(1.0f), style(), GaitType::BI_GATE));
+    rig.run(1.5f);
+    TEST_ASSERT_EQUAL(GoalState::RUNNING, rig.state());
+    TEST_ASSERT_EQUAL(GaitType::BI_GATE, rig.robot.gait());
+    rig.robot.setGait(GaitType::BI_GATE);
+    rig.run(0.5f);
+    TEST_ASSERT_EQUAL(GoalState::RUNNING, rig.state());
+}
+
+// The goal's own gait replaced the operator's as the selection, so the operator's gait, sent again, is a gait change
+// and ends the goal.
+void test_the_operators_earlier_gait_sent_during_a_goal_cancels_it() {
+    Rig &rig = newRig();
+    standUp(rig);
+    TEST_ASSERT_EQUAL(GaitType::TRI_GATE, rig.robot.gait());
+    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(1.0f), style(), GaitType::BI_GATE));
+    rig.run(1.5f);
+    TEST_ASSERT_EQUAL(GoalState::RUNNING, rig.state());
+    TEST_ASSERT_EQUAL(GaitType::BI_GATE, rig.robot.gait());
+    rig.robot.setGait(GaitType::TRI_GATE);
+    rig.tick();
+    TEST_ASSERT_EQUAL(GoalState::CANCELLED, rig.state());
+}
+
 // AUTO picks the gait from the goal's own sticks and swaps it while the gait is at rest; that is no gait change.
 void test_an_auto_swap_at_rest_does_not_cancel_the_goal() {
     Rig &rig = newRig();
@@ -671,6 +700,29 @@ void test_a_goal_is_refused_unless_standing_or_walking() {
     }
 }
 
+// A script asks for a stand and waits until the robot reports it applied before it sends a goal, as Robot.stand() then
+// move_forward() does through RealBackend.set_mode: that goal walks. A goal sent before the report, while the stand is
+// only queued, finds the robot deactivated and is refused.
+void test_a_goal_sent_once_the_stand_is_reported_walks_and_one_sent_before_is_refused() {
+    Rig &rig = newRig();
+    rig.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, rig.robot.mode());
+    std::vector<MOTION_STATE> reported;
+    auto listener = EventBus<ModeMsg>::subscribe([&reported](const ModeMsg &m) {
+        if (m.kind == ModeMsgKind::APPLIED) reported.push_back(m.mode);
+    });
+    rig.robot.setMode(MOTION_STATE::STAND);
+    host_bus::drainAll();
+    TEST_ASSERT_TRUE(reported.empty());
+    TEST_ASSERT_EQUAL_INT(409, rig.robot.goalMove(forward(0.3f), style(), GaitType::TRI_GATE));
+    for (int t = 0; t < 10 && reported.empty(); ++t) rig.tick();
+    TEST_ASSERT_EQUAL_size_t(1, reported.size());
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, reported[0]);
+    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(0.3f), style(), GaitType::TRI_GATE));
+    rig.runGoal();
+    TEST_ASSERT_EQUAL(GoalState::REACHED, rig.state());
+}
+
 void test_a_malformed_goal_is_refused() {
     Rig &rig = newRig();
     standUp(rig);
@@ -753,6 +805,8 @@ int main(int, char **) {
     RUN_TEST(test_an_off_centre_stick_cancels_the_goal_and_drives_the_walk);
     RUN_TEST(test_a_mode_change_cancels_the_goal);
     RUN_TEST(test_a_gait_change_over_the_wire_cancels_the_goal);
+    RUN_TEST(test_a_client_sending_the_goals_own_gait_keeps_the_goal);
+    RUN_TEST(test_the_operators_earlier_gait_sent_during_a_goal_cancels_it);
     RUN_TEST(test_an_auto_swap_at_rest_does_not_cancel_the_goal);
     RUN_TEST(test_the_dead_man_timeout_does_not_stop_a_goal);
     RUN_TEST(test_a_goal_ends_the_dead_man_stop_and_the_stop_returns_after_it);
@@ -764,6 +818,7 @@ int main(int, char **) {
     RUN_TEST(test_an_unwalkable_style_is_clamped_like_the_sliders);
     RUN_TEST(test_a_tuned_style_is_refused);
     RUN_TEST(test_a_goal_is_refused_unless_standing_or_walking);
+    RUN_TEST(test_a_goal_sent_once_the_stand_is_reported_walks_and_one_sent_before_is_refused);
     RUN_TEST(test_a_malformed_goal_is_refused);
     RUN_TEST(test_a_new_goal_replaces_the_one_in_progress);
     RUN_TEST(test_the_status_is_pushed_on_state_changes_and_every_5_percent);

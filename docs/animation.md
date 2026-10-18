@@ -71,28 +71,28 @@ There are two ways in.
   A play from IDLE or DEACTIVATED is ignored.
 - Setting the mode to ANIMATE explicitly is sticky: the robot holds stance, accepts puppeteer poses and plays, and stays until the mode changes.
 
-Every mode decision is made on the `ModeMsg` worker, in the order the messages arrive, by `decideMode` in `firmware/include/animation/mode_arbiter.h`; `firmware/test/test_mode_arbiter` replays the interleavings.
+Every mode decision is made by the control task, at the start of the tick after the mode arrived and in the order the modes arrive, by `decideMode` in `firmware/include/animation/mode_arbiter.h`; `firmware/test/test_mode_arbiter` replays the interleavings.
 
-- A borrow reaching the worker after a DEACTIVATED, IDLE or POSE is refused, the loaded play is dropped, and the standing mode is published again as `APPLIED`.
-- The hand-back is only requested by the control task, as a `ModeMsg` of kind `HANDBACK`, at most once until the worker has handled a mode message.
-  The worker applies it only while the robot is still in a borrowed ANIMATE and the runner is not busy, so an emergency stop or a sticky ANIMATE handled first wins, and a play chained after the request keeps the borrow; the control task asks again once the worker has cleared its flag and the runner is idle at stance.
+- A borrow arriving after a DEACTIVATED, IDLE or POSE is refused, the loaded play is dropped, and the standing mode is published again as `APPLIED`.
+- The hand-back is only requested by the control task, as a `ModeMsg` of kind `HANDBACK` posted into its own inbox behind every mode that arrived before it, at most once until it has taken another mode.
+  It is applied only while the robot is still in a borrowed ANIMATE and the runner is not busy, so an emergency stop or a sticky ANIMATE that arrived first wins, and a play chained after the request keeps the borrow; the control task asks again once it has taken another mode and the runner is idle at stance.
 - `AnimationRunner::busy()` is true while the player is not idle, a play is pending, or the pose is away from stance (any joint-angle leg, or a body or foot offset above 1 mm or 0.01 rad).
   A finished Exit is restated as zero foot offsets, so a leg that blended home in joint space does not keep the runner busy.
 - An explicit STAND, WALK or WALK_NN while the runner is busy does not leave at once.
   A running player is stopped, and a pose held by an idle player (a puppeteer pose) eases home through the puppet path toward stance; the requested mode becomes the hand-back target, and the mode changes once every leg is home.
   Leaving at once would snap joint-angle legs to stance at full servo speed.
-  The requested mode is published when it arrives, so a mode observer sees it about one exit time before the robot switches.
-- DEACTIVATED, IDLE and POSE apply at once even mid-play, because cutting or centring the servos immediately is the safety property.
+  A mode observer sees the requested mode when the robot switches, about one exit time after the request.
+- DEACTIVATED, IDLE and POSE apply at the next tick even mid-play, because cutting or centring the servos immediately is the safety property.
 - Any other explicit mode ends a borrow, so an explicit ANIMATE mid-play makes the robot stay in ANIMATE afterwards.
 
 A `ModeMsg` carries a `ModeMsgKind` (`firmware/include/message_types.h`):
 
 - `REQUEST` is a mode asked for by a client, the ESP-NOW controller, the OTA service or the firmware itself; every `{MOTION_STATE::X}` initialiser is one.
-- `BORROW` is a play asking for ANIMATE, and `HANDBACK` is the control task asking for the borrowed mode back; the worker decides both against the mode at delivery.
-- `APPLIED` is `MotionService` reporting the mode it switched to, or kept, for a `BORROW` or `HANDBACK`; the worker ignores it.
+- `BORROW` is a play asking for ANIMATE, and `HANDBACK` is the control task asking for the borrowed mode back; the control task decides both against the mode they find when it takes them.
+- `APPLIED` is `MotionService` reporting a mode once it is in force: every mode it switched to, and the mode a refused `BORROW` keeps; the motion inbox ignores it.
 
-The `ModeData` bridge to the clients and the ESP-NOW adapter's mode mirror pass only `REQUEST` and `APPLIED`.
-A client therefore sees every requested mode when it arrives and every mode the animation borrow or hand-back actually produced, and never a borrow that was refused or a hand-back that was ignored.
+The `ModeData` bridge to the clients, the status LED and the ESP-NOW adapter's mode mirror pass only `APPLIED`.
+A client therefore sees every mode the robot switched to when it switched, and never a request still queued, a borrow that was refused or a hand-back that was ignored.
 
 Losing control stops the animation.
 When a client goes (a WebSocket closes, the BLE central disconnects, or the USB host disappears) and no transport has a client left, `MotionService` asks a running or held animation to stop; a borrowed mode then hands back as usual, and a sticky ANIMATE stays in ANIMATE at stance.
@@ -294,7 +294,7 @@ Nothing is sent while the pose is unchanged; the firmware holds the last pose.
 The last pose is sent again when a `ModeData` reports ANIMATE, because the robot drops a pose that arrives before it has applied the mode, and when `AnimationStatus` returns to IDLE, because a play leaves the robot at stance.
 Switching it off, losing the link, or leaving the editor cancels the stream.
 The robot stays in the explicit, sticky ANIMATE (spec section 3) holding the last pose; the way back is a mode change from the controller page.
-A STAND or walking mode eases the pose home before the mode switches; DEACTIVATED, IDLE and POSE apply at once (see [Mode, borrow and hand-back](#mode-borrow-and-hand-back)).
+A STAND or walking mode eases the pose home before the mode switches; DEACTIVATED, IDLE and POSE apply at the next tick, even mid-play (see [Mode, borrow and hand-back](#mode-borrow-and-hand-back)).
 
 "Play on robot" uploads the current document, overwriting any robot file of the same name, then plays it with the Animation panel's preview values.
 Stop sends `animation_stop`.

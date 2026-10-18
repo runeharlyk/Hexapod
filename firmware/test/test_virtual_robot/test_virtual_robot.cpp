@@ -90,6 +90,29 @@ void test_a_mode_request_reaches_the_motion_through_the_bus() {
     TEST_ASSERT_EQUAL(MOTION_STATE::STAND, robot.mode());
 }
 
+// The robot reports a mode only once the control task has applied it: each mode a request applies is published as
+// APPLIED in the tick that applies it, and not when the request is delivered. The observers that show the robot's mode
+// forward these alone.
+void test_a_mode_is_reported_applied_in_the_tick_that_applies_it() {
+    VirtualRobot robot;
+    robot.tick();
+    std::vector<MOTION_STATE> applied;
+    auto listener = EventBus<ModeMsg>::subscribe([&applied](const ModeMsg &m) {
+        if (m.kind == ModeMsgKind::APPLIED) applied.push_back(m.mode);
+    });
+    for (const MOTION_STATE mode : {MOTION_STATE::STAND, MOTION_STATE::WALK, MOTION_STATE::IDLE, MOTION_STATE::POSE,
+                                    MOTION_STATE::STAND, MOTION_STATE::DEACTIVATED}) {
+        applied.clear();
+        robot.setMode(mode);
+        host_bus::drainAll();
+        TEST_ASSERT_TRUE(applied.empty());
+        robot.tick();
+        TEST_ASSERT_EQUAL(mode, robot.mode());
+        TEST_ASSERT_EQUAL_size_t(1, applied.size());
+        TEST_ASSERT_EQUAL(mode, applied[0]);
+    }
+}
+
 void test_a_standing_robot_holds_still() {
     VirtualRobot robot;
     standUp(robot);
@@ -172,6 +195,29 @@ void test_the_telemetry_flags_the_dead_man_stop_from_the_tick_it_fires() {
     TEST_ASSERT_FALSE(robot.linkLost());
 }
 
+// The dead-man's window runs from the command's arrival, not from the tick that takes it: a command delivered and then
+// left in the inbox for 100 ms, as an overrun of the tick in progress leaves it, still stops the walk 600 ms after it
+// arrived.
+void test_the_dead_man_window_runs_from_the_commands_arrival_not_its_take() {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setMode(MOTION_STATE::WALK);
+    largestStep(robot, ticksFor(0.5f), &FORWARD);
+    robot.command(FORWARD);
+    host_bus::drainAll();
+    constexpr int64_t HELD_US = 100000;
+    host_clock::advance(HELD_US);
+    robot.tick();
+    TEST_ASSERT_FALSE(robot.linkLost());
+    int ticks = 0;
+    while (!robot.linkLost() && ticks < ticksFor(2.0f)) {
+        robot.tick();
+        ++ticks;
+    }
+    const int sinceArrival = (HELD_US + VirtualRobot::TICK_US * (ticks + 1)) / VirtualRobot::TICK_US;
+    TEST_ASSERT_EQUAL_INT(ticksFor(0.6f), sinceArrival);
+}
+
 // The telemetry reports the write of its own tick: none in a mode that sends no pose, a success in a stand, and an idle
 // tick after a stand tick does not inherit the stand's write (Hexapod::planMotion starts each tick's record).
 void test_the_telemetry_reports_the_servo_write_of_its_own_tick() {
@@ -234,6 +280,106 @@ void test_deactivating_mid_walk_freezes_the_joints() {
     robot.tick();
     TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, robot.mode());
     TEST_ASSERT_EQUAL_FLOAT(0.0f, largestStep(robot, ticksFor(0.5f), &FORWARD));
+}
+
+// Only the control task changes the motion (roadmap 9.5): what a transport posts reaches its bus's worker at once
+// (host_bus::drainAll), and the motion takes it at the start of the next tick, never in the middle of one.
+void test_nothing_posted_changes_the_motion_before_the_next_tick() {
+    {
+        VirtualRobot robot;
+        standUp(robot);
+        robot.command({1, 0, 0, 0, 0, 0, 0, 0});
+        host_bus::drainAll();
+        TEST_ASSERT_EQUAL_FLOAT(0.f, robot.bodyCommand().xm);
+        robot.tick();
+        TEST_ASSERT_EQUAL_FLOAT(50.f, robot.bodyCommand().xm);
+    }
+    {
+        VirtualRobot robot;
+        standUp(robot);
+        robot.setMode(MOTION_STATE::WALK);
+        robot.tick();
+        robot.command(FORWARD);
+        host_bus::drainAll();
+        TEST_ASSERT_EQUAL_FLOAT(0.f, robot.gaitCommand().step_y);
+        robot.tick();
+        TEST_ASSERT_GREATER_THAN_FLOAT(GAIT_STRIDE_DEADBAND_MM, robot.gaitCommand().step_y);
+    }
+    {
+        VirtualRobot robot;
+        standUp(robot);
+        robot.setGait(GaitType::BI_GATE);
+        host_bus::drainAll();
+        TEST_ASSERT_EQUAL(GaitType::TRI_GATE, robot.gaitCommand().gait_type);
+        robot.tick();
+        TEST_ASSERT_EQUAL(GaitType::BI_GATE, robot.gaitCommand().gait_type);
+    }
+    {
+        VirtualRobot robot;
+        standUp(robot);
+        robot.setMode(MOTION_STATE::WALK);
+        largestStep(robot, ticksFor(0.5f), &FORWARD);
+        const float stroke = robot.gaitCommand().step_y;
+        TEST_ASSERT_GREATER_THAN_FLOAT(GAIT_STRIDE_DEADBAND_MM, stroke);
+        robot.setMode(MOTION_STATE::STAND);
+        host_bus::drainAll();
+        TEST_ASSERT_EQUAL_FLOAT(stroke, robot.gaitCommand().step_y);
+        robot.tick();
+        TEST_ASSERT_EQUAL(MOTION_STATE::STAND, robot.mode());
+        TEST_ASSERT_EQUAL_FLOAT(0.f, robot.gaitCommand().step_y);
+        robot.setMode(MOTION_STATE::DEACTIVATED);
+        host_bus::drainAll();
+        TEST_ASSERT_TRUE(robot.servosDriven());
+        robot.tick();
+        TEST_ASSERT_FALSE(robot.servosDriven());
+    }
+}
+
+// Modes are taken in the order they arrived, none merged into another: a borrow arriving in the tick a DEACTIVATED
+// did is decided from DEACTIVATED and refused, so the boards stay asleep.
+void test_a_deactivation_and_a_borrow_in_one_tick_leave_the_robot_deactivated() {
+    VirtualRobot robot;
+    standUp(robot);
+    EventBus<ModeMsg>::publish({MOTION_STATE::DEACTIVATED});
+    EventBus<ModeMsg>::publish({MOTION_STATE::ANIMATE, ModeMsgKind::BORROW});
+    robot.tick();
+    robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, robot.mode());
+    TEST_ASSERT_FALSE(robot.servosDriven());
+    TEST_ASSERT_FALSE(ServoController::output().awake);
+}
+
+// A borrow with nothing to play finds the runner idle at stance, so the control task hands the mode back on its own,
+// and the observers learn both outcomes as APPLIED.
+void test_a_borrow_with_nothing_to_play_hands_the_mode_back() {
+    VirtualRobot robot;
+    standUp(robot);
+    std::vector<ModeMsg> applied;
+    auto listener = EventBus<ModeMsg>::subscribe([&applied](const ModeMsg &m) {
+        if (m.kind == ModeMsgKind::APPLIED) applied.push_back(m);
+    });
+    EventBus<ModeMsg>::publish({MOTION_STATE::ANIMATE, ModeMsgKind::BORROW});
+    for (int t = 0; t < 3; ++t) robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, robot.mode());
+    host_bus::drainAll();
+    TEST_ASSERT_EQUAL(2, applied.size());
+    TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, applied[0].mode);
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, applied[1].mode);
+}
+
+// The joint angles are the control task's alone: the angles the robot publishes for the app are never written back.
+void test_angles_on_the_bus_leave_the_motions_angles_alone() {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setMode(MOTION_STATE::DEACTIVATED);
+    robot.tick();
+    float held[18];
+    std::copy_n(robot.angles(), 18, held);
+    ServoAnglesMsg stale;
+    std::fill_n(stale.angles, 18, 99.0f);
+    EventBus<ServoAnglesMsg>::publish(stale);
+    robot.tick();
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(held, robot.angles(), 18);
 }
 
 void test_a_gait_selected_while_standing_is_applied() {
@@ -1322,15 +1468,21 @@ int main(int, char **) {
     RUN_TEST(test_idle_from_boot_wakes_the_boards_but_sends_no_pose);
     RUN_TEST(test_a_standing_robot_drives_its_servos_to_the_motions_pose);
     RUN_TEST(test_a_mode_request_reaches_the_motion_through_the_bus);
+    RUN_TEST(test_a_mode_is_reported_applied_in_the_tick_that_applies_it);
     RUN_TEST(test_a_standing_robot_holds_still);
     RUN_TEST(test_a_stick_held_in_walk_steps_the_legs);
     RUN_TEST(test_a_walk_obeys_its_last_command_for_600_ms_and_no_longer);
     RUN_TEST(test_the_telemetry_flags_the_dead_man_stop_from_the_tick_it_fires);
+    RUN_TEST(test_the_dead_man_window_runs_from_the_commands_arrival_not_its_take);
     RUN_TEST(test_the_telemetry_reports_the_servo_write_of_its_own_tick);
     RUN_TEST(test_a_height_only_command_is_obeyed_for_2_s_after_silence);
     RUN_TEST(test_no_servo_is_driven_past_its_joint_travel);
     RUN_TEST(test_a_walk_without_commands_comes_to_rest);
     RUN_TEST(test_deactivating_mid_walk_freezes_the_joints);
+    RUN_TEST(test_nothing_posted_changes_the_motion_before_the_next_tick);
+    RUN_TEST(test_a_deactivation_and_a_borrow_in_one_tick_leave_the_robot_deactivated);
+    RUN_TEST(test_a_borrow_with_nothing_to_play_hands_the_mode_back);
+    RUN_TEST(test_angles_on_the_bus_leave_the_motions_angles_alone);
     RUN_TEST(test_a_gait_selected_while_standing_is_applied);
     RUN_TEST(test_full_stick_walk_stays_in_travel_for_every_classic_gait);
     RUN_TEST(test_an_auto_gait_switch_retargets_the_held_stick);

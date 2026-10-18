@@ -2,9 +2,7 @@
 #define MotionService_h
 
 #include <algorithm>
-#include <atomic>
 #include <iterator>
-#include <mutex>
 #include <utility>
 #include <esp_log.h>
 #include <kinematics.h>
@@ -23,16 +21,10 @@
 #include <self_level.h>
 #include <animation/animation_runner.h>
 #include <animation/mode_arbiter.h>
+#include <motion_inbox.h>
 
 /** The goal status the motion pushes: a few pushes a tick at most, to the app's bridge. */
 using GoalStatusBus = EventBus<socket_message_GoalStatus, 4, 2, 1>;
-
-/** A transport's client, its adapter and its id there: ids repeat across transports. */
-struct GoalOwner {
-    const void *adapter = nullptr;
-    int id = -1;
-    bool operator==(const GoalOwner &other) const { return adapter == other.adapter && id == other.id; }
-};
 
 class MotionService {
   public:
@@ -44,39 +36,19 @@ class MotionService {
     void begin() {
         _animation.begin(kinematics, default_feet_pos);
         ESP_LOGI("MotionService", "Subscribing to event buses...");
-        _cmdSubHandle = EventBus<CommandMsg>::subscribe([&](CommandMsg const &c) {
-            ESP_LOGD("MotionService", "COMMAND callback called");
-            handleCommand(c);
-        });
-        _modeSubHandle = EventBus<ModeMsg>::subscribe([&](ModeMsg const &c) {
-            ESP_LOGD("MotionService", "MODE callback called with mode %d", (int)c.mode);
-            handleInputMode(c);
-        });
-        _gaitSubHandle = EventBus<GaitMsg>::subscribe([&](GaitMsg const &c) {
-            ESP_LOGD("MotionService", "GAIT callback called with gait %d", (int)c.gait);
-            handleInputGait(c);
-        });
-        _angleSubHandle = EventBus<ServoAnglesMsg>::subscribe([&](ServoAnglesMsg const &s) {
-            ESP_LOGD("MotionService", "ANGLES callback called");
-            handleAnglesEvent(s);
-        });
+        _cmdSubHandle = EventBus<CommandMsg>::subscribe([&](CommandMsg const &c) { _inbox.postCommand(c, millis()); });
+        _modeSubHandle = EventBus<ModeMsg>::subscribe([&](ModeMsg const &m) { _inbox.postMode(m, _animation.busy()); });
+        _gaitSubHandle = EventBus<GaitMsg>::subscribe([&](GaitMsg const &g) { _inbox.postGait(g.gait); });
         ESP_LOGI("MotionService", "Event bus subscriptions completed");
         body_state.updateFeet(default_feet_pos);
         EventBus<ModeMsg>::publish({motionState});
         EventBus<GaitMsg>::publish({gait_state.gait_type});
     }
 
-    void handleAnglesEvent(ServoAnglesMsg const &s) {
-        for (int i = 0; i < 12; i++) {
-            msgAngles.angles[i] = s.angles[i];
-        }
-    }
-
-    void handleInputGait(GaitMsg const &g) {
-        ESP_LOGI("MotionService", "Gait %d", g.gait);
-        // A goal's timeout was reckoned at its gait's pace; the goal's own selection is not delivered here.
-        if (g.gait != _requestedGait) requestGoalCancel();
-        _requestedGait = g.gait;
+  private:
+    // Control task, at the start of the tick after the gait arrived; the goal it ends was ended on arrival.
+    void handleInputGait(GaitType gait) {
+        _requestedGait = gait;
         // Swapping a schedule mid-stride is the hazard updateAutoGait() documents: offset[] reassigns
         // every leg's phase at once, so a leg at the top of its swing becomes a stance leg and its
         // foot is commanded straight down. Defer to the next tick that may swap instead, which
@@ -88,18 +60,15 @@ class MotionService {
     // Loads _requestedGait into the live schedule. Only safe while the gait is not stepping.
     void applyRequestedGait() {
         const GaitType requested = _requestedGait;
-        loadGait(requested == GaitType::AUTO ? _autoGait.load() : requested);
+        loadGait(requested == GaitType::AUTO ? _autoGait : requested);
     }
 
-    // Mode worker. The rules live in decideMode (animation/mode_arbiter.h); this executes them. A
-    // BORROW or HANDBACK is internal, so the mode it applied or kept is published as APPLIED for the
-    // observers, which see only REQUEST and APPLIED.
+    // Control task, at the start of the tick after the mode arrived, in arrival order. The rules live in decideMode
+    // (animation/mode_arbiter.h); this executes them. The goal a mode ends was ended on arrival
+    // (MotionInbox::postMode). Every mode applied, and the mode a refused borrow keeps, is published as APPLIED: the
+    // robot reports a mode only once it is in it, and the observers that show the mode forward APPLIED alone. The mode
+    // is noted for the replies before it is reported, so a client that heard the report finds it in force.
     void handleInputMode(ModeMsg const &m) {
-        if (m.kind == ModeMsgKind::APPLIED) return;
-        ESP_LOGI("MotionService", "Mode %d%s", (int)m.mode,
-                 m.kind == ModeMsgKind::BORROW     ? " (borrow)"
-                 : m.kind == ModeMsgKind::HANDBACK ? " (hand-back)"
-                                                   : "");
         _handbackSent = false;
         const ModeArbiterDecision d =
             decideMode({motionState, _borrowedMode, _previousMode, m.mode, m.kind, _animation.busy()});
@@ -107,66 +76,69 @@ class MotionService {
         _previousMode = d.previous;
         if (d.cancelPending) _animation.cancelPendingPlay();
         if (d.requestLeave) _animation.requestLeave();
-        const bool internal = m.kind != ModeMsgKind::REQUEST;
-        switch (d.action) {
-            case ModeArbiterDecision::APPLY: break;
-            case ModeArbiterDecision::RESTATE: EventBus<ModeMsg>::publish({motionState, ModeMsgKind::APPLIED}); return;
-            case ModeArbiterDecision::IGNORE:
-            case ModeArbiterDecision::GRACEFUL_LEAVE: return;
-        }
-        // A goal walks in WALK, and enters it from STAND through this path itself.
-        if (d.mode != MOTION_STATE::WALK) requestGoalCancel();
-        const bool enteringWalk = d.mode == MOTION_STATE::WALK && motionState != MOTION_STATE::WALK;
+        if (d.action == ModeArbiterDecision::APPLY) applyMode(d.mode);
+        _inbox.noteMode({motionState, _borrowedMode, _previousMode});
+        if (d.action == ModeArbiterDecision::APPLY || d.action == ModeArbiterDecision::RESTATE)
+            EventBus<ModeMsg>::publish({motionState, ModeMsgKind::APPLIED});
+    }
+
+    // Control task.
+    void applyMode(MOTION_STATE mode) {
+        const bool enteringWalk = mode == MOTION_STATE::WALK && motionState != MOTION_STATE::WALK;
         const bool leavingPolicy = motionState == MOTION_STATE::WALK_NN;
-        motionState = d.mode;
+        motionState = mode;
 #if FT_ENABLED(USE_POLICY)
-        if (d.mode == MOTION_STATE::WALK_NN) _policy.reset(gait, default_feet_pos);
+        if (mode == MOTION_STATE::WALK_NN) _policy.reset(gait, default_feet_pos);
 #endif
         // ANIMATE drives no gait, so a half-stride left in gait_state would resume after it.
-        if (!isWalkingMode(d.mode)) stopLocomotionCommand(!actuated(d.mode) || d.mode == MOTION_STATE::ANIMATE);
+        if (!isWalkingMode(mode)) stopLocomotionCommand(!actuated(mode) || mode == MOTION_STATE::ANIMATE);
         // WALK_NN keeps the command, and its policy moves the ride height and the feet; a stride or a posture left
         // from before it would be walked through whatever it left. The stick comes back with the next heartbeat.
         // The classic stroke WALK_NN left in gait_state is snapped out too: ramped out from the feet the policy left,
         // it took a joint past its travel at some phases of the walk before.
         if (enteringWalk) stopLocomotionCommand(leavingPolicy);
-        motionState == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
-        if (internal) EventBus<ModeMsg>::publish({motionState, ModeMsgKind::APPLIED});
+        mode == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
     }
 
+  public:
     // Adapter task. A play from any active mode borrows ANIMATE and hands the mode back when the
     // player finishes; a play while already in ANIMATE (borrowed or sticky) chains. The clip is loaded
     // before the mode changes, so a refused play leaves the robot in its mode and pose; whether the
-    // borrow is granted is decided by handleInputMode.
+    // borrow is granted is decided by handleInputMode. The animation calls judge the mode the control
+    // task applied last (MotionInbox::appliedMode).
     void handleAnimationCommand(AnimationCommandMsg const &c) {
-        if (!actuated(motionState)) return;
+        const MOTION_STATE mode = _inbox.appliedMode();
+        if (!actuated(mode)) return;
         if (!_animation.requestPlay(c)) return;
-        if (motionState == MOTION_STATE::ANIMATE) return;
+        if (mode == MOTION_STATE::ANIMATE) return;
         EventBus<ModeMsg>::publish({MOTION_STATE::ANIMATE, ModeMsgKind::BORROW});
     }
 
     // Adapter task. A stop only makes sense in ANIMATE.
     void handleAnimationStop() {
-        if (motionState == MOTION_STATE::ANIMATE) _animation.requestStop();
+        if (_inbox.appliedMode() == MOTION_STATE::ANIMATE) _animation.requestStop();
     }
 
     // Adapter task, when the last client on every transport has gone. Outside ANIMATE a play may be
     // loaded with its borrow still in flight; dropping it keeps an unattended loop from starting.
     void animationControlLost() {
-        if (motionState == MOTION_STATE::ANIMATE) _animation.controlLost();
+        if (_inbox.appliedMode() == MOTION_STATE::ANIMATE)
+            _animation.controlLost();
         else
             _animation.cancelPendingPlay();
     }
 
     // Adapter task. Puppeteer poses apply only in ANIMATE.
     void handleAnimationPose(PoseMsg const &p) {
-        if (motionState == MOTION_STATE::ANIMATE) _animation.setPuppet(p);
+        if (_inbox.appliedMode() == MOTION_STATE::ANIMATE) _animation.setPuppet(p);
     }
 
     void validateAnimation(const char *name, socket_message_AnimationReport &r) { _animation.validate(name, r); }
 
-    void handleCommand(CommandMsg const &c) {
-        if (goalKeepsWalk(c)) return;
-        lastCommandMillis = millis();
+  private:
+    // Control task, at the start of the tick after the command arrived; the dead-man's window runs from its arrival.
+    void handleCommand(CommandMsg const &c, unsigned long arrivalMs) {
+        lastCommandMillis = arrivalMs;
         lastCommand = c;
         commandTimedOut = false;
         const MOTION_STATE mode = motionState;
@@ -244,7 +216,8 @@ class MotionService {
                         tuned_gait::PHASE_RATE_MIN +
                         (a[5] + 1.f) * 0.5f * (tuned_gait::PHASE_RATE_MAX - tuned_gait::PHASE_RATE_MIN);
                     target_body_state.zm = -tuned_gait::RIDE_MM;
-                    logTunedCommand(cmd, target_gait_state);
+                    std::copy(std::begin(cmd), std::end(cmd), std::begin(_tunedVelocity));
+                    _tunedLogDue = true;
                 } else {
                     walkClassic(clamped);
                 }
@@ -303,20 +276,29 @@ class MotionService {
         return !gaitIsCommanded(gait_state) && !gait.hasPendingStanceChange() && !_postureSettling;
     }
 
+  public:
     // imuFresh: the IMU was read on this tick, so its DMP packet and gyro rate are this tick's.
     bool updateMotion(bool imuFresh) {
-        takeGoalMail();
+        const MotionInbox::Mail mail = _inbox.take(millis());
+        _modesTaken = mail.modes;
+        _gaitTaken = mail.gait;
+        for (int i = 0; i < mail.modes.count; ++i) handleInputMode(mail.modes.items[i]);
+        if (mail.gait) handleInputGait(*mail.gait);
+        if (mail.command) handleCommand(*mail.command, mail.commandMs);
+        takeGoalMail(mail);
         resetCommandIfTimedOut();
         const float dt = getMotionDeltaSeconds();
         const MOTION_STATE state = motionState;
-        if (_odometryResetPending.exchange(false)) _odometry.reset();
+        if (mail.odometryReset) {
+            _odometry.reset();
+            _inbox.noteOdometry(_odometry.estimate());
+        }
         if (state != MOTION_STATE::STAND && state != MOTION_STATE::WALK) {
             _atRest = false;
             // The odometry holds its pose; whatever moves the feet meanwhile is no travel it can measure.
             _odometry.pause();
         }
-        // Entering and leaving ANIMATE are handled here rather than in handleInputMode so the runner
-        // is only ever touched by the control task.
+        // Entering and leaving ANIMATE are handled here, once every mode the tick took is applied.
         if ((state == MOTION_STATE::ANIMATE) != _animating) {
             _animating = state == MOTION_STATE::ANIMATE;
             if (_animating)
@@ -361,11 +343,11 @@ class MotionService {
             case MOTION_STATE::ANIMATE: {
                 // tick writes the angles itself; body_state carries the absolute pose for telemetry.
                 _animation.tick(dt, target_body_state.zm, body_state, msgAngles.angles);
-                // Only asks: the worker decides, so a mode it handled first (a stop, a sticky ANIMATE)
-                // wins. The flag is raised before the publish so the worker's clear cannot be lost.
+                // Only asks: the hand-back queues behind every mode that arrived before it and is decided when
+                // taken, so a mode taken first (a stop, a sticky ANIMATE) wins.
                 if (_borrowedMode && !_handbackSent && !_animation.busy()) {
                     _handbackSent = true;
-                    if (!EventBus<ModeMsg>::publish({_previousMode, ModeMsgKind::HANDBACK})) _handbackSent = false;
+                    _inbox.postMode({_previousMode, ModeMsgKind::HANDBACK}, false);
                 }
                 break;
             }
@@ -392,6 +374,22 @@ class MotionService {
         return true;
     }
 
+    // Control task, after the tick's servo write: the log lines of what the tick took from the inbox, so a slow console
+    // never delays the write.
+    void logMail() {
+        if (_modesTaken.dropped)
+            ESP_LOGW("MotionService", "%u modes dropped, the oldest, from a full queue", _modesTaken.dropped);
+        for (int i = 0; i < _modesTaken.count; ++i) {
+            const ModeMsg &m = _modesTaken.items[i];
+            ESP_LOGI("MotionService", "Mode %d%s", (int)m.mode,
+                     m.kind == ModeMsgKind::BORROW     ? " (borrow)"
+                     : m.kind == ModeMsgKind::HANDBACK ? " (hand-back)"
+                                                       : "");
+        }
+        if (_gaitTaken) ESP_LOGI("MotionService", "Gait %d", (int)*_gaitTaken);
+        if (std::exchange(_tunedLogDue, false)) logTunedCommand(_tunedVelocity, target_gait_state);
+    }
+
     float *getAngles() { return msgAngles.angles; }
 
     // The locomotion command the gait eases toward, the command it walks now, and the body pose the motion eases
@@ -400,70 +398,44 @@ class MotionService {
     const gait_state_t &gaitState() const { return gait_state; }
     const BodyStateMsg &bodyCommand() const { return target_body_state; }
 
-    // Any task. Off the control task a read can mix two ticks' poses, as lastCommand's can.
-    OdometryEstimate odometry() const { return _odometry.estimate(); }
+    // Any task: the pose of the last tick, whole.
+    OdometryEstimate odometry() const { return _inbox.odometry(); }
     // Any task. The control task zeroes the pose before its next update; the gyro bias stays. Refused, resetting
     // nothing, while a goal drives: the pose is its origin.
-    bool resetOdometry() {
-        std::lock_guard<std::mutex> lock(_goalMutex);
-        if (_goalDrives) return false;
-        _odometryResetPending = true;
-        return true;
-    }
+    bool resetOdometry() { return _inbox.requestOdometryReset(); }
 
     // Adapter task: the reply to a goal, 202 when the control task is to walk it from its next tick. A malformed goal
-    // or style is 400, a robot neither standing nor walking 409, and a style whose speed envelope is empty 422: TUNED,
-    // which has none, or a posture none of whose cells walks the goal's axes. The style's posture is clamped as the
-    // sliders' is and its sticks are the goal's. A goal accepted while another runs replaces it.
+    // or style is 400, a robot that is neither standing nor walking 409, and a style whose speed envelope is empty
+    // 422: TUNED, which has none, or a posture none of whose cells walks the goal's axes. The style's posture is
+    // clamped as the sliders' is and its sticks are the goal's. A goal accepted while another runs replaces it.
     int startGoal(const Goal &goal, const CommandMsg &style, GaitType gait, GoalOwner owner) {
         CommandMsg s = style;
         if (!GoalController::valid(goal) || !s.sanitize() || (int)gait < 0 || (int)gait > (int)GaitType::AUTO)
             return 400;
-        const MOTION_STATE mode = motionState;
+        // The mode the robot reports: a script waits for the stand it asked for to be reported before it sends a goal.
+        const MOTION_STATE mode = _inbox.appliedMode();
         if (mode != MOTION_STATE::STAND && mode != MOTION_STATE::WALK) return 409;
         clampPosture(s.s1, s.h, s.fd);
         if (!goalTops(goal.kind, gait, {s.s1, s.h, s.fd}, s.stride).walkable()) return 422;
         // A full stick walks the gait's top speed, which the goal's speed is a share of.
         s.lx = s.ly = s.rx = s.ry = 0.f;
         s.s = 1.f;
-        std::lock_guard<std::mutex> lock(_goalMutex);
-        _goalRequest = {goal, s, gait, ++_goalCount};
-        _goalRequested = true;
-        _goalOwner = owner;
-        _ownerHeardMs = millis();
-        _goalDrives = true;
-        // Whatever ended the goal before is done with: a cancel from now on is this goal's.
-        _goalCancelRequested = false;
+        _inbox.postGoal(goal, s, gait, owner, millis());
         return 202;
     }
 
     // Any task.
-    void cancelGoal() { requestGoalCancel(); }
+    void cancelGoal() { _inbox.cancelGoal(); }
 
     // Adapter task: a client left. The goal it asked for ends; another client's does not.
-    void clientGone(GoalOwner owner) {
-        std::lock_guard<std::mutex> lock(_goalMutex);
-        if (_goalDrives && owner == _goalOwner) _goalCancelRequested = true;
-    }
+    void clientGone(GoalOwner owner) { _inbox.clientGone(owner); }
 
     // Adapter task: a client sent something. A goal's owner that falls silent for OWNER_SILENCE_MS loses its goal,
     // since a closed USB serial port is not reported while the host still polls the bus.
-    void ownerHeard(GoalOwner owner) {
-        std::lock_guard<std::mutex> lock(_goalMutex);
-        if (_goalDrives && owner == _goalOwner) _ownerHeardMs = millis();
-    }
+    void ownerHeard(GoalOwner owner) { _inbox.ownerHeard(owner, millis()); }
 
-    // Any task: the newest goal's status, one accepted but not yet taken as settling, with the pose now.
-    socket_message_GoalStatus goalStatus() const {
-        socket_message_GoalStatus s;
-        {
-            std::lock_guard<std::mutex> lock(_goalMutex);
-            s = _goalRequested ? goalStatusOf(_goalRequest.id, GoalState::SETTLING, _goalRequest.goal, 0.f, 0)
-                               : _goalStatus;
-        }
-        setPose(s, _odometry.estimate());
-        return s;
-    }
+    // Any task: the newest goal's status, one accepted but not yet taken as settling, with the pose of the last tick.
+    socket_message_GoalStatus goalStatus() const { return _inbox.goalStatus(); }
 
     // The motion's half of a telemetry tick: what it produced and from which command and mode.
     void fillTelemetry(socket_message_TickSample &tick) const {
@@ -491,7 +463,6 @@ class MotionService {
     EventBus<CommandMsg>::Handle _cmdSubHandle;
     EventBus<ModeMsg>::Handle _modeSubHandle;
     EventBus<GaitMsg>::Handle _gaitSubHandle;
-    EventBus<ServoAnglesMsg>::Handle _angleSubHandle;
     Kinematics kinematics;
     GaitController gait;
 #if FT_ENABLED(USE_POLICY)
@@ -500,7 +471,7 @@ class MotionService {
     AnimationRunner _animation;
     MOTION_STATE _previousMode = MOTION_STATE::STAND;
     bool _borrowedMode = false;
-    std::atomic<bool> _handbackSent {false}; // a hand-back is queued; cleared by the worker on any mode
+    bool _handbackSent = false;              // a hand-back is queued; cleared by any mode taken
     bool _animating = false;                 // control task only: whether the last tick ran ANIMATE
 
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
@@ -514,30 +485,12 @@ class MotionService {
     gait_state_t target_gait_state = gait_state;
     GaitCommandRamp _commandRamp; // control task
     FusedOdometry _odometry;      // control task
-    std::atomic<bool> _odometryResetPending {false};
 
-    // A goal is asked for on an adapter task and walked by the control task. Whoever ends it early, on any task, asks
-    // the control task to; only an operator taking the walk back writes it at once (goalKeepsWalk).
-    struct GoalRequest {
-        Goal goal;
-        CommandMsg style;
-        GaitType gait;
-        uint32_t id;
-    };
-    mutable std::mutex _goalMutex;
-    // Under _goalMutex: the goal accepted and not yet taken, its owner, whether a goal drives the walk's sticks (from
-    // its acceptance until it ends or an operator takes the walk back), whether its end was asked for, and the status
-    // last pushed.
-    GoalRequest _goalRequest {};
-    bool _goalRequested = false;
-    uint32_t _goalCount = 0;
-    GoalOwner _goalOwner {};
-    unsigned long _ownerHeardMs = 0;
-    bool _goalDrives = false;
-    bool _goalCancelRequested = false;
-    socket_message_GoalStatus _goalStatus = socket_message_GoalStatus_init_zero;
+    // What the other tasks post for the control task to take. A goal is asked for on an adapter task and walked by the
+    // control task; whoever ends it early, on any task, asks the control task to through the inbox.
+    MotionInbox _inbox;
     // Control task: the goal taken, and how far it got.
-    GoalRequest _goalTaken {};
+    MotionInbox::GoalRequest _goalTaken {};
     GoalController _goal;
     GoalState _goalState = GoalState::IDLE;
     bool _goalStyleTaken = false; // its posture and gait were handed to the walk
@@ -545,9 +498,6 @@ class MotionService {
     unsigned long _goalTakenMs = 0;
     socket_message_GoalStatus _goalReported = socket_message_GoalStatus_init_zero;
     static constexpr int GOAL_STATUS_STEPS = 20; // a push every 5 % of progress
-    // The facade and the app send every 0.2 s; an owner silent ten times as long has gone, whether or not its transport
-    // has said so. A goal with no transport, the host's own, has no owner to fall silent.
-    static constexpr unsigned long OWNER_SILENCE_MS = 2000;
     // A goal takes its posture and gait in a few seconds; one still waiting after this never will.
     static constexpr unsigned long GOAL_START_TIMEOUT_MS = 10000;
     // The period a stop is stepped ahead at to predict it, four control ticks, which predicts as well as one on the
@@ -573,34 +523,32 @@ class MotionService {
 
     float default_feet_pos[6][4];
 
-    std::atomic<GaitType> _requestedGait {GaitType::TRI_GATE};
+    GaitType _requestedGait = GaitType::TRI_GATE;
     // The last WALK stick, posture clamped, its share of BI's top speed and the gait AUTO picks for it; all are
     // cleared when the locomotion command stops.
     CommandMsg lastWalkCommand_ {};
     float _walkSpeed01 = 0.f;
-    // The stride the classic walk walks, slewed toward the commanded one (slewStride); written by the control task.
-    std::atomic<float> _stride {0.f};
+    // The stride the classic walk walks, slewed toward the commanded one (slewStride).
+    float _stride = 0.f;
     static constexpr float STRIDE_SLEW_PER_S = 1.0f;
-    std::atomic<GaitType> _autoGait {GaitType::RIPPLE};
+    GaitType _autoGait = GaitType::RIPPLE;
     struct Posture {
         float s1, h, fd;
     };
     // The posture the classic walk stands in, valid once it was taken between steps (settleWalkPosture) or from the
     // stand the walk was entered from (takeRestPosture).
     Posture _walkPosture {};
-    std::atomic<bool> _walkPostureValid {false};
-    // The posture of a stand at rest, its lift as an s1, for a walk entered next: the targets the stand holds, which
-    // the control task rewrites unchanged every STAND tick while _atRest holds, so the command worker's read cannot
-    // tear. Anything that moves the robot in WALK before the first classic command takes it consumes it (clears
-    // _atRest).
+    bool _walkPostureValid = false;
+    // The posture of a stand at rest, its lift as an s1, for a walk entered next: the targets the stand holds. Anything
+    // that moves the robot in WALK before the first classic command takes it consumes it (clears _atRest).
     Posture _restPosture {};
-    std::atomic<bool> _atRest {false};
+    bool _atRest = false;
     // A posture is waiting for the gait to stop, then for the robot to settle; the walk is held at zero meanwhile.
-    std::atomic<bool> _posturePending {false};
-    std::atomic<bool> _postureSettling {false};
+    bool _posturePending = false;
+    bool _postureSettling = false;
     // The stand posture last commanded, waiting until the feet are still (takeStandPosture).
     Posture _standPosture {};
-    std::atomic<bool> _standPosturePending {false};
+    bool _standPosturePending = false;
     enum class SettleStage : uint8_t { LOWER_LIFT, MOVE, RAISE_LIFT };
     SettleStage _settleStage = SettleStage::LOWER_LIFT; // control task, while settling
     bool _heightAfterStance = false;                    // control task: the body height waits for the stance
@@ -614,18 +562,27 @@ class MotionService {
     unsigned long lastCommandMillis = 0;
     unsigned long lastMotionMicros = 0;
     unsigned long _lastTunedLog = 0;
+    // The modes and the gait the tick took, and the velocity the last TUNED command asked for, logged after its servo
+    // write.
+    MotionInbox::Modes _modesTaken;
+    std::optional<GaitType> _gaitTaken;
+    float _tunedVelocity[3] = {0.f, 0.f, 0.f};
+    bool _tunedLogDue = false;
     // The dead-man stop is in force: it fired, and no command or goal has come since.
     bool commandTimedOut = false;
     bool steering = false;
-    // Written on the command worker, read by the control task for telemetry only; a torn read costs
-    // one sample's command, never the motion.
+    // The last command taken, for the telemetry.
     CommandMsg lastCommand{};
 
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
 
   public:
-    // Lying on its belly with the legs limp or folded: still enough to calibrate the IMU against.
-    bool resting() const { return motionState == MOTION_STATE::DEACTIVATED || motionState == MOTION_STATE::IDLE; }
+    // Adapter task. Lying on its belly with the legs limp or folded, in the mode the control task applied last: still
+    // enough to calibrate the IMU against.
+    bool resting() const {
+        const MOTION_STATE mode = _inbox.appliedMode();
+        return mode == MOTION_STATE::DEACTIVATED || mode == MOTION_STATE::IDLE;
+    }
 
   private:
     static bool isWalkingMode(MOTION_STATE mode) { return mode == MOTION_STATE::WALK || mode == MOTION_STATE::WALK_NN; }
@@ -704,7 +661,7 @@ class MotionService {
     void settleWalkPosture() {
         if (gait_state.gait_type == GaitType::TUNED) return;
         if (_posturePending && !gaitIsCommanded(gait_state)) {
-            // Settling is raised first, so the command worker holds the walk at zero throughout.
+            // Settling holds the walk at zero throughout (applyWalkTarget).
             _postureSettling = true;
             _posturePending = false;
             const CommandMsg c = lastWalkCommand_;
@@ -762,32 +719,6 @@ class MotionService {
                 envelopeAt(walked, 2, p.s1, p.h, p.fd, stride).vMax};
     }
 
-    static_assert((int)GoalState::IDLE == socket_message_GoalState_GOAL_IDLE &&
-                      (int)GoalState::SETTLING == socket_message_GoalState_GOAL_SETTLING &&
-                      (int)GoalState::RUNNING == socket_message_GoalState_GOAL_RUNNING &&
-                      (int)GoalState::REACHED == socket_message_GoalState_GOAL_REACHED &&
-                      (int)GoalState::CANCELLED == socket_message_GoalState_GOAL_CANCELLED &&
-                      (int)GoalState::TIMED_OUT == socket_message_GoalState_GOAL_TIMED_OUT &&
-                      (int)GoalState::REFUSED == socket_message_GoalState_GOAL_REFUSED,
-                  "GoalStatus.state carries GoalState by value");
-    static_assert((int)GoalKind::FORWARD == socket_message_GoalKind_GOAL_FORWARD &&
-                      (int)GoalKind::SIDEWAYS == socket_message_GoalKind_GOAL_SIDEWAYS &&
-                      (int)GoalKind::TURN == socket_message_GoalKind_GOAL_TURN &&
-                      (int)GoalKind::ARC == socket_message_GoalKind_GOAL_ARC,
-                  "GoalStatus.kind and GoalMove.kind carry GoalKind by value");
-
-    static socket_message_GoalStatus goalStatusOf(uint32_t id, GoalState state, const Goal &goal, float progress,
-                                                  int passes) {
-        socket_message_GoalStatus s = socket_message_GoalStatus_init_zero;
-        s.id = id;
-        s.state = static_cast<socket_message_GoalState>(state);
-        s.kind = static_cast<socket_message_GoalKind>(goal.kind);
-        s.target = goal.kind == GoalKind::FORWARD || goal.kind == GoalKind::SIDEWAYS ? goal.distance : goal.angle;
-        s.progress = progress;
-        s.passes = passes;
-        return s;
-    }
-
     static void setPose(socket_message_GoalStatus &s, const OdometryEstimate &pose) {
         s.x = pose.x;
         s.y = pose.y;
@@ -796,43 +727,14 @@ class MotionService {
 
     bool goalActive() const { return _goalState == GoalState::SETTLING || _goalState == GoalState::RUNNING; }
 
-    // Any task.
-    void requestGoalCancel() {
-        std::lock_guard<std::mutex> lock(_goalMutex);
-        if (_goalDrives) _goalCancelRequested = true;
-    }
-
-    // Command worker. While a goal drives the walk, a centred command is ignored, its posture and the rest of it too:
-    // the heartbeats of the app, the facade and the ESP-NOW controller. A stick off centre takes the walk back, so the
-    // command walks at once and the goal never writes the sticks again.
-    bool goalKeepsWalk(const CommandMsg &c) {
-        std::lock_guard<std::mutex> lock(_goalMutex);
-        if (!_goalDrives) return false;
-        if (c.lx == 0.f && c.ly == 0.f && c.rx == 0.f) return true;
-        _goalDrives = false;
-        _goalCancelRequested = true;
-        return false;
-    }
-
     // Control task, every tick: takes a goal accepted since the last, and ends one whose end was asked for. A goal
     // ended by anything but an operator's stick leaves the walk centred, so it stops through the stop ramp.
-    void takeGoalMail() {
-        bool requested, cancelled;
-        GoalRequest request;
-        {
-            std::lock_guard<std::mutex> lock(_goalMutex);
-            requested = std::exchange(_goalRequested, false);
-            request = _goalRequest;
-            cancelled = std::exchange(_goalCancelRequested, false) ||
-                        (_goalDrives && _goalOwner.adapter && millis() - _ownerHeardMs > OWNER_SILENCE_MS);
-            if (cancelled && _goalDrives) {
-                _goalDrives = false;
-                centreWalk();
-            }
-        }
-        if (requested) {
+    void takeGoalMail(const MotionInbox::Mail &mail) {
+        if (mail.goalDriveEnded) centreWalk();
+        const bool cancelled = mail.goalCancelled;
+        if (mail.goal) {
             cancelGoalTaken();
-            _goalTaken = request;
+            _goalTaken = *mail.goal;
             _goalStyleTaken = _goalStarted = false;
             _goalTakenMs = millis();
             const MOTION_STATE mode = motionState;
@@ -866,13 +768,10 @@ class MotionService {
 
     // Control task: the goal no longer drives the walk; its last sticks are centred unless an operator took them.
     void releaseGoalWalk() {
-        std::lock_guard<std::mutex> lock(_goalMutex);
-        if (!_goalDrives) return;
-        _goalDrives = false;
-        centreWalk();
+        if (_inbox.endGoalDrive()) centreWalk();
     }
 
-    // Under _goalMutex.
+    // Control task.
     void centreWalk() {
         lastWalkCommand_.lx = lastWalkCommand_.ly = lastWalkCommand_.rx = 0.f;
         applyWalkTarget();
@@ -896,8 +795,7 @@ class MotionService {
             _goalStarted = true;
         } else {
             const GoalSticks sticks = _goal.update(restPose(), !gaitIsCommanded(gait_state) && feetAtRest(), dt);
-            std::lock_guard<std::mutex> lock(_goalMutex);
-            if (_goalDrives) {
+            if (_inbox.goalDrives()) {
                 lastWalkCommand_.lx = sticks.lx;
                 lastWalkCommand_.ly = sticks.ly;
                 lastWalkCommand_.rx = sticks.rx;
@@ -913,17 +811,14 @@ class MotionService {
     // stand at rest in it starts at once, any other settles first) and its gait through the deferred swap. TUNED steps
     // on the stick it last had, which only a stop ends.
     void takeGoalStyle() {
-        bool newGait;
-        {
-            std::lock_guard<std::mutex> lock(_goalMutex);
-            if (!_goalDrives) return;
-            if (gait_state.gait_type == GaitType::TUNED) stopLocomotionCommand(false);
-            newGait = _requestedGait != _goalTaken.gait;
-            _requestedGait = _goalTaken.gait;
-            lastWalkCommand_ = _goalTaken.style;
-            walkClassic(_goalTaken.style);
-            _goalStyleTaken = true;
-        }
+        if (!_inbox.goalDrives()) return;
+        if (gait_state.gait_type == GaitType::TUNED) stopLocomotionCommand(false);
+        const bool newGait = _requestedGait != _goalTaken.gait;
+        _requestedGait = _goalTaken.gait;
+        _inbox.selectGait(_goalTaken.gait);
+        lastWalkCommand_ = _goalTaken.style;
+        walkClassic(_goalTaken.style);
+        _goalStyleTaken = true;
         // For the app and the controller; MotionService would take its own selection for a wire gait change.
         if (newGait) EventBus<GaitMsg>::publish({_goalTaken.gait}, _gaitSubHandle);
     }
@@ -939,14 +834,11 @@ class MotionService {
         if (s.id == _goalReported.id && s.state == _goalReported.state && step(s) == step(_goalReported)) return;
         _goalReported = s;
         setPose(s, _odometry.estimate());
-        {
-            std::lock_guard<std::mutex> lock(_goalMutex);
-            _goalStatus = s;
-        }
+        _inbox.report(s);
         GoalStatusBus::publish(s);
     }
 
-    // Command worker or control task. The envelope measured a level, centred body: the tilt stick and the stand's
+    // Control task. The envelope measured a level, centred body: the tilt stick and the stand's
     // offsets ease out. The envelope sets the cadence; step_speed is left to pace a stance change.
     void walkClassic(const CommandMsg &c) {
         target_body_state.xm = target_body_state.ym = 0;
@@ -963,6 +855,7 @@ class MotionService {
         std::optional<ImuYaw> packet;
         if (imuFresh) packet = ImuYaw {imu_frame::YAW_SIGN * _peripherals->angleZ(), _peripherals->imuFifoResets()};
         _odometry.update(body_state, stanceFlags(), packet, dt);
+        _inbox.noteOdometry(_odometry.estimate());
     }
 
     // Control task: which legs the gait has in stance after its last step.
@@ -1012,12 +905,12 @@ class MotionService {
         _atRest = atRest;
     }
 
-    // Command worker, the first classic walk command after a stand at rest. A command that keeps the stand's height
+    // Control task, the first classic walk command after a stand at rest. A command that keeps the stand's height
     // and stance walks at once in it: only the lift differs, and a lift that rises eases in alongside the stroke,
     // which keeps every state between inside the envelope (checked over its walkable grid). One that falls does not:
     // the stand's lift over the posture's stroke can leave travel, so that walk, like any other, settles first.
     void takeRestPosture(const CommandMsg &c) {
-        if (_walkPostureValid || _postureSettling || !_atRest.exchange(false)) return;
+        if (_walkPostureValid || _postureSettling || !std::exchange(_atRest, false)) return;
         const Posture rest = _restPosture;
         if (std::fabs(c.h - rest.h) > POSTURE_DEADBAND || std::fabs(c.fd - rest.fd) > POSTURE_DEADBAND ||
             c.s1 < rest.s1 - POSTURE_DEADBAND || !postureWalkable(c.s1, rest.h, rest.fd))

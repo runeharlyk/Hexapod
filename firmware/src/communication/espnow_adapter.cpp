@@ -122,9 +122,10 @@ void EspNowAdapter::begin() {
         esp_timer_start_periodic(beacon, HEXAPOD_BEACON_PERIOD_MS * 1000);
     }
 
+    // The robot's mode, which the buttons cycle from and the right stick's height follows: the one MotionService
+    // reports applied. A press stores its own request at once, so a second press cycles on from it.
     EventBus<ModeMsg>::consume([](const ModeMsg& m) {
-        if (m.kind == ModeMsgKind::REQUEST || m.kind == ModeMsgKind::APPLIED)
-            s_mode.store(m.mode, std::memory_order_relaxed);
+        if (m.kind == ModeMsgKind::APPLIED) s_mode.store(m.mode, std::memory_order_relaxed);
     });
     EventBus<GaitMsg>::consume([](const GaitMsg& g) { s_gait.store(g.gait, std::memory_order_relaxed); });
 
