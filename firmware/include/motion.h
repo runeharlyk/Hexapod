@@ -45,6 +45,7 @@ class MotionService {
         EventBus<GaitMsg>::publish({gait_state.gait_type});
     }
 
+  private:
     // Control task, at the start of the tick after the gait arrived; the goal it ends was ended on arrival.
     void handleInputGait(GaitType gait) {
         _requestedGait = gait;
@@ -99,6 +100,7 @@ class MotionService {
         mode == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
     }
 
+  public:
     // Adapter task. A play from any active mode borrows ANIMATE and hands the mode back when the
     // player finishes; a play while already in ANIMATE (borrowed or sticky) chains. The clip is loaded
     // before the mode changes, so a refused play leaves the robot in its mode and pose; whether the
@@ -133,6 +135,7 @@ class MotionService {
 
     void validateAnimation(const char *name, socket_message_AnimationReport &r) { _animation.validate(name, r); }
 
+  private:
     // Control task, at the start of the tick after the command arrived; the dead-man's window runs from its arrival.
     void handleCommand(CommandMsg const &c, unsigned long arrivalMs) {
         lastCommandMillis = arrivalMs;
@@ -273,6 +276,7 @@ class MotionService {
         return !gaitIsCommanded(gait_state) && !gait.hasPendingStanceChange() && !_postureSettling;
     }
 
+  public:
     // imuFresh: the IMU was read on this tick, so its DMP packet and gyro rate are this tick's.
     bool updateMotion(bool imuFresh) {
         const MotionInbox::Mail mail = _inbox.take(millis());
