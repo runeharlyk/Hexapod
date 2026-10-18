@@ -92,7 +92,9 @@ Commands and gaits coalesce, since each is a whole snapshot; modes queue, eight 
 What a goal depends on is decided on arrival, under the mutex: its takeover by a stick off centre, the end a mode or a gait implies, and the refusal of an odometry reset while a goal drives.
 The end a mode implies is the arbiter's decision from the mode applied last.
 No task waits for the control task: the mode, the goal status and the pose the replies carry are the ones the control task noted last.
-A goal's 409 and the animation calls judge the mode applied, the one the robot reports, not a mode still queued; a script that asks for a stand waits for the robot to report it before it sends a goal (`RealBackend.set_mode`), and that goal is accepted.
+A goal's 409 and a play judge the mode applied, the one the robot reports, not a mode still queued.
+A stop, a puppet pose and the loss of the last client judge it too, but also take a play's borrow still queued as ANIMATE, so they reach a play that has not been applied yet.
+A script that asks for a stand waits for the robot to report it before it sends a goal (`RealBackend.set_mode`), and that goal is accepted.
 The log lines of what a tick took come after its servo write (`Hexapod::updateActuators`), so a slow console does not delay the write.
 The mode is a `MOTION_STATE`: `DEACTIVATED`, `IDLE`, `POSE`, `STAND`, `WALK`, `WALK_NN` and `ANIMATE`.
 

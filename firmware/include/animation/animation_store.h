@@ -16,7 +16,9 @@
 #include <animation/animation_codec.h>
 #include <filesystem.h>
 
+#ifndef ANIMATION_DIRECTORY // a host test points it at a directory of its own
 #define ANIMATION_DIRECTORY MOUNT_POINT "/animations"
+#endif
 
 class AnimationStore {
   public:

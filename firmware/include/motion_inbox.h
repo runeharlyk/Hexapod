@@ -165,6 +165,16 @@ class MotionInbox {
         return _applied.mode;
     }
 
+    // Any task: whether the animation calls are to be honoured, the mode being ANIMATE or a play's borrow of it queued
+    // and so to be applied at the next take. The play such a borrow follows is already loaded, so a stop, a pose or a
+    // lost control that arrives before the borrow is applied still reaches it.
+    bool animating() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const ModeMsg *end = _modes.items + _modes.count;
+        return _applied.mode == MOTION_STATE::ANIMATE ||
+               std::any_of(_modes.items, end, [](const ModeMsg &m) { return m.kind == ModeMsgKind::BORROW; });
+    }
+
     // Control task, as it applies or keeps each mode it took, before it reports it.
     void noteMode(const ModeState &applied) {
         std::lock_guard<std::mutex> lock(_mutex);

@@ -252,6 +252,24 @@ void test_a_pending_gait_other_than_the_goals_own_ends_the_goal() {
     TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
 }
 
+// An animation call is honoured from a play's borrow queued, not only once it is applied: the play it follows is then
+// already loaded, and the control task takes the borrow at its next tick.
+void test_the_robot_animates_from_a_borrow_queued_until_the_mode_is_handed_back() {
+    MotionInbox inbox;
+    TEST_ASSERT_FALSE(inbox.animating());
+    inbox.postMode({MOTION_STATE::WALK}, false);
+    inbox.postMode({MOTION_STATE::ANIMATE, ModeMsgKind::HANDBACK}, false);
+    TEST_ASSERT_FALSE(inbox.animating());
+    inbox.postMode({MOTION_STATE::ANIMATE, ModeMsgKind::BORROW}, false);
+    TEST_ASSERT_TRUE(inbox.animating());
+    inbox.take(0);
+    TEST_ASSERT_FALSE(inbox.animating());
+    inbox.noteMode({MOTION_STATE::ANIMATE, true, MOTION_STATE::STAND});
+    TEST_ASSERT_TRUE(inbox.animating());
+    inbox.noteMode({MOTION_STATE::STAND, false, MOTION_STATE::STAND});
+    TEST_ASSERT_FALSE(inbox.animating());
+}
+
 // A borrow and a hand-back are decided against the mode they find, so modes are taken in the order they arrived, none
 // merged: a DEACTIVATED and a borrow posted in one tick are two, the deactivation first. An APPLIED is no request.
 void test_modes_are_taken_in_arrival_order_none_merged() {
@@ -371,6 +389,7 @@ int main(int, char **) {
     RUN_TEST(test_a_goals_own_gait_is_the_selection);
     RUN_TEST(test_a_gait_posted_before_the_goals_selection_stays_the_selection);
     RUN_TEST(test_a_pending_gait_other_than_the_goals_own_ends_the_goal);
+    RUN_TEST(test_the_robot_animates_from_a_borrow_queued_until_the_mode_is_handed_back);
     RUN_TEST(test_modes_are_taken_in_arrival_order_none_merged);
     RUN_TEST(test_a_full_mode_queue_drops_the_oldest_and_keeps_a_newest_deactivation);
     RUN_TEST(test_the_replies_judge_the_mode_the_control_task_noted_last);

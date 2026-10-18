@@ -104,8 +104,8 @@ class MotionService {
     // Adapter task. A play from any active mode borrows ANIMATE and hands the mode back when the
     // player finishes; a play while already in ANIMATE (borrowed or sticky) chains. The clip is loaded
     // before the mode changes, so a refused play leaves the robot in its mode and pose; whether the
-    // borrow is granted is decided by handleInputMode. The animation calls judge the mode the control
-    // task applied last (MotionInbox::appliedMode).
+    // borrow is granted is decided by handleInputMode. The play judges the mode the control task applied
+    // last (MotionInbox::appliedMode); a stop, a pose and a lost control judge MotionInbox::animating.
     void handleAnimationCommand(AnimationCommandMsg const &c) {
         const MOTION_STATE mode = _inbox.appliedMode();
         if (!actuated(mode)) return;
@@ -114,23 +114,23 @@ class MotionService {
         EventBus<ModeMsg>::publish({MOTION_STATE::ANIMATE, ModeMsgKind::BORROW});
     }
 
-    // Adapter task. A stop only makes sense in ANIMATE.
+    // Adapter task. A stop only makes sense in ANIMATE, which a play's borrow still queued is about to enter.
     void handleAnimationStop() {
-        if (_inbox.appliedMode() == MOTION_STATE::ANIMATE) _animation.requestStop();
+        if (_inbox.animating()) _animation.requestStop();
     }
 
     // Adapter task, when the last client on every transport has gone. Outside ANIMATE a play may be
     // loaded with its borrow still in flight; dropping it keeps an unattended loop from starting.
     void animationControlLost() {
-        if (_inbox.appliedMode() == MOTION_STATE::ANIMATE)
+        if (_inbox.animating())
             _animation.controlLost();
         else
             _animation.cancelPendingPlay();
     }
 
-    // Adapter task. Puppeteer poses apply only in ANIMATE.
+    // Adapter task. Puppeteer poses apply only in ANIMATE, or once a queued borrow of it is applied.
     void handleAnimationPose(PoseMsg const &p) {
-        if (_inbox.appliedMode() == MOTION_STATE::ANIMATE) _animation.setPuppet(p);
+        if (_inbox.animating()) _animation.setPuppet(p);
     }
 
     void validateAnimation(const char *name, socket_message_AnimationReport &r) { _animation.validate(name, r); }

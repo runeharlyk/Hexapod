@@ -1,6 +1,8 @@
 // The firmware's Hexapod run off the robot (firmware/host/virtual_robot.h): commands reach the motion
 // through its own EventBus subscriptions, and the clock is the control loop's 5 ms tick.
 
+// The animation store reads the parity fixtures, whose "fx_single" holds its last keyframe until stopped.
+#define ANIMATION_DIRECTORY "animations/fixtures"
 #define USE_POLICY 1
 #define USE_MPU6050 1
 
@@ -365,6 +367,54 @@ void test_a_borrow_with_nothing_to_play_hands_the_mode_back() {
     TEST_ASSERT_EQUAL(2, applied.size());
     TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, applied[0].mode);
     TEST_ASSERT_EQUAL(MOTION_STATE::STAND, applied[1].mode);
+}
+
+namespace {
+
+AnimationCommandMsg playOf(const char *name) {
+    AnimationCommandMsg play {};
+    std::snprintf(play.name, sizeof(play.name), "%s", name);
+    return play;
+}
+
+} // namespace
+
+// A clip that holds until stopped, played from a stand, is the animation these tests judge a stop and a pose by.
+void test_a_play_from_a_stand_holds_in_animate_until_stopped() {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.animationPlay(playOf("fx_single"));
+    largestStep(robot, ticksFor(1.5f));
+    TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, robot.mode());
+    robot.animationStop();
+    largestStep(robot, ticksFor(1.5f));
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, robot.mode());
+}
+
+// A stop that arrives while the play's borrow is queued in the inbox, within the tick the play came in, is the play's
+// stop: the clip never plays and the mode is handed back, where the stop dropped would leave the clip holding.
+void test_a_stop_in_the_tick_of_the_play_ends_it() {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.animationPlay(playOf("fx_single"));
+    host_bus::drainAll(); // the borrow reaches the inbox, which the control task takes at its next tick
+    robot.animationStop();
+    largestStep(robot, ticksFor(1.5f));
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, robot.mode());
+}
+
+// A pose that arrives while a borrow is queued is the puppet's first pose: it holds ANIMATE while the body is away from
+// the stance, where the pose dropped leaves a borrow with nothing to do, handed back within three ticks.
+void test_a_pose_in_the_tick_of_the_borrow_is_taken() {
+    VirtualRobot robot;
+    standUp(robot);
+    EventBus<ModeMsg>::publish({MOTION_STATE::ANIMATE, ModeMsgKind::BORROW});
+    host_bus::drainAll();
+    PoseMsg pose {};
+    pose.body[5] = 20.0f;
+    robot.animationPose(pose);
+    for (int t = 0; t < 10; ++t) robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, robot.mode());
 }
 
 // The joint angles are the control task's alone: the angles the robot publishes for the app are never written back.
@@ -1482,6 +1532,9 @@ int main(int, char **) {
     RUN_TEST(test_nothing_posted_changes_the_motion_before_the_next_tick);
     RUN_TEST(test_a_deactivation_and_a_borrow_in_one_tick_leave_the_robot_deactivated);
     RUN_TEST(test_a_borrow_with_nothing_to_play_hands_the_mode_back);
+    RUN_TEST(test_a_play_from_a_stand_holds_in_animate_until_stopped);
+    RUN_TEST(test_a_stop_in_the_tick_of_the_play_ends_it);
+    RUN_TEST(test_a_pose_in_the_tick_of_the_borrow_is_taken);
     RUN_TEST(test_angles_on_the_bus_leave_the_motions_angles_alone);
     RUN_TEST(test_a_gait_selected_while_standing_is_applied);
     RUN_TEST(test_full_stick_walk_stays_in_travel_for_every_classic_gait);

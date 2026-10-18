@@ -34,6 +34,12 @@ class VirtualRobot {
     void setMode(MOTION_STATE mode) { EventBus<ModeMsg>::publish({mode}); }
     void setGait(GaitType gait) { EventBus<GaitMsg>::publish({gait}); }
     void setImu(const Peripherals::Imu &imu) { Peripherals::setImu(imu); }
+    // As the animation adapters call the motion: the clip is loaded from ANIMATION_DIRECTORY, and a play the motion
+    // accepts borrows ANIMATE through the bus.
+    void animationPlay(const AnimationCommandMsg &play) { _robot.animationPlay(play); }
+    void animationStop() { _robot.animationStop(); }
+    void animationPose(const PoseMsg &pose) { _robot.animationPose(pose); }
+    void animationControlLost() { _robot.animationControlLost(); }
 
     void tick() {
         host_clock::advance(TICK_US);
