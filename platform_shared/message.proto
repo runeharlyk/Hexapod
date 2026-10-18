@@ -123,9 +123,10 @@ message SystemInformationResponse {
   StaticSystemInformation static_system_information = 2;
 }
 
-// The FreeRTOS task table, a measurement read by request (the metrics page asks every 2 s while it is open).
+// The FreeRTOS task table, a measurement read by request (the metrics page asks when it opens and on its refresh).
 message TaskStatsRequest {}
-// eTaskState's positions. A snapshot sees only its own core's task as running; the other core's shows as ready.
+// eTaskState's positions. A snapshot sees only its own core's task as running, which is the transport task answering
+// the request, so the other core's running task shows as ready.
 enum TaskState {
   TASK_RUNNING = 0;
   TASK_READY = 1;
@@ -143,6 +144,7 @@ message TaskEntry {
   uint32 stack_free_min = 7;  // bytes: the least free stack since the task started
   float cpu_percent = 8;      // of one core over the window; 0 when window_us is 0
 }
+// A request within 10 s of the last snapshot gets that reply again: a snapshot masks interrupts on both cores.
 message TaskStats {
   uint32 window_us = 1;       // since the robot's previous snapshot, from any client; 0 on the first, which has no CPU
   uint32 snapshot_us = 2;     // from the call to the snapshot's end, about how long it held the kernel's lock

@@ -39,8 +39,8 @@ class CpuWindow {
     /**
      * Sets each task's cpuPercent from its run time since the previous call, or since it started for a task that call
      * did not see, and keeps this snapshot as the next one's baseline. Returns the window in us; 0 when there is none,
-     * on the first call, on one 2^32 us or more after the previous or after a snapshot larger than Capacity, and every
-     * cpuPercent is then 0.
+     * on the first call and on one 2^32 us or more after the previous, and every cpuPercent is then 0. A snapshot
+     * holds no more than Capacity tasks: the caller's snapshot buffer has the same size.
      */
     uint32_t measure(Task* tasks, size_t count, uint64_t nowUs) {
         const uint64_t window = baselineCount_ > 0 ? nowUs - baselineAt_ : 0;
@@ -68,7 +68,7 @@ class CpuWindow {
     }
 
     void keep(const Task* tasks, size_t count, uint64_t nowUs) {
-        baselineCount_ = count <= Capacity ? count : 0;
+        baselineCount_ = count;
         for (size_t i = 0; i < baselineCount_; i++) baselines_[i] = {tasks[i].number, tasks[i].runTime};
         baselineAt_ = nowUs;
     }
@@ -76,6 +76,39 @@ class CpuWindow {
     std::array<Baseline, Capacity> baselines_ {};
     size_t baselineCount_ = 0;
     uint64_t baselineAt_ = 0;
+};
+
+/**
+ * The shortest time between two snapshots of the robot's tasks. uxTaskGetSystemState masks interrupts on both cores
+ * while it scans every task's free stack, an estimated 2 to 4 ms against the control loop's 5 ms period, and that is
+ * the cost of a snapshot whoever asks: a request in between gets the last reply, its CPU window included.
+ */
+constexpr uint64_t MIN_SNAPSHOT_INTERVAL_US = 10'000'000;
+
+/** Keeps the last successful reply, to serve it again while it is younger than MIN_SNAPSHOT_INTERVAL_US. */
+template <class Reply>
+class SnapshotCache {
+  public:
+    /** Fills `reply` from the cache, or from `take(reply)` when the cache is older; returns the status (200 is ok). */
+    template <class Take>
+    uint32_t serve(uint64_t nowUs, Reply& reply, Take&& take) {
+        if (valid_ && nowUs - takenAt_ < MIN_SNAPSHOT_INTERVAL_US) {
+            reply = last_;
+            return 200;
+        }
+        const uint32_t status = take(reply);
+        if (status == 200) {
+            last_ = reply;
+            takenAt_ = nowUs;
+            valid_ = true;
+        }
+        return status;
+    }
+
+  private:
+    Reply last_ {};
+    uint64_t takenAt_ = 0;
+    bool valid_ = false;
 };
 
 /**

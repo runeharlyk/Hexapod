@@ -5,6 +5,7 @@
 #include <unity.h>
 
 #include <cstring>
+#include <functional>
 #include <task_table.h>
 
 using task_table::CpuWindow;
@@ -112,19 +113,6 @@ void test_a_share_above_one_core_is_held_to_one_core() {
     TEST_ASSERT_EQUAL_FLOAT(100.f, second[0].cpuPercent);
 }
 
-// With more tasks than the baseline holds, a task left out would next be taken for a new one and credited with its
-// whole run time; the window starts again instead.
-void test_a_snapshot_larger_than_the_baseline_starts_the_window_again() {
-    CpuWindow<2> window;
-    Task three[] = {task(1, "a", 100), task(2, "b", 200), task(3, "c", 300)};
-    window.measure(three, 3, 10'000'000);
-    Task two[] = {task(1, "a", 200), task(3, "c", 400)};
-    TEST_ASSERT_EQUAL_UINT32(0, window.measure(two, 2, 11'000'000));
-    Task again[] = {task(1, "a", 300), task(3, "c", 600)};
-    TEST_ASSERT_EQUAL_UINT32(1'000'000, window.measure(again, 2, 12'000'000));
-    TEST_ASSERT_EQUAL_FLOAT(0.02f, again[1].cpuPercent);
-}
-
 void test_the_tightest_stacks_lead_and_the_roomiest_are_cut() {
     Task tasks[] = {task(1, "service", 0, 2400), task(2, "serial_rx", 0, 5800), task(3, "control", 0, 900),
                     task(4, "IDLE0", 0, 600)};
@@ -143,6 +131,66 @@ void test_ties_order_by_name_then_by_number() {
     TEST_ASSERT_EQUAL_UINT32(12, tasks[2].number);
 }
 
+namespace {
+
+struct Reply {
+    uint32_t snapshot;
+};
+
+// A snapshot source that counts how often it is asked, and answers with that count.
+struct Source {
+    int taken = 0;
+    uint32_t status = 200;
+    uint32_t operator()(Reply& reply) {
+        reply.snapshot = ++taken;
+        return status;
+    }
+};
+
+} // namespace
+
+// Each snapshot masks interrupts on both cores for milliseconds, so how often one is taken is the robot's to bound,
+// whatever the number of clients: the second request gets the first one's reply.
+void test_requests_within_the_interval_share_one_snapshot() {
+    task_table::SnapshotCache<Reply> cache;
+    Source source;
+    Reply first {}, second {}, third {};
+    TEST_ASSERT_EQUAL_UINT32(200, cache.serve(5'000'000, first, std::ref(source)));
+    TEST_ASSERT_EQUAL_UINT32(
+        200, cache.serve(5'000'000 + task_table::MIN_SNAPSHOT_INTERVAL_US - 1, second, std::ref(source)));
+    TEST_ASSERT_EQUAL_UINT32(200, cache.serve(5'000'001, third, std::ref(source)));
+    TEST_ASSERT_EQUAL_INT(1, source.taken);
+    TEST_ASSERT_EQUAL_UINT32(1, first.snapshot);
+    TEST_ASSERT_EQUAL_UINT32(1, second.snapshot);
+    TEST_ASSERT_EQUAL_UINT32(1, third.snapshot);
+}
+
+void test_a_request_after_the_interval_takes_a_new_snapshot() {
+    task_table::SnapshotCache<Reply> cache;
+    Source source;
+    Reply reply {};
+    cache.serve(5'000'000, reply, std::ref(source));
+    cache.serve(5'000'000 + task_table::MIN_SNAPSHOT_INTERVAL_US, reply, std::ref(source));
+    TEST_ASSERT_EQUAL_INT(2, source.taken);
+    TEST_ASSERT_EQUAL_UINT32(2, reply.snapshot);
+    // The interval counts from the snapshot taken, not from the request served from the cache.
+    cache.serve(5'000'000 + task_table::MIN_SNAPSHOT_INTERVAL_US + 1, reply, std::ref(source));
+    TEST_ASSERT_EQUAL_INT(2, source.taken);
+}
+
+// A snapshot that failed has nothing to serve, and a client that retries must not be handed an old success or a
+// cached refusal.
+void test_a_refused_snapshot_is_not_kept() {
+    task_table::SnapshotCache<Reply> cache;
+    Source source;
+    source.status = 507;
+    Reply reply {};
+    TEST_ASSERT_EQUAL_UINT32(507, cache.serve(5'000'000, reply, std::ref(source)));
+    source.status = 200;
+    TEST_ASSERT_EQUAL_UINT32(200, cache.serve(5'000'001, reply, std::ref(source)));
+    TEST_ASSERT_EQUAL_INT(2, source.taken);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_the_first_snapshot_has_no_window_and_no_cpu);
@@ -153,8 +201,10 @@ int main() {
     RUN_TEST(test_a_counter_that_wrapped_within_the_window_still_counts_what_it_ran);
     RUN_TEST(test_a_window_the_counters_cannot_span_has_no_cpu_and_the_next_one_does);
     RUN_TEST(test_a_share_above_one_core_is_held_to_one_core);
-    RUN_TEST(test_a_snapshot_larger_than_the_baseline_starts_the_window_again);
     RUN_TEST(test_the_tightest_stacks_lead_and_the_roomiest_are_cut);
     RUN_TEST(test_ties_order_by_name_then_by_number);
+    RUN_TEST(test_requests_within_the_interval_share_one_snapshot);
+    RUN_TEST(test_a_request_after_the_interval_takes_a_new_snapshot);
+    RUN_TEST(test_a_refused_snapshot_is_not_kept);
     return UNITY_END();
 }

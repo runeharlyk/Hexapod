@@ -27,9 +27,11 @@ static_assert(int(eRunning) == socket_message_TaskState_TASK_RUNNING &&
 
 /**
  * Answers the metrics page's TaskStatsRequest from one uxTaskGetSystemState snapshot, the CPU shares measured against
- * the previous request's (task_table.h). The transports' tasks take requests concurrently and share the one baseline,
- * so a reply runs under a lock; the control task never answers one. The snapshot holds the kernel's lock, interrupts
- * masked on the calling core, while it reads every task's untouched stack bytes, and the reply says for how long.
+ * the previous snapshot's (task_table.h). A snapshot is taken at most once per task_table::MIN_SNAPSHOT_INTERVAL_US;
+ * a request in between gets the last reply. The transports' tasks take requests concurrently and share the one
+ * baseline, so a reply runs under a lock; the control task never answers one. The snapshot holds the kernel's lock,
+ * interrupts masked on the calling core, while it reads every task's untouched stack bytes, and the reply says for
+ * how long.
  */
 class TaskStats {
   public:
@@ -41,15 +43,27 @@ class TaskStats {
         if (!buffers_) buffers_ = allocate();
         if (!buffers_) return 503;
         Buffers& b = *buffers_;
+        const uint64_t now = esp_timer_get_time();
+        return b.last.serve(now, reply, [&](socket_message_TaskStats& r) { return snapshot(b, now, r); });
+    }
 
-        const uint64_t before = esp_timer_get_time();
+  private:
+    struct Buffers {
+        TaskStatus_t statuses[CAPACITY];
+        task_table::Task tasks[CAPACITY];
+        task_table::CpuWindow<CAPACITY> window;
+        task_table::SnapshotCache<socket_message_TaskStats> last;
+    };
+
+    static uint32_t snapshot(Buffers& b, uint64_t before, socket_message_TaskStats& reply) {
         configRUN_TIME_COUNTER_TYPE takenAt = 0; // the counters' clock, the esp_timer's low word, read under the lock
         const UBaseType_t count = uxTaskGetSystemState(b.statuses, CAPACITY, &takenAt);
         if (count == 0) {
             reply.task_count = uxTaskGetNumberOfTasks();
             return 507;
         }
-        // A status names its task by a pointer into the task's memory, freed if the task is deleted: copied at once.
+        // A status names its task by a pointer into the task's memory, which is read here, after the lock is
+        // released: a task deleted and freed in between gives one garbled name, never a fault, as vTaskList's does.
         for (UBaseType_t i = 0; i < count; i++) b.tasks[i] = taskOf(b.statuses[i]);
 
         const uint32_t snapshotUs = takenAt - static_cast<uint32_t>(before);
@@ -61,14 +75,7 @@ class TaskStats {
         return 200;
     }
 
-  private:
-    struct Buffers {
-        TaskStatus_t statuses[CAPACITY];
-        task_table::Task tasks[CAPACITY];
-        task_table::CpuWindow<CAPACITY> window;
-    };
-
-    // Some 5 KB, in PSRAM: internal RAM is the robot's binding limit (docs/firmware.md, RAM budget).
+    // Some 7 KB, in PSRAM: internal RAM is the robot's binding limit (docs/firmware.md, RAM budget).
     static Buffers* allocate() {
         void* memory = heap_caps_calloc(1, sizeof(Buffers), MALLOC_CAP_SPIRAM);
         return memory ? new (memory) Buffers() : nullptr;
