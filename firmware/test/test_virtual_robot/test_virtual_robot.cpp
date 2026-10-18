@@ -90,6 +90,29 @@ void test_a_mode_request_reaches_the_motion_through_the_bus() {
     TEST_ASSERT_EQUAL(MOTION_STATE::STAND, robot.mode());
 }
 
+// The robot reports a mode only once the control task has applied it: each mode a request applies is published as
+// APPLIED in the tick that applies it, and not when the request is delivered. The observers that show the robot's mode
+// forward these alone.
+void test_a_mode_is_reported_applied_in_the_tick_that_applies_it() {
+    VirtualRobot robot;
+    robot.tick();
+    std::vector<MOTION_STATE> applied;
+    auto listener = EventBus<ModeMsg>::subscribe([&applied](const ModeMsg &m) {
+        if (m.kind == ModeMsgKind::APPLIED) applied.push_back(m.mode);
+    });
+    for (const MOTION_STATE mode : {MOTION_STATE::STAND, MOTION_STATE::WALK, MOTION_STATE::IDLE, MOTION_STATE::POSE,
+                                    MOTION_STATE::STAND, MOTION_STATE::DEACTIVATED}) {
+        applied.clear();
+        robot.setMode(mode);
+        host_bus::drainAll();
+        TEST_ASSERT_TRUE(applied.empty());
+        robot.tick();
+        TEST_ASSERT_EQUAL(mode, robot.mode());
+        TEST_ASSERT_EQUAL_size_t(1, applied.size());
+        TEST_ASSERT_EQUAL(mode, applied[0]);
+    }
+}
+
 void test_a_standing_robot_holds_still() {
     VirtualRobot robot;
     standUp(robot);
@@ -1422,6 +1445,7 @@ int main(int, char **) {
     RUN_TEST(test_idle_from_boot_wakes_the_boards_but_sends_no_pose);
     RUN_TEST(test_a_standing_robot_drives_its_servos_to_the_motions_pose);
     RUN_TEST(test_a_mode_request_reaches_the_motion_through_the_bus);
+    RUN_TEST(test_a_mode_is_reported_applied_in_the_tick_that_applies_it);
     RUN_TEST(test_a_standing_robot_holds_still);
     RUN_TEST(test_a_stick_held_in_walk_steps_the_legs);
     RUN_TEST(test_a_walk_obeys_its_last_command_for_600_ms_and_no_longer);

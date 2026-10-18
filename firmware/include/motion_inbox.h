@@ -2,10 +2,10 @@
 
 // What the other tasks hand MotionService's control task, under one mutex: the modes in arrival order, the newest
 // command and gait, a goal asked for and its end, and an odometry reset; and back from the control task, the goal
-// status and the pose the replies carry. The decisions a reply or a goal depends on are made as each arrives, in
-// arrival order, against the mode the queued modes predict; the control task takes what arrived at the start of its
-// next tick, so nothing changes the motion in the middle of one, and no task ever waits for the control task. Ported in
-// shape from SpotMicroESP32-Leika's esp32/include/motion_inbox.h.
+// status, the mode and the pose the replies carry. The decisions a reply or a goal depends on are made as each arrives,
+// in arrival order, against the mode the control task applied last; the control task takes what arrived at the start
+// of its next tick, so nothing changes the motion in the middle of one, and no task ever waits for the control task.
+// Ported in shape from SpotMicroESP32-Leika's esp32/include/motion_inbox.h.
 
 #include <algorithm>
 #include <cstdint>
@@ -140,10 +140,10 @@ class MotionInbox {
     }
 
     // Mode worker, and the control task for its own hand-back, which so queues behind every mode that arrived before
-    // it. Modes are never merged, since a borrow and a hand-back are decided against the mode they find. Each is folded
-    // through the arbiter from the mode the queue predicts, with the runner's `busy` now: one that applies a mode other
-    // than WALK ends the goal driving the walk on arrival, as a goal walks in WALK. An APPLIED is no request. Full, the
-    // queue drops its oldest, so the newest intent, a DEACTIVATED above all, is kept.
+    // it. Modes are never merged, since a borrow and a hand-back are decided against the mode they find. One that the
+    // arbiter, from the mode applied last and with the runner's `busy` now, has apply a mode other than WALK ends the
+    // goal driving the walk on arrival, as a goal walks in WALK. An APPLIED is no request. Full, the queue drops its
+    // oldest, so the newest intent, a DEACTIVATED above all, is kept.
     void postMode(const ModeMsg &m, bool busy) {
         if (m.kind == ModeMsgKind::APPLIED) return;
         std::lock_guard<std::mutex> lock(_mutex);
@@ -151,28 +151,24 @@ class MotionInbox {
             std::move(std::begin(_modes.items) + 1, std::end(_modes.items), std::begin(_modes.items));
             --_modes.count;
             ++_modes.dropped;
-            _predicted = fold(_applied, busy);
         }
         _modes.items[_modes.count++] = m;
-        const ModeArbiterDecision d = decide(_predicted, m, busy);
+        const ModeArbiterDecision d =
+            decideMode({_applied.mode, _applied.borrowed, _applied.previous, m.mode, m.kind, busy});
         if (d.action == ModeArbiterDecision::APPLY && d.mode != MOTION_STATE::WALK) cancelGoalLocked();
-        _predicted = {d.mode, d.borrowed, d.previous};
     }
 
-    // Any task: the mode the robot is in once the control task has taken the modes posted so far. It differs from the
-    // mode applied only for those few milliseconds, and from the mode they will apply only when the runner's busy
-    // changes before the take, which happens only in ANIMATE.
-    MOTION_STATE predictedMode() const {
+    // Any task: the mode the control task applied last, which is the mode the robot reports; a mode still queued is not
+    // the robot's yet.
+    MOTION_STATE appliedMode() const {
         std::lock_guard<std::mutex> lock(_mutex);
-        return _predicted.mode;
+        return _applied.mode;
     }
 
-    // Control task, after applying the modes it took: the state they left, from which the modes posted since are
-    // predicted again.
-    void noteModes(const ModeState &applied, bool busy) {
+    // Control task, as it applies or keeps each mode it took, before it reports it.
+    void noteMode(const ModeState &applied) {
         std::lock_guard<std::mutex> lock(_mutex);
         _applied = applied;
-        _predicted = fold(applied, busy);
     }
 
     // Gait worker. A goal's timeout was reckoned at its gait's pace, so a gait other than the one selected ends it, on
@@ -231,8 +227,6 @@ class MotionInbox {
         const long ownerSilenceMs = static_cast<long>(nowMs - _ownerHeardMs);
         Mail mail;
         mail.modes = std::exchange(_modes, Modes {});
-        // The control task applies them now; until it reports what they left, they are taken to leave the prediction.
-        _applied = _predicted;
         mail.command = std::exchange(_command, std::nullopt);
         mail.commandMs = _commandMs;
         mail.gait = std::exchange(_gait, std::nullopt);
@@ -266,8 +260,7 @@ class MotionInbox {
   private:
     mutable std::mutex _mutex;
     Modes _modes;
-    ModeState _applied;   // as the control task last reported it, or as the modes it took will leave it
-    ModeState _predicted; // _applied with the queued modes folded in
+    ModeState _applied; // as the control task noted it last
     std::optional<CommandMsg> _command;
     unsigned long _commandMs = 0;
     std::optional<GaitType> _gait;
@@ -285,18 +278,5 @@ class MotionInbox {
 
     void cancelGoalLocked() {
         if (_goalDrives) _goalCancelRequested = true;
-    }
-
-    static ModeArbiterDecision decide(const ModeState &s, const ModeMsg &m, bool busy) {
-        return decideMode({s.mode, s.borrowed, s.previous, m.mode, m.kind, busy});
-    }
-
-    // The state the queued modes leave `from`.
-    ModeState fold(ModeState from, bool busy) const {
-        for (int i = 0; i < _modes.count; ++i) {
-            const ModeArbiterDecision d = decide(from, _modes.items[i], busy);
-            from = {d.mode, d.borrowed, d.previous};
-        }
-        return from;
     }
 };

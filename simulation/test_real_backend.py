@@ -128,13 +128,13 @@ class SerialSide:
 
 
 class FakeRobot:
-    """The firmware's side of /api/ws and of the native USB serial link: echoes mode and gait requests to subscribers
-    as its EventBus bridges do, answers pings in order and the features request, streams the IMU yaw at 20 Hz, and
-    records every frame when it handles it. `obey=False` drops mode requests as the firmware drops one it rejects;
-    `silent` stops all sending; `stall(s)` stops handling frames for s seconds, as a WiFi stall does: they queue up
-    and are handled late. `reset_on_open` reboots the board when a serial port opens, as some USB hosts do: the ROM
-    prints its banner, and the frames of the next BOOT_S are lost ("drops") or held until the firmware reads them
-    ("queues"); which of the two a real host does is unmeasured.
+    """The firmware's side of /api/ws and of the native USB serial link: applies a mode request at once and pushes the
+    mode applied, and echoes gait requests, to subscribers as its EventBus bridges do, answers pings in order and the
+    features request, streams the IMU yaw at 20 Hz, and records every frame when it handles it. `obey=False` drops mode
+    requests as the firmware drops one it rejects; `silent` stops all sending; `stall(s)` stops handling frames for s
+    seconds, as a WiFi stall does: they queue up and are handled late. `reset_on_open` reboots the board when a serial
+    port opens, as some USB hosts do: the ROM prints its banner, and the frames of the next BOOT_S are lost ("drops") or
+    held until the firmware reads them ("queues"); which of the two a real host does is unmeasured.
 
     With `goals` it takes goal moves as the firmware does: a goal_move from STAND or WALK is accepted (202), enters
     WALK, settles for GOAL_SETTLE_S, runs for GOAL_RUN_S and is REACHED; its status is pushed on every change, except

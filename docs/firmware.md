@@ -89,8 +89,10 @@ Only the control task changes the motion.
 The subscribers and the goal and odometry requests post into `MotionInbox` under its one mutex, and `updateMotion()` starts by taking everything posted since the last tick, so nothing changes in the middle of one.
 It applies the modes in the order they arrived, then the newest gait, then the newest command, then the goal's mail.
 Commands and gaits coalesce, since each is a whole snapshot; modes queue, eight deep and dropping the oldest when full, since a borrow and a hand-back are decided against the mode they find.
-What a reply or a goal depends on is decided on arrival, under the mutex: a goal's takeover by a stick off centre, the goal's end a mode or a gait implies, the refusal of an odometry reset while a goal drives, and a goal's 409, judged on the mode the queued modes predict, so a goal sent right after a stand is accepted.
-No task waits for the control task: the goal status and the pose the replies carry are the last tick's, which the control task writes back.
+What a goal depends on is decided on arrival, under the mutex: its takeover by a stick off centre, the end a mode or a gait implies, and the refusal of an odometry reset while a goal drives.
+The end a mode implies is the arbiter's decision from the mode applied last.
+No task waits for the control task: the mode, the goal status and the pose the replies carry are the ones the control task noted last.
+A goal's 409 and the animation calls judge the mode applied, the one the robot reports, not a mode still queued; a script that asks for a stand waits for the robot to report it before it sends a goal (`RealBackend.set_mode`), and that goal is accepted.
 The log lines of what a tick took come after its servo write (`Hexapod::updateActuators`), so a slow console does not delay the write.
 The mode is a `MOTION_STATE`: `DEACTIVATED`, `IDLE`, `POSE`, `STAND`, `WALK`, `WALK_NN` and `ANIMATE`.
 
@@ -131,7 +133,8 @@ A stick pushed past the top of the gait in effect therefore walks at that top un
 Mode changes are decided by the pure function in `include/animation/mode_arbiter.h` and applied only by the control task, in the order the modes arrived, which makes it the one place the mode changes.
 An animation play borrows `ANIMATE` from the current mode, and the control task asks for the mode back when the clip ends by posting the hand-back into its own inbox, behind every mode that arrived before it.
 `DEACTIVATED`, `IDLE` and `POSE` always apply at the next tick, even mid-play, which is the safety property.
-`MotionService` republishes the mode it settled on as `ModeMsgKind::APPLIED`, so observers learn the outcome of a borrow or a hand-back.
+`MotionService` publishes every mode it applies, and the mode a refused borrow keeps, as `ModeMsgKind::APPLIED`, after it is in force and noted for the replies.
+The robot reports a mode only then: the app bridge, the status LED and the ESP-NOW adapter's mode mirror take `APPLIED` alone, so a client never sees a mode the robot is not in, and one that waits for the report finds it in force.
 
 The gait and kinematics math has two mirrors outside the firmware.
 `simulation/src/robot/firmware_gait.py` is the port the simulation's research modes run on and must stay in step, enforced by `simulation/test_firmware_gait_parity.py`; the app draws the robot with its own forward kinematics, which the firmware has none of.
@@ -170,7 +173,7 @@ A goal is a correlation request (`goal_move`, 131) carrying a kind and the walki
 The kinds are `FORWARD` (m, negative is backwards), `SIDEWAYS` (m, positive is right in the firmware's frame, which the facade maps), `TURN` (rad, counter-clockwise positive) and `ARC` (radius in m above 0 and an angle, positive curving left; a circle is an arc of 360 deg).
 The style carries `gait`, `speed`, `stride`, `s1`, `h` and `fd`.
 Speed is a share in (0, 1] of the gait's top speed at the posture (`goalTops` over `gait_speed.h`'s envelope), and AUTO's is a share of BI's top.
-The reply is 202 with the goal's status when accepted, 400 when malformed, 409 when the modes posted so far leave the robot in a mode other than `STAND` or `WALK` (deactivated, animating, or `WALK_NN`, which has no stance flags for the odometry) or a firmware update is running, and 422 for a style it cannot walk: TUNED (no speed envelope), or a posture none of whose cells walks the goal's axes.
+The reply is 202 with the goal's status when accepted, 400 when malformed, 409 when the mode the robot last reported, not one requested and not yet applied, is other than `STAND` or `WALK` (deactivated, animating, or `WALK_NN`, which has no stance flags for the odometry) or a firmware update is running, and 422 for a style it cannot walk: TUNED (no speed envelope), or a posture none of whose cells walks the goal's axes.
 A goal accepted while another runs replaces it.
 A posture that is not walkable is clamped as the sliders' is.
 On acceptance the goal takes the style's posture and gait through the existing WALK posture paths (the settle) and the gait swap, enters `WALK` from `STAND`, and then writes the walk's sticks itself every tick, through the path the app's commands take.
@@ -242,7 +245,7 @@ The board's WS2812 on `WS2812_PIN` (GPIO 48) shows the motion mode and whether a
 
 The colour is steady while a client is connected over WebSocket, BLE or the USB serial link, and blinks once a second, half on and half off, while none is.
 A USB host counts as a client, as it does for stopping an animation when the last client goes; the ESP-NOW controller does not, since it only broadcasts.
-The mode shown is the latest `ModeMsg` REQUEST or APPLIED, the mode the app is shown.
+The mode shown is the latest `ModeMsg` APPLIED, the mode the robot is in and the app is shown.
 Red is kept out of the mode colours for the battery warning, which becomes one more input to the pattern in `include/peripherals/status_led_pattern.h` once a battery signal exists (roadmap 2.1).
 
 The service task drives the LED every 100 ms and sends a colour only when it changes, through the IDF's RMT TX driver and its bytes encoder: one RMT channel, no DMA and no LED-strip component.

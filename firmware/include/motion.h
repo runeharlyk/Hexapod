@@ -64,8 +64,9 @@ class MotionService {
 
     // Control task, at the start of the tick after the mode arrived, in arrival order. The rules live in decideMode
     // (animation/mode_arbiter.h); this executes them. The goal a mode ends was ended on arrival
-    // (MotionInbox::postMode). A BORROW or HANDBACK is internal, so the mode it applied or kept is published as APPLIED
-    // for the observers, which see only REQUEST and APPLIED.
+    // (MotionInbox::postMode). Every mode applied, and the mode a refused borrow keeps, is published as APPLIED: the
+    // robot reports a mode only once it is in it, and the observers that show the mode forward APPLIED alone. The mode
+    // is noted for the replies before it is reported, so a client that heard the report finds it in force.
     void handleInputMode(ModeMsg const &m) {
         _handbackSent = false;
         const ModeArbiterDecision d =
@@ -74,37 +75,37 @@ class MotionService {
         _previousMode = d.previous;
         if (d.cancelPending) _animation.cancelPendingPlay();
         if (d.requestLeave) _animation.requestLeave();
-        const bool internal = m.kind != ModeMsgKind::REQUEST;
-        switch (d.action) {
-            case ModeArbiterDecision::APPLY: break;
-            case ModeArbiterDecision::RESTATE: EventBus<ModeMsg>::publish({motionState, ModeMsgKind::APPLIED}); return;
-            case ModeArbiterDecision::IGNORE:
-            case ModeArbiterDecision::GRACEFUL_LEAVE: return;
-        }
-        const bool enteringWalk = d.mode == MOTION_STATE::WALK && motionState != MOTION_STATE::WALK;
+        if (d.action == ModeArbiterDecision::APPLY) applyMode(d.mode);
+        _inbox.noteMode({motionState, _borrowedMode, _previousMode});
+        if (d.action == ModeArbiterDecision::APPLY || d.action == ModeArbiterDecision::RESTATE)
+            EventBus<ModeMsg>::publish({motionState, ModeMsgKind::APPLIED});
+    }
+
+    // Control task.
+    void applyMode(MOTION_STATE mode) {
+        const bool enteringWalk = mode == MOTION_STATE::WALK && motionState != MOTION_STATE::WALK;
         const bool leavingPolicy = motionState == MOTION_STATE::WALK_NN;
-        motionState = d.mode;
+        motionState = mode;
 #if FT_ENABLED(USE_POLICY)
-        if (d.mode == MOTION_STATE::WALK_NN) _policy.reset(gait, default_feet_pos);
+        if (mode == MOTION_STATE::WALK_NN) _policy.reset(gait, default_feet_pos);
 #endif
         // ANIMATE drives no gait, so a half-stride left in gait_state would resume after it.
-        if (!isWalkingMode(d.mode)) stopLocomotionCommand(!actuated(d.mode) || d.mode == MOTION_STATE::ANIMATE);
+        if (!isWalkingMode(mode)) stopLocomotionCommand(!actuated(mode) || mode == MOTION_STATE::ANIMATE);
         // WALK_NN keeps the command, and its policy moves the ride height and the feet; a stride or a posture left
         // from before it would be walked through whatever it left. The stick comes back with the next heartbeat.
         // The classic stroke WALK_NN left in gait_state is snapped out too: ramped out from the feet the policy left,
         // it took a joint past its travel at some phases of the walk before.
         if (enteringWalk) stopLocomotionCommand(leavingPolicy);
-        motionState == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
-        if (internal) EventBus<ModeMsg>::publish({motionState, ModeMsgKind::APPLIED});
+        mode == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
     }
 
     // Adapter task. A play from any active mode borrows ANIMATE and hands the mode back when the
     // player finishes; a play while already in ANIMATE (borrowed or sticky) chains. The clip is loaded
     // before the mode changes, so a refused play leaves the robot in its mode and pose; whether the
-    // borrow is granted is decided by handleInputMode. The animation calls judge the mode the modes
-    // already posted leave (MotionInbox::predictedMode).
+    // borrow is granted is decided by handleInputMode. The animation calls judge the mode the control
+    // task applied last (MotionInbox::appliedMode).
     void handleAnimationCommand(AnimationCommandMsg const &c) {
-        const MOTION_STATE mode = _inbox.predictedMode();
+        const MOTION_STATE mode = _inbox.appliedMode();
         if (!actuated(mode)) return;
         if (!_animation.requestPlay(c)) return;
         if (mode == MOTION_STATE::ANIMATE) return;
@@ -113,13 +114,13 @@ class MotionService {
 
     // Adapter task. A stop only makes sense in ANIMATE.
     void handleAnimationStop() {
-        if (_inbox.predictedMode() == MOTION_STATE::ANIMATE) _animation.requestStop();
+        if (_inbox.appliedMode() == MOTION_STATE::ANIMATE) _animation.requestStop();
     }
 
     // Adapter task, when the last client on every transport has gone. Outside ANIMATE a play may be
     // loaded with its borrow still in flight; dropping it keeps an unattended loop from starting.
     void animationControlLost() {
-        if (_inbox.predictedMode() == MOTION_STATE::ANIMATE)
+        if (_inbox.appliedMode() == MOTION_STATE::ANIMATE)
             _animation.controlLost();
         else
             _animation.cancelPendingPlay();
@@ -127,7 +128,7 @@ class MotionService {
 
     // Adapter task. Puppeteer poses apply only in ANIMATE.
     void handleAnimationPose(PoseMsg const &p) {
-        if (_inbox.predictedMode() == MOTION_STATE::ANIMATE) _animation.setPuppet(p);
+        if (_inbox.appliedMode() == MOTION_STATE::ANIMATE) _animation.setPuppet(p);
     }
 
     void validateAnimation(const char *name, socket_message_AnimationReport &r) { _animation.validate(name, r); }
@@ -278,7 +279,6 @@ class MotionService {
         _modesTaken = mail.modes;
         _gaitTaken = mail.gait;
         for (int i = 0; i < mail.modes.count; ++i) handleInputMode(mail.modes.items[i]);
-        if (mail.modes.count) _inbox.noteModes({motionState, _borrowedMode, _previousMode}, _animation.busy());
         if (mail.gait) handleInputGait(*mail.gait);
         if (mail.command) handleCommand(*mail.command, mail.commandMs);
         takeGoalMail(mail);
@@ -401,15 +401,15 @@ class MotionService {
     bool resetOdometry() { return _inbox.requestOdometryReset(); }
 
     // Adapter task: the reply to a goal, 202 when the control task is to walk it from its next tick. A malformed goal
-    // or style is 400, a robot that will be neither standing nor walking 409, and a style whose speed envelope is empty
+    // or style is 400, a robot that is neither standing nor walking 409, and a style whose speed envelope is empty
     // 422: TUNED, which has none, or a posture none of whose cells walks the goal's axes. The style's posture is
     // clamped as the sliders' is and its sticks are the goal's. A goal accepted while another runs replaces it.
     int startGoal(const Goal &goal, const CommandMsg &style, GaitType gait, GoalOwner owner) {
         CommandMsg s = style;
         if (!GoalController::valid(goal) || !s.sanitize() || (int)gait < 0 || (int)gait > (int)GaitType::AUTO)
             return 400;
-        // The mode the modes posted so far leave, so a script's stand and goal sent at once is a walk.
-        const MOTION_STATE mode = _inbox.predictedMode();
+        // The mode the robot reports: a script waits for the stand it asked for to be reported before it sends a goal.
+        const MOTION_STATE mode = _inbox.appliedMode();
         if (mode != MOTION_STATE::STAND && mode != MOTION_STATE::WALK) return 409;
         clampPosture(s.s1, s.h, s.fd);
         if (!goalTops(goal.kind, gait, {s.s1, s.h, s.fd}, s.stride).walkable()) return 422;
@@ -573,10 +573,10 @@ class MotionService {
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
 
   public:
-    // Adapter task. Lying on its belly with the legs limp or folded, in the mode the modes posted so far leave: still
+    // Adapter task. Lying on its belly with the legs limp or folded, in the mode the control task applied last: still
     // enough to calibrate the IMU against.
     bool resting() const {
-        const MOTION_STATE mode = _inbox.predictedMode();
+        const MOTION_STATE mode = _inbox.appliedMode();
         return mode == MOTION_STATE::DEACTIVATED || mode == MOTION_STATE::IDLE;
     }
 

@@ -81,7 +81,7 @@ Every mode decision is made by the control task, at the start of the tick after 
 - An explicit STAND, WALK or WALK_NN while the runner is busy does not leave at once.
   A running player is stopped, and a pose held by an idle player (a puppeteer pose) eases home through the puppet path toward stance; the requested mode becomes the hand-back target, and the mode changes once every leg is home.
   Leaving at once would snap joint-angle legs to stance at full servo speed.
-  The requested mode is published when it arrives, so a mode observer sees it about one exit time before the robot switches.
+  A mode observer sees the requested mode when the robot switches, about one exit time after the request.
 - DEACTIVATED, IDLE and POSE apply at the next tick even mid-play, because cutting or centring the servos immediately is the safety property.
 - Any other explicit mode ends a borrow, so an explicit ANIMATE mid-play makes the robot stay in ANIMATE afterwards.
 
@@ -89,10 +89,10 @@ A `ModeMsg` carries a `ModeMsgKind` (`firmware/include/message_types.h`):
 
 - `REQUEST` is a mode asked for by a client, the ESP-NOW controller, the OTA service or the firmware itself; every `{MOTION_STATE::X}` initialiser is one.
 - `BORROW` is a play asking for ANIMATE, and `HANDBACK` is the control task asking for the borrowed mode back; the control task decides both against the mode they find when it takes them.
-- `APPLIED` is `MotionService` reporting the mode it switched to, or kept, for a `BORROW` or `HANDBACK`; the motion inbox ignores it.
+- `APPLIED` is `MotionService` reporting a mode once it is in force: every mode it switched to, and the mode a refused `BORROW` keeps; the motion inbox ignores it.
 
-The `ModeData` bridge to the clients and the ESP-NOW adapter's mode mirror pass only `REQUEST` and `APPLIED`.
-A client therefore sees every requested mode when it arrives and every mode the animation borrow or hand-back actually produced, and never a borrow that was refused or a hand-back that was ignored.
+The `ModeData` bridge to the clients, the status LED and the ESP-NOW adapter's mode mirror pass only `APPLIED`.
+A client therefore sees every mode the robot switched to when it switched, and never a request still queued, a borrow that was refused or a hand-back that was ignored.
 
 Losing control stops the animation.
 When a client goes (a WebSocket closes, the BLE central disconnects, or the USB host disappears) and no transport has a client left, `MotionService` asks a running or held animation to stop; a borrowed mode then hands back as usual, and a sticky ANIMATE stays in ANIMATE at stance.

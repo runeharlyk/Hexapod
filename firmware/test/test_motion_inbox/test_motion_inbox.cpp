@@ -259,7 +259,6 @@ void test_a_full_mode_queue_drops_the_oldest_and_keeps_a_newest_deactivation() {
     for (int i = 0; i < MotionInbox::MODE_DEPTH; ++i)
         inbox.postMode({i % 2 ? MOTION_STATE::WALK : MOTION_STATE::STAND}, false);
     inbox.postMode({MOTION_STATE::DEACTIVATED}, false);
-    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, inbox.predictedMode());
     const MotionInbox::Mail mail = inbox.take(0);
     TEST_ASSERT_EQUAL_INT(MotionInbox::MODE_DEPTH, mail.modes.count);
     TEST_ASSERT_EQUAL_UINT(1, mail.modes.dropped);
@@ -268,30 +267,31 @@ void test_a_full_mode_queue_drops_the_oldest_and_keeps_a_newest_deactivation() {
     TEST_ASSERT_EQUAL_UINT(0, inbox.take(0).modes.dropped);
 }
 
-// The mode a reply is decided on is the one the queued modes will leave, folded through the arbiter as the control
-// task will apply them.
-void test_the_predicted_mode_follows_the_queue_through_the_arbiter() {
+// The replies judge the mode the robot reports: the one the control task noted as it applied it, not one queued or
+// taken and not yet applied.
+void test_the_replies_judge_the_mode_the_control_task_noted_last() {
     MotionInbox inbox;
-    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, inbox.predictedMode());
-    // A borrow from a mode that drives no servo is refused.
-    inbox.postMode({MOTION_STATE::ANIMATE, ModeMsgKind::BORROW}, false);
-    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, inbox.predictedMode());
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, inbox.appliedMode());
     inbox.postMode({MOTION_STATE::STAND}, false);
-    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, inbox.predictedMode());
-    inbox.postMode({MOTION_STATE::ANIMATE, ModeMsgKind::BORROW}, false);
-    TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, inbox.predictedMode());
-    inbox.postMode({MOTION_STATE::STAND, ModeMsgKind::HANDBACK}, false);
-    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, inbox.predictedMode());
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, inbox.appliedMode());
     inbox.take(0);
-    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, inbox.predictedMode());
-    // A mode posted while the control task applies what it took is predicted from where those leave it.
-    inbox.postMode({MOTION_STATE::WALK}, false);
-    TEST_ASSERT_EQUAL(MOTION_STATE::WALK, inbox.predictedMode());
-    // The control task reports what it applied, and the modes posted since are predicted from that: here a play the
-    // control task found busy kept ANIMATE, so the walk and the stand posted since are graceful leaves that keep it.
-    inbox.noteModes({MOTION_STATE::ANIMATE, true, MOTION_STATE::STAND}, true);
-    inbox.postMode({MOTION_STATE::STAND}, true);
-    TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, inbox.predictedMode());
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, inbox.appliedMode());
+    inbox.noteMode({MOTION_STATE::STAND, false, MOTION_STATE::STAND});
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, inbox.appliedMode());
+}
+
+// The end a mode implies is decided by the arbiter from the mode applied last: a borrow from a stand or a walk enters
+// ANIMATE and ends the goal, and one from a mode that drives no servo is refused and ends nothing.
+void test_a_borrow_ends_a_goal_only_from_a_mode_it_would_animate() {
+    MotionInbox inbox;
+    inbox.noteMode({MOTION_STATE::WALK, false, MOTION_STATE::STAND});
+    driving(inbox);
+    inbox.postMode({MOTION_STATE::ANIMATE, ModeMsgKind::BORROW}, false);
+    TEST_ASSERT_TRUE(inbox.take(0).goalCancelled);
+    inbox.noteMode({MOTION_STATE::IDLE, false, MOTION_STATE::STAND});
+    driving(inbox);
+    inbox.postMode({MOTION_STATE::ANIMATE, ModeMsgKind::BORROW}, false);
+    TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
 }
 
 // A goal walks in WALK: a mode that leaves it ends a goal accepted before it, and not one accepted after it.
@@ -356,7 +356,8 @@ int main(int, char **) {
     RUN_TEST(test_a_gait_posted_before_the_goals_selection_stays_the_selection);
     RUN_TEST(test_modes_are_taken_in_arrival_order_none_merged);
     RUN_TEST(test_a_full_mode_queue_drops_the_oldest_and_keeps_a_newest_deactivation);
-    RUN_TEST(test_the_predicted_mode_follows_the_queue_through_the_arbiter);
+    RUN_TEST(test_the_replies_judge_the_mode_the_control_task_noted_last);
+    RUN_TEST(test_a_borrow_ends_a_goal_only_from_a_mode_it_would_animate);
     RUN_TEST(test_a_mode_leaving_walk_ends_only_a_goal_posted_before_it);
     RUN_TEST(test_the_replies_carry_the_pose_the_control_task_noted_last);
     return UNITY_END();

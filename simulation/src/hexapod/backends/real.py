@@ -294,8 +294,8 @@ class RealBackend:
                 self._changed.wait(left)
 
     # --- the backend interface ---------------------------------------------------------------------------------
-    # main.cpp's mode bridge forwards every mode request on the robot's EventBus to the subscribers, so the echo says
-    # the request arrived; one its arbiter defers (leaving a busy animation) is echoed before it applies.
+    # main.cpp's mode bridge pushes a mode only once the control task has applied it, so a goal sent after the report
+    # finds the robot in the mode; one its arbiter defers (leaving a busy animation) is reported when it applies.
     def set_mode(self, mode: Mode) -> None:
         self._run(self._send(pb.Message(mode=pb.ModeData(mode=int(mode)))))
         self._wait(lambda: self._mode is mode, f"the robot did not report {mode.name}")
