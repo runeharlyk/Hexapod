@@ -94,6 +94,7 @@ The end a mode implies is the arbiter's decision from the mode applied last.
 No task waits for the control task: the mode, the goal status and the pose the replies carry are the ones the control task noted last.
 A goal's 409 and a play judge the mode applied, the one the robot reports, not a mode still queued.
 A stop, a puppet pose and the loss of the last client judge it too, but also take a play's borrow still queued as ANIMATE, so they reach a play that has not been applied yet.
+A goal accepted while a `DEACTIVATED` is queued is answered 202, since the mode applied still allows it, and is refused at the take, which applies the mode first: its status is `REFUSED`.
 A script that asks for a stand waits for the robot to report it before it sends a goal (`RealBackend.set_mode`), and that goal is accepted.
 The log lines of what a tick took come after its servo write (`Hexapod::updateActuators`), so a slow console does not delay the write.
 The mode is a `MOTION_STATE`: `DEACTIVATED`, `IDLE`, `POSE`, `STAND`, `WALK`, `WALK_NN` and `ANIMATE`.
@@ -179,6 +180,7 @@ The kinds are `FORWARD` (m, negative is backwards), `SIDEWAYS` (m, positive is r
 The style carries `gait`, `speed`, `stride`, `s1`, `h` and `fd`.
 Speed is a share in (0, 1] of the gait's top speed at the posture (`goalTops` over `gait_speed.h`'s envelope), and AUTO's is a share of BI's top.
 The reply is 202 with the goal's status when accepted, 400 when malformed, 409 when the mode the robot last reported, not one requested and not yet applied, is other than `STAND` or `WALK` (deactivated, animating, or `WALK_NN`, which has no stance flags for the odometry) or a firmware update is running, and 422 for a style it cannot walk: TUNED (no speed envelope), or a posture none of whose cells walks the goal's axes.
+A goal accepted while a `DEACTIVATED` is queued is answered 202, and is then refused at the take with the status `REFUSED`, since the robot is deactivated by then.
 A goal accepted while another runs replaces it.
 A posture that is not walkable is clamped as the sliders' is.
 On acceptance the goal takes the style's posture and gait through the existing WALK posture paths (the settle) and the gait swap, enters `WALK` from `STAND`, and then writes the walk's sticks itself every tick, through the path the app's commands take.
