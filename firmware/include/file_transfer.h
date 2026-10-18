@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <filesystem.h>
 
 namespace file_transfer {
 
@@ -48,14 +49,6 @@ inline long fileSize(const char *full) {
 
 inline std::string partPath(const char *full) { return std::string(full) + ".part"; }
 
-// LittleFS renames over an existing file in one step; a host filesystem that refuses to is given the
-// remove first.
-inline bool replace(const char *from, const char *to) {
-    if (std::rename(from, to) == 0) return true;
-    std::remove(to);
-    return std::rename(from, to) == 0;
-}
-
 // 200 written; 400 the chunk does not fit the declared total, does not continue the upload, or is
 // too large; 500 the filesystem refused.
 inline int write(const char *full, uint32_t offset, uint32_t total, const uint8_t *data, size_t len) {
@@ -68,7 +61,7 @@ inline int write(const char *full, uint32_t offset, uint32_t total, const uint8_
     fclose(f);
     if (!ok) return 500;
     if (offset + len < total) return 200;
-    return replace(part.c_str(), full) ? 200 : 500;
+    return FileSystem::replaceFile(part.c_str(), full) ? 200 : 500;
 }
 
 // 200 with n bytes and the file's total; 404 no such file; 400 length over CHUNK_MAX.

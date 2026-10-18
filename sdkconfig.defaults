@@ -84,6 +84,13 @@ CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y
 CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
 CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
 
+# A task the task watchdog watches that does not reset it for 5 s panics the board, which writes the core dump and
+# restarts; the restart puts both PCA9685 boards to sleep. Watched: the control task (main.cpp) and, as the IDF
+# default, both idle tasks, which now restart the board too instead of only logging. 5 s is the IDF default and over
+# twice the longest stall of a control tick that is not hung, about 2.2 s (docs/firmware.md, Task watchdog).
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=5
+
 # Bluetooth / NimBLE (peripheral role for the NUS transport)
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y

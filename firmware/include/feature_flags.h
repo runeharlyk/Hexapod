@@ -39,6 +39,12 @@
 #define ESPNOW_WIFI_CHANNEL 1
 #endif
 
+// Seconds after boot at which the control task hangs on purpose, to check that the task watchdog restarts the board;
+// 0 builds no hang.
+#ifndef DEBUG_HANG_CONTROL_S
+#define DEBUG_HANG_CONTROL_S 0
+#endif
+
 namespace feature_service {
 
 void printFeatureConfiguration();

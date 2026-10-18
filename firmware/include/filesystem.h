@@ -20,5 +20,8 @@ bool init();
 bool readFile(const char *path, std::string &out);
 bool writeFile(const char *path, const char *content);
 bool mkdirRecursive(const char *path);
+// Moves `from` over `to` in one step, so a reset leaves one of the two whole. Removing `to` first and retrying would
+// lose it whenever the move fails for a reason that persists, such as a full file system.
+bool replaceFile(const char *from, const char *to);
 
 } // namespace FileSystem

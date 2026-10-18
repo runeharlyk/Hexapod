@@ -341,6 +341,11 @@ A WebSocket opened by any other page is closed before it carries a frame, and an
 
 Settings services derive from `StatefulService<T>` (`include/template/stateful_service.h`), which guards the state with a mutex and runs update and hook handlers on change.
 `FSPersistencePB` (`include/template/stateful_persistence.h`) stores each one as binary protobuf under `/littlefs/config/` (paths in `include/filesystem.h`; the files keep their legacy `.json` names), writing beside the file and renaming over it so a reset mid-write keeps the old settings, and keeping an unloadable file as `.bak` before defaults replace it.
+A save writes `<file>.tmp`, closes it, which commits its data on LittleFS, and moves it over the file with `FileSystem::replaceFile` (`src/filesystem.cpp`).
+LittleFS makes that move one metadata commit that deletes the old file's entry and moves the new one into its place (`lfs_rename_` in the `joltwallet/littlefs` component's `lfs.c`), so a reset leaves either the old settings or the new ones whole.
+A move that fails leaves the stored file alone and removes the `.tmp`; removing the stored file and retrying would lose it whenever the failure persists, as on a full file system.
+A `.tmp` that a reset leaves behind is never read, and the next save writes over it.
+`test/test_settings_persistence/` checks these cases on the host, with a `replaceFile` that can fail or cut the power at the move.
 Servo calibration, peripheral settings and IMU calibration are also published on their own EventBus types, so the servo and sensor code picks them up with `peek` at start and by subscription afterwards.
 Factory defaults (app name and version, WiFi, AP, `NUM_SERVO`) come from `factory_settings.ini`.
 
@@ -368,6 +373,49 @@ esp-coredump info_corefile -t raw -c <dump.bin> esp32-wroom-camera.elf
 `esp-coredump` ships in the ESP-IDF Python environment; `uv tool install esp-coredump` also provides it.
 The command prints the crashed task's registers, the call stack, the task list and the memory regions.
 
+## Task watchdog
+
+The control task subscribes itself to the IDF task watchdog once `Hexapod::initialize()` has returned, and resets it at the start of every tick (`controlLoop` in `src/main.cpp`).
+`CONFIG_ESP_TASK_WDT_PANIC` with a 5 s `CONFIG_ESP_TASK_WDT_TIMEOUT_S` (`sdkconfig.defaults`) makes a tick that does not end within 5 s a panic: the board writes its core dump and restarts, and the next boot reports the reset reason `task watchdog`.
+Without it a hung control task leaves both PCA9685 boards driving the last pulses, and a `DEACTIVATED` published meanwhile is never applied, since only the control task applies modes.
+The idle tasks of both cores stay watched, as the IDF default, so a core that runs no idle task for 5 s now restarts the board as well, where it used to log only.
+Watching the idle tasks alone does not cover the control task: a busy loop on core 1 starves its idle task, but a deadlock blocks the control task and leaves the idle task running.
+There is no separate sensor task; the control task reads the IMU and the magnetometer itself.
+The service task, the bus workers and the transport tasks are not watched: none of them drives the servos on every tick, and the bus workers block on their queues without a timeout, so they have no loop to reset the watchdog from.
+`Hexapod::initialize()` is not watched either: the MPU6050's start alone waits 350 ms and uploads the DMP firmware in several hundred transfers, which a failing bus would stretch past the timeout into a restart loop.
+
+The timeout has to exceed the longest stall of a tick that is not hung:
+
+- An I2C transfer waits at most 50 ms for the bus lock and 20 ms for the transfer (`include/peripherals/i2c_bus.h`).
+  A tick that reads the IMU and the magnetometer and writes both boards makes about seven transfers, 140 ms when each times out on a held bus; a board that has failed three times in a row is then skipped.
+  The worst tick wakes both boards and restarts both on their first write, some 31 transfers: about 2.2 s if every one of them also waits out the lock.
+- Entering or leaving `DEACTIVATED` sleeps 5 ms per board.
+- The control task reads and writes no flash: animation clips are loaded by the adapter tasks, and the control task takes the clip lock without waiting.
+  A flash erase or write on another task stops both cores while the cache is off, but only for one erase: firmware updates erase one 4 KB sector at a time as they write (`OTA_WITH_SEQUENTIAL_WRITES`, which `esp_https_ota` uses as well unless `bulk_flash_erase` is set), LittleFS erases one 4 KB block at a time, and the IDF yields between erases (`CONFIG_SPI_FLASH_YIELD_DURING_ERASE`).
+  A 4 KB erase takes at most a few hundred milliseconds by the datasheets of common SPI NOR parts; the module's flash part has not been read off.
+  The control task holds no lock that the update or the file system takes, so neither can block it.
+
+5 s is more than twice that bound and the IDF default, which leaves the idle tasks' timing as it was.
+
+### What the restart leaves
+
+The ESP32's reset does not reach the PCA9685 boards, which share only the I2C bus with it: they keep their registers and go on driving the last pulses through the panic, the core dump and the boot.
+The servos go limp when `ServoController::begin()`, in `Hexapod::initialize()` after the IMU's start, starts each board asleep with every channel off (`PCA9685Driver::begin`, checked by `test/test_pca9685/`).
+The motion starts in `DEACTIVATED`, so the boards stay asleep until a client asks for a mode.
+From the hang to limp servos is therefore the 5 s timeout, the core dump's write and about a second of boot and IMU start, an estimate from the code that has not been timed on the robot.
+A board that does not answer at boot is not started then; in `DEACTIVATED` no tick writes to it, so it goes on driving its last pulses until a mode that writes the servos starts it.
+
+### Checking it on the robot
+
+`DEBUG_HANG_CONTROL_S` in `features.ini` (0 by default) builds a control task that suspends itself that many seconds after boot: blocked for good while the idle task runs, as in a deadlock.
+
+1. Set `-D DEBUG_HANG_CONTROL_S=20`, build and flash the firmware over the UART port (`pio run -t upload`), and open the console (`pio device monitor`).
+2. The boot logs `debug build: the control task hangs 20 s after boot`.
+   About 25 s after boot the console shows `Task watchdog got triggered. The following tasks/users did not reset the watchdog in time:` with `control (CPU 1)` under it, then the core dump being written, and the board restarts.
+3. The status page reports the reset reason `task watchdog`.
+4. Read the core dump straight from flash with `esp-coredump --chip esp32s3 --port <COMx> info_corefile .pio/build/esp32-wroom-camera/firmware.elf`, before rebuilding; `Panic reason:` repeats the watchdog's message, and the task list shows `control` suspended in `controlLoop`.
+5. Set the flag back to 0 and flash again; until then the board restarts every 25 s or so.
+
 ## RAM budget
 
 Internal DMA-capable RAM, not total heap, is the limit on this board.
@@ -390,9 +438,9 @@ Delete the generated file before rebuilding, and check that the option arrived w
 ## Build configuration
 
 - `platformio.ini` (repository root): the board environment, pins and hardware flags such as `USE_CAMERA`, the partition table, and the build scripts.
-- `features.ini`: feature flags (`USE_SERIAL_LINK`, `USE_POLICY`, `USE_MPU6050`, `USE_MAG`, `USE_ESPNOW`, `ESPNOW_WIFI_CHANNEL`, `EMBED_WEBAPP`); `include/feature_flags.h` supplies the defaults and `FT_ENABLED`.
+- `features.ini`: feature flags (`USE_SERIAL_LINK`, `USE_POLICY`, `USE_MPU6050`, `USE_MAG`, `USE_ESPNOW`, `ESPNOW_WIFI_CHANNEL`, `EMBED_WEBAPP`) and the debug-only `DEBUG_HANG_CONTROL_S` (Task watchdog); `include/feature_flags.h` supplies the defaults and `FT_ENABLED`.
 - `factory_settings.ini`: factory defaults for settings.
-- `sdkconfig.defaults` (repository root): ESP-IDF options (1 kHz FreeRTOS tick for the 5 ms loop, PSRAM, BLE and WiFi memory placement, rollback, core dumps).
+- `sdkconfig.defaults` (repository root): ESP-IDF options (1 kHz FreeRTOS tick for the 5 ms loop, PSRAM, BLE and WiFi memory placement, rollback, core dumps, the task watchdog's panic).
 
 Every build runs `scripts/pre_build.py` (nanopb generation), `scripts/pack_animations.py` (root `animations/*.json` into `data/animations/*.pb` for the filesystem image) and `scripts/build_app.py` (bakes the web app into `include/WWWData.h` when `EMBED_WEBAPP=1`), and afterwards `scripts/merge_factory.py`, which writes `firmware.factory.bin` (bootloader, partition table, OTA data and app from offset 0) for flashing a blank board.
 The release workflow publishes that image, and the GitHub Pages site serves it through the ESP Web Tools page in `flasher/` (repository root).
