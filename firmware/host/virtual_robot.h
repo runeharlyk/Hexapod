@@ -6,6 +6,7 @@
 // would publish are published the same way, so they reach the motion through its own subscriptions.
 // The bus, clock and IMU stand-ins are process-wide, as on the robot, so one VirtualRobot exists at a time.
 
+#include <communication/handheld_input.h>
 #include <controller_input.h>
 #include <hexapod.h>
 #include <host_clock.h>
@@ -31,6 +32,12 @@ class VirtualRobot {
         if (c.sanitize()) EventBus<CommandMsg>::publish(c);
     }
     void input(const socket_message_ControllerInputData &in) { command(commandFromInput(in)); }
+    // As the ESP-NOW adapter publishes the handheld controller's sticks, its height trim following the mode the last
+    // tick reported; its buttons are left out.
+    void handheld(const controller_packet_t &pkt) {
+        CommandMsg c = handheldCommand(pkt, mode() == MOTION_STATE::STAND, _handheldHeight);
+        if (c.sanitize()) EventBus<CommandMsg>::publish(c);
+    }
     void setMode(MOTION_STATE mode) { EventBus<ModeMsg>::publish({mode}); }
     void setGait(GaitType gait) { EventBus<GaitMsg>::publish({gait}); }
     void setImu(const Peripherals::Imu &imu) { Peripherals::setImu(imu); }
@@ -99,4 +106,5 @@ class VirtualRobot {
   private:
     Hexapod _robot;
     socket_message_TickSample _sample = socket_message_TickSample_init_zero;
+    float _handheldHeight = 0.0f;
 };

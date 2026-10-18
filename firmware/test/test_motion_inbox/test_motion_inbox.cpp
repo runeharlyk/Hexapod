@@ -10,6 +10,9 @@ const Goal FORWARD_GOAL {GoalKind::FORWARD, 1.0f, 0, 0, 0.5f};
 const CommandMsg STYLE {0, 0, 0, 0, 0, 1, 0, 0, 0};
 const CommandMsg CENTRED {0, 0, 0, 0.5f, -0.5f, 1, 1, 0.5f, -1};
 const CommandMsg FORWARD_STICK {0, 1, 0, 0, 0, 0, 0, 0, 0};
+const CommandMsg HANDHELD_FORWARD {0, 0.5f, 0, 0, 0, 0, 0, 0, 0, CommandOrigin::HANDHELD_MOVING};
+const CommandMsg HANDHELD_CENTRED {0, 0, 0, 0, 0.2f, 0, 0, 0, 0, CommandOrigin::HANDHELD};
+constexpr unsigned long WINDOW_MS = MotionInbox::HANDHELD_PRIORITY_MS;
 int owners[2];
 const GoalOwner OWNER {&owners[0], 7};
 const GoalOwner OTHER_ID {&owners[0], 8};
@@ -371,6 +374,114 @@ void test_the_replies_carry_the_pose_the_control_task_noted_last() {
     TEST_ASSERT_EQUAL_FLOAT(2.0f, status.y);
 }
 
+// The handheld's priority: while it has moved a stick within HANDHELD_PRIORITY_MS, it drives, and a client's command,
+// the app's heartbeat above all, is dropped, centred or not, posture and all.
+void test_a_clients_command_within_the_handheld_window_is_dropped() {
+    MotionInbox inbox;
+    inbox.postCommand(HANDHELD_FORWARD, 1000);
+    inbox.postCommand(CENTRED, 1010);
+    MotionInbox::Mail mail = inbox.take(1015);
+    TEST_ASSERT_TRUE(mail.command.has_value());
+    TEST_ASSERT_EQUAL_FLOAT(0.5f, mail.command->ly);
+    TEST_ASSERT_EQUAL(CommandOrigin::HANDHELD_MOVING, mail.command->origin);
+    // Off centre too, and its arrival is no command's: the dead-man counts from the handheld's.
+    inbox.postCommand(FORWARD_STICK, 1100);
+    mail = inbox.take(1105);
+    TEST_ASSERT_FALSE(mail.command.has_value());
+    TEST_ASSERT_EQUAL_UINT32(1000, mail.commandMs);
+}
+
+// The window ends HANDHELD_PRIORITY_MS after the handheld's last frame with a stick off centre, to the millisecond.
+void test_the_handheld_window_ends_600_ms_after_its_last_moving_frame() {
+    MotionInbox inbox;
+    inbox.postCommand(HANDHELD_FORWARD, 1000);
+    inbox.take(1000);
+    inbox.postCommand(CENTRED, 1000 + WINDOW_MS - 1);
+    TEST_ASSERT_FALSE(inbox.take(1000 + WINDOW_MS - 1).command.has_value());
+    inbox.postCommand(CENTRED, 1000 + WINDOW_MS);
+    const MotionInbox::Mail mail = inbox.take(1000 + WINDOW_MS);
+    TEST_ASSERT_TRUE(mail.command.has_value());
+    TEST_ASSERT_EQUAL_UINT32(1000 + WINDOW_MS, mail.commandMs);
+}
+
+// The handheld's own centred frame is its stop, so it is walked at once, and it keeps no window open.
+void test_the_handhelds_centred_frame_is_taken_and_opens_no_window() {
+    MotionInbox inbox;
+    inbox.postCommand(HANDHELD_FORWARD, 1000);
+    inbox.postCommand(HANDHELD_CENTRED, 1100);
+    MotionInbox::Mail mail = inbox.take(1100);
+    TEST_ASSERT_TRUE(mail.command.has_value());
+    TEST_ASSERT_EQUAL_FLOAT(0, mail.command->ly);
+    TEST_ASSERT_EQUAL_UINT32(1100, mail.commandMs);
+    inbox.postCommand(HANDHELD_CENTRED, 1500);
+    inbox.postCommand(CENTRED, 1000 + WINDOW_MS);
+    mail = inbox.take(1000 + WINDOW_MS);
+    TEST_ASSERT_TRUE(mail.command.has_value());
+    TEST_ASSERT_EQUAL(CommandOrigin::CLIENT, mail.command->origin);
+}
+
+// Before any handheld frame with a stick off centre there is no window, from boot on.
+void test_a_robot_that_never_saw_the_handheld_move_takes_every_command() {
+    MotionInbox inbox;
+    inbox.postCommand(HANDHELD_CENTRED, 0);
+    inbox.postCommand(FORWARD_STICK, 1);
+    TEST_ASSERT_TRUE(inbox.take(1).command.has_value());
+    TEST_ASSERT_TRUE(inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, 2));
+}
+
+// A goal asked for while the handheld drives is refused, decided under the lock of the posts; once the window ends it
+// is accepted.
+void test_a_goal_within_the_handheld_window_is_refused() {
+    MotionInbox inbox;
+    inbox.postCommand(HANDHELD_FORWARD, 1000);
+    TEST_ASSERT_FALSE(inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, OWNER, 1000 + WINDOW_MS - 1));
+    TEST_ASSERT_FALSE(inbox.take(1000 + WINDOW_MS - 1).goal.has_value());
+    TEST_ASSERT_FALSE(inbox.goalDrives());
+    TEST_ASSERT_TRUE(inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, OWNER, 1000 + WINDOW_MS));
+    TEST_ASSERT_TRUE(inbox.take(1000 + WINDOW_MS).goal.has_value());
+}
+
+// The handheld moving any axis ends a goal, its tilt and its height trim included, which leave the command's walk
+// sticks centred; a client's command so centred leaves the goal alone.
+void test_a_handheld_moving_frame_ends_a_goal_though_its_walk_sticks_are_centred() {
+    MotionInbox inbox;
+    driving(inbox);
+    inbox.postCommand(CENTRED, 10);
+    TEST_ASSERT_FALSE(inbox.take(10).goalCancelled);
+    CommandMsg tilt = CENTRED;
+    tilt.origin = CommandOrigin::HANDHELD_MOVING;
+    inbox.postCommand(tilt, 20);
+    const MotionInbox::Mail mail = inbox.take(20);
+    TEST_ASSERT_TRUE(mail.goalCancelled);
+    TEST_ASSERT_TRUE(mail.command.has_value());
+    TEST_ASSERT_FALSE(inbox.goalDrives());
+}
+
+// A stop is never gated: a mode from any source, DEACTIVATED above all, is queued while the handheld drives.
+void test_a_mode_within_the_handheld_window_is_queued() {
+    MotionInbox inbox;
+    inbox.postCommand(HANDHELD_FORWARD, 1000);
+    inbox.postMode({MOTION_STATE::DEACTIVATED}, false);
+    const MotionInbox::Mail mail = inbox.take(1010);
+    TEST_ASSERT_EQUAL_INT(1, mail.modes.count);
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, mail.modes.items[0].mode);
+}
+
+// The clock wraps after 49 days; the window is a difference, so it spans the wrap. A poster reads its clock before the
+// lock, so one read before the handheld's frame was posted is within the window too.
+void test_the_handheld_window_spans_the_clocks_wrap() {
+    MotionInbox inbox;
+    const unsigned long moved = static_cast<unsigned long>(-1) - 100;
+    inbox.postCommand(HANDHELD_FORWARD, moved);
+    inbox.take(moved);
+    inbox.postCommand(CENTRED, moved - 1);
+    TEST_ASSERT_FALSE(inbox.take(moved).command.has_value());
+    inbox.postCommand(CENTRED, moved + WINDOW_MS - 1);
+    TEST_ASSERT_FALSE(inbox.take(moved + WINDOW_MS - 1).command.has_value());
+    inbox.postCommand(CENTRED, moved + WINDOW_MS);
+    TEST_ASSERT_TRUE(inbox.take(moved + WINDOW_MS).command.has_value());
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_goal_is_taken_once_and_reported_settling_until_then);
@@ -396,5 +507,13 @@ int main(int, char **) {
     RUN_TEST(test_a_borrow_ends_a_goal_only_from_a_mode_it_would_animate);
     RUN_TEST(test_a_mode_leaving_walk_ends_only_a_goal_posted_before_it);
     RUN_TEST(test_the_replies_carry_the_pose_the_control_task_noted_last);
+    RUN_TEST(test_a_clients_command_within_the_handheld_window_is_dropped);
+    RUN_TEST(test_the_handheld_window_ends_600_ms_after_its_last_moving_frame);
+    RUN_TEST(test_the_handhelds_centred_frame_is_taken_and_opens_no_window);
+    RUN_TEST(test_a_robot_that_never_saw_the_handheld_move_takes_every_command);
+    RUN_TEST(test_a_goal_within_the_handheld_window_is_refused);
+    RUN_TEST(test_a_handheld_moving_frame_ends_a_goal_though_its_walk_sticks_are_centred);
+    RUN_TEST(test_a_mode_within_the_handheld_window_is_queued);
+    RUN_TEST(test_the_handheld_window_spans_the_clocks_wrap);
     return UNITY_END();
 }

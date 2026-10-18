@@ -94,16 +94,23 @@ class MotionInbox {
     // has said so. A goal with no transport, the host's own, has no owner to fall silent.
     static constexpr unsigned long OWNER_SILENCE_MS = 2000;
 
+    // The ESP-NOW handheld drives for this long after its last frame with a stick off centre: as long as the walk obeys
+    // its last stick (MotionService's STEERING_TIMEOUT_MS), so a handheld whose link drops mid-stride is stopped by the
+    // dead-man at the moment the other sources are heard again.
+    static constexpr unsigned long HANDHELD_PRIORITY_MS = 600;
+
     // Adapter task: a goal accepted, replacing one not yet taken. It drives the walk's sticks from now until it ends or
-    // an operator takes the walk back.
-    void postGoal(const Goal &goal, const CommandMsg &style, GaitType gait, GoalOwner owner, unsigned long nowMs) {
+    // an operator takes the walk back. Refused, false, while the handheld drives.
+    bool postGoal(const Goal &goal, const CommandMsg &style, GaitType gait, GoalOwner owner, unsigned long nowMs) {
         std::lock_guard<std::mutex> lock(_mutex);
+        if (handheldDrivingLocked(nowMs)) return false;
         _goal = GoalRequest {goal, style, gait, ++_goalCount};
         _goalOwner = owner;
         _ownerHeardMs = nowMs;
         _goalDrives = true;
         // Whatever ended the goal before is done with: a cancel from now on is this goal's.
         _goalCancelRequested = false;
+        return true;
     }
 
     // Any task: ends the goal driving the walk, if any.
@@ -125,13 +132,23 @@ class MotionInbox {
     }
 
     // Command worker. Each command is a full snapshot of the sticks and sliders, so the newest replaces one not yet
-    // taken. While a goal drives the walk, a centred command is no command, its posture and the rest of it too: the
-    // heartbeats of the app, the facade and the ESP-NOW controller. A stick off centre takes the walk back, so the goal
-    // ends and never writes the sticks again, and the command is walked.
+    // taken. While the handheld drives, a client's command is dropped, centred or not: the app's heartbeat would stop
+    // the handheld's walk for a tick and move its posture. The handheld's own centred frame is its stop, and is walked.
+    // A command dropped is no command to the dead-man either. While a goal drives the walk, a centred command is no
+    // command, its posture and the rest of it too: the heartbeats of the app, the facade and the ESP-NOW controller. A
+    // stick off centre, or the handheld moving any of its own, takes the walk back, so the goal ends and never writes
+    // the sticks again, and the command is walked.
     void postCommand(const CommandMsg &c, unsigned long nowMs) {
         std::lock_guard<std::mutex> lock(_mutex);
+        const bool handheldMoving = c.origin == CommandOrigin::HANDHELD_MOVING;
+        if (handheldMoving) {
+            _handheldMovedMs = nowMs;
+            _handheldMoved = true;
+        } else if (c.origin == CommandOrigin::CLIENT && handheldDrivingLocked(nowMs)) {
+            return;
+        }
         if (_goalDrives) {
-            if (c.lx == 0.f && c.ly == 0.f && c.rx == 0.f) return;
+            if (!handheldMoving && c.lx == 0.f && c.ly == 0.f && c.rx == 0.f) return;
             _goalDrives = false;
             _goalCancelRequested = true;
         }
@@ -289,8 +306,17 @@ class MotionInbox {
     socket_message_GoalStatus _goalStatus = socket_message_GoalStatus_init_zero;
     bool _odometryReset = false;
     OdometryEstimate _odometry {};
+    // The arrival of the handheld's last frame with a stick off centre, once there was one.
+    unsigned long _handheldMovedMs = 0;
+    bool _handheldMoved = false;
 
     void cancelGoalLocked() {
         if (_goalDrives) _goalCancelRequested = true;
+    }
+
+    // A poster reads its clock before the lock, so a frame posted after that read carries a later time: the difference
+    // is signed, as the owner's silence is.
+    bool handheldDrivingLocked(unsigned long nowMs) const {
+        return _handheldMoved && static_cast<long>(nowMs - _handheldMovedMs) < static_cast<long>(HANDHELD_PRIORITY_MS);
     }
 };

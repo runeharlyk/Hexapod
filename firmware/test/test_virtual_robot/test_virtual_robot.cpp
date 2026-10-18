@@ -47,6 +47,15 @@ void standUp(VirtualRobot &robot) {
 
 const CommandMsg FORWARD{0, 1, 0, 0, 0, 0, 0, 0};
 
+constexpr int HANDHELD_PERIOD_TICKS = 4; // the handheld's 50 Hz while a stick is off centre
+constexpr int APP_HEARTBEAT_TICKS = 40;  // app/src/lib/control-link.ts COMMAND_HEARTBEAT_MS
+
+// The handheld controller's frame, its axes as shares of full scale.
+controller_packet_t handheldFrame(float lx, float ly, float rx = 0, float ry = 0) {
+    const auto axis = [](float v) { return static_cast<int16_t>(std::lround(v * AXIS_FULL_SCALE)); };
+    return {CONTROLLER_PACKET_VERSION, 0, axis(lx), axis(ly), axis(rx), axis(ry), 0};
+}
+
 }  // namespace
 
 void setUp() {}
@@ -218,6 +227,68 @@ void test_the_dead_man_window_runs_from_the_commands_arrival_not_its_take() {
     }
     const int sinceArrival = (HELD_US + VirtualRobot::TICK_US * (ticks + 1)) / VirtualRobot::TICK_US;
     TEST_ASSERT_EQUAL_INT(ticksFor(0.6f), sinceArrival);
+}
+
+// A walk on the handheld's stick at its 50 Hz, the app's heartbeat `heartbeat` arriving between its frames when given:
+// per tick, as walkWithHeartbeatUntil samples it.
+std::vector<MotionSample> handheldWalk(const CommandMsg *heartbeat, float seconds) {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setMode(MOTION_STATE::WALK);
+    std::vector<MotionSample> trace;
+    for (int t = 0; t < ticksFor(seconds); ++t) {
+        if (t % HANDHELD_PERIOD_TICKS == 0) robot.handheld(handheldFrame(0, 0.8f));
+        if (heartbeat && t % APP_HEARTBEAT_TICKS == 2) robot.command(*heartbeat);
+        robot.tick();
+        MotionSample sample;
+        std::copy_n(robot.angles(), 18, sample.begin());
+        sample[18] = robot.bodyCommand().zm;
+        sample[19] = robot.gaitCommand().step_y;
+        trace.push_back(sample);
+    }
+    return trace;
+}
+
+// The handheld has priority (MotionInbox::HANDHELD_PRIORITY_MS): the app re-sends its last command every 200 ms, its
+// sticks centred and its sliders' posture while untouched, and while the handheld walks the robot those heartbeats
+// change no joint angle, no stroke and no body height, where each one used to stop the walk for a tick and move the
+// posture.
+void test_the_apps_heartbeat_leaves_a_handheld_walk_alone() {
+    const CommandMsg heartbeat {0, 0, 0, 0, 0.3f, 0, 0, 0, 0};
+    const std::vector<MotionSample> alone = handheldWalk(nullptr, 3.0f);
+    const std::vector<MotionSample> heard = handheldWalk(&heartbeat, 3.0f);
+    TEST_ASSERT_GREATER_THAN_FLOAT(GAIT_STRIDE_DEADBAND_MM, alone.back()[19]);
+    for (size_t t = 0; t < alone.size(); ++t) {
+        char msg[48];
+        std::snprintf(msg, sizeof(msg), "tick %u", (unsigned)t);
+        TEST_ASSERT_EQUAL_FLOAT_ARRAY_MESSAGE(alone[t].data(), heard[t].data(), 20, msg);
+    }
+}
+
+// Once the handheld lets go, its centred frame stops it at once, and the app is heard again 600 ms after the
+// handheld's last frame with a stick off centre: the app's heartbeat carries another height, which the stand takes
+// from then on and not a tick before.
+void test_the_app_is_heard_again_600_ms_after_the_handheld_lets_go() {
+    VirtualRobot robot;
+    standUp(robot);
+    const CommandMsg heartbeat {0, 0, 0, 0, 0.5f, 0, 0, 0, 0};
+    const float standingZm = robot.bodyCommand().zm;
+    const int release = ticksFor(1.0f);
+    const int lastMoving = release - HANDHELD_PERIOD_TICKS;
+    int heightTaken = -1;
+    for (int t = 0; t < ticksFor(2.5f); ++t) {
+        if (t < release && t % HANDHELD_PERIOD_TICKS == 0) robot.handheld(handheldFrame(0.5f, 0));
+        if (t == release) robot.handheld(handheldFrame(0, 0));
+        if (t % APP_HEARTBEAT_TICKS == 3) robot.command(heartbeat);
+        robot.tick();
+        if (t < release) TEST_ASSERT_GREATER_THAN_FLOAT(0, robot.bodyCommand().xm);
+        if (t == release) TEST_ASSERT_EQUAL_FLOAT(0, robot.bodyCommand().xm);
+        if (heightTaken < 0 && robot.bodyCommand().zm != standingZm) heightTaken = t;
+    }
+    int firstHeard = lastMoving + ticksFor(0.6f);
+    while (firstHeard % APP_HEARTBEAT_TICKS != 3) ++firstHeard;
+    TEST_ASSERT_EQUAL_INT(firstHeard, heightTaken);
+    TEST_ASSERT_EQUAL_FLOAT(bodyHeightMm(0.5f), robot.bodyCommand().zm);
 }
 
 // The telemetry reports the write of its own tick: none in a mode that sends no pose, a success in a stand, and an idle
@@ -1524,6 +1595,8 @@ int main(int, char **) {
     RUN_TEST(test_a_walk_obeys_its_last_command_for_600_ms_and_no_longer);
     RUN_TEST(test_the_telemetry_flags_the_dead_man_stop_from_the_tick_it_fires);
     RUN_TEST(test_the_dead_man_window_runs_from_the_commands_arrival_not_its_take);
+    RUN_TEST(test_the_apps_heartbeat_leaves_a_handheld_walk_alone);
+    RUN_TEST(test_the_app_is_heard_again_600_ms_after_the_handheld_lets_go);
     RUN_TEST(test_the_telemetry_reports_the_servo_write_of_its_own_tick);
     RUN_TEST(test_a_height_only_command_is_obeyed_for_2_s_after_silence);
     RUN_TEST(test_no_servo_is_driven_past_its_joint_travel);

@@ -405,9 +405,10 @@ class MotionService {
     bool resetOdometry() { return _inbox.requestOdometryReset(); }
 
     // Adapter task: the reply to a goal, 202 when the control task is to walk it from its next tick. A malformed goal
-    // or style is 400, a robot that is neither standing nor walking 409, and a style whose speed envelope is empty
-    // 422: TUNED, which has none, or a posture none of whose cells walks the goal's axes. The style's posture is
-    // clamped as the sliders' is and its sticks are the goal's. A goal accepted while another runs replaces it.
+    // or style is 400, a robot that is neither standing nor walking 409, a style whose speed envelope is empty 422:
+    // TUNED, which has none, or a posture none of whose cells walks the goal's axes, and a goal while the handheld
+    // drives 423. The style's posture is clamped as the sliders' is and its sticks are the goal's. A goal accepted
+    // while another runs replaces it.
     int startGoal(const Goal &goal, const CommandMsg &style, GaitType gait, GoalOwner owner) {
         CommandMsg s = style;
         if (!GoalController::valid(goal) || !s.sanitize() || (int)gait < 0 || (int)gait > (int)GaitType::AUTO)
@@ -420,8 +421,7 @@ class MotionService {
         // A full stick walks the gait's top speed, which the goal's speed is a share of.
         s.lx = s.ly = s.rx = s.ry = 0.f;
         s.s = 1.f;
-        _inbox.postGoal(goal, s, gait, owner, millis());
-        return 202;
+        return _inbox.postGoal(goal, s, gait, owner, millis()) ? 202 : 423;
     }
 
     // Any task.
@@ -520,6 +520,8 @@ class MotionService {
     // senders repeat it (app heartbeat 200 ms, ESP-NOW controller 50 Hz), so silence for three
     // heartbeats means the link is gone and the robot must stop walking.
     static constexpr unsigned long STEERING_TIMEOUT_MS = 600;
+    static_assert(MotionInbox::HANDHELD_PRIORITY_MS == STEERING_TIMEOUT_MS,
+                  "the handheld drives for as long as the walk obeys its last stick");
 
     float default_feet_pos[6][4];
 

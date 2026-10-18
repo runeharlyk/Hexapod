@@ -353,6 +353,47 @@ void test_centred_commands_during_a_goal_change_nothing() {
     assertSameWalk(quiet, heard);
 }
 
+// The handheld controller's frame, its axes as shares of full scale.
+controller_packet_t handheldFrame(float lx, float ly, float rx = 0, float ry = 0) {
+    const auto axis = [](float v) { return static_cast<int16_t>(std::lround(v * AXIS_FULL_SCALE)); };
+    return {CONTROLLER_PACKET_VERSION, 0, axis(lx), axis(ly), axis(rx), axis(ry), 0};
+}
+
+// The handheld drives while it moves a stick (MotionInbox::HANDHELD_PRIORITY_MS): a goal asked for meanwhile is
+// refused, 423, and leaves the robot as it was; once the handheld has been still for 600 ms a goal is taken.
+void test_a_goal_is_refused_while_the_handheld_drives() {
+    Rig &rig = newRig();
+    standUp(rig);
+    rig.robot.handheld(handheldFrame(0.3f, 0));
+    rig.tick();
+    TEST_ASSERT_EQUAL_INT(423, rig.robot.goalMove(forward(0.3f), style(), GaitType::TRI_GATE));
+    rig.tick();
+    TEST_ASSERT_EQUAL(GoalState::IDLE, rig.state());
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, rig.robot.mode());
+    rig.robot.handheld(handheldFrame(0, 0));
+    rig.run(0.6f);
+    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(0.3f), style(), GaitType::TRI_GATE));
+}
+
+// The handheld moving any axis ends a running goal and drives the walk at once, its tilt stick included, which a
+// client's command may hold off centre without ending the goal.
+void test_the_handheld_moving_a_stick_cancels_the_goal() {
+    {
+        Rig &rig = newRig();
+        walkingForward(rig);
+        rig.robot.handheld(handheldFrame(0, -0.5f));
+        rig.tick();
+        TEST_ASSERT_EQUAL(GoalState::CANCELLED, rig.state());
+        rig.run(0.3f);
+        TEST_ASSERT_LESS_THAN_FLOAT(-GAIT_STRIDE_DEADBAND_MM, rig.robot.gaitCommand().step_y);
+    }
+    Rig &rig = newRig();
+    walkingForward(rig);
+    rig.robot.handheld(handheldFrame(0, 0, 0, 0.5f));
+    rig.tick();
+    TEST_ASSERT_EQUAL(GoalState::CANCELLED, rig.state());
+}
+
 // Review focus 1: any stick off centre, from any source, cancels the goal and walks as the operator asks at once.
 void test_an_off_centre_stick_cancels_the_goal_and_drives_the_walk() {
     for (int axis = 0; axis < 3; ++axis) {
@@ -803,6 +844,8 @@ int main(int, char **) {
     RUN_TEST(test_a_goal_of_a_centimetre_or_a_few_degrees_reaches_it);
     RUN_TEST(test_centred_commands_during_a_goal_change_nothing);
     RUN_TEST(test_an_off_centre_stick_cancels_the_goal_and_drives_the_walk);
+    RUN_TEST(test_a_goal_is_refused_while_the_handheld_drives);
+    RUN_TEST(test_the_handheld_moving_a_stick_cancels_the_goal);
     RUN_TEST(test_a_mode_change_cancels_the_goal);
     RUN_TEST(test_a_gait_change_over_the_wire_cancels_the_goal);
     RUN_TEST(test_a_client_sending_the_goals_own_gait_keeps_the_goal);

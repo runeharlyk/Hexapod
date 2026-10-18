@@ -142,6 +142,7 @@ static const char *goalRefusal(uint32_t status) {
         case 400: return "A malformed goal or style";
         case 409: return "Only a standing or walking robot takes a goal, and not while updating";
         case 422: return "No goal walks in this style: TUNED, or no speed at its posture";
+        case 423: return "The handheld controller is driving";
         default: return "";
     }
 }
