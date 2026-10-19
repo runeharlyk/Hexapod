@@ -14,6 +14,7 @@ import {
   drivenMode,
   simulation
 } from '../../src/lib/stores/drive'
+import { commandOf } from '../../src/lib/controller-input'
 import { GaitType } from '../../src/lib/gait'
 import { MotionModes } from '../../src/lib/motion'
 import type { Command } from '../../src/lib/simulation/virtual-robot'
@@ -77,6 +78,34 @@ describe('the controls', () => {
     expect(sticks(get(outControllerData))).toEqual([0, 0, 0, 0])
     expect(sticks(get(simulation.command))).toEqual([0, 0, 0, 0])
     expect(emit).not.toHaveBeenCalled()
+  })
+
+  it("show each robot's own sliders, so neither takes the other's on its next stick", () => {
+    const robotSliders = { height: 0.3, speed: 0.5, s1: 0.2, feetDistance: -0.1, stride: 0.4 }
+    const simSliders = { height: -0.2, speed: 0.1, s1: 0.6, feetDistance: 0.3, stride: -0.5 }
+    const sliders = () => {
+      const { height, speed, s1, feetDistance, stride } = get(input)
+      return { height, speed, s1, feetDistance, stride }
+    }
+    simulation.command.set(CENTRED)
+    input.update(i => ({ ...i, ...robotSliders }))
+    drive(commandOf(get(input)))
+
+    driveSimulation(true)
+    expect(sliders()).toEqual({ height: 0, speed: 0, s1: 0, feetDistance: 0, stride: 0 })
+    input.update(i => ({ ...i, ...simSliders }))
+    drive(commandOf(get(input)))
+
+    driveSimulation(false)
+    expect(sliders()).toEqual(robotSliders)
+    input.update(i => ({ ...i, left: { x: 0.5, y: 0 } }))
+    drive(commandOf(get(input)))
+    expect(get(outControllerData).slice(4)).toEqual(
+      commandOf({ ...get(input), ...robotSliders }).slice(4)
+    )
+
+    driveSimulation(true)
+    expect(sliders()).toEqual(simSliders)
   })
 
   it('drive the robot when the simulation view is not shown', () => {
