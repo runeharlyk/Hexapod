@@ -3,8 +3,8 @@
 // A sweep of the I2C bus for the addresses that acknowledge, run on the control task. The bus's interrupt is bound to
 // the core that opened the bus, the control task's, and in IDF 5.4.2 a probe from the other core can take a stale
 // completion for its own and report a device that is not there (docs/firmware.md, I2C scan). So a requester posts
-// the sweep and waits, and the control task probes a few addresses after each tick's work: the sweep never holds the
-// bus across a tick, and the control task never waits on the requester.
+// the sweep and waits, and the control task probes a few addresses after each tick's work, and never waits on the
+// requester. A sweep costs a tick about 1 ms; a probe the driver times out costs it 20 ms once, and ends the sweep.
 
 #include <atomic>
 #include <cstddef>
@@ -20,7 +20,7 @@ class I2CScan {
     // The driver probes at 100 kHz, about 0.1 ms an address: by estimate 1 ms of a 5 ms tick, and 14 ticks a sweep.
     static constexpr int PROBES_PER_TICK = 8;
 
-    enum class Outcome { DONE, ALREADY_RUNNING, BUS_BUSY, TIMED_OUT };
+    enum class Outcome { DONE, ALREADY_RUNNING, BUS_BUSY, BUS_FAULT, TIMED_OUT };
 
     struct Found {
         size_t count = 0;
@@ -57,6 +57,7 @@ class I2CScan {
         for (int i = 0; i < budget; i++) {
             switch (I2CBus::instance().tryProbe(next_)) {
                 case i2c_health::Probe::BUSY: return end(State::BUS_BUSY);
+                case i2c_health::Probe::FAULT: return end(State::BUS_FAULT);
                 case i2c_health::Probe::PRESENT: found_.addresses[found_.count++] = next_; break;
                 case i2c_health::Probe::ABSENT: break;
             }
@@ -66,18 +67,22 @@ class I2CScan {
 
   private:
     // CLAIMED keeps a second requester out while the first resets the sweep; only the control task leaves ABANDONED.
-    enum class State : uint8_t { IDLE, CLAIMED, RUNNING, DONE, BUS_BUSY, ABANDONED };
+    enum class State : uint8_t { IDLE, CLAIMED, RUNNING, DONE, BUS_BUSY, BUS_FAULT, ABANDONED };
 
     bool ended() const {
         const State state = state_.load(std::memory_order_acquire);
-        return state == State::DONE || state == State::BUS_BUSY;
+        return state == State::DONE || state == State::BUS_BUSY || state == State::BUS_FAULT;
     }
 
     Outcome collect(Found& found) {
-        const bool done = state_.load(std::memory_order_acquire) == State::DONE;
-        if (done) found = found_;
+        const State state = state_.load(std::memory_order_acquire);
+        if (state == State::DONE) found = found_;
         state_.store(State::IDLE, std::memory_order_release);
-        return done ? Outcome::DONE : Outcome::BUS_BUSY;
+        switch (state) {
+            case State::DONE: return Outcome::DONE;
+            case State::BUS_FAULT: return Outcome::BUS_FAULT;
+            default: return Outcome::BUS_BUSY;
+        }
     }
 
     // A requester that gave up has left the sweep ABANDONED; it reads nothing more, so the scan is free again.

@@ -169,7 +169,7 @@ class CommAdapterBase {
         SemaphoreHandle_t mutex_;
     };
 
-    // Falls back to the heap for the few messages (I2C scan, WiFi network list) that outgrow the static buffer.
+    // Falls back to the heap for a message that outgrows the static buffer.
     class EncodeBuffer {
       public:
         EncodeBuffer(uint8_t* staticBuffer, size_t staticSize, size_t needed) {

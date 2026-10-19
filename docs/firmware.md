@@ -283,10 +283,11 @@ The I2C page's scan probes every unreserved address, 0x08 to 0x77, and the reply
 The probes run on the control task: the bus's interrupt is bound to the core that opened the bus, the control task's core 1, and in IDF 5.4.2 an `i2c_master_probe` from core 0 can take a stale completion of the previous probe for its own and report a device that is not there.
 Probed from the BLE task on core 0, the scan returned some 16 random low addresses, cut at the reply's former 16 entries, and none of the robot's real devices; the race is read from the driver source and not yet confirmed on the robot.
 Every other transfer runs on core 1 as well: the control task's, the EventBus worker's servo writes and the IMU calibration's `imu_cal` task, so no transfer from core 0 meets a probe's latched completion.
-The request handler posts the scan and waits for it, at most 500 ms; the control task probes up to eight addresses after each tick's servo write, so the sweep takes 14 ticks and never holds the bus across a tick.
+The request handler posts the scan and waits for it, at most 500 ms; the control task probes up to eight addresses after each tick's servo write, so the sweep takes 14 ticks.
+A probe the driver times out holds its tick for 20 ms instead, some four missed ticks, and ends the sweep; the driver fixes that limit for a probe's clock stretching, and a shorter wait would return with the probe still on the bus.
 The driver probes at 100 kHz whatever the bus frequency, about 0.1 ms an address on the wire, so the eight cost a tick some 1 ms by estimate; the tick's `compute_us` in the telemetry includes them, which is where to read the real cost.
 A probe takes the bus lock without waiting, so the control task never waits on another task for it.
-A bus that another task holds, or a probe that times out, fails the scan with 503 instead of reporting the address as empty; a second request while a scan runs is refused with 503 as well.
+A bus that another task holds fails the scan with 503, "The I2C bus is busy", and one that is not running or failed a probe, a timeout among them, with 503, "The I2C bus is not running or failed a probe", instead of reporting the address as empty; a second request while a scan runs is refused with 503 as well.
 `test/test_i2c_scan/` checks the set reported, the range, the probes per tick and the refusals against the register fake, which cannot reproduce the driver's cross-core race itself.
 
 ### I2C errors and recovery

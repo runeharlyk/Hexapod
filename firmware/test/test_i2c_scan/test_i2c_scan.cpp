@@ -128,6 +128,24 @@ void test_a_busy_bus_fails_the_scan_instead_of_reporting_no_devices() {
     TEST_ASSERT(reported(found) == (std::vector<uint8_t> {0x40}));
 }
 
+// A bus that is down, or a probe the driver times out, is not reported as a busy bus, which would send the user looking
+// for another task that holds it.
+void test_a_faulty_bus_fails_the_scan_as_a_fault_rather_than_as_busy() {
+    plug({0x40});
+    I2CBus::instance().faulty = true;
+    I2CScan scan;
+    Ticks ticks {scan};
+    I2CScan::Found found;
+
+    TEST_ASSERT(scan.request(found, ticks, 100) == Outcome::BUS_FAULT);
+    TEST_ASSERT_EQUAL(0, found.count);
+    TEST_ASSERT_EQUAL(1, ticks.ticks);
+
+    I2CBus::instance().faulty = false;
+    TEST_ASSERT(scan.request(found, ticks, 100) == Outcome::DONE);
+    TEST_ASSERT(reported(found) == (std::vector<uint8_t> {0x40}));
+}
+
 void test_a_bus_that_turns_busy_mid_sweep_fails_the_scan() {
     plug({0x10, 0x60});
     I2CScan scan;
@@ -212,6 +230,7 @@ int main(int, char**) {
     RUN_TEST(test_a_tick_probes_at_most_eight_addresses);
     RUN_TEST(test_a_tick_without_a_request_probes_nothing);
     RUN_TEST(test_a_busy_bus_fails_the_scan_instead_of_reporting_no_devices);
+    RUN_TEST(test_a_faulty_bus_fails_the_scan_as_a_fault_rather_than_as_busy);
     RUN_TEST(test_a_bus_that_turns_busy_mid_sweep_fails_the_scan);
     RUN_TEST(test_a_second_request_while_one_runs_is_refused);
     RUN_TEST(test_a_sweep_that_does_not_end_in_time_is_abandoned_and_dropped);

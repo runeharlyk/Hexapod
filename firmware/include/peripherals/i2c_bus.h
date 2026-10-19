@@ -133,13 +133,15 @@ class I2CBus {
     }
 
     // A scan's probe (peripherals/i2c_scan.h), on the control task: it takes the bus without waiting, so a sweep never
-    // stalls a tick, and it tells a bus it could not have, or one held past the probe's timeout, from an empty address.
+    // waits on another task, and it tells a bus it could not have, or one that is down or failed the probe, from an
+    // empty address. A probe the driver times out costs the tick 20 ms, the driver's own SCL-stretch limit for a probe.
     i2c_health::Probe tryProbe(uint8_t addr) {
         Lock lock(_mutex, 0);
-        if (!lock.held() || !_initialized) return i2c_health::Probe::BUSY;
+        if (!lock.held()) return i2c_health::Probe::BUSY;
+        if (!_initialized) return i2c_health::Probe::FAULT;
         const esp_err_t err = i2c_master_probe(_bus, addr, TRANSFER_TIMEOUT_MS);
         if (err == ESP_OK) return i2c_health::Probe::PRESENT;
-        return err == ESP_ERR_NOT_FOUND ? i2c_health::Probe::ABSENT : i2c_health::Probe::BUSY;
+        return err == ESP_ERR_NOT_FOUND ? i2c_health::Probe::ABSENT : i2c_health::Probe::FAULT;
     }
 
     static constexpr size_t MAX_DEVICES = 8;

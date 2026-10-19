@@ -232,6 +232,7 @@ static const char *i2cScanRefusal(I2CScan::Outcome outcome) {
     switch (outcome) {
         case I2CScan::Outcome::ALREADY_RUNNING: return "An I2C scan is already running";
         case I2CScan::Outcome::BUS_BUSY: return "The I2C bus is busy";
+        case I2CScan::Outcome::BUS_FAULT: return "The I2C bus is not running or failed a probe";
         case I2CScan::Outcome::TIMED_OUT: return "The control task did not finish the I2C scan";
         default: return "";
     }
