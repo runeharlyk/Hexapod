@@ -3,6 +3,7 @@
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <algorithm>
 #include <cstdlib>
 #include <functional>
 #include <list>
@@ -110,13 +111,14 @@ class CommAdapterBase {
 
     // The callbacks below fire outside mutex_: a handler asks every adapter whether the tag still
     // has listeners, which re-enters this lock.
+    // A client resubscribes on every reconnect and fail-over, so a subscribe it already holds adds nothing.
     void subscribe(int32_t tag, int cid = 0) {
         bool first;
         {
             ScopedLock lock(mutex_);
             auto& clients = client_subscriptions_[tag];
             first = clients.empty();
-            clients.push_back(cid);
+            if (std::find(clients.begin(), clients.end(), cid) == clients.end()) clients.push_back(cid);
         }
         if (first) notifyTagChange(tag);
         ESP_LOGI("ProtoComm", "Client %d subscribed to tag %d", cid, (int)tag);
