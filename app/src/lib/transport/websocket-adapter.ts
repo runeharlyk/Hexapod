@@ -1,9 +1,12 @@
 import { derived, get, writable } from 'svelte/store'
 import { type ITransport, type LinkStatus } from '../interfaces/transport.interface'
 import { canReachRobot, location } from '$lib/stores/location-store'
+import { LatestFrames } from './latest-frames'
 
 const RECONNECT_MIN_MS = 1000
 const RECONNECT_MAX_MS = 15000
+// The browser reports no event when the socket's buffer empties, so a frame waiting for it looks again this often.
+const DRAIN_POLL_MS = 10
 
 export const socketUrl = (host: string) => `ws://${host}/api/ws`
 
@@ -19,6 +22,27 @@ function createWebSocketAdapter(): ITransport {
   let reconnectDelay = RECONNECT_MIN_MS
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined
   let refusedByBrowser = false
+  let drainTimer: ReturnType<typeof setTimeout> | undefined
+
+  const latest = new LatestFrames({
+    busy: () => (ws?.bufferedAmount ?? 0) > 0,
+    write: data => ws?.send(data)
+  })
+
+  const watchDrain = () => {
+    if (drainTimer || !latest.holding) return
+    drainTimer = setTimeout(() => {
+      drainTimer = undefined
+      latest.drained()
+      watchDrain()
+    }, DRAIN_POLL_MS)
+  }
+
+  const forgetWaiting = () => {
+    clearTimeout(drainTimer)
+    drainTimer = undefined
+    latest.clear()
+  }
 
   const stopReconnecting = () => {
     if (reconnectTimer) clearTimeout(reconnectTimer)
@@ -69,6 +93,7 @@ function createWebSocketAdapter(): ITransport {
     socket.onclose = () => {
       if (ws !== socket) return
       ws = undefined
+      forgetWaiting()
       status.set('disconnected')
       disconnectCallbacks.forEach(cb => cb())
       scheduleReconnect()
@@ -104,6 +129,7 @@ function createWebSocketAdapter(): ITransport {
     stopReconnecting()
     const socket = ws
     ws = undefined
+    forgetWaiting()
     status.set('disconnected')
     if (socket) {
       socket.close()
@@ -116,9 +142,10 @@ function createWebSocketAdapter(): ITransport {
     ws.send(data)
   }
 
-  const trySend = (data: Uint8Array) => {
-    if (!ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 0) return false
-    ws.send(data)
+  const sendLatest = (kind: number, data: Uint8Array) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false
+    latest.offer(kind, data)
+    watchDrain()
     return true
   }
 
@@ -128,7 +155,7 @@ function createWebSocketAdapter(): ITransport {
     connect,
     disconnect,
     send,
-    trySend,
+    sendLatest,
     onData: cb => dataCallbacks.push(cb),
     onConnect: cb => connectCallbacks.push(cb),
     onDisconnect: cb => disconnectCallbacks.push(cb)

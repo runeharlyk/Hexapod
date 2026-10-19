@@ -2,6 +2,7 @@ import { derived, writable } from 'svelte/store'
 import { Message } from '$lib/platform_shared/message'
 import { type ITransport, type LinkStatus } from '../interfaces/transport.interface'
 import { SERIAL_MAX_MESSAGE, SerialFrameDecoder, encodeSerialFrame } from './serial-framing'
+import { LatestFrames } from './latest-frames'
 
 // The ESP32-S3 native USB port is CDC, so the rate is ignored -- but the API demands one.
 const BAUD_RATE = 921600
@@ -73,6 +74,10 @@ export function createSerialAdapter(): SerialTransport {
   let writeQueue = Promise.resolve()
   // Frames queued and not yet written: each write waits for the one before it.
   let writesInFlight = 0
+  const latest = new LatestFrames({
+    busy: () => writesInFlight > 0,
+    write: data => write(encodeSerialFrame(data))
+  })
   let probeId: ReturnType<typeof setInterval> | undefined
   let waiting: AbortController | undefined
 
@@ -101,12 +106,16 @@ export function createSerialAdapter(): SerialTransport {
           writer.releaseLock()
         }
       })
-      .finally(() => writesInFlight--)
+      .finally(() => {
+        writesInFlight--
+        latest.drained()
+      })
       .catch(error => console.error('Serial write failed:', error))
   }
 
   const lose = () => {
     clearInterval(probeId)
+    latest.clear()
     const wasAnswering = answering
     answering = false
     decoder.reset()
@@ -201,10 +210,9 @@ export function createSerialAdapter(): SerialTransport {
     write(encodeSerialFrame(data))
   }
 
-  const trySend = (data: Uint8Array) => {
-    if (!answering || !opened?.writable || writesInFlight > 0 || data.length > SERIAL_MAX_MESSAGE)
-      return false
-    write(encodeSerialFrame(data))
+  const sendLatest = (kind: number, data: Uint8Array) => {
+    if (!answering || !opened?.writable || data.length > SERIAL_MAX_MESSAGE) return false
+    latest.offer(kind, data)
     return true
   }
 
@@ -219,7 +227,7 @@ export function createSerialAdapter(): SerialTransport {
     },
     disconnect,
     send,
-    trySend,
+    sendLatest,
     onData: cb => dataCallbacks.push(cb),
     onConnect: cb => connectCallbacks.push(cb),
     onDisconnect: cb => disconnectCallbacks.push(cb)

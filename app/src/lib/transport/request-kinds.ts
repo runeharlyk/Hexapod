@@ -6,8 +6,8 @@ export type RequestKey = Exclude<keyof CorrelationRequest, 'correlationId'>
  * What a request is, which decides what becomes of it while no link is up (DataBroker.request). An action has a
  * physical effect and fails at once, since the robot it was meant for may have moved on by the time a link comes. A
  * setting is a stored write: it waits SETTING_GRACE_MS, so a link blip goes unnoticed, and then fails as not saved. A
- * read waits for a link until the request's timeout. Motion is no request: it goes out volatile or not at all
- * (DataBroker.emitVolatile).
+ * read waits for a link until the request's timeout. Motion is no request: it goes out on the link up, the newest
+ * frame of each kind, or not at all (DataBroker.emitVolatile).
  */
 export type RequestKind = 'action' | 'setting' | 'read'
 

@@ -1,5 +1,6 @@
 import { derived, get, writable, type Readable } from 'svelte/store'
 import { type ITransport, type LinkStatus } from '../interfaces/transport.interface'
+import { LatestFrames } from './latest-frames'
 
 export const SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e'
 const CHARACTERISTIC_TX_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'
@@ -20,6 +21,7 @@ function createBLEAdapter(): BLEAdapter {
   let writeQueue = Promise.resolve()
   // Chunks queued and not yet written: each write waits for the one before it.
   let writesInFlight = 0
+  const latest = new LatestFrames({ busy: () => writesInFlight > 0, write: data => send(data) })
 
   // Framing: [uint16 LE length][payload] chunked to the MTU; rxBuffer reassembles by length prefix.
   const CHUNK = 180
@@ -42,6 +44,7 @@ function createBLEAdapter(): BLEAdapter {
   // Runs from both an explicit disconnect() and the gattserverdisconnected event it triggers.
   const markDisconnected = () => {
     if (get(status) === 'disconnected') return
+    latest.clear()
     status.set('disconnected')
     deviceName.set(null)
     disconnectCallbacks.forEach(cb => cb())
@@ -106,13 +109,16 @@ function createBLEAdapter(): BLEAdapter {
           : characteristic.writeValue(chunk)
         )
         .catch(err => console.error('BLE write error:', err))
-        .finally(() => writesInFlight--)
+        .finally(() => {
+          writesInFlight--
+          latest.drained()
+        })
     }
   }
 
-  const trySend = (data: Uint8Array) => {
-    if (!rx || !device?.gatt?.connected || writesInFlight > 0) return false
-    send(data)
+  const sendLatest = (kind: number, data: Uint8Array) => {
+    if (!rx || !device?.gatt?.connected) return false
+    latest.offer(kind, data)
     return true
   }
 
@@ -123,7 +129,7 @@ function createBLEAdapter(): BLEAdapter {
     connect,
     disconnect,
     send,
-    trySend,
+    sendLatest,
     onData: cb => dataCallbacks.push(cb),
     onConnect: cb => connectCallbacks.push(cb),
     onDisconnect: cb => disconnectCallbacks.push(cb)

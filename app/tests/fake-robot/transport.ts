@@ -40,7 +40,7 @@ export const fakeLink = (robot: FakeRobot) => {
     send: bytes => {
       if (client) robot.receive(client, bytes)
     },
-    trySend: bytes => {
+    sendLatest: (_kind, bytes) => {
       if (!client) return false
       robot.receive(client, bytes)
       return true

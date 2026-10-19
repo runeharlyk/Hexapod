@@ -1,5 +1,5 @@
-// The controller's sticks on their way to the robot (src/lib/stick-link.ts). Every frame is motion: it goes out when the
-// link can take it, or not at all, and nothing older than the last stick event is ever sent after a link comes back.
+// The controller's sticks on their way to the robot (src/lib/stick-link.ts): which frames it sends, and when. What the
+// link does with them is motion-frames.spec.ts's; nothing older than the last stick event is sent after a link comes back.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { writable } from 'svelte/store'
 import { followSticks, STICK_INTERVAL_MS } from '$lib/stick-link'

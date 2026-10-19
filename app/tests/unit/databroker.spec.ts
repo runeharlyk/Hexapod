@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vitest } from 'vitest'
 import { derived, get, writable } from 'svelte/store'
 import { DataBroker } from '../../src/lib/transport/databroker'
+import { tagOf } from '../../src/lib/transport/message-codec'
 import type { ITransport, LinkStatus } from '../../src/lib/interfaces/transport.interface'
 import {
   ControllerInputData,
@@ -12,8 +13,8 @@ import {
 const createFakeTransport = () => {
   const status = writable<LinkStatus>('disconnected')
   const sent: Message[] = []
-  // Whether a write is still under way, so a frame that must not wait cannot go out now.
-  const link = { busy: false }
+  // The motion frames handed over as the latest of their kind (transport/latest-frames.ts), with that kind.
+  const latest: { kind: number; message: Message }[] = []
   const callbacks = {
     data: [] as ((bytes: Uint8Array) => void)[],
     connect: [] as (() => void)[],
@@ -31,9 +32,9 @@ const createFakeTransport = () => {
       callbacks.disconnect.forEach(cb => cb())
     },
     send: bytes => sent.push(Message.decode(bytes)),
-    trySend: bytes => {
-      if (link.busy || get(status) !== 'connected') return false
-      sent.push(Message.decode(bytes))
+    sendLatest: (kind, bytes) => {
+      if (get(status) !== 'connected') return false
+      latest.push({ kind, message: Message.decode(bytes) })
       return true
     },
     onData: cb => callbacks.data.push(cb),
@@ -42,7 +43,7 @@ const createFakeTransport = () => {
   }
   const receive = (message: Message) =>
     callbacks.data.forEach(cb => cb(Message.encode(message).finish()))
-  return { transport, sent, receive, link }
+  return { transport, sent, latest, receive }
 }
 
 const imu = (x: number) => Message.create({ imu: IMUData.create({ x }) })
@@ -168,21 +169,21 @@ describe('DataBroker', () => {
     expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function))
   })
 
-  // Motion is dropped, never queued: a stick frame that waited would arrive late and steer the robot with the past.
-  it('sends a volatile frame only when the link can take it now, and never later', async () => {
+  // Motion goes to the link up as the latest frame of its kind, which the link coalesces; nothing is held for a link
+  // that is down, so nothing old is sent after a reconnect.
+  it('hands a volatile frame to the link up as the latest of its kind, and takes none while no link is up', async () => {
     const serial = createFakeTransport()
     broker.addTransport(serial.transport)
     await serial.transport.connect()
-    serial.sent.length = 0
 
     expect(broker.emitVolatile(ControllerInputData, sticks(0.5))).toBe(true)
-    serial.link.busy = true
-    expect(broker.emitVolatile(ControllerInputData, sticks(0.6))).toBe(false)
-    serial.link.busy = false
     await serial.transport.disconnect()
-    expect(broker.emitVolatile(ControllerInputData, sticks(0.7))).toBe(false)
+    expect(broker.emitVolatile(ControllerInputData, sticks(0.75))).toBe(false)
     await serial.transport.connect()
 
-    expect(serial.sent.flatMap(m => (m.input ? [m.input.left?.y] : []))).toEqual([0.5])
+    expect(serial.latest.map(({ kind, message }) => [kind, message.input?.left?.y])).toEqual([
+      [tagOf(ControllerInputData), 0.5]
+    ])
+    expect(serial.sent.filter(m => m.input)).toEqual([])
   })
 })

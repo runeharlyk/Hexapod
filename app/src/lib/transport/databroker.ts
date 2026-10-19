@@ -238,15 +238,17 @@ export class DataBroker {
   }
 
   /**
-   * Motion (sticks, heartbeats, animation preview poses): sent only when the link can take it now, and otherwise
-   * dropped, never queued or sent after a reconnect, since a frame that waited would move the robot with the past.
-   * False when it was dropped.
+   * Motion (sticks, heartbeats, animation preview poses): sent at once when the link is idle; while a write is under
+   * way only the newest frame of its kind waits, and goes out when the write completes (transport/latest-frames.ts).
+   * The last frame, a released stick's stop or a drag's final pose, therefore always arrives while the link is up.
+   * Never queued for a link that is down nor sent after a reconnect, since a frame that waited would move the robot
+   * with the past. False when no link is up.
    */
   emitVolatile<T>(fns: MessageFns<T>, data: T): boolean {
     const transport = this.activeTransport()
     return (
       transport !== undefined &&
-      transport.trySend(encodeMessage(Message.create({ [keyOf(fns)]: data })))
+      transport.sendLatest(tagOf(fns), encodeMessage(Message.create({ [keyOf(fns)]: data })))
     )
   }
 
