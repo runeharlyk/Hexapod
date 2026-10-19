@@ -473,11 +473,6 @@ static void registerHandlers(CommAdapterBase &c) {
                 else if (count == -2) res.status_code = 503;  // radio busy (STA connecting); give up
                 break;
             }
-            case socket_message_CorrelationRequest_wifi_status_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_wifi_status_tag;
-                WiFiService::statusProto(res.response.wifi_status);
-                break;
-            }
             case socket_message_CorrelationRequest_ap_settings_get_tag: {
                 res.which_response = socket_message_CorrelationResponse_ap_settings_tag;
                 redactedApSettings(res.response.ap_settings);
@@ -490,11 +485,6 @@ static void registerHandlers(CommAdapterBase &c) {
                 if (r == StateUpdateResult::ERROR) res.status_code = 400;
                 res.which_response = socket_message_CorrelationResponse_ap_settings_tag;
                 redactedApSettings(res.response.ap_settings);
-                break;
-            }
-            case socket_message_CorrelationRequest_ap_status_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_ap_status_tag;
-                apService.statusProto(res.response.ap_status);
                 break;
             }
             case socket_message_CorrelationRequest_mdns_status_get_tag: {
@@ -680,17 +670,6 @@ static void registerHandlers(CommAdapterBase &c) {
             case socket_message_CorrelationRequest_goal_cancel_tag: {
                 res.which_response = socket_message_CorrelationResponse_empty_tag;
                 robot.cancelGoal();
-                break;
-            }
-            case socket_message_CorrelationRequest_goal_status_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_goal_status_tag;
-                res.response.goal_status = robot.motion().goalStatus();
-                break;
-            }
-            case socket_message_CorrelationRequest_mode_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_mode_tag;
-                res.response.mode.mode = static_cast<socket_message_ModesEnum>(robot.motion().appliedMode());
-                res.response.mode.handheld = robot.motion().handheldDriving();
                 break;
             }
             case socket_message_CorrelationRequest_task_stats_request_tag: {

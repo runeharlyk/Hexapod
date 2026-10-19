@@ -384,7 +384,6 @@
    "dns_ip_1": "10 uint32",
    "dns_ip_2": "11 uint32"
   },
-  "api.WifiStatusRequest": {},
   "socket_message.AnalyticsData": {
    "max_alloc_heap": "1 int32",
    "psram_size": "2 int32",
@@ -471,10 +470,8 @@
    "wifi_settings_get": "50 api.WifiSettingsRequest",
    "wifi_settings_update": "51 api.WifiSettings",
    "wifi_networks_get": "52 api.WifiNetworksRequest",
-   "wifi_status_get": "53 api.WifiStatusRequest",
    "ap_settings_get": "60 api.APSettingsRequest",
    "ap_settings_update": "61 api.APSettings",
-   "ap_status_get": "62 api.APStatusRequest",
    "mdns_status_get": "70 api.MDNSStatusRequest",
    "mdns_query": "71 api.MDNSQueryRequest",
    "servo_settings_get": "80 api.ServoSettingsRequest",
@@ -493,8 +490,6 @@
    "odometry_get": "130 socket_message.OdometryGet",
    "goal_move": "131 socket_message.GoalMove",
    "goal_cancel": "132 socket_message.GoalCancel",
-   "goal_status_get": "133 socket_message.GoalStatusGet",
-   "mode_get": "134 socket_message.ModeGet",
    "task_stats_request": "140 socket_message.TaskStatsRequest",
    "core_dump_get": "150 socket_message.CoreDumpGet",
    "core_dump_read": "151 socket_message.CoreDumpRead",
@@ -509,9 +504,7 @@
    "system_information_response": "40 socket_message.SystemInformationResponse",
    "wifi_settings": "50 api.WifiSettings",
    "wifi_network_list": "52 api.WifiNetworkList",
-   "wifi_status": "53 api.WifiStatus",
    "ap_settings": "60 api.APSettings",
-   "ap_status": "62 api.APStatus",
    "mdns_status": "70 api.MDNSStatus",
    "mdns_query_response": "71 api.MDNSQueryResponse",
    "servo_settings": "80 api.ServoSettings",
@@ -522,7 +515,6 @@
    "animation_list": "111 socket_message.AnimationList",
    "odometry": "130 socket_message.OdometryData",
    "goal_status": "131 socket_message.GoalStatus",
-   "mode": "132 socket_message.ModeData",
    "task_stats": "140 socket_message.TaskStats",
    "core_dump_report": "150 socket_message.CoreDumpReport"
   },
@@ -564,7 +556,6 @@
    "yaw": "8 float",
    "passes": "9 uint32"
   },
-  "socket_message.GoalStatusGet": {},
   "socket_message.I2CDevice": {
    "address": "1 int32"
   },
@@ -603,7 +594,6 @@
    "angles": "170 socket_message.AnglesData",
    "servo_pwm": "210 socket_message.ServoPWMData",
    "servo_state": "211 socket_message.ServoStateData",
-   "rssi": "260 socket_message.RSSIData",
    "system_command": "120 socket_message.SystemCommandData",
    "wifi_status": "250 api.WifiStatus",
    "ap_status": "251 api.APStatus",
@@ -619,7 +609,6 @@
    "mode": "1 socket_message.ModesEnum",
    "handheld": "2 bool"
   },
-  "socket_message.ModeGet": {},
   "socket_message.OdometryData": {
    "x": "1 float",
    "y": "2 float",
@@ -648,9 +637,6 @@
   "socket_message.PoseData": {
    "body": "1 animation.BodyPose",
    "legs": "2 repeated animation.LegTarget"
-  },
-  "socket_message.RSSIData": {
-   "rssi": "1 int32"
   },
   "socket_message.ServoPWMData": {
    "servo_id": "1 int32",

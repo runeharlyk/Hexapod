@@ -53,8 +53,6 @@ message ModeData {
   ModesEnum mode = 1;
   bool handheld = 2;
 }
-// Answered with the ModeData the next push would carry, for a client that connects between pushes.
-message ModeGet {}
 message GaitData { GaitEnum gait = 1; }
 message AnglesData { repeated int32 angles = 1; } // 18 servos
 message IMUData {
@@ -63,7 +61,6 @@ message IMUData {
   float z = 3;
   float heading = 4;
 }
-message RSSIData { int32 rssi = 1; }
 
 message ServoPWMData {
   int32 servo_id = 1;
@@ -290,7 +287,6 @@ message GoalMove {
 }
 // Ends the goal in progress, if any.
 message GoalCancel {}
-message GoalStatusGet {}
 // Observable: pushed on every state change and every 5 % of progress.
 message GoalStatus {
   uint32 id = 1;  // the goal's number since boot, 0 before the first
@@ -338,6 +334,10 @@ message CoreDumpReport {
 }
 
 message CorrelationRequest {
+  // The current mode, goal status, WiFi status and AP status come as the snapshot a subscribe to their topic is
+  // answered with (platform_shared/topics.json).
+  reserved 53, 62, 133, 134;
+  reserved "wifi_status_get", "ap_status_get", "goal_status_get", "mode_get";
   uint32 correlation_id = 1;
   oneof request {
     FeaturesDataRequest features_data_request = 10;
@@ -346,10 +346,8 @@ message CorrelationRequest {
     api.WifiSettingsRequest wifi_settings_get = 50;
     api.WifiSettings wifi_settings_update = 51;
     api.WifiNetworksRequest wifi_networks_get = 52;
-    api.WifiStatusRequest wifi_status_get = 53;
     api.APSettingsRequest ap_settings_get = 60;
     api.APSettings ap_settings_update = 61;
-    api.APStatusRequest ap_status_get = 62;
     api.MDNSStatusRequest mdns_status_get = 70;
     api.MDNSQueryRequest mdns_query = 71;
     api.ServoSettingsRequest servo_settings_get = 80;
@@ -368,8 +366,6 @@ message CorrelationRequest {
     OdometryGet odometry_get = 130;
     GoalMove goal_move = 131;
     GoalCancel goal_cancel = 132;
-    GoalStatusGet goal_status_get = 133;
-    ModeGet mode_get = 134;
     TaskStatsRequest task_stats_request = 140;
     CoreDumpGet core_dump_get = 150;
     CoreDumpRead core_dump_read = 151;
@@ -378,6 +374,9 @@ message CorrelationRequest {
 }
 
 message CorrelationResponse {
+  // The replies to the requests the snapshots replaced (CorrelationRequest).
+  reserved 53, 62, 132;
+  reserved "wifi_status", "ap_status", "mode";
   uint32 correlation_id = 1;
   uint32 status_code = 2;
   // Why a request was refused, for the app to show; empty on success.
@@ -388,9 +387,7 @@ message CorrelationResponse {
     SystemInformationResponse system_information_response = 40;
     api.WifiSettings wifi_settings = 50;
     api.WifiNetworkList wifi_network_list = 52;
-    api.WifiStatus wifi_status = 53;
     api.APSettings ap_settings = 60;
-    api.APStatus ap_status = 62;
     api.MDNSStatus mdns_status = 70;
     api.MDNSQueryResponse mdns_query_response = 71;
     api.ServoSettings servo_settings = 80;
@@ -401,7 +398,6 @@ message CorrelationResponse {
     AnimationList animation_list = 111;
     OdometryData odometry = 130;
     GoalStatus goal_status = 131;
-    ModeData mode = 132;
     TaskStats task_stats = 140;
     CoreDumpReport core_dump_report = 150;
   }
@@ -477,7 +473,12 @@ message AnimationEntry {
 message AnimationList { repeated AnimationEntry entries = 1; }
 
 message Message {
+  // RSSIData, which nothing ever sent.
+  reserved 260;
+  reserved "rssi";
   oneof message {
+    // A subscribe; the robot echoes it to the client as the ack, after a state topic's current value
+    // (platform_shared/topics.json).
     SubscribeNotification sub_notif = 20;
     UnsubscribeNotification unsub_notif = 21;
     PingMsg pingmsg = 30;
@@ -492,7 +493,6 @@ message Message {
     AnglesData angles = 170;
     ServoPWMData servo_pwm = 210;
     ServoStateData servo_state = 211;
-    RSSIData rssi = 260;
     SystemCommandData system_command = 120;
     api.WifiStatus wifi_status = 250;  // observable status: pushed on change (connect/disconnect)
     api.APStatus ap_status = 251;      // observable status: pushed on AP up/down/station change

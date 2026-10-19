@@ -193,7 +193,7 @@ Commands carry no client's identity, so one centred command from any client ends
 With a second client connected a stale stick can therefore walk again: the app's centred heartbeat releases a non-facade script's stream, the facade's centred keep-alive releases a stick held in the app, and a second app tab releases the first's.
 The app's heartbeat, centred while its sticks are untouched, ends the wait within 200 ms in `STAND`, `WALK` and `WALK_NN`, the modes it heartbeats in; in `IDLE` or `DEACTIVATED` the wait lasts until its first centred send, so the first stick pushed after a switch to `STAND` can be dropped.
 Modes, gaits, animation plays, poses, servo writes and settings from any source are not gated, so the stops always pass: `DEACTIVATED`, `goal_cancel` and `AnimationStop`.
-Whether the handheld drives is reported with the mode, as `ModeData.handheld`: the control task reports the mode applied again, as `APPLIED`, on each change of the flag, so the mode's other observers see an unchanged mode, and `mode_get` (request 134, reply 132) reads both for a client that connects between pushes.
+Whether the handheld drives is reported with the mode, as `ModeData.handheld`: the control task reports the mode applied again, as `APPLIED`, on each change of the flag, so the mode's other observers see an unchanged mode, and the snapshot a subscribe to the mode is answered with carries both to a client that connects between pushes.
 Outside the window the handheld's centred frames, which it sends at 5 Hz whenever it is switched on and at 50 Hz while a button is held, are dropped whole, posture included, while a client's command is in force (roadmap 11.1b).
 A client's command is in force for `MotionInbox::CLIENT_IN_FORCE_MS` (2 s, equal to `COMMAND_TIMEOUT_MS`, the dead-man's longest window) after its arrival, if the handheld let it through; a centred heartbeat that a goal swallows counts, as the goal is a client's.
 So an idle handheld beside the app or a script neither stops its walk nor moves its posture: the height, lift (`s1`), feet distance and tilt are the client's.
@@ -268,7 +268,7 @@ While a goal runs, a command with every stick centred is ignored, posture fields
 A goal taken after the dead-man stop fired ends that stop, as a command would, and once the goal ends the stop watches the link again.
 When a goal ends the robot stands at rest with no cadence left.
 
-The status (`GoalStatus`: id, state, kind, target, progress, x, y, yaw, passes) is an observable: `observeStatus` pushes it as `Message` 300 on every state change and every 5 % of progress, never on a timer, and `goal_status_get` (133, reply 131) reads the current one.
+The status (`GoalStatus`: id, state, kind, target, progress, x, y, yaw, passes) is an observable: `observeStatus` pushes it as `Message` 300 on every state change and every 5 % of progress, never on a timer, and a subscribe to it is answered with the current one.
 The states are `IDLE`, `SETTLING`, `RUNNING`, `REACHED`, `CANCELLED`, `TIMED_OUT` and `REFUSED`; `SETTLING` is both the start (posture and gait) and the rest before each judging.
 
 ## Sensors

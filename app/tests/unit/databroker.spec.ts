@@ -129,7 +129,7 @@ describe('DataBroker', () => {
     broker.addTransport(link.transport)
 
     const oldest = broker.request({ featuresDataRequest: {} })
-    for (let i = 0; i < 16; i++) broker.request({ modeGet: {} }).catch(() => {})
+    for (let i = 0; i < 16; i++) broker.request({ taskStatsRequest: {} }).catch(() => {})
 
     await expect(oldest).rejects.toMatchObject({ failure: { kind: 'disconnected' } })
   })
