@@ -11,7 +11,7 @@
   import { MotionModes, urdfJointOrder } from '$lib/motion'
   import { dataBroker } from '$lib/transport/databroker'
   import { AnglesData, IMUData } from '$lib/platform_shared/message'
-  import { Vector3 } from 'three'
+  import { Quaternion, Vector3 } from 'three'
   import { isLinked } from '$lib/stores/link'
   import { animationPreview, type AnimationPreview } from '$lib/stores/animation'
   import Kinematics from '$lib/kinematic'
@@ -240,7 +240,7 @@
     const dragged = transform?.dragging ? transform.object : undefined
     sceneManager.handles.forEach((handle, leg) => {
       if (handle !== dragged) sceneManager.setHandlePosition(leg, stanceToScene(feet[leg]))
-      handle.material.color.setHex(handleColor(legMask(preview?.mask ?? 0, leg)))
+      sceneManager.setHandleColor(leg, handleColor(legMask(preview?.mask ?? 0, leg)))
     })
   }
 
@@ -258,11 +258,16 @@
 
   const ORIENT_SMOOTH = 0.1
 
+  const placedQuaternion = new Quaternion()
+  const placedPosition = new Vector3()
+
   const placeRobot = (robot: URDFRobot) => {
     if (!settings['Auto orient robot']) return
     const { orientation, position } = shown.placement(
       preview && { legs: legsOf(preview.angles), yaw: -preview.body.psi }
     )
+    placedQuaternion.copy(robot.quaternion)
+    placedPosition.copy(robot.position)
     if (settings['Smooth motion']) {
       robot.quaternion.slerp(orientation, ORIENT_SMOOTH)
       robot.position.lerp(position, ORIENT_SMOOTH)
@@ -270,6 +275,8 @@
       robot.quaternion.copy(orientation)
       robot.position.copy(position)
     }
+    if (!robot.quaternion.equals(placedQuaternion) || !robot.position.equals(placedPosition))
+      sceneManager.invalidate()
   }
 
   const render = () => {
@@ -286,7 +293,7 @@
 
     for (let i = 0; i < $jointNames.length; i++) {
       angles[i] = smooth(robot.joints[$jointNames[i]].angle as number, targetAngles[i], 0.1)
-      robot.joints[$jointNames[i]].setJointValue(angles[i])
+      if (robot.joints[$jointNames[i]].setJointValue(angles[i])) sceneManager.invalidate()
     }
   }
 </script>
