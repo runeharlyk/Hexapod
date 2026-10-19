@@ -11,6 +11,26 @@
 #include <vector>
 #include <type_traits>
 #include <communication/proto_helpers.h>
+#include <communication/topics.h>
+
+class CommAdapterBase;
+
+// Where a state topic's snapshot puts its owner's current value (communication/topics.h). Only a subscribe makes one,
+// with the adapter's encode lock held, so a snapshot sends nowhere else and at no other time.
+class SnapshotSink {
+  public:
+    template <typename T>
+    void put(const T& value);
+
+  private:
+    friend class CommAdapterBase;
+    SnapshotSink(CommAdapterBase& adapter, int cid) : adapter_(adapter), cid_(cid) {}
+    SnapshotSink(const SnapshotSink&) = delete;
+    SnapshotSink& operator=(const SnapshotSink&) = delete;
+
+    CommAdapterBase& adapter_;
+    int cid_;
+};
 
 class CommAdapterBase {
   public:
@@ -36,6 +56,13 @@ class CommAdapterBase {
 
     ProtoDecoder& decoder() { return decoder_; }
 
+    // The topics this adapter serves; a tag not in the table is served as a stream.
+    template <size_t N>
+    void setTopics(const Topic (&topics)[N]) {
+        topics_ = topics;
+        topicCount_ = N;
+    }
+
     // Fired when a tag gains its first subscriber or loses its last.
     void onSubscriptionChange(std::function<void(int32_t)> cb) { tagChangeCb_ = std::move(cb); }
 
@@ -59,38 +86,9 @@ class CommAdapterBase {
     // instead of stack-local matters: socket_message_Message is over a kilobyte.
     template <typename T>
     void emit(const T& data, int clientId = -1) {
-        constexpr pb_size_t tag = MessageTraits<T>::tag;
-
-        if (clientId < 0 && !hasSubscribers(tag)) return;
-
+        if (clientId < 0 && !hasSubscribers(MessageTraits<T>::tag)) return;
         ScopedLock lock(encodeMutex_);
-
-        msg_.which_message = tag;
-        MessageTraits<T>::assign(msg_, data);
-
-        size_t out_size = 0;
-        if (!pb_get_encoded_size(&out_size, socket_message_Message_fields, &msg_)) {
-            ESP_LOGE("ProtoComm", "Failed to size message (tag %d)", (int)tag);
-            return;
-        }
-
-        EncodeBuffer buffer(enc_buf_, sizeof(enc_buf_), out_size);
-        if (!buffer.data()) {
-            ESP_LOGE("ProtoComm", "Out of memory for %u byte message (tag %d)", (unsigned)out_size, (int)tag);
-            return;
-        }
-
-        pb_ostream_t stream = pb_ostream_from_buffer(buffer.data(), out_size);
-        if (!pb_encode(&stream, socket_message_Message_fields, &msg_)) {
-            ESP_LOGE("ProtoComm", "Failed to encode message (tag %d): %s", (int)tag, PB_GET_ERROR(&stream));
-            return;
-        }
-
-        if (clientId >= 0) {
-            send(buffer.data(), stream.bytes_written, clientId);
-        } else {
-            sendToSubscribers(tag, buffer.data(), stream.bytes_written);
-        }
+        encodeAndSend(data, clientId);
     }
 
     // A directed message from a task that must not wait on one client (the service loop): sent only when the client can
@@ -111,7 +109,13 @@ class CommAdapterBase {
 
     // The callbacks below fire outside mutex_: a handler asks every adapter whether the tag still
     // has listeners, which re-enters this lock.
-    // A client resubscribes on every reconnect and fail-over, so a subscribe it already holds adds nothing.
+    // A client resubscribes on every reconnect and fail-over, so a subscribe it already holds adds nothing; it is
+    // answered again all the same. A state topic is answered with its snapshot, then every subscribe with its ack
+    // (communication/topics.h). The bridge attaches before the owner is read, so a change after the read is pushed. The
+    // read, the snapshot and the ack go out under encodeMutex_, which every push to this adapter takes, so a push of a
+    // change made after the read follows the snapshot rather than overtaking it; a change made before the read may be
+    // pushed after it too, which only repeats the value. A snapshot must therefore never wait on an EventBus worker,
+    // and an owner never pushes while it holds a lock its snapshot takes (docs/firmware.md, Transports).
     void subscribe(int32_t tag, int cid = 0) {
         bool first;
         {
@@ -122,6 +126,16 @@ class CommAdapterBase {
         }
         if (first) notifyTagChange(tag);
         ESP_LOGI("ProtoComm", "Client %d subscribed to tag %d", cid, (int)tag);
+
+        ScopedLock lock(encodeMutex_);
+        const Topic* topic = topicOf(tag);
+        if (topic && topic->kind == TopicKind::STATE) {
+            SnapshotSink sink(*this, cid);
+            topic->snapshot(sink);
+        }
+        msg_.which_message = socket_message_Message_sub_notif_tag;
+        msg_.message.sub_notif.tag = tag;
+        sendSmall(cid);
     }
 
     void unsubscribe(int32_t tag, int cid = 0) {
@@ -158,17 +172,60 @@ class CommAdapterBase {
     }
 
     void sendPong(int cid) {
-        uint8_t pongBuffer[16];
         ScopedLock lock(encodeMutex_);
         msg_.which_message = socket_message_Message_pongmsg_tag;
         msg_.message.pongmsg = socket_message_PongMsg_init_zero;
-        pb_ostream_t stream = pb_ostream_from_buffer(pongBuffer, sizeof(pongBuffer));
-        if (pb_encode(&stream, socket_message_Message_fields, &msg_)) {
-            send(pongBuffer, stream.bytes_written, cid);
-        }
+        sendSmall(cid);
     }
 
   private:
+    friend class SnapshotSink;
+
+    // Under encodeMutex_: the shared message and encode buffer.
+    template <typename T>
+    void encodeAndSend(const T& data, int clientId) {
+        constexpr pb_size_t tag = MessageTraits<T>::tag;
+        msg_.which_message = tag;
+        MessageTraits<T>::assign(msg_, data);
+
+        size_t out_size = 0;
+        if (!pb_get_encoded_size(&out_size, socket_message_Message_fields, &msg_)) {
+            ESP_LOGE("ProtoComm", "Failed to size message (tag %d)", (int)tag);
+            return;
+        }
+
+        EncodeBuffer buffer(enc_buf_, sizeof(enc_buf_), out_size);
+        if (!buffer.data()) {
+            ESP_LOGE("ProtoComm", "Out of memory for %u byte message (tag %d)", (unsigned)out_size, (int)tag);
+            return;
+        }
+
+        pb_ostream_t stream = pb_ostream_from_buffer(buffer.data(), out_size);
+        if (!pb_encode(&stream, socket_message_Message_fields, &msg_)) {
+            ESP_LOGE("ProtoComm", "Failed to encode message (tag %d): %s", (int)tag, PB_GET_ERROR(&stream));
+            return;
+        }
+
+        if (clientId >= 0) {
+            send(buffer.data(), stream.bytes_written, clientId);
+        } else {
+            sendToSubscribers(tag, buffer.data(), stream.bytes_written);
+        }
+    }
+
+    // Under encodeMutex_: msg_ as set, a pong or an ack, which fits a few bytes on the stack.
+    void sendSmall(int cid) {
+        uint8_t bytes[16];
+        pb_ostream_t stream = pb_ostream_from_buffer(bytes, sizeof(bytes));
+        if (pb_encode(&stream, socket_message_Message_fields, &msg_)) send(bytes, stream.bytes_written, cid);
+    }
+
+    const Topic* topicOf(int32_t tag) const {
+        for (size_t i = 0; i < topicCount_; i++)
+            if (topics_[i].tag == tag) return &topics_[i];
+        return nullptr;
+    }
+
     class ScopedLock {
       public:
         explicit ScopedLock(SemaphoreHandle_t mutex) : mutex_(mutex) { xSemaphoreTake(mutex_, portMAX_DELAY); }
@@ -229,4 +286,11 @@ class CommAdapterBase {
     ProtoDecoder decoder_;
     socket_message_Message msg_ = socket_message_Message_init_zero;
     uint8_t enc_buf_[PROTO_BUFFER_SIZE];
+    const Topic* topics_ = nullptr;
+    size_t topicCount_ = 0;
 };
+
+template <typename T>
+void SnapshotSink::put(const T& value) {
+    adapter_.encodeAndSend(value, cid_);
+}

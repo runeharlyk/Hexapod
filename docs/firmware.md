@@ -358,7 +358,7 @@ One scan runs at a time, a second request is refused with 503, and a client that
 Outgoing data takes one of four shapes, chosen by the kind of data:
 
 - **Streams** (servo angles, IMU, analytics, per-tick telemetry) are emitted at their own rate while a client subscribes.
-- **Observable state** (mode, gait, WiFi status, AP status, OTA progress, animation status) is published on the EventBus by its producer when it changes and pushed to every subscribed client; a client that joins late asks for the current value once with a request, then follows the pushes.
+- **Observable state** (mode, gait, WiFi status, AP status, OTA progress, animation status, goal status) is published on the EventBus by its producer when it changes and pushed to every subscribed client; a subscribe is answered with the current value, so a client that joins late needs no request.
   State is never sent on a timer.
 - **Settings** are read and written by request and response only, so a push can never overwrite a form being edited.
 - **Commands** (sticks, mode, restart, sleep) are fire-and-forget.
@@ -366,6 +366,15 @@ Outgoing data takes one of four shapes, chosen by the kind of data:
 Streams and observable state reach the transports through bridges in `setupComm()` (`addBridge`, `observeStatus<T>()`).
 A bridge holds its EventBus subscription only while some client on some transport subscribes to its tag, so nothing is converted for nobody.
 `emitAll` sends a message on every transport.
+
+`platform_shared/topics.json` names each topic's kind, state or stream, and `include/communication/topics.h` and the app's `src/lib/transport/topics.ts` are checked against it (`test/test_topic_snapshot/`, `app/tests/unit/topics.spec.ts`).
+`main.cpp`'s `TOPICS` gives each state topic a snapshot function that reads its owner, as the replies do: `MotionInbox` for the mode and the goal, `EventBus::peek` for the gait, the OTA and the animation status, and the WiFi and AP services for theirs.
+A status nobody has published yet is its idle value, so every state topic has a value from boot; a `static_assert` holds `TOPICS` to the shared table.
+`CommAdapterBase::subscribe` adds the client unless it already subscribes, attaches the bridge on the tag's first subscriber, and then, under the adapter's `encodeMutex_`, sends a state topic's snapshot and then the `sub_notif` echoed to that client as the ack; a stream, and a tag that is no topic, get the ack alone.
+Every push to the adapter encodes and sends under the same lock, so a change made after the snapshot's read is pushed after the snapshot, never before it, and the bridge attaching first means no such change goes unpushed; a change made before the read may arrive twice, which only repeats the value.
+Two rules follow, and `test/test_topic_snapshot/` checks the ordering with a change made between the read and the send.
+An owner never pushes while it holds a lock that its snapshot reads under: owners publish to the EventBus, whose `publish` never waits, and the bridges push from the bus worker after the owner's lock is gone.
+A snapshot never waits on an EventBus worker, since that worker may itself be waiting for the adapter's `encodeMutex_`.
 When the last client on every transport has gone, a playing animation stops, so nothing runs unattended.
 
 Per-tick telemetry (`include/telemetry/telemetry.h`) is recorded by the control task into a lock-free single-producer ring, only while someone subscribes, and shipped in whole batches by the service task; a full ring drops samples and counts them rather than blocking the control loop.

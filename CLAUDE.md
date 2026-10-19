@@ -75,7 +75,8 @@ Read it before changing the firmware; what follows is only what an agent needs o
 
 - Discarding the `Handle` that `EventBus<T>::subscribe()` returns unsubscribes on that line, silently; store it in a member, or use `consume()` for a program-lifetime subscription.
 - EventBus workers run on PSRAM stacks, so a subscriber must never touch flash (no LittleFS or NVS read or write); hand such work to another task.
-- New dynamic state for the app follows the observable-state pattern: the producer publishes on change, `observeStatus<T>()` in `main.cpp` bridges it, the app requests the current value once and then follows pushes.
+- New dynamic state for the app follows the observable-state pattern: the producer publishes on change, `observeStatus<T>()` in `main.cpp` bridges it, its entry in `main.cpp`'s `TOPICS` (and in `platform_shared/topics.json`) answers a subscribe with the current value and an ack, and the app follows that snapshot and the pushes.
+  An owner never pushes while holding a lock its snapshot reads under.
   Never a timer push; settings stay request/response only.
 - `MOTION_STATE`/`GaitType` cross the wire as enum positions, so firmware and app must be deployed together when those enums change.
   `simulation/test_wire_golden.py` fails on any renumbered enum value or field until `simulation/gen_wire_golden.py` regenerates `platform_shared/wire_golden.json`.
