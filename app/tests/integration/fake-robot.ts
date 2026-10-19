@@ -10,7 +10,7 @@ type Answer = Partial<Omit<CorrelationResponse, 'correlationId'>>
 /**
  * Stands in for the robot behind the WebSocket the layout opens by itself on an http origin: every request goes to
  * `answer`, whose reply, when it settles, is sent back with the request's correlation id and status 200 unless it
- * names another.
+ * names another. Pings get pongs. A subscribe gets nothing, as from firmware older than the snapshots.
  */
 export const fakeRobot = (
   page: Page,
@@ -19,7 +19,9 @@ export const fakeRobot = (
   page.routeWebSocket('**/api/ws', socket => {
     socket.onMessage(async frame => {
       if (typeof frame === 'string') return
-      const request = Message.decode(new Uint8Array(frame)).correlationRequest
+      const message = Message.decode(new Uint8Array(frame))
+      if (message.pingmsg) socket.send(Buffer.from(Message.encode({ pongmsg: {} }).finish()))
+      const request = message.correlationRequest
       if (!request) return
       const response = CorrelationResponse.create({
         correlationId: request.correlationId,

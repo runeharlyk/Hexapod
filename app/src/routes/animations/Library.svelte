@@ -7,7 +7,7 @@
   import { ParamId, type Animation } from '$lib/platform_shared/animation'
   import { AnimationState } from '$lib/platform_shared/message'
   import { isLinked } from '$lib/stores/link'
-  import { animationStatus } from '$lib/stores/animation'
+  import { animationStatus } from '$lib/robot/state'
   import { clampedJoints, shown } from '$lib/stores/animation-editor'
   import { inactiveModeWarning, playAnimation, stopAnimation } from '$lib/control'
   import { deleteAnimation, downloadAnimation, uploadAnimation } from '$lib/animation/transfer'

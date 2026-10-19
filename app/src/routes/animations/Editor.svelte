@@ -10,7 +10,8 @@
   import { MotionModes } from '$lib/motion'
   import { outControllerData } from '$lib/stores'
   import { isLinked } from '$lib/stores/link'
-  import { animationPreview, animationStatus } from '$lib/stores/animation'
+  import { animationPreview } from '$lib/stores/animation'
+  import { animationStatus } from '$lib/robot/state'
   import { clampedJoints, editor, sliderBase } from '$lib/stores/animation-editor'
   import {
     PoseSender,

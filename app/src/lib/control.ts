@@ -1,6 +1,6 @@
 import { GaitType } from '$lib/gait'
 import { MotionModes } from '$lib/motion'
-import { gait as gaitStore, mode as modeStore } from '$lib/stores'
+import { mode as modeStore } from '$lib/robot/state'
 import { dataBroker } from '$lib/transport/databroker'
 import { get } from 'svelte/store'
 import { throttler } from '$lib/utilities'
@@ -15,15 +15,17 @@ import {
   PoseData
 } from '$lib/platform_shared/message'
 
+// The mode and the gait shown are the robot's, from its pushes: a request is pending until the robot pushes the change,
+// or a second at most, since a mode it refuses pushes nothing.
 export const requestMode = (nextMode: MotionModes) => {
-  modeStore.set(nextMode)
   // The robot reads the mode alone; whether the handheld drives is its own to report.
   dataBroker.emit(ModeData, { mode: Object.values(MotionModes).indexOf(nextMode), handheld: false })
+  dataBroker.markPending(ModeData)
 }
 
 export const requestGait = (nextGait: GaitType) => {
-  gaitStore.set(nextGait)
   dataBroker.emit(GaitData, { gait: Object.values(GaitType).indexOf(nextGait) })
+  dataBroker.markPending(GaitData)
 }
 
 export const playAnimation = (name: string, values: Map<ParamId, number>) => {
@@ -35,8 +37,8 @@ export const playAnimation = (name: string, values: Map<ParamId, number>) => {
 
 export const stopAnimation = () => dataBroker.emit(AnimationStop, {})
 
-// The robot ignores a play from DEACTIVATED or IDLE. The mode store only learns the robot's mode
-// from changes after connecting, so this is a warning and the play is still sent.
+// The robot ignores a play from DEACTIVATED or IDLE. The mode shown may be a stale one kept from a link that dropped, so
+// this is a warning and the play is still sent.
 export const inactiveModeWarning = (): string | null => {
   const current = get(modeStore)
   return current === MotionModes.DEACTIVATED || current === MotionModes.IDLE ?
