@@ -420,15 +420,18 @@ class RealBackend:
                               yaw=self._yaw if self._imu else None, link_drops=self._drops, handheld=self._handheld)
 
     # Subscribes to the mode again, for its snapshot. A firmware from before the snapshots answers nothing but pushes
-    # every change, so the mode last heard is then as current as any; an ack without the snapshot means the snapshot was
-    # lost, and the mode last heard may be the very one the robot has left.
+    # every change, so the mode last heard is then as current as any. From a firmware that answers subscribes, an ack
+    # without the snapshot means the snapshot was lost, and no answer within MODE_WAIT_S that the link stalls, which
+    # holds back the pushes too: either way the mode last heard may be the very one the robot has left.
     def fresh_mode(self) -> Mode | None:
         async def ask() -> bool | None:
             return await self._acked(await self._subscribe("mode"), MODE_WAIT_S)
 
         snapshot = self._run(ask(), MODE_WAIT_S + 1)
         with self._changed:
-            return None if snapshot is False else self._mode
+            if snapshot is False or (snapshot is None and self._snapshots):
+                return None
+            return self._mode
 
     def now(self) -> float:
         return time.monotonic()

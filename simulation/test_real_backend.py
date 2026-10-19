@@ -552,6 +552,20 @@ def test_leaving_never_stands_up_a_robot_deactivated_meanwhile(fake, target, mon
     assert _modes_sent(fake) == [pb.STAND, pb.DEACTIVATED]
 
 
+# The app deactivated the robot while its answers stall for longer than the wait for the mode's snapshot, so neither the
+# push nor the snapshot comes in time. A firmware that answers subscribes and has not answered leaves the mode unknown,
+# never the STAND last heard, and the robot is switched off where it is rather than stood up.
+def test_leaving_never_stands_up_a_robot_deactivated_during_a_stall(fake, target, monkeypatch):
+    monkeypatch.setattr(real, "REFRESH_S", 60.0)
+    with Robot(target) as robot:
+        robot.stand()
+        fake.push_mode(pb.DEACTIVATED, lost=True)
+        fake.stall(real.MODE_WAIT_S + 0.5)
+        assert robot.state().mode is Mode.STAND
+    _eventually(lambda: fake.connections == 0, timeout=5.0)
+    assert _modes_sent(fake) == [pb.STAND, pb.DEACTIVATED]
+
+
 # A firmware from before the snapshots never answers the ask: a mode that stays unknown is no standing one.
 def test_leaving_a_robot_whose_mode_stays_unknown_switches_it_off_where_it_is(transport, monkeypatch):
     monkeypatch.setattr(real, "REPLY_TIMEOUT_S", 0.5)

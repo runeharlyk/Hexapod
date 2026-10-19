@@ -296,6 +296,7 @@ A mode change returns once the robot reports it applied, so a goal sent right af
 Leaving the `with` block, also on an exception or Ctrl-C, stops the robot, lowers it onto its belly and switches the servos off.
 Lowering takes STAND, which would stand up a robot that is not standing, so the robot is asked for its mode on the way out (its snapshot, waited for up to 1 s) and lowered only when it reports STAND or WALK.
 A robot whose mode stays unknown, as with a firmware from before the snapshots that has pushed none, is switched off where it is: a 50 mm drop for a standing robot, never a deactivated one stood up.
+A firmware that sends snapshots and does not answer within that second leaves the mode unknown too, since a stalled link holds back its pushes as well; only a firmware from before the snapshots, which answers no subscribe but pushes every change, is taken to be in the mode last heard.
 
 ## Goals
 
