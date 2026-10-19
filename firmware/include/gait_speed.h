@@ -227,7 +227,8 @@ inline void stickShares(float lx, float ly, float rx, float s, float (&share)[3]
     for (int axis = 0; axis < 3; ++axis) share[axis] = speedFraction(s) * std::fabs(stick[axis]) / length;
 }
 
-// The walk at share[axis] of each axis's top speed at the stride, the shares summing to at most 1, signed as the stick.
+// The walk at share[axis] of each axis's top speed at the stride, the shares summing to at most 1, signed as lx and
+// ly on its lateral and forward axes and against rx on its yaw.
 // Each axis walks its share of the total share of its stroke, and the gait steps at the total share of the slowest top
 // cadence among those axes: a combined stick never steps an axis faster than that axis's own top cadence, and so walks
 // an axis with a faster one below its share of its top speed.
