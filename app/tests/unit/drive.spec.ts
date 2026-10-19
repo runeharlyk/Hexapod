@@ -160,16 +160,16 @@ describe('the controls', () => {
     await settle()
   })
 
-  // The mode shown is the robot's: the request leaves it pending until the robot pushes the change.
+  // The mode shown is the robot's: the request changes it only once the robot pushes the change.
   it('drive the robot when the simulation view is not shown', async () => {
     drive(DEFLECTED)
     driveMode(MotionModes.WALK)
     expect(get(outControllerData)).toEqual(DEFLECTED)
     expect(emit).toHaveBeenCalledTimes(1)
-    expect([get(mode), get(modeState).pending]).toEqual([MotionModes.STAND, true])
+    expect(get(mode)).toBe(MotionModes.STAND)
 
     robot.set(ModeData, { mode: ModesEnum.WALK, handheld: false })
     await settle()
-    expect([get(mode), get(modeState).pending]).toEqual([MotionModes.WALK, false])
+    expect(get(mode)).toBe(MotionModes.WALK)
   })
 })

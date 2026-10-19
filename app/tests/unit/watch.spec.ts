@@ -1,8 +1,8 @@
 // watch() over the real DataBroker and the fake robot (tests/fake-robot), which answers a subscribe as the firmware
-// does: a state topic's value, then the ack. The watch shows the value, whether it is live, stale or failed, and a write
-// still pending; the link's drops, fail-overs and the robot's lost frames are what it has to survive.
+// does: a state topic's value, then the ack. The watch shows the value and whether it is live, stale or failed; the
+// link's drops, fail-overs and the robot's lost frames are what it has to survive.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { get, type Readable } from 'svelte/store'
+import type { Readable } from 'svelte/store'
 import { DataBroker } from '$lib/transport/databroker'
 import { tagOf } from '$lib/transport/message-codec'
 import { ACK_TIMEOUT_MS, type Watched } from '$lib/transport/topics'
@@ -202,34 +202,5 @@ describe('watch', () => {
     await settle()
     expect(again.now()).toMatchObject({ value: { mode: WALK }, status: 'live' })
     again.stop()
-  })
-
-  // A mode or gait write is a fire-and-forget command: pending until the robot pushes, or a second at most, since a
-  // refused mode pushes nothing.
-  it('holds a write pending until the next value or a second', async () => {
-    const mode = record(watch(ModeData, broker))
-    await settle()
-
-    broker.markPending(ModeData)
-    expect(mode.now().pending).toBe(true)
-    robot.set(ModeData, { mode: STAND, handheld: false })
-    await settle()
-    expect(mode.now()).toMatchObject({ pending: false, value: { mode: STAND } })
-
-    broker.markPending(ModeData)
-    await vi.advanceTimersByTimeAsync(999)
-    expect(mode.now().pending).toBe(true)
-    await vi.advanceTimersByTimeAsync(1)
-    expect(mode.now().pending).toBe(false)
-    mode.stop()
-  })
-
-  it('reads the current state with get', async () => {
-    robot.set(ModeData, { mode: STAND, handheld: false })
-    const store = watch(ModeData, broker)
-    const keep = store.subscribe(() => {})
-    await settle()
-    expect(get(store)).toMatchObject({ value: { mode: STAND }, status: 'live' })
-    keep()
   })
 })

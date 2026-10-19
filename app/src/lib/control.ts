@@ -25,17 +25,16 @@ const act = <T>(fns: MessageFns<T>, data: T, failed: string) => {
   return sent
 }
 
-// The mode and the gait shown are the robot's, from its pushes: a request is pending until the robot pushes the change,
-// or a second at most, since a mode it refuses pushes nothing.
+// The mode and the gait shown are the robot's, from its pushes, never the request's: a mode it refuses pushes nothing.
 export const requestMode = (nextMode: MotionModes) => {
   // The robot reads the mode alone; whether the handheld drives is its own to report.
   const mode = { mode: Object.values(MotionModes).indexOf(nextMode), handheld: false }
-  if (act(ModeData, mode, 'Mode not changed')) dataBroker.markPending(ModeData)
+  act(ModeData, mode, 'Mode not changed')
 }
 
 export const requestGait = (nextGait: GaitType) => {
   const gait = { gait: Object.values(GaitType).indexOf(nextGait) }
-  if (act(GaitData, gait, 'Gait not changed')) dataBroker.markPending(GaitData)
+  act(GaitData, gait, 'Gait not changed')
 }
 
 export const playAnimation = (name: string, values: Map<ParamId, number>) => {

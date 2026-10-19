@@ -200,11 +200,6 @@ export class DataBroker {
     }
   }
 
-  /** A write the robot answers with a push, such as a mode, is pending until that push comes or PENDING_MS pass. */
-  markPending<T>(fns: MessageFns<T>) {
-    this.states.get(tagOf(fns))?.markPending()
-  }
-
   /** Forgets every state topic's value and asks the robot again, for a link that may reach another robot. */
   resetStates() {
     this.states.forEach(entry => entry.reset())

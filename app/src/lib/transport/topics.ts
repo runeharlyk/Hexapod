@@ -1,24 +1,19 @@
 import {
-  AnalyticsData,
-  AnglesData,
   AnimationStatus,
   GaitData,
   GoalStatus,
-  IMUData,
   ModeData,
   OtaStatusData,
-  TelemetryBatch,
   type MessageFns
 } from '$lib/platform_shared/message'
 import { APStatus, WifiStatus } from '$lib/platform_shared/api'
-import { tagOf } from './message-codec'
 import type { Failure } from './reply'
 
 /**
- * The robot's server-to-client topics, as platform_shared/topics.json lists them (tests/unit/topics.spec.ts checks this
- * table against it). A state topic holds one current value: the robot answers a subscribe with that value and then the
- * subscribe echoed as its ack, and pushes every change. A stream is a sequence of frames, and its subscribe is acked
- * alone.
+ * The robot's state topics, as platform_shared/topics.json lists them (tests/unit/topics.spec.ts checks this table
+ * against it). A state topic holds one current value: the robot answers a subscribe with that value and then the
+ * subscribe echoed as its ack, and pushes every change. A stream, any other topic, is a sequence of frames followed
+ * with the data broker's `on`, and its subscribe is acked alone.
  */
 export const STATE_TOPICS = [
   ModeData,
@@ -30,43 +25,27 @@ export const STATE_TOPICS = [
   GoalStatus
 ] as const
 
-export const STREAM_TOPICS = [IMUData, AnalyticsData, AnglesData, TelemetryBatch] as const
-
 /** A state topic's message type: `watch(IMUData)` does not type-check. */
 export type StateTopic = (typeof STATE_TOPICS)[number]
 
 /** The value a state topic carries. */
 export type ValueOf<F> = F extends MessageFns<infer T> ? T : never
 
-const tagsOf = (topics: readonly unknown[]): ReadonlySet<number> =>
-  new Set(topics.map(fns => tagOf(fns as MessageFns<unknown>)))
-const STATE_TAGS = tagsOf(STATE_TOPICS)
-const STREAM_TAGS = tagsOf(STREAM_TOPICS)
-
-/** A tag's kind, or undefined for a tag that is no topic. */
-export const kindOf = (tag: number): 'state' | 'stream' | undefined =>
-  STATE_TAGS.has(tag) ? 'state'
-  : STREAM_TAGS.has(tag) ? 'stream'
-  : undefined
-
 /** How long a subscribe waits for its ack before it is sent again. */
 export const ACK_TIMEOUT_MS = 2000
 /** Subscribes without a current value (no ack, or an ack with no value before it) before a watch gives up. */
 export const SUBSCRIBE_TRIES = 3
-/** How long a fire-and-forget write stays pending when the robot pushes nothing for it, as for a refused mode. */
-export const PENDING_MS = 1000
 
 /**
  * A state topic as a page sees it. `value` is the robot's last value, undefined until the first arrives. `status` is
  * `live` once the robot acked the subscribe after sending its value, `subscribing` until then, and `error` when the
  * robot never sent one; `failure` then says why. `stale` marks a value kept from a link that dropped, until the next
- * link's snapshot replaces it, and `pending` a write the robot has not answered yet.
+ * link's snapshot replaces it.
  */
 export interface Watched<T> {
   value: T | undefined
   status: 'subscribing' | 'live' | 'error'
   stale: boolean
-  pending: boolean
   failure: Failure | null
 }
 
@@ -91,7 +70,6 @@ export class StateEntry<T> {
     value: undefined,
     status: 'subscribing',
     stale: false,
-    pending: false,
     failure: null
   }
   private readonly watchers = new Set<(state: Watched<T>) => void>()
@@ -100,7 +78,6 @@ export class StateEntry<T> {
   private tries = 0
   private heardAtFirstTry = 0
   private ackTimer: ReturnType<typeof setTimeout> | undefined
-  private pendingTimer: ReturnType<typeof setTimeout> | undefined
 
   constructor(
     private readonly tag: number,
@@ -137,8 +114,7 @@ export class StateEntry<T> {
 
   received(value: T) {
     this.valueSinceSubscribe = true
-    clearTimeout(this.pendingTimer)
-    this.update({ value, stale: false, pending: false })
+    this.update({ value, stale: false })
   }
 
   acked() {
@@ -158,7 +134,6 @@ export class StateEntry<T> {
     this.update({
       status: 'subscribing',
       stale: this.state.value !== undefined,
-      pending: false,
       failure: null
     })
   }
@@ -172,16 +147,9 @@ export class StateEntry<T> {
       value: undefined,
       status: 'subscribing',
       stale: false,
-      pending: false,
       failure: null
     })
     this.subscribe()
-  }
-
-  markPending() {
-    clearTimeout(this.pendingTimer)
-    this.pendingTimer = setTimeout(() => this.update({ pending: false }), PENDING_MS)
-    this.update({ pending: true })
   }
 
   private retry(reason: 'no-ack' | 'no-value') {
@@ -198,7 +166,6 @@ export class StateEntry<T> {
 
   private stopTimers() {
     clearTimeout(this.ackTimer)
-    clearTimeout(this.pendingTimer)
   }
 
   private update(change: Partial<Watched<T>>) {

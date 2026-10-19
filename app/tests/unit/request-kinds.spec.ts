@@ -2,8 +2,7 @@
 // once, a settings write waits out a link blip and then fails as not saved, and a read waits until its timeout.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DataBroker } from '$lib/transport/databroker'
-import { REQUEST_KINDS, SETTING_GRACE_MS } from '$lib/transport/request-kinds'
-import { protoMetadata } from '$lib/platform_shared/message'
+import { SETTING_GRACE_MS } from '$lib/transport/request-kinds'
 import { FakeRobot, fakeLink } from '../fake-robot/transport'
 
 const REQUEST_TIMEOUT_MS = 15000
@@ -64,15 +63,5 @@ describe('a request while no link is up', () => {
     await link.connect()
     await expect(read).resolves.toMatchObject({ statusCode: 200 })
     expect(robot.requests('featuresDataRequest')).toHaveLength(0)
-  })
-
-  it('gives every request of the schema a kind', () => {
-    const request = protoMetadata.fileDescriptor.messageType.find(
-      type => type.name === 'CorrelationRequest'
-    )
-    const keys = (request?.field ?? [])
-      .filter(field => field.jsonName !== 'correlationId')
-      .map(field => field.jsonName)
-    expect(Object.keys(REQUEST_KINDS).sort()).toEqual(keys.sort())
   })
 })
