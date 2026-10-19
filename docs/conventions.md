@@ -61,7 +61,9 @@ The stick-to-gait mapping is a separate layer, `MotionService::handleCommand` in
 Its classical WALK branch takes `classicWalkTarget` (`firmware/include/gait_speed.h`), which gives `step_x` the sign of `lx`, `step_y` the sign of `ly` and `step_angle` the sign of `-rx`, scaled to the gait's speed envelope.
 The TUNED branch uses the same signs through the velocity command `(ly, lx, -rx)`, forward, right and counter-clockwise, and `WALK_NN` converts the sticks the same way into the command its policy was trained on (`PolicyRunner::setCommand`, `firmware/include/policy_runner.h`).
 Under the convention above that means +ly walks forward, +lx strafes right and +rx turns clockwise.
-The app, a gamepad and the ESP-NOW handheld send their sticks unchanged, with +x to the right and +y up.
+The app and a gamepad send their sticks unchanged, with +x to the right and +y up.
+The ESP-NOW handheld's firmware is not in this repo: it applies a per-axis inversion before sending (`firmware/include/communication/controller_packet.h`), and the robot keeps their signs (`firmware/include/communication/handheld_input.h`).
+Whether it sends +x for a stick pushed right is unverified; a bench check with the handheld would settle it, and if it was inverted to suit the previous mapping, it now strafes and turns the wrong way.
 The simulation measured these signs (`simulation/src/hexapod/speed_model.py`).
 The fixture records the mapping, so right strafe is the stick `lx = 0.5` and the counter-clockwise turn `rx = -0.5`.
 The native test checks it on `classicWalkTarget`, the Python test on the port, and the app test from the stick on through the virtual robot.
@@ -70,8 +72,9 @@ The goal controller (`firmware/include/goal_controller.h`) reasons in the body f
 The Python facade turns REP-103 velocities into sticks through the speed model's measured table, which carries the signs.
 
 Until 2026-10-19 the lateral and turn signs were the mirror image: +lx strafed left, +rx turned counter-clockwise, and in STAND +lx shifted the body left and +rx lowered its left side.
-That mapping felt right only while the robot was wired as its own mirror image, before the fix under "Floor confirmation".
-Telemetry recorded before the change holds sticks of the old mapping, and `simulation/score_track.py` reads every recording by the current one.
+On the robot wired as its own mirror image, before the fix under "Floor confirmation", that mapping would strafe and turn the robot to the right for a stick pushed right, which is presumably why it went unnoticed; this is inferred from the wiring, not observed.
+Telemetry recorded before the change holds sticks of the old mapping, and `simulation/score_track.py` reads a recording by the current one, so it refuses one whose header names no firmware version or one older than 0.1.1.
+Version 0.1.1 is not a clean boundary: the 0.1.1 release has the old mapping, and builds after it report 0.1.1 on either mapping, so a 0.1.1 recording is scored and the next release's version is the first that tells them apart (`STICK_MAPPING_VERSION` in `simulation/score_track.py`).
 
 ## Stand stick signs
 
@@ -88,7 +91,9 @@ In STAND the sticks pose the body over its planted feet instead of walking it, i
 The lateral sign is the walk's: a stick pushed right strafes the robot to its right and shifts a standing body to its right.
 A positive `phi` lowers the left side, which the self-levelling confirms: the measured tilt feeds `phi` too (`levelAttitude`, `firmware/include/self_level.h`), so if a positive `phi` lowered the right side, the levelling would push a low right side further down instead of reaching down with it, as the floor check of 2026-10-16 found it does.
 The stick therefore feeds `phi` negated.
-A floor check on 2026-10-18, under the previous mapping, reported the left stick pushed right shifting the body right and the right stick pushed right putting the right side down; that was the previous mapping seen from in front of the robot.
+A floor check on 2026-10-18, under the previous mapping, reported the left stick pushed right shifting the body right and the right stick pushed right putting the right side down.
+By the derivation above the previous mapping shifted the body to its left and lowered its left side for those sticks, so the report is read as made from in front of the robot.
+That reading is an inference consistent with the 2026-10-16 floor check and the self-levelling argument, not a re-observation; a floor check of the current firmware would confirm it.
 Self-levelling also takes back part of a commanded tilt on flat ground, since it adds the measured tilt to the command: the simulation settles at 3.6 deg for a half stick that commands 7.3 deg.
 
 The fixture's `stand` rows hold each stick from a settled stand and store the signs of the body's shift and tilt.
