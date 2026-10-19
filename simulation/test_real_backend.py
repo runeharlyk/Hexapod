@@ -516,6 +516,50 @@ def test_leaving_on_an_exception_stops_sits_and_deactivates(fake, target, monkey
     assert sit < [i for i, (kind, _) in enumerate(tail) if kind == "mode"][-1]
 
 
+def _modes_sent(fake):
+    return [m.mode.mode for _, m in fake.received if m.WhichOneof("message") == "mode"]
+
+
+# Lowering a standing robot before switching it off takes STAND, which would stand up a robot that is not standing. So
+# leaving asks the robot for its mode, its snapshot, rather than trust what the script last heard, and lowers only a
+# robot standing or walking. A robot the app left standing, whose mode the script never heard, is lowered.
+def test_leaving_lowers_a_robot_left_standing_whose_mode_was_never_heard(fake, target, monkeypatch):
+    monkeypatch.setattr(real, "REPLY_TIMEOUT_S", 1.0)
+    fake.mode = pb.STAND
+    fake.lost_mode_snapshots = 1
+    with Robot(target) as robot:
+        assert robot.state().mode is None
+    _eventually(lambda: fake.connections == 0)
+    assert _modes_sent(fake) == [pb.STAND, pb.DEACTIVATED]
+    assert [sent.height for _, sent in fake.inputs()][-1] == 1.0
+
+
+# The app's stop button deactivated the robot and its push was lost: the script still holds STAND, and must not stand
+# the robot up again on its way out.
+def test_leaving_never_stands_up_a_robot_deactivated_meanwhile(fake, target, monkeypatch):
+    monkeypatch.setattr(real, "REPLY_TIMEOUT_S", 1.0)
+    monkeypatch.setattr(real, "REFRESH_S", 60.0)
+    with Robot(target) as robot:
+        robot.stand()
+        fake.push_mode(pb.DEACTIVATED, lost=True)
+        assert robot.state().mode is Mode.STAND
+    _eventually(lambda: fake.connections == 0)
+    assert _modes_sent(fake) == [pb.STAND, pb.DEACTIVATED]
+
+
+# A firmware from before the snapshots never answers the ask: a mode that stays unknown is no standing one.
+def test_leaving_a_robot_whose_mode_stays_unknown_switches_it_off_where_it_is(transport, monkeypatch):
+    monkeypatch.setattr(real, "REPLY_TIMEOUT_S", 0.5)
+    fake = FakeRobot(snapshots=False)
+    try:
+        with Robot(_target(fake, transport, monkeypatch)) as robot:
+            assert robot.state().mode is None
+        _eventually(lambda: fake.connections == 0)
+        assert _modes_sent(fake) == [pb.DEACTIVATED]
+    finally:
+        fake.stop()
+
+
 # The firmware stops a walk that hears nothing for 600 ms and says nothing about it; the client must notice.
 def test_a_stall_past_the_dead_man_is_reported_as_a_move_cut_short(robot, fake):
     robot.stand()

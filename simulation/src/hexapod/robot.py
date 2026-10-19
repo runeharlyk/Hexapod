@@ -106,10 +106,12 @@ class Robot:
 
     def rest(self) -> None:
         """Lowers a standing robot onto its belly, then switches the servos off: a drop of a few millimetres
-        instead of the full 50 mm a standing robot falls when deactivated."""
+        instead of the full 50 mm a standing robot falls when deactivated. Lowering takes STAND, which would stand up a
+        robot that is not standing, so the robot is asked for its mode rather than trusted to be in the one last heard,
+        and a robot whose mode stays unknown is switched off where it is."""
         self.stop()
         try:
-            if self.state().mode in WALKS_FROM:
+            if self._backend.fresh_mode() in WALKS_FROM:
                 self._backend.set_mode(Mode.STAND)
                 self._backend.set_height(1.0)
                 self._backend.sleep(SIT_S)

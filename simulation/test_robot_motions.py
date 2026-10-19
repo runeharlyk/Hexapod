@@ -83,6 +83,9 @@ class ScriptedBackend:
         seen = (self._seen[0] + 180) % 360 - 180 if self.imu else None
         return RobotState(self.t, self.mode, self.gait, seen, self.link_drops)
 
+    def fresh_mode(self):
+        return self.mode
+
     def now(self):
         return self.t
 

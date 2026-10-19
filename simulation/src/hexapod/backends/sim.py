@@ -116,6 +116,9 @@ class SimBackend:
         return RobotState(t=self.now(), mode=self._mode, gait=self._gait, yaw=math.degrees(self.sim.base_yaw()),
                           link_drops=0, roll=roll)
 
+    def fresh_mode(self) -> Mode | None:
+        return self._mode
+
     def now(self) -> float:
         return self._loop.ticks * FIRMWARE_DT
 

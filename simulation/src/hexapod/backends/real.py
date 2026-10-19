@@ -57,6 +57,7 @@ STEERING_TIMEOUT_S = 0.6
 HEARTBEAT_MODES = (Mode.STAND, Mode.WALK, Mode.WALK_NN)
 WALKING_MODES = (Mode.WALK, Mode.WALK_NN)
 REPLY_TIMEOUT_S = 3.0
+MODE_WAIT_S = 1.0  # fresh_mode's wait for the mode's snapshot, on the way out of a script
 SILENCE_S = 2.0  # pongs arrive every KEEPALIVE_S: this long without a frame means the link is gone
 CONFIRM_S = 1.0
 # Under the handheld's 600 ms window (motion_inbox.h HANDHELD_PRIORITY_MS), so a refresh falls inside every drive.
@@ -214,10 +215,10 @@ class RealBackend:
         await self._send(pb.Message(sub_notif=pb.SubscribeNotification(tag=tag)))
         return ack
 
-    # None when no ack came within the reply timeout, as from a firmware from before the snapshots.
-    async def _acked(self, ack: asyncio.Future) -> bool | None:
+    # None when no ack came within the timeout, as from a firmware from before the snapshots.
+    async def _acked(self, ack: asyncio.Future, timeout: float | None = None) -> bool | None:
         try:
-            return await asyncio.wait_for(asyncio.shield(ack), REPLY_TIMEOUT_S)
+            return await asyncio.wait_for(asyncio.shield(ack), timeout or REPLY_TIMEOUT_S)
         except TimeoutError:
             return None
 
@@ -415,6 +416,17 @@ class RealBackend:
                 raise self._error
             return RobotState(t=time.monotonic(), mode=self._mode, gait=self._gait,
                               yaw=self._yaw if self._imu else None, link_drops=self._drops, handheld=self._handheld)
+
+    # Subscribes to the mode again, for its snapshot. A firmware from before the snapshots answers nothing but pushes
+    # every change, so the mode last heard is then as current as any; an ack without the snapshot means the snapshot was
+    # lost, and the mode last heard may be the very one the robot has left.
+    def fresh_mode(self) -> Mode | None:
+        async def ask() -> bool | None:
+            return await self._acked(await self._subscribe("mode"), MODE_WAIT_S)
+
+        snapshot = self._run(ask(), MODE_WAIT_S + 1)
+        with self._changed:
+            return None if snapshot is False else self._mode
 
     def now(self) -> float:
         return time.monotonic()

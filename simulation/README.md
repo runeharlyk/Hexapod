@@ -294,6 +294,8 @@ A lost report is so corrected within one refresh, 0.4 s and a round trip at most
 A firmware from before these answers acks no subscribe: the mode is then unknown until the robot pushes one, nothing is refreshed, and no goal is sent.
 A mode change returns once the robot reports it applied, so a goal sent right after `stand()` is accepted; during an animation the robot applies it only after the clip's exit, and an exit longer than the 3 s reply timeout raises `RobotTimeout` although the robot still switches.
 Leaving the `with` block, also on an exception or Ctrl-C, stops the robot, lowers it onto its belly and switches the servos off.
+Lowering takes STAND, which would stand up a robot that is not standing, so the robot is asked for its mode on the way out (its snapshot, waited for up to 1 s) and lowered only when it reports STAND or WALK.
+A robot whose mode stays unknown, as with a firmware from before the snapshots that has pushed none, is switched off where it is: a 50 mm drop for a standing robot, never a deactivated one stood up.
 
 ## Goals
 
