@@ -56,6 +56,7 @@ void BLE::setup() {
 }
 
 void BLE::ServerCallbacks::onConnect(NimBLEServer *server, NimBLEConnInfo &connInfo) {
+    _service->_connHandle = connInfo.getConnHandle();
     _service->_deviceConnected = true;
     _service->requestRxReset();
     server->updateConnParams(connInfo.getConnHandle(), 12, 24, 0, 400);
@@ -127,37 +128,21 @@ void BLE::reassemble(const uint8_t *data, size_t len) {
     if (pos > 0) _rxBuffer.erase(_rxBuffer.begin(), _rxBuffer.begin() + pos);
 }
 
-// notify() fails when NimBLE has no mbuf for a chunk (BLE_HS_ENOMEM, after its own 10 ms of retries): the frame is lost
-// then, and its later chunks are not sent.
+// notify() fails when NimBLE has no mbuf for the chunk after its own 10 ms of retries (BLE_HS_ENOMEM), or when the
+// link is gone. ble_frame::send retries a chunk after the first and ends the link rather than leave a frame cut short.
 bool BLE::send(const uint8_t *data, size_t len, int cid) {
     if (!_deviceConnected || !_txCharacteristic) return false;
 
-    static constexpr size_t CHUNK = 180;
-    const uint8_t header[2] = {(uint8_t)(len & 0xFF), (uint8_t)((len >> 8) & 0xFF)};
-    uint8_t buf[CHUNK];
-    size_t bufLen = 0;
-    bool sent = true;
-
-    auto flush = [&]() {
-        if (bufLen == 0 || !sent) return;
-        _txCharacteristic->setValue(buf, bufLen);
-        sent = _txCharacteristic->notify();
-        bufLen = 0;
-    };
-    auto append = [&](const uint8_t *src, size_t n) {
-        for (size_t i = 0; i < n && sent;) {
-            size_t take = CHUNK - bufLen < n - i ? CHUNK - bufLen : n - i;
-            memcpy(buf + bufLen, src + i, take);
-            bufLen += take;
-            i += take;
-            if (bufLen == CHUNK) flush();
-        }
-    };
-
     if (_txMutex) xSemaphoreTake(_txMutex, portMAX_DELAY);
-    append(header, 2);
-    append(data, len);
-    flush();
+    const bool sent = ble_frame::send(
+        data, len, [this](const uint8_t *chunk, size_t n) { return _txCharacteristic->notify(chunk, n); },
+        [] { vTaskDelay(pdMS_TO_TICKS(10)); },
+        [this] {
+            ESP_LOGW(TAG, "A frame's chunk found no mbuf; ending the link rather than leave the frame cut short");
+            // No later frame may follow the cut one on this link; onDisconnect forgets the client.
+            _deviceConnected = false;
+            _server->disconnect(_connHandle);
+        });
     if (_txMutex) xSemaphoreGive(_txMutex);
     return sent;
 }

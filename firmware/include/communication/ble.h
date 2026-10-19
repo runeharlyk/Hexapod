@@ -5,6 +5,7 @@
 #include <freertos/queue.h>
 #include <vector>
 
+#include <communication/ble_frame.h>
 #include <communication/comm_base.hpp>
 
 // Nordic UART Service BLE transport (esp-nimble-cpp), carrying the same protobuf frames as the WS.
@@ -40,6 +41,7 @@ class BLE : public CommAdapterBase {
     NimBLECharacteristic *_txCharacteristic{nullptr};
     NimBLECharacteristic *_rxCharacteristic{nullptr};
     volatile bool _deviceConnected{false};
+    uint16_t _connHandle{BLE_HS_CONN_HANDLE_NONE};
 
     QueueHandle_t _messageQueue{nullptr};
     TaskHandle_t _processingTask{nullptr};
