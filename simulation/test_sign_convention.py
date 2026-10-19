@@ -1,5 +1,6 @@
 """The body-frame sign convention against platform_shared/sign_convention.json, which the firmware's native
-test (firmware/test/test_sign_convention) and the app's gait.ts pass too. docs/conventions.md derives the signs."""
+test (firmware/test/test_sign_convention) and the app's sign-convention.spec.ts pass too. docs/conventions.md derives
+the signs."""
 import json
 import math
 from pathlib import Path
@@ -8,6 +9,8 @@ import numpy as np
 import pytest
 
 from src.robot import firmware_gait as fg
+from src.sim.firmware_loop import FirmwareLoop
+from src.sim.mj_runtime import HexapodSim
 
 FIXTURE = json.loads(
     (Path(__file__).resolve().parents[1] / "platform_shared" / "sign_convention.json").read_text()
@@ -16,6 +19,8 @@ SAMPLING = FIXTURE["sampling"]
 LEGS = FIXTURE["legs"]
 STANCE = np.array(FIXTURE["stance_mm"], dtype=float)
 COMMANDS = {c["name"]: c for c in FIXTURE["commands"]}
+STAND = FIXTURE["stand"]
+STAND_STICKS = {s["name"]: s for s in STAND["sticks"]}
 
 
 def _sign(value: float, zero: float) -> int:
@@ -99,3 +104,32 @@ def test_body_motion_has_the_fixture_signs(name):
     zero = SAMPLING["zero_mm_per_tick"]
     assert [_sign(body_velocity[0], zero), _sign(body_velocity[1], zero)] == command["body_velocity_sign"]
     assert _sign(yaw, SAMPLING["zero_rad_per_tick"]) == command["yaw_sign"]
+
+
+def _stand(stick: dict):
+    """The firmware's STAND in MuJoCo, its self-levelling fed the simulated IMU: how far the base moved over the
+    floor (mm) and world up in the body frame, once the stick has settled. The robot starts facing world +Y with its
+    right side toward world +X, so the world's x and y are the body's."""
+    sim = HexapodSim()
+    sim.reset_to_stand()
+    loop = FirmwareLoop(sim, fg.TRI_GATE)
+    loop.hold()
+    for _ in range(STAND["settle_ticks"]):
+        loop.tick()
+    start = sim.data.qpos[:2].copy()
+    loop.stand(**stick)
+    for _ in range(STAND["settle_ticks"]):
+        loop.tick()
+    w, x, y, z = sim.base_quat()
+    up = (2 * (x * z - w * y), 2 * (y * z + w * x))
+    return (sim.data.qpos[:2] - start) * 1000, up
+
+
+@pytest.mark.parametrize("name", list(STAND_STICKS))
+def test_a_standing_body_shifts_and_tilts_with_the_fixture_signs(name):
+    row = STAND_STICKS[name]
+    shift, up = _stand(row["stick"])
+    assert [_sign(v, STAND["zero_mm"]) for v in shift] == row["body_shift_sign"]
+    # Nose up tips world up toward body +y; right side down tips it toward body -x.
+    tilt = (up[1], -up[0])
+    assert [_sign(v, STAND["zero_rad"]) for v in tilt] == row["body_tilt_sign"]

@@ -137,7 +137,7 @@ def test_leg_chain_follows_the_clamped_ik_when_a_foot_is_out_of_reach():
     # bound, for a foot beyond femur + tibia reach mid-cycle; the IK clamps its acos arguments, so the servos (and the
     # chain the sweep checks) stop short of it.
     kin = Kinematics()
-    body = next(_gait_bodies(1.0, -1.0, -1.0, [0.575], TUNED))
+    body = next(_gait_bodies(-1.0, -1.0, 1.0, [0.575], TUNED))
     chain, angles = _chain(kin, body)
     assert np.linalg.norm(chain[0, 3] - body.feet[0, :3]) > 1.0
     np.testing.assert_allclose(chain[0, 3], kin.forward_kinematics_local(0, *angles[0]), atol=1e-9)
@@ -163,7 +163,7 @@ def test_travel_clamp_is_what_keeps_full_reverse_turn_clear():
     # Full reverse plus full yaw asks the searched gait's legs 0 and 1 to swing past their travel until they
     # cross; the servos stop at travel, which leaves the legs apart. The classic gaits' speed envelope keeps
     # their strokes inside travel over this stick grid, so only the searched gait can still ask for this.
-    command = [(-0.25, -1.0, -1.0)]
+    command = [(0.25, -1.0, 1.0)]
     commanded = sweep(TUNED, command, phases=40, clamped=False)
     reached = sweep(TUNED, command, phases=40, clamped=True)
     assert commanded.beyond_travel_fraction > 0.0

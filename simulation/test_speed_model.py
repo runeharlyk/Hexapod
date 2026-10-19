@@ -32,10 +32,10 @@ def test_the_table_still_describes_the_simulation(gait, axis, stick):
 
 # What the table says about the axes, so a regenerated table that flips one is noticed rather than obeyed.
 @pytest.mark.parametrize("gait", MODELLED)
-def test_left_and_counter_clockwise_come_from_positive_lx_and_rx(gait):
-    sticks = sm.sticks_for(gait, Velocity(0.02, 0.02, 0.2))
+def test_right_and_clockwise_come_from_positive_lx_and_rx(gait):
+    sticks = sm.sticks_for(gait, Velocity(0.02, -0.02, -0.2))
     assert sticks.lx > 0 and sticks.ly > 0 and sticks.rx > 0
-    back = sm.sticks_for(gait, Velocity(-0.02, -0.02, -0.2))
+    back = sm.sticks_for(gait, Velocity(-0.02, 0.02, 0.2))
     assert back.lx < 0 and back.ly < 0 and back.rx < 0
 
 

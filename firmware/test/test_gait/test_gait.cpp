@@ -48,7 +48,7 @@ struct TunedCommand {
 };
 
 TunedCommand makeTuned(float ly, float lx, float rx, float s1) {
-    const float cmd[3] = {ly * TUNED_CMD_VX_MAX, -lx * TUNED_CMD_VY_MAX, rx * TUNED_CMD_YAW_MAX};
+    const float cmd[3] = {ly * TUNED_CMD_VX_MAX, lx * TUNED_CMD_VY_MAX, -rx * TUNED_CMD_YAW_MAX};
     float a[6];
     tuned_gait::velocity_to_gait(cmd, a);
 
@@ -697,15 +697,15 @@ void test_tuned_gait_records_lateral_femur_cost() {
         float worst[3] = {0, 0, 0};
         float peak[3] = {0, 0, 0};
         // Both sign pairings; lateral opposing the turn is the worse of the two.
-        sweepTunedCycle(1.0f, lx, -1.0f, -1.0f, worst, peak);
-        sweepTunedCycle(-1.0f, lx, 1.0f, -1.0f, worst, peak);
+        sweepTunedCycle(1.0f, -lx, 1.0f, -1.0f, worst, peak);
+        sweepTunedCycle(-1.0f, -lx, -1.0f, -1.0f, worst, peak);
         n += std::snprintf(msg + n, sizeof(msg) - n, " %.2f=%.1f", lx, worst[1]);
     }
     TEST_MESSAGE(msg);
 
     float full[3] = {0, 0, 0};
     float fpeak[3] = {0, 0, 0};
-    sweepTunedCycle(-1.0f, -1.0f, -0.5f, -1.0f, full, fpeak);
+    sweepTunedCycle(-1.0f, 1.0f, 0.5f, -1.0f, full, fpeak);
     TEST_ASSERT_TRUE_MESSAGE(full[1] > 0.0f,
                              "full three-axis command now fits -- the lateral caveat can be dropped");
 }
@@ -720,10 +720,10 @@ void test_tuned_gait_is_feasible_on_single_axis_commands() {
     float peak[3] = {0, 0, 0};
     for (float v : sticks) {
         sweepTunedCycle(v, 0.f, 0.f, -1.0f, worst, peak);   // forward only
-        sweepTunedCycle(0.f, v, 0.f, -1.0f, worst, peak);   // lateral only
-        sweepTunedCycle(0.f, 0.f, v, -1.0f, worst, peak);   // turn only
+        sweepTunedCycle(0.f, -v, 0.f, -1.0f, worst, peak);  // lateral only, to the left
+        sweepTunedCycle(0.f, 0.f, -v, -1.0f, worst, peak);  // turn only, counter-clockwise
     }
-    sweepTunedCycle(0.f, 1.0f, 0.f, -1.0f, worst, peak);    // lateral saturates at only ~28 mm stride
+    sweepTunedCycle(0.f, -1.0f, 0.f, -1.0f, worst, peak); // lateral saturates at only ~28 mm stride
     TEST_ASSERT_TRUE_MESSAGE(worst[0] <= 0.0f, "coxa exceeds travel on a single-axis command");
     TEST_ASSERT_TRUE_MESSAGE(worst[1] <= 0.0f, "femur exceeds travel on a single-axis command");
     TEST_ASSERT_TRUE_MESSAGE(worst[2] <= 0.0f, "tibia exceeds travel on a single-axis command");
@@ -740,7 +740,7 @@ void test_tuned_gait_records_combined_command_overshoot() {
     for (auto &pr : pairs) {
         float worst[3] = {0, 0, 0};
         float peak[3] = {0, 0, 0};
-        sweepTunedCycle(pr[0], 0.f, pr[1], -1.0f, worst, peak);
+        sweepTunedCycle(pr[0], 0.f, -pr[1], -1.0f, worst, peak); // a counter-clockwise turn
         n += std::snprintf(msg + n, sizeof(msg) - n, " %.2f/%.2f=%.1f", pr[0], pr[1], worst[0]);
     }
     TEST_MESSAGE(msg);

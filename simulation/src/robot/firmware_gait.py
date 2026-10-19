@@ -425,8 +425,8 @@ def _stick_shares(lx: float, ly: float, rx: float, s: float) -> list[float]:
 def _walk_at_shares(gait_type: int, share: list[float], lx: float, ly: float, rx: float, s1: float, h: float,
                     fd: float, stride: float) -> tuple[float, float, float, float]:
     """Port of gait_speed_detail::walkAtShares: the walk at share[axis] of each axis's top speed at the stride, signed
-    as the stick. Each axis walks its share of the total share of its stroke, at the total share of the slowest top
-    cadence among those axes."""
+    by the stick: +lx strafes right, +ly walks forward and +rx turns clockwise. Each axis walks its share of the total
+    share of its stroke, at the total share of the slowest top cadence among those axes."""
     used, stroke = [0.0] * 3, [0.0] * 3
     total, slowest = 0.0, load_gait_envelope().cadence_max
     for axis in range(3):
@@ -442,7 +442,7 @@ def _walk_at_shares(gait_type: int, share: list[float], lx: float, ly: float, rx
     if total <= 0.0:
         return 0.0, 0.0, 0.0, 0.0
     stroke = [stroke[axis] * (used[axis] / total) for axis in range(3)]
-    return -math.copysign(stroke[1], lx), math.copysign(stroke[0], ly), math.copysign(stroke[2], rx), total * slowest
+    return math.copysign(stroke[1], lx), math.copysign(stroke[0], ly), -math.copysign(stroke[2], rx), total * slowest
 
 
 def classic_walk_target(gait_type: int, lx: float, ly: float, rx: float, s: float, s1: float, h: float,
@@ -524,7 +524,7 @@ def command_to_walk_gait(lx, ly, rx, s, s1, gait: GaitState, h: float = 0.0, fd:
     """
     if gait.gait_type == TUNED:
         tuned = load_tuned_gait()
-        cmd = (ly * TUNED_CMD_VX_MAX, -lx * TUNED_CMD_VY_MAX, rx * TUNED_CMD_YAW_MAX)
+        cmd = (ly * TUNED_CMD_VX_MAX, lx * TUNED_CMD_VY_MAX, -rx * TUNED_CMD_YAW_MAX)
         a = tuned.schedule.gait_action(cmd)
         gait.step_x = float(a[0]) * TUNED_STEP_XY_MM
         gait.step_y = float(a[1]) * TUNED_STEP_XY_MM

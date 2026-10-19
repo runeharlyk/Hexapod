@@ -1,7 +1,8 @@
 // @vitest-environment node
 // The app moves the robot with the firmware's own motion code (the virtual robot), so its side of the shared sign
-// convention is checked there, from the stick on: each fixture stick is walked through the firmware's command
-// handling and gait, and the feet the forward kinematics places from its joint angles give the signs.
+// convention is checked there, from the stick on: each fixture stick is walked, or held in STAND, through the
+// firmware's command handling, gait and kinematics, and the feet the forward kinematics places from its joint angles
+// give the signs.
 // Needs the virtual robot built (scripts/build_virtual_robot.js).
 import { beforeAll, describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
@@ -9,7 +10,11 @@ import { resolve } from 'node:path'
 import Kinematics, { type body_state_t } from '../../src/lib/kinematic'
 import { config } from '../../src/lib/components/config'
 import { MotionModes } from '../../src/lib/motion'
-import { loadVirtualRobot, type VirtualRobot } from '../../src/lib/simulation/virtual-robot'
+import {
+  loadVirtualRobot,
+  type Command as RobotCommand,
+  type VirtualRobot
+} from '../../src/lib/simulation/virtual-robot'
 
 type Command = {
   name: string
@@ -19,6 +24,13 @@ type Command = {
   stance_foot_displacement_sign: number[][]
 }
 
+type StandStick = {
+  name: string
+  stick: { lx: number; ly: number; rx: number; ry: number }
+  body_shift_sign: number[]
+  body_tilt_sign: number[]
+}
+
 // The same file the firmware's host test (firmware/test/test_sign_convention) and the simulation's
 // test_sign_convention.py read; docs/conventions.md derives the signs.
 const fixture: {
@@ -26,6 +38,7 @@ const fixture: {
   stance_mm: number[][]
   sampling: { dt_s: number; ticks: number; zero_mm_per_tick: number; zero_rad_per_tick: number }
   commands: Command[]
+  stand: { settle_ticks: number; zero_mm: number; zero_rad: number; sticks: StandStick[] }
 } = JSON.parse(
   readFileSync(resolve(__dirname, '../../../platform_shared/sign_convention.json'), 'utf8')
 )
@@ -120,14 +133,60 @@ const walk = (command: Command) => {
   return { foot, ticks, bodyVelocity, yaw: -cross / radiusSquared }
 }
 
+const mean = (feet: number[][], legs: number[], axis: number) =>
+  legs.reduce((sum, leg) => sum + feet[leg][axis], 0) / legs.length
+
+// The body over its planted feet: world up is the normal of the ground the feet span, and the body's offset is the
+// part along that ground of the way from the feet's centre to the body origin.
+const bodyOverFeet = (feet: number[][]) => {
+  const axes = [0, 1, 2]
+  const across = axes.map(a => mean(feet, [0, 1, 2], a) - mean(feet, [3, 4, 5], a))
+  const along = axes.map(a => mean(feet, [0, 3], a) - mean(feet, [2, 5], a))
+  const centre = axes.map(a => mean(feet, [0, 1, 2, 3, 4, 5], a))
+  const normal = [
+    across[1] * along[2] - across[2] * along[1],
+    across[2] * along[0] - across[0] * along[2],
+    across[0] * along[1] - across[1] * along[0]
+  ]
+  const length = Math.hypot(...normal)
+  const up = normal.map(v => v / length)
+  const height = -centre.reduce((sum, v, a) => sum + v * up[a], 0)
+  return { up, offset: [0, 1].map(a => -centre[a] - height * up[a]) }
+}
+
+// STAND from the stick on: the body over its feet once the centred sticks have settled, and once the stick has.
+const stand = ({ lx, ly, rx, ry }: StandStick['stick']) => {
+  restingStance()
+  const hold = (command: RobotCommand) => {
+    for (let tick = 0; tick < fixture.stand.settle_ticks; tick++) {
+      robot.command(command)
+      robot.tick()
+    }
+    return bodyOverFeet(feet())
+  }
+  const rest = hold([0, 0, 0, 0, 0, 0, 0, 0, 0])
+  return { rest, held: hold([lx, ly, rx, ry, 0, 0, 0, 0, 0]) }
+}
+
 describe('sign convention', () => {
   beforeAll(async () => {
     robot = await loadVirtualRobot()
   })
 
-  it('reads three commands for six legs', () => {
+  it('reads three commands and four STAND sticks for six legs', () => {
     expect(fixture.commands).toHaveLength(3)
+    expect(fixture.stand.sticks).toHaveLength(4)
     expect(fixture.legs).toHaveLength(6)
+  })
+
+  it.each(fixture.stand.sticks)('shifts and tilts a standing body for the $name', row => {
+    const { rest, held } = stand(row.stick)
+    const { zero_mm, zero_rad } = fixture.stand
+    expect([0, 1].map(a => sign(held.offset[a] - rest.offset[a], zero_mm))).toEqual(
+      row.body_shift_sign
+    )
+    // Nose up tips world up toward body +y; right side down tips it toward body -x.
+    expect([sign(held.up[1], zero_rad), sign(-held.up[0], zero_rad)]).toEqual(row.body_tilt_sign)
   })
 
   it("puts each leg of the firmware's resting stance on its fixture side", () => {

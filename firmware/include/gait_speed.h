@@ -213,7 +213,7 @@ inline float speedFraction(float s) {
 }
 
 struct WalkTarget {
-    float stepX, stepY, stepAngle; // mm, mm, rad per cycle, signed as MotionService's stick convention
+    float stepX, stepY, stepAngle; // mm, mm, rad per cycle, in the body frame (docs/conventions.md)
     float phaseRate;               // cycles/s
 };
 
@@ -227,7 +227,8 @@ inline void stickShares(float lx, float ly, float rx, float s, float (&share)[3]
     for (int axis = 0; axis < 3; ++axis) share[axis] = speedFraction(s) * std::fabs(stick[axis]) / length;
 }
 
-// The walk at share[axis] of each axis's top speed at the stride, the shares summing to at most 1, signed as the stick.
+// The walk at share[axis] of each axis's top speed at the stride, the shares summing to at most 1, signed as lx and
+// ly on its lateral and forward axes and against rx on its yaw.
 // Each axis walks its share of the total share of its stroke, and the gait steps at the total share of the slowest top
 // cadence among those axes: a combined stick never steps an axis faster than that axis's own top cadence, and so walks
 // an axis with a faster one below its share of its top speed.
@@ -248,7 +249,8 @@ inline WalkTarget walkAtShares(GaitType gait, const float (&share)[3], float lx,
     }
     if (total <= 0.0f) return {};
     for (int axis = 0; axis < 3; ++axis) stroke[axis] *= used[axis] / total;
-    return {-std::copysign(stroke[1], lx), std::copysign(stroke[0], ly), std::copysign(stroke[2], rx), total * slowest};
+    // +lx strafes right (+x), +ly walks forward (+y) and +rx turns clockwise (negative step_angle).
+    return {std::copysign(stroke[1], lx), std::copysign(stroke[0], ly), -std::copysign(stroke[2], rx), total * slowest};
 }
 
 } // namespace gait_speed_detail

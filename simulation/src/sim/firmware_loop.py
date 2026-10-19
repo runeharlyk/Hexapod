@@ -51,8 +51,13 @@ class FirmwareLoop:
 
     def hold(self, h: float = 0.0, s1: float = 0.0, fd: float = 0.0, stride: float = 0.0) -> None:
         """STAND with centred sticks: the posture only."""
+        self.stand(h=h, s1=s1, fd=fd, stride=stride)
+
+    def stand(self, lx: float = 0.0, ly: float = 0.0, rx: float = 0.0, ry: float = 0.0, h: float = 0.0,
+              s1: float = 0.0, fd: float = 0.0, stride: float = 0.0) -> None:
+        """STAND with these sticks: the left one shifts the body over its feet, the right one tilts it."""
         self.set_mode(STAND)
-        self._send(dict(h=h, s1=s1, fd=fd, stride=stride))
+        self._send(dict(lx=lx, ly=ly, rx=rx, ry=ry, h=h, s1=s1, fd=fd, stride=stride))
 
     def goal_move(self, kind: int, distance: float, angle: float, radius: float, speed: float, gait: int,
                   stride: float, s1: float, h: float, fd: float) -> int:

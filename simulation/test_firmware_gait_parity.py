@@ -268,7 +268,7 @@ def test_tuned_command_mapping_follows_the_firmware_formula(header, gait_h):
     for lx, ly, rx, s1 in [(0, 0.5, 0, 0), (0, 1, 0, 1), (-0.4, 0.2, 0.3, -1), (0, -0.6, -0.8, 0.5)]:
         gait = fg.GaitState(gait_type=fg.TUNED)
         zm = fg.command_to_walk_gait(lx, ly, rx, 0.0, s1, gait)
-        a = header_velocity_to_gait(header, (ly * vx_max, -lx * vy_max, rx * yaw_max))
+        a = header_velocity_to_gait(header, (ly * vx_max, lx * vy_max, -rx * yaw_max))
         assert gait.step_x == pytest.approx(a[0] * header["STEP_XY_MM"], abs=1e-3)
         assert gait.step_y == pytest.approx(a[1] * header["STEP_XY_MM"], abs=1e-3)
         assert gait.step_angle == pytest.approx(a[2] * header["STEP_ANGLE_RAD"], abs=1e-5)

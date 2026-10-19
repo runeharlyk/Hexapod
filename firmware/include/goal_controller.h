@@ -23,7 +23,7 @@ struct Goal {
     float speed = 0;    // share of the gait's top speed at the posture, in (0, 1]
 };
 
-/** Sticks in MotionService's convention: ly > 0 walks forward, lx > 0 left and rx > 0 turns counter-clockwise. */
+/** Sticks in MotionService's convention: ly > 0 walks forward, lx > 0 right and rx > 0 turns clockwise. */
 struct GoalSticks {
     float lx = 0, ly = 0, rx = 0;
 };
@@ -213,10 +213,15 @@ class GoalController {
         return std::clamp(HEADING_GAIN * error, -HEADING_STICK_MAX, HEADING_STICK_MAX);
     }
 
+    // The sticks for a walk right, forward and counter-clockwise, as the odometry measures them.
+    static GoalSticks walk(float right, float forward, float counterClockwise) {
+        return {right, forward, -counterClockwise};
+    }
+
     // An arc's sticks, the forward one slowed when the turn one would pass a full stick, so the curvature is kept.
-    GoalSticks arcSticks(float forward, float turn) const {
-        const float over = std::max(1.0f, std::fabs(turn));
-        return {0, forward / over, turn / over};
+    static GoalSticks arcSticks(float forward, float counterClockwise) {
+        const float over = std::max(1.0f, std::fabs(counterClockwise));
+        return walk(0, forward / over, counterClockwise / over);
     }
 
     // The rate the pass's axis moves at with a full share of the asked speed: m/s, or rad/s for a turn or an arc.
@@ -226,7 +231,7 @@ class GoalController {
             case GoalKind::ARC: {
                 // MotionService shares a combined stick out over its L1 norm, which slows the turn with the walk.
                 const GoalSticks full = arcSticks(target.speed, target.speed * turnPerForward());
-                return full.rx / std::max(1.0f, full.ly + full.rx) * topTurnRads;
+                return std::fabs(full.rx) / std::max(1.0f, full.ly + std::fabs(full.rx)) * topTurnRads;
             }
             default: return target.speed * topSpeedMs;
         }
@@ -250,10 +255,10 @@ class GoalController {
         const float drive = arriving() ? 0 : std::copysign(target.speed * share(), remaining);
         const float across = std::clamp(CROSS_GAIN * cross(pose), -CROSS_STICK_MAX, CROSS_STICK_MAX);
         switch (target.kind) {
-            // Right is positive and lx > 0 walks left: right of the line walks left, a goal to the right on lx < 0.
-            case GoalKind::FORWARD: return {across, drive, headingStick(-turned)};
-            case GoalKind::SIDEWAYS: return {-drive, -across, headingStick(-turned)};
-            case GoalKind::TURN: return {0, 0, drive};
+            // Right of the line walks left; ahead of a sideways walk's line walks back.
+            case GoalKind::FORWARD: return walk(-across, drive, headingStick(-turned));
+            case GoalKind::SIDEWAYS: return walk(drive, -across, headingStick(-turned));
+            case GoalKind::TURN: return walk(0, 0, drive);
             case GoalKind::ARC: {
                 // Forward along the arc turns its way; turning back walks back along it.
                 const float ideal = passTurned + direction * (pose.distance - passDistance) / target.radius;

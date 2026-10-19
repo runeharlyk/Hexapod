@@ -17,8 +17,8 @@ Runs whose model dir is missing are disabled in the panel (that mode is greyed o
 
 Physical controller (--serial): the ESP-NOW handheld controller drives the sim over
 USB, mapped exactly like the robot's firmware (espnow_adapter.cpp / motion.h WALK):
-  - left stick  -> walk velocity: vx <- ly (fwd/back), vy <- -lx (strafe)
-  - right stick -> yaw (rx); in charge mode it aims the leap
+  - left stick  -> walk velocity: vx <- ly (fwd/back), vy <- lx (strafe, right positive)
+  - right stick -> yaw <- -rx (right turns clockwise); in charge mode it aims the leap
   - left button -> cycle mode (walk -> vertical -> charge)
   - aux A       -> jump / reset ; aux B -> charge release (launch)
 """
@@ -164,11 +164,11 @@ class SimGUI:
             self.release()
 
         lx, ly, rx, ry = (self._dz(v) for v in b.snapshot())
-        # Mirror motion.h WALK: the robot faces +Y, so forward comes from ly (step_y = ly) and the
-        # lateral command from -lx (step_x = -lx), exactly as the TUNED branch builds its command.
+        # Mirror motion.h WALK: the robot faces +Y, so forward comes from ly (step_y = ly), the
+        # rightward command from lx and the counter-clockwise yaw from -rx, as the TUNED branch builds its command.
         self.cmd[0] = ly * (CMD_VX[1] if ly >= 0 else -CMD_VX[0])
-        self.cmd[1] = -lx * CMD_VY[1]
-        self.cmd[2] = rx * CMD_YAW[1]
+        self.cmd[1] = lx * CMD_VY[1]
+        self.cmd[2] = -rx * CMD_YAW[1]
         for s, v in zip(getattr(self, "_walk_scales", []), self.cmd):
             s.set(v)  # reflect controller input on the sliders
 

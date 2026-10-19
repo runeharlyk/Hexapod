@@ -180,9 +180,11 @@ class MotionService {
         target_body_state.omega = c.ry * BODY_TILT_LIMIT_RAD;
         switch (mode) {
             case MOTION_STATE::STAND: {
-                target_body_state.xm = c.lx * 50.f;
+                // The body moves by the inverse of this pose (docs/conventions.md): +lx shifts it right, +ly forward,
+                // +rx lowers its right side and +ry its nose.
+                target_body_state.xm = -c.lx * 50.f;
                 target_body_state.ym = -c.ly * 50.f;
-                target_body_state.phi = c.rx * BODY_TILT_LIMIT_RAD;
+                target_body_state.phi = -c.rx * BODY_TILT_LIMIT_RAD;
                 target_gait_state.step_x = 0;
                 target_gait_state.step_y = 0;
                 target_gait_state.step_angle = 0;
@@ -206,8 +208,8 @@ class MotionService {
                     // and cadence were optimized together, so driving stride from the stick while
                     // leaving cadence to the legacy law reproduces neither. The stick therefore
                     // becomes a velocity command over the range the search covered.
-                    const float cmd[3] = {c.ly * TUNED_CMD_VX_MAX, -c.lx * TUNED_CMD_VY_MAX,
-                                          c.rx * TUNED_CMD_YAW_MAX};
+                    // Forward, rightward and counter-clockwise, as classicWalkTarget signs its stroke.
+                    const float cmd[3] = {c.ly * TUNED_CMD_VX_MAX, c.lx * TUNED_CMD_VY_MAX, -c.rx * TUNED_CMD_YAW_MAX};
                     float a[6];
                     tuned_gait::velocity_to_gait(cmd, a);
                     target_gait_state.step_x = a[0] * tuned_gait::STEP_XY_MM;
@@ -401,11 +403,12 @@ class MotionService {
 
     float *getAngles() { return msgAngles.angles; }
 
-    // The locomotion command the gait eases toward, the command it walks now, and the body pose the motion eases
-    // toward, for the virtual robot's tests.
+    // The locomotion command the gait eases toward, the command it walks now, the body pose the motion eases
+    // toward, and the body pose and feet the last tick solved the legs for, for the virtual robot's tests.
     const gait_state_t &gaitCommand() const { return target_gait_state; }
     const gait_state_t &gaitState() const { return gait_state; }
     const BodyStateMsg &bodyCommand() const { return target_body_state; }
+    const BodyStateMsg &bodyState() const { return body_state; }
 
     // Any task: the pose of the last tick, whole.
     OdometryEstimate odometry() const { return _inbox.odometry(); }

@@ -71,7 +71,8 @@ class PolicyCore {
         gait.snapDefaultFootTarget(stance);
     }
 
-    // Body-frame velocity: forward (m/s), leftward (m/s) and counter-clockwise yaw rate (rad/s).
+    // Body-frame velocity: forward (m/s), rightward (m/s) and counter-clockwise yaw rate (rad/s), as the training
+    // environment tracks it (hexapod_mj_env.py: cmd[1] against body +x).
     void setCommand(float vx, float vy, float yawRate) {
         cmd[0] = vx;
         cmd[1] = vy;

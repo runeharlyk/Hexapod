@@ -56,11 +56,48 @@ It is asserted on the firmware gait (`firmware/test/test_sign_convention`), the 
 
 ## Stick signs
 
+The sticks are read by an operator standing behind the robot, facing the way it faces: a stick pushed right moves the robot to its right.
 The stick-to-gait mapping is a separate layer, `MotionService::handleCommand` in `firmware/include/motion.h`, with a port in `simulation/src/robot/firmware_gait.py` (`command_to_walk_gait`); the app runs the firmware's own through the virtual robot.
-Its classical WALK branch takes `classicWalkTarget` (`firmware/include/gait_speed.h`), which gives `step_x` the sign of `-lx`, `step_y` the sign of `ly` and `step_angle` the sign of `rx`, scaled to the gait's speed envelope; the TUNED branch uses the same signs through the velocity command `(ly, -lx, rx)`.
-Under the convention above that means +ly walks forward, +lx strafes left and +rx turns counter-clockwise, so a stick pushed right on the app's joystick or a gamepad strafes and turns the robot to its left.
-The simulation measured exactly this (`simulation/src/hexapod/speed_model.py`).
-The fixture records the mapping as it stands, so right strafe is the stick `lx = -0.5`; the Python and app tests assert it, while the native test cannot reach `MotionService` and covers only the gait layer.
+Its classical WALK branch takes `classicWalkTarget` (`firmware/include/gait_speed.h`), which gives `step_x` the sign of `lx`, `step_y` the sign of `ly` and `step_angle` the sign of `-rx`, scaled to the gait's speed envelope.
+The TUNED branch uses the same signs through the velocity command `(ly, lx, -rx)`, forward, right and counter-clockwise, and `WALK_NN` converts the sticks the same way into the command its policy was trained on (`PolicyRunner::setCommand`, `firmware/include/policy_runner.h`).
+Under the convention above that means +ly walks forward, +lx strafes right and +rx turns clockwise.
+The app and a gamepad send their sticks unchanged, with +x to the right and +y up.
+The ESP-NOW handheld's firmware is not in this repo: it applies a per-axis inversion before sending (`firmware/include/communication/controller_packet.h`), and the robot keeps their signs (`firmware/include/communication/handheld_input.h`).
+Whether it sends +x for a stick pushed right is unverified; a bench check with the handheld would settle it, and if it was inverted to suit the previous mapping, it now strafes and turns the wrong way.
+The simulation measured these signs (`simulation/src/hexapod/speed_model.py`).
+The fixture records the mapping, so right strafe is the stick `lx = 0.5` and the counter-clockwise turn `rx = -0.5`.
+The native test checks it on `classicWalkTarget`, the Python test on the port, and the app test from the stick on through the virtual robot.
+
+The goal controller (`firmware/include/goal_controller.h`) reasons in the body frame and the odometry's counter-clockwise yaw, and turns the walk it wants into sticks by this mapping.
+The Python facade turns REP-103 velocities into sticks through the speed model's measured table, which carries the signs.
+
+Until 2026-10-19 the lateral and turn signs were the mirror image: +lx strafed left, +rx turned counter-clockwise, and in STAND +lx shifted the body left and +rx lowered its left side.
+On the robot wired as its own mirror image, before the fix under "Floor confirmation", that mapping would strafe and turn the robot to the right for a stick pushed right, which is presumably why it went unnoticed; this is inferred from the wiring, not observed.
+Telemetry recorded before the change holds sticks of the old mapping, and `simulation/score_track.py` reads a recording by the current one, so it refuses one whose header names no firmware version or one older than 0.1.1.
+Version 0.1.1 is not a clean boundary: the 0.1.1 release has the old mapping, and builds after it report 0.1.1 on either mapping, so a 0.1.1 recording is scored and the next release's version is the first that tells them apart (`STICK_MAPPING_VERSION` in `simulation/score_track.py`).
+
+## Stand stick signs
+
+In STAND the sticks pose the body over its planted feet instead of walking it, in the same `MotionService::handleCommand`: `xm = -50 lx`, `ym = -50 ly` (mm), `phi = -0.254 rx` and `omega = 0.254 ry` (rad).
+`get_transformation_matrix` (`firmware/include/kinematics.h`) maps the feet into the body, so the body moves by the inverse of that pose: a positive `xm` moves it -x, a positive `ym` moves it -y, a positive `phi` turns it about +y by `-phi`, and a positive `omega` turns it about +x by `-omega`.
+
+| Stick | Body shift over its feet | Body tilt |
+| --- | --- | --- |
+| left stick right, `lx > 0` | +x, toward its right | none |
+| left stick up, `ly > 0` | +y, forward | none |
+| right stick right, `rx > 0` | none | right side down |
+| right stick up, `ry > 0` | none | nose down |
+
+The lateral sign is the walk's: a stick pushed right strafes the robot to its right and shifts a standing body to its right.
+A positive `phi` lowers the left side, which the self-levelling confirms: the measured tilt feeds `phi` too (`levelAttitude`, `firmware/include/self_level.h`), so if a positive `phi` lowered the right side, the levelling would push a low right side further down instead of reaching down with it, as the floor check of 2026-10-16 found it does.
+The stick therefore feeds `phi` negated.
+A floor check on 2026-10-18, under the previous mapping, reported the left stick pushed right shifting the body right and the right stick pushed right putting the right side down.
+By the derivation above the previous mapping shifted the body to its left and lowered its left side for those sticks, so the report is read as made from in front of the robot.
+That reading is an inference consistent with the 2026-10-16 floor check and the self-levelling argument, not a re-observation; a floor check of the current firmware would confirm it.
+Self-levelling also takes back part of a commanded tilt on flat ground, since it adds the measured tilt to the command: the simulation settles at 3.6 deg for a half stick that commands 7.3 deg.
+
+The fixture's `stand` rows hold each stick from a settled stand and store the signs of the body's shift and tilt.
+The native test (`firmware/test/test_sign_convention`) and the app test (`app/tests/unit/sign-convention.spec.ts`) read them from the feet the firmware's kinematics solves the legs for, through the virtual robot; the simulation test (`simulation/test_sign_convention.py`) reads them from the MuJoCo robot's base under the firmware's control loop and self-levelling.
 
 ## Floor confirmation
 

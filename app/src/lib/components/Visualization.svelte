@@ -9,13 +9,13 @@
   import { GaitType } from '$lib/gait'
   import { MotionModes, urdfJointOrder } from '$lib/motion'
   import { dataBroker } from '$lib/transport/databroker'
-  import { AnglesData } from '$lib/platform_shared/message'
+  import { AnglesData, IMUData } from '$lib/platform_shared/message'
   import { Vector3 } from 'three'
   import { requestMode } from '$lib/control'
   import { isLinked } from '$lib/stores/link'
   import { animationPreview, type AnimationPreview } from '$lib/stores/animation'
   import Kinematics from '$lib/kinematic'
-  import { groundPlacement } from '$lib/ground-placement'
+  import { ShownRobot } from '$lib/ground-placement'
   import { config } from '$lib/components/config'
   import {
     loadVirtualRobot,
@@ -54,10 +54,7 @@
   const targetAngles = new Array(18).fill(0)
 
   type LegRad = [number, number, number]
-  const kinematics = new Kinematics(config)
-  // The joint angles shown (radians, per leg, IK order), whoever produced them, which set the robot on the ground.
-  // Before any arrive, the robot stands level on its stance.
-  let shownLegs: LegRad[] | null = null
+  const shown = new ShownRobot(new Kinematics(config))
 
   // While no robot sends its angles, the firmware's own motion code animates the model. The robot-hosted build is
   // always linked, and the build-time constant leaves the virtual robot out of it.
@@ -99,8 +96,10 @@
         settings['Internal kinematic'] = false
         show(data.angles)
       }),
+      dataBroker.on(IMUData, data => shown.measure(data)),
       // Without a link no angles arrive, so the local model has to animate the robot again.
       isLinked.subscribe(linked => {
+        shown.link(linked)
         if (!linked) settings['Internal kinematic'] = true
       }),
       gait.subscribe(g => virtualRobot?.setGait(gaitIndex(g))),
@@ -170,7 +169,7 @@
   const show = (anglesDeg: ArrayLike<number>) => {
     const rad = Array.from(anglesDeg, degToRad)
     setTargetAngles(urdfJointOrder(rad))
-    shownLegs = legsOf(rad)
+    shown.show(legsOf(rad))
   }
 
   const legsOf = (rad: readonly number[]): LegRad[] =>
@@ -255,10 +254,11 @@
 
   const ORIENT_SMOOTH = 0.1
 
-  // The robot stands on the ground under its feet (ground-placement.ts); `yaw` is an animation's body yaw.
-  const placeOnGround = (robot: URDFRobot, legs: LegRad[] | null, yaw: number) => {
+  const placeRobot = (robot: URDFRobot) => {
     if (!settings['Auto orient robot']) return
-    const { orientation, position } = groundPlacement(legs && kinematics.groundUnderFeet(legs), yaw)
+    const { orientation, position } = shown.placement(
+      preview && { legs: legsOf(preview.angles), yaw: -preview.body.psi }
+    )
     if (settings['Smooth motion']) {
       robot.quaternion.slerp(orientation, ORIENT_SMOOTH)
       robot.position.lerp(position, ORIENT_SMOOTH)
@@ -277,7 +277,7 @@
       stepVirtualRobot(virtualRobot)
     }
     update_camera(robot)
-    placeOnGround(robot, preview ? legsOf(preview.angles) : shownLegs, -(preview?.body.psi ?? 0))
+    placeRobot(robot)
     if (handles) updateHandles()
 
     for (let i = 0; i < $jointNames.length; i++) {

@@ -74,9 +74,9 @@ struct Body {
         if (!centred(sticks)) {
             const float norm = std::max(1.0f, std::fabs(sticks.lx) + std::fabs(sticks.ly) + std::fabs(sticks.rx));
             const float k = DT / (LAG_S + DT), top = TOP_SPEED_MM / 1000 * forwardScale;
-            right += k * (-sticks.lx / norm * top - right);
+            right += k * (sticks.lx / norm * top - right);
             ahead += k * (sticks.ly / norm * top - ahead);
-            yawRate += k * (sticks.rx / norm * TOP_TURN * turnScale - yawRate);
+            yawRate += k * (-sticks.rx / norm * TOP_TURN * turnScale - yawRate);
             walking = true;
             stopping = false;
             sense = 1;
@@ -192,7 +192,7 @@ void test_a_forward_goal_lands_within_its_tolerance() {
     }
 }
 
-// A positive SIDEWAYS goal is to the right, which MotionService walks on a negative lx.
+// A positive SIDEWAYS goal is to the right, which MotionService walks on a positive lx.
 void test_a_sideways_goal_signs_its_stick_by_motion_services_convention() {
     for (const float distance : {0.25f, -0.25f}) {
         Body body(-0.1f, 0.3f, -1.0f);
@@ -201,7 +201,7 @@ void test_a_sideways_goal_signs_its_stick_by_motion_services_convention() {
         goal.start(sideways(distance, 0.7f), body.pose, TOP_SPEED_MM, TOP_TURN);
         const Run run = drive(goal, body);
         TEST_ASSERT_EQUAL(GoalState::REACHED, run.end);
-        TEST_ASSERT_FLOAT_WITHIN(1e-6f, -std::copysign(0.7f, distance), run.firstLx);
+        TEST_ASSERT_FLOAT_WITHIN(1e-6f, std::copysign(0.7f, distance), run.firstLx);
         TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0, run.maxLy); // only the line hold, on rounding off the line
         TEST_ASSERT_FLOAT_WITHIN(GoalController::REACHED_M, distance, local(origin, body.pose).right);
         TEST_ASSERT_TRUE(run.endedAtRest);
@@ -221,7 +221,7 @@ void test_turns_land_in_both_directions_across_the_wrap() {
         const Run run = drive(goal, body);
         TEST_ASSERT_EQUAL(GoalState::REACHED, run.end);
         TEST_ASSERT_FLOAT_WITHIN(GoalController::REACHED_RAD, c.angle, body.heading - c.startYaw);
-        TEST_ASSERT_FLOAT_WITHIN(1e-6f, std::copysign(0.5f, c.angle), run.firstRx);
+        TEST_ASSERT_FLOAT_WITHIN(1e-6f, -std::copysign(0.5f, c.angle), run.firstRx); // rx > 0 turns clockwise
         TEST_ASSERT_EQUAL_FLOAT(0, run.maxLx);
         TEST_ASSERT_EQUAL_FLOAT(0, run.maxLy);
         TEST_ASSERT_TRUE(run.endedAtRest);
@@ -244,7 +244,7 @@ void test_arcs_land_on_their_end_pose_and_follow_their_circle() {
         const Run run = drive(goal, body, 300, &centre, c.radius);
         TEST_ASSERT_EQUAL(GoalState::REACHED, run.end);
         TEST_ASSERT_TRUE(run.firstLy > 0);
-        TEST_ASSERT_TRUE(run.firstRx * c.angle > 0);
+        TEST_ASSERT_TRUE(run.firstRx * c.angle < 0);
         TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.5f, run.maxLy);
         const Local end = local(origin, body.pose), ideal = arcEnd(c.radius, c.angle);
         TEST_ASSERT_TRUE(std::hypot(end.right - ideal.right, end.forward - ideal.forward) <=
@@ -262,9 +262,9 @@ void test_a_tight_arc_slows_its_forward_stick_to_keep_its_curvature() {
     GoalController goal;
     goal.start(arc(RADIUS, 180 * DEG, 1), body.pose, TOP_SPEED_MM, TOP_TURN);
     const GoalSticks first = goal.update(body.pose, true, DT);
-    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1, first.rx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, -1, first.rx);
     TEST_ASSERT_TRUE(first.ly < 1);
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1 / RADIUS, first.rx * TOP_TURN / (first.ly * TOP_SPEED_MM / 1000));
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1 / RADIUS, -first.rx * TOP_TURN / (first.ly * TOP_SPEED_MM / 1000));
     // Its floor still turns at a fifth of the top turn rate: short quick steps keep the stop's coast within tolerance.
     body.cadence = 4;
     goal.start(arc(RADIUS, 180 * DEG, 1), body.pose, TOP_SPEED_MM, TOP_TURN);
@@ -293,10 +293,10 @@ void test_it_slows_over_the_last_stretch_down_to_a_floor() {
     TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
 
     goal.start(turn(90 * DEG, 0.8f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
-    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.8f, goal.update(at(0, 0, 60 * DEG), false, DT).rx);
-    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.4f, goal.update(at(0, 0, 75 * DEG), false, DT).rx);
-    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.16f, goal.update(at(0, 0, 86 * DEG), false, DT).rx); // 4 deg left
-    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.16f, goal.update(at(0, 0, 88 * DEG), false, DT).rx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, -0.8f, goal.update(at(0, 0, 60 * DEG), false, DT).rx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, -0.4f, goal.update(at(0, 0, 75 * DEG), false, DT).rx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, -0.16f, goal.update(at(0, 0, 86 * DEG), false, DT).rx); // 4 deg left
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, -0.16f, goal.update(at(0, 0, 88 * DEG), false, DT).rx);
     TEST_ASSERT_TRUE(centred(goal.update(at(0, 0, 91 * DEG), false, DT)));
     TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
 
@@ -349,13 +349,13 @@ void test_an_arc_slows_on_its_remaining_angle() {
     goal.start(arc(RADIUS, 90 * DEG, 0.8f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
     GoalSticks sticks = goal.update(onArc(30 * DEG), false, DT);
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.8f, sticks.ly);
-    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.8f * TURN_PER_FORWARD, sticks.rx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, -0.8f * TURN_PER_FORWARD, sticks.rx);
     sticks = goal.update(onArc(75 * DEG), false, DT); // 15 deg left: half the speed
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.4f, sticks.ly);
-    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.4f * TURN_PER_FORWARD, sticks.rx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, -0.4f * TURN_PER_FORWARD, sticks.rx);
     sticks = goal.update(onArc(88 * DEG), false, DT); // the floor
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.16f, sticks.ly);
-    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.16f * TURN_PER_FORWARD, sticks.rx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, -0.16f * TURN_PER_FORWARD, sticks.rx);
     TEST_ASSERT_TRUE(centred(goal.update(onArc(91 * DEG), false, DT)));
     TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
     TEST_ASSERT_TRUE(centred(goal.update(onArc(91 * DEG), true, DT)));
@@ -367,14 +367,14 @@ void test_an_arc_slows_on_its_remaining_angle() {
 void test_heading_hold_steers_against_a_drifting_yaw() {
     GoalController goal;
     goal.start(forward(1, 0.5f), at(0.3f, 0.3f, 3.1f), TOP_SPEED_MM, TOP_TURN);
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, -0.1f, goal.update(at(0.3f, 0.3f, 3.15f), false, DT).rx);
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.3f, goal.update(at(0.3f, 0.3f, 2.9f), false, DT).rx);
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, -0.3f, goal.update(at(0.3f, 0.3f, 3.5f), false, DT).rx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.1f, goal.update(at(0.3f, 0.3f, 3.15f), false, DT).rx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, -0.3f, goal.update(at(0.3f, 0.3f, 2.9f), false, DT).rx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.3f, goal.update(at(0.3f, 0.3f, 3.5f), false, DT).rx);
 
     goal.start(sideways(0.5f, 0.5f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
     const GoalSticks hold = goal.update(at(0, 0, 0.1f), false, DT);
-    TEST_ASSERT_FLOAT_WITHIN(1e-6f, -0.5f, hold.lx);
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, -0.2f, hold.rx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.5f, hold.lx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.2f, hold.rx);
 
     // A gait drifting 0.15 rad/s would turn well over a radian on these walks; held, they end near their heading,
     // and the heading's steady error, about 0.06 rad, no longer carries them off the line.
@@ -394,7 +394,7 @@ void test_heading_hold_steers_against_a_drifting_yaw() {
     }
 }
 
-// The stick across the line is 10 per m of offset, at most 0.3: right of a forward walk's line walks left (lx > 0),
+// The stick across the line is 10 per m of offset, at most 0.3: right of a forward walk's line walks left (lx < 0),
 // ahead of a sideways walk's line walks back (ly < 0).
 void test_straight_walks_hold_their_line_with_signs_by_the_stick_convention() {
     GoalController goal;
@@ -402,17 +402,17 @@ void test_straight_walks_hold_their_line_with_signs_by_the_stick_convention() {
     const float c = std::cos(YAW), s = std::sin(YAW);
     goal.start(forward(1, 0.5f), at(0.3f, 0.3f, YAW), TOP_SPEED_MM, TOP_TURN);
     GoalSticks sticks = goal.update(at(0.3f + 0.02f * c, 0.3f + 0.02f * s, YAW), false, DT); // 20 mm right
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.2f, sticks.lx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, -0.2f, sticks.lx);
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.5f, sticks.ly);
     sticks = goal.update(at(0.3f - 0.02f * c, 0.3f - 0.02f * s, YAW), false, DT); // 20 mm left
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, -0.2f, sticks.lx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.2f, sticks.lx);
     sticks = goal.update(at(0.3f + 0.05f * c, 0.3f + 0.05f * s, YAW), false, DT);
-    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.3f, sticks.lx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, -0.3f, sticks.lx);
 
     goal.start(sideways(0.5f, 0.5f), at(0, 0, -YAW), TOP_SPEED_MM, TOP_TURN);
     sticks = goal.update(at(-0.02f * std::sin(-YAW), 0.02f * std::cos(-YAW), -YAW), false, DT); // 20 mm ahead
     TEST_ASSERT_FLOAT_WITHIN(1e-4f, -0.2f, sticks.ly);
-    TEST_ASSERT_FLOAT_WITHIN(1e-6f, -0.5f, sticks.lx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.5f, sticks.lx);
     sticks = goal.update(at(0.02f * std::sin(-YAW), -0.02f * std::cos(-YAW), -YAW), false, DT); // 20 mm behind
     TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.2f, sticks.ly);
 }
@@ -424,14 +424,14 @@ void test_a_pass_walks_the_remaining_cross_track() {
     goal.start(forward(0.2f, 0.5f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
     GoalSticks sticks = goal.update(at(0.03f, 0.203f, 0), false, DT);
     TEST_ASSERT_EQUAL(GoalState::RUNNING, goal.state());
-    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.3f, sticks.lx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, -0.3f, sticks.lx);
     TEST_ASSERT_EQUAL_FLOAT(0, sticks.ly);
     TEST_ASSERT_TRUE(centred(goal.update(at(0.015f, 0.203f, 0), false, DT)));
     TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
     sticks = goal.update(at(0.025f, 0.197f, 0), true, DT); // settled 3 mm short and 25 mm right
     TEST_ASSERT_EQUAL(GoalState::RUNNING, goal.state());
     TEST_ASSERT_EQUAL(2, goal.passes());
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.25f, sticks.lx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, -0.25f, sticks.lx);
     TEST_ASSERT_EQUAL_FLOAT(0, sticks.ly);
     TEST_ASSERT_TRUE(centred(goal.update(at(0.01f, 0.197f, 0), false, DT)));
     TEST_ASSERT_TRUE(centred(goal.update(at(0.01f, 0.197f, 0), true, DT)));
@@ -449,10 +449,10 @@ void test_the_arc_corrects_its_yaw_toward_the_ideal_heading() {
     // 0.2 m along, the ideal heading is 0.4 rad: 0.1 rad short asks 0.2 more.
     GoalSticks sticks = goal.update(at(0, 0, 0.3f, 0.2f), false, DT);
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.5f, sticks.ly);
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.5f * TURN_PER_FORWARD + 0.2f, sticks.rx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, -(0.5f * TURN_PER_FORWARD + 0.2f), sticks.rx);
     // 0.2 rad ahead asks 0.4 less, clipped to 0.3.
     sticks = goal.update(at(0, 0, 0.6f, 0.2f), false, DT);
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.5f * TURN_PER_FORWARD - 0.3f, sticks.rx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, -(0.5f * TURN_PER_FORWARD - 0.3f), sticks.rx);
 
     struct Case {
         float turnScale, drift;

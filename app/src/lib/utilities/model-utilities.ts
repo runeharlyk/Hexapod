@@ -4,6 +4,7 @@ import { XacroLoader } from 'xacro-parser'
 import { Result } from '$lib/utilities'
 import { jointNames, model } from '$lib/stores'
 import { resolve } from '$app/paths'
+import { LEVEL } from '$lib/model-frame'
 
 const base = resolve('/')
 
@@ -45,8 +46,7 @@ const loadModelAsync = async (url: string): Promise<Result<[URDFRobot, string[]]
           let model: URDFRobot | undefined = undefined
           const finish = () => {
             if (!model) return
-            model.rotation.x = -Math.PI / 2
-            model.rotation.z = Math.PI / 2
+            model.quaternion.copy(LEVEL)
             model.traverse(c => (c.castShadow = true))
             model.scale.setScalar(10)
             centerRobotPivot(model)

@@ -1,10 +1,15 @@
-import { Euler, Quaternion, Vector3 } from 'three'
-import type { Ground } from '$lib/kinematic'
+import { Quaternion, Vector3 } from 'three'
+import type Kinematics from '$lib/kinematic'
+import { levelBody, type Ground } from '$lib/kinematic'
+import { DEFAULT_FEET } from '$lib/animation/model'
 import { stanceToScene } from '$lib/animation/handles'
+import { LEVEL } from '$lib/model-frame'
+import { DMP_ANGLE_SIGNS } from '$lib/simulation/virtual-robot'
 
-// The URDF's orientation for a level, unturned body; the scene is y up (see handles.ts for the axes).
-const LEVEL = new Quaternion().setFromEuler(new Euler(-Math.PI / 2, 0, Math.PI / 2))
 const UP = new Vector3(0, 1, 0)
+
+// stanceToScene's axes, for a direction rather than a point
+const directionToScene = ([x, y, z]: readonly number[]) => new Vector3(y, z, x)
 
 export interface Placement {
   orientation: Quaternion
@@ -21,9 +26,7 @@ export const groundPlacement = (ground: Ground | null, yaw: number): Placement =
   const tilt = new Quaternion()
   const shift = new Vector3()
   if (ground) {
-    const [nx, ny, nz] = ground.normal
-    // stanceToScene's axes, for a direction rather than a point
-    tilt.setFromUnitVectors(new Vector3(ny, nz, nx), UP)
+    tilt.setFromUnitVectors(directionToScene(ground.normal), UP)
     const centre = ground.planted
       .reduce((sum, foot) => sum.add(new Vector3(...stanceToScene(foot))), new Vector3())
       .divideScalar(ground.planted.length)
@@ -34,5 +37,95 @@ export const groundPlacement = (ground: Ground | null, yaw: number): Placement =
   return {
     orientation: turn.clone().multiply(tilt).multiply(LEVEL),
     position: shift.applyQuaternion(turn)
+  }
+}
+
+/** IMUData: the MPU6050 DMP's roll, pitch and yaw in radians, with the DMP's signs (firmware/include/imu_frame.h). */
+export interface DmpAngles {
+  x: number
+  y: number
+  z: number
+}
+
+/**
+ * World up in the body frame for the DMP's roll and pitch. The DMP takes roll as atan2(gy, gz) and pitch as
+ * atan2(gx, hypot(gy, gz)) of this vector, so it is rebuilt exactly up to a 90 degree tilt; imu_frame.h's signs turn
+ * the angles into the body frame's rotations about +x (nose up) and +y (right side down) first.
+ */
+const worldUp = ({ x, y }: DmpAngles): number[] => {
+  const noseUp = DMP_ANGLE_SIGNS[0] * x
+  const rightSideDown = DMP_ANGLE_SIGNS[1] * y
+  return [
+    -Math.sin(rightSideDown),
+    Math.cos(rightSideDown) * Math.sin(noseUp),
+    Math.cos(rightSideDown) * Math.cos(noseUp)
+  ]
+}
+
+/**
+ * Where the connected robot stands for its IMU: tilted as the DMP's roll and pitch measure it, with no yaw, so it keeps
+ * facing the camera, and lowered until the lowest of `feet` (body frame, mm, as the reported joint angles place them)
+ * touches the floor (y = 0), its body origin kept over the scene's origin. Without an IMU reading it stands level.
+ */
+export const imuPlacement = (
+  imu: DmpAngles | null,
+  feet: readonly (readonly number[])[]
+): Placement => {
+  const tilt = new Quaternion()
+  if (imu) tilt.setFromUnitVectors(directionToScene(worldUp(imu)), UP)
+  const origin = new Vector3(...stanceToScene([0, 0, 0]))
+  const turned = origin.clone().applyQuaternion(tilt)
+  const lowest = Math.min(
+    ...feet.map(foot => new Vector3(...stanceToScene(foot)).applyQuaternion(tilt).y)
+  )
+  return {
+    orientation: tilt.multiply(LEVEL),
+    position: new Vector3(origin.x - turned.x, -lowest, origin.z - turned.z)
+  }
+}
+
+type LegRad = [number, number, number]
+
+/** An animation preview's joint angles (radians, per leg, IK order) and its body yaw (radians). */
+export interface PreviewPose {
+  legs: LegRad[]
+  yaw: number
+}
+
+/**
+ * What the 3D view knows of the robot it draws, and where it places it. A linked robot is tilted by its IMU, over the
+ * angles shown whoever produced them: it sends none in DEACTIVATED, IDLE and POSE, where the virtual robot's stand the
+ * view keeps drawing sets only its height. An unlinked robot and the animation preview have no IMU, so they stand on
+ * the ground under their feet.
+ */
+export class ShownRobot {
+  private legs: LegRad[] | null = null
+  private imu: DmpAngles | null = null
+  private linked = false
+
+  constructor(private readonly kinematics: Kinematics) {}
+
+  /** The joint angles drawn, in radians, per leg, in IK order. */
+  show(legs: LegRad[]) {
+    this.legs = legs
+  }
+
+  measure(imu: DmpAngles) {
+    this.imu = imu
+  }
+
+  link(linked: boolean) {
+    this.linked = linked
+    if (!linked) this.imu = null
+  }
+
+  placement(preview: PreviewPose | null): Placement {
+    if (preview) return groundPlacement(this.kinematics.groundUnderFeet(preview.legs), preview.yaw)
+    if (!this.linked)
+      return groundPlacement(this.legs && this.kinematics.groundUnderFeet(this.legs), 0)
+    return imuPlacement(
+      this.imu,
+      this.legs ? this.kinematics.forwardKinematics(levelBody(), this.legs) : DEFAULT_FEET
+    )
   }
 }

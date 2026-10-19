@@ -264,14 +264,15 @@ void test_stop_commands_nothing() {
     }
 }
 
+// docs/conventions.md: +lx strafes right (+x), +ly walks forward (+y) and +rx turns clockwise (negative yaw).
 void test_signs_follow_the_convention() {
-    const WalkTarget left = classicWalkTarget(GaitType::TRI_GATE, -1, 0, 0, 0, 0, 0, 0, 0);
-    TEST_ASSERT_TRUE(left.stepX > 0.0f);
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, left.stepY);
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, left.stepAngle);
-
     const WalkTarget right = classicWalkTarget(GaitType::TRI_GATE, 1, 0, 0, 0, 0, 0, 0, 0);
-    TEST_ASSERT_TRUE(right.stepX < 0.0f);
+    TEST_ASSERT_TRUE(right.stepX > 0.0f);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, right.stepY);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, right.stepAngle);
+
+    const WalkTarget left = classicWalkTarget(GaitType::TRI_GATE, -1, 0, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_TRUE(left.stepX < 0.0f);
 
     const WalkTarget forward = classicWalkTarget(GaitType::TRI_GATE, 0, 1, 0, 0, 0, 0, 0, 0);
     TEST_ASSERT_TRUE(forward.stepY > 0.0f);
@@ -281,13 +282,13 @@ void test_signs_follow_the_convention() {
     const WalkTarget backward = classicWalkTarget(GaitType::TRI_GATE, 0, -1, 0, 0, 0, 0, 0, 0);
     TEST_ASSERT_TRUE(backward.stepY < 0.0f);
 
-    const WalkTarget turnLeft = classicWalkTarget(GaitType::TRI_GATE, 0, 0, 1, 0, 0, 0, 0, 0);
-    TEST_ASSERT_TRUE(turnLeft.stepAngle > 0.0f);
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, turnLeft.stepX);
-    TEST_ASSERT_EQUAL_FLOAT(0.0f, turnLeft.stepY);
-
-    const WalkTarget turnRight = classicWalkTarget(GaitType::TRI_GATE, 0, 0, -1, 0, 0, 0, 0, 0);
+    const WalkTarget turnRight = classicWalkTarget(GaitType::TRI_GATE, 0, 0, 1, 0, 0, 0, 0, 0);
     TEST_ASSERT_TRUE(turnRight.stepAngle < 0.0f);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, turnRight.stepX);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, turnRight.stepY);
+
+    const WalkTarget turnLeft = classicWalkTarget(GaitType::TRI_GATE, 0, 0, -1, 0, 0, 0, 0, 0);
+    TEST_ASSERT_TRUE(turnLeft.stepAngle > 0.0f);
 }
 
 // A combined stick past an L1 norm of 1 is normalised by it: each axis takes a third of its stroke, and the gait steps
@@ -687,7 +688,7 @@ void test_auto_caps_a_demand_above_the_gaits_top() {
         const float need = shareOfTop(GaitType::RIPPLE, demand, 0, 0, 0, stride);
         TEST_ASSERT_TRUE(need > 2.0f);
         const WalkTarget capped = autoWalkTarget(GaitType::RIPPLE, demand, 1, 1, 1, 0, 0, 0, stride);
-        TEST_ASSERT_TRUE(capped.stepX < 0.0f && capped.stepY > 0.0f && capped.stepAngle > 0.0f);
+        TEST_ASSERT_TRUE(capped.stepX > 0.0f && capped.stepY > 0.0f && capped.stepAngle < 0.0f);
         float slowest = INFINITY;
         for (int axis = 0; axis < 3; ++axis) {
             const AxisEnvelope e = envelopeAt(GaitType::RIPPLE, axis, 0, 0, 0, stride);

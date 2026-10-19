@@ -47,6 +47,52 @@ void test_first_comment_names_the_mode_the_constants_belong_to() {
     TEST_ASSERT_EQUAL_INT(strcmp(mode, "residual_gait") == 0 ? 24 : 18, hp::ACT_DIM);
 }
 
+// The stick is converted to the policy's command frame (forward, rightward, counter-clockwise), which is where
+// WALK_NN's command meaning lives: stick right drives right, and right stick right turns clockwise, a negative yaw.
+void test_stick_forward_is_forward_at_the_trained_maximum() {
+    const policy_layout::PolicyCommand c = policy_layout::stickToPolicyCommand(0.0f, 1.0f, 0.0f);
+    TEST_ASSERT_EQUAL_FLOAT(hp::CMD_VX_MAX, c.vx);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, c.vy);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, c.yawRate);
+}
+
+void test_stick_backward_reaches_the_asymmetric_backward_limit() {
+    const policy_layout::PolicyCommand c = policy_layout::stickToPolicyCommand(0.0f, -1.0f, 0.0f);
+    TEST_ASSERT_EQUAL_FLOAT(hp::CMD_VX_MIN, c.vx);
+    TEST_ASSERT_TRUE(c.vx < 0.0f);
+}
+
+void test_stick_right_is_rightward_velocity() {
+    const policy_layout::PolicyCommand c = policy_layout::stickToPolicyCommand(1.0f, 0.0f, 0.0f);
+    TEST_ASSERT_EQUAL_FLOAT(hp::CMD_VY_MAX, c.vy);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, c.vx);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, c.yawRate);
+}
+
+void test_right_stick_right_is_clockwise_so_negative_counter_clockwise_yaw() {
+    const policy_layout::PolicyCommand c = policy_layout::stickToPolicyCommand(0.0f, 0.0f, 1.0f);
+    TEST_ASSERT_EQUAL_FLOAT(-hp::CMD_YAW_MAX, c.yawRate);
+    TEST_ASSERT_EQUAL_FLOAT(hp::CMD_YAW_MAX, policy_layout::stickToPolicyCommand(0.0f, 0.0f, -1.0f).yawRate);
+}
+
+void test_stick_scales_linearly_and_the_axes_do_not_mix() {
+    const policy_layout::PolicyCommand c = policy_layout::stickToPolicyCommand(0.5f, 0.5f, 0.5f);
+    TEST_ASSERT_EQUAL_FLOAT(0.5f * hp::CMD_VX_MAX, c.vx);
+    TEST_ASSERT_EQUAL_FLOAT(0.5f * hp::CMD_VY_MAX, c.vy);
+    TEST_ASSERT_EQUAL_FLOAT(-0.5f * hp::CMD_YAW_MAX, c.yawRate);
+    const policy_layout::PolicyCommand back = policy_layout::stickToPolicyCommand(-0.5f, -0.5f, -0.5f);
+    TEST_ASSERT_EQUAL_FLOAT(0.5f * hp::CMD_VX_MIN, back.vx);
+    TEST_ASSERT_EQUAL_FLOAT(-0.5f * hp::CMD_VY_MAX, back.vy);
+    TEST_ASSERT_EQUAL_FLOAT(0.5f * hp::CMD_YAW_MAX, back.yawRate);
+}
+
+void test_released_stick_commands_zero() {
+    const policy_layout::PolicyCommand c = policy_layout::stickToPolicyCommand(0.0f, 0.0f, 0.0f);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, c.vx);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, c.vy);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, c.yawRate);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -54,5 +100,11 @@ int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_header_golden_vector_still_holds);
     RUN_TEST(test_first_comment_names_the_mode_the_constants_belong_to);
+    RUN_TEST(test_stick_forward_is_forward_at_the_trained_maximum);
+    RUN_TEST(test_stick_backward_reaches_the_asymmetric_backward_limit);
+    RUN_TEST(test_stick_right_is_rightward_velocity);
+    RUN_TEST(test_right_stick_right_is_clockwise_so_negative_counter_clockwise_yaw);
+    RUN_TEST(test_stick_scales_linearly_and_the_axes_do_not_mix);
+    RUN_TEST(test_released_stick_commands_zero);
     return UNITY_END();
 }

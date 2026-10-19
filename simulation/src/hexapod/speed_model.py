@@ -5,9 +5,9 @@ The firmware takes sticks, not velocities (motion.h handleCommand): lx strafes, 
 single-axis command, which is what move_forward, move_sideways and rotate send. A combined command is inverted axis
 by axis and is only approximate: the classical gait derives one cadence from the stride and the turn together.
 
-Measured, not assumed: on every modelled gait +lx walks LEFT and +rx turns COUNTER-CLOCKWISE, so a stick pushed
-right on the app's joystick strafes and turns the robot to its left. The table carries the signs; nothing here
-hard-codes them.
+Measured, not assumed: on every modelled gait +lx walks RIGHT (negative vy) and +rx turns CLOCKWISE (negative yaw
+rate), so a stick pushed right on the app's joystick strafes and turns the robot to its right. The table carries the
+signs; nothing here hard-codes them.
 """
 import json
 from dataclasses import dataclass

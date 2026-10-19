@@ -1,5 +1,5 @@
 {
-  "description": "Body-frame sign convention shared by the firmware gait (firmware/include/gait.h, test firmware/test/test_sign_convention), the simulation's port (simulation/src/robot/firmware_gait.py, test simulation/test_sign_convention.py) and the app, which runs the firmware's code as WebAssembly (test app/tests/unit/sign-convention.spec.ts, from the stick on). The body frame is x lateral (+x right), y forward, z up; the robot faces +y; yaw is positive counter-clockwise seen from above. Each command is walked with the tripod gait for the sampling ticks, starting once gait.h's FEET_EASE_S carry from rest has gone; a sign is the sign of the mean per-tick stance-foot displacement (body frame, mm), of the body velocity those planted feet imply, and of the yaw rate they imply, with values within the zero band counted as 0. The stick is the app/controller input that motion.h's classical WALK branch maps onto the gait command. docs/conventions.md derives every value.",
+  "description": "Body-frame sign convention shared by the firmware gait (firmware/include/gait.h, test firmware/test/test_sign_convention), the simulation's port (simulation/src/robot/firmware_gait.py, test simulation/test_sign_convention.py) and the app, which runs the firmware's code as WebAssembly (test app/tests/unit/sign-convention.spec.ts, from the stick on). The body frame is x lateral (+x right), y forward, z up; the robot faces +y; yaw is positive counter-clockwise seen from above. Each command is walked with the tripod gait for the sampling ticks, starting once gait.h's FEET_EASE_S carry from rest has gone; a sign is the sign of the mean per-tick stance-foot displacement (body frame, mm), of the body velocity those planted feet imply, and of the yaw rate they imply, with values within the zero band counted as 0. The stick is the app/controller input that motion.h's classical WALK branch maps onto the gait command. The stand rows hold each stick in STAND from a settled stand, for settle_ticks of the 5 ms control tick each, and give the sign of the body's shift over its planted feet (body x, y; within zero_mm counted as 0) and of its tilt (about body +x, nose up positive, and about body +y, right side down positive; the sine of the tilt within zero_rad counted as 0): the native and app tests read them from the legs the firmware's kinematics solves, the simulation's from the MuJoCo robot under the firmware's self-levelling. docs/conventions.md derives every value.",
   "legs": ["right front", "right middle", "right rear", "left front", "left middle", "left rear"],
   "stance_mm": [
     [122, 152, -66],
@@ -33,7 +33,7 @@
     },
     {
       "name": "right strafe",
-      "stick": { "lx": -0.5, "ly": 0, "rx": 0 },
+      "stick": { "lx": 0.5, "ly": 0, "rx": 0 },
       "gait": { "step_x": 52.4, "step_y": 0, "step_angle": 0 },
       "body_velocity_sign": [1, 0],
       "yaw_sign": 0,
@@ -48,7 +48,7 @@
     },
     {
       "name": "counter-clockwise turn",
-      "stick": { "lx": 0, "ly": 0, "rx": 0.5 },
+      "stick": { "lx": 0, "ly": 0, "rx": -0.5 },
       "gait": { "step_x": 0, "step_y": 0, "step_angle": 0.435 },
       "body_velocity_sign": [0, 0],
       "yaw_sign": 1,
@@ -61,5 +61,36 @@
         [-1, 1]
       ]
     }
-  ]
+  ],
+  "stand": {
+    "settle_ticks": 400,
+    "zero_mm": 3,
+    "zero_rad": 0.02,
+    "sticks": [
+      {
+        "name": "left stick right",
+        "stick": { "lx": 0.5, "ly": 0, "rx": 0, "ry": 0 },
+        "body_shift_sign": [1, 0],
+        "body_tilt_sign": [0, 0]
+      },
+      {
+        "name": "left stick up",
+        "stick": { "lx": 0, "ly": 0.5, "rx": 0, "ry": 0 },
+        "body_shift_sign": [0, 1],
+        "body_tilt_sign": [0, 0]
+      },
+      {
+        "name": "right stick right",
+        "stick": { "lx": 0, "ly": 0, "rx": 0.5, "ry": 0 },
+        "body_shift_sign": [0, 0],
+        "body_tilt_sign": [0, 1]
+      },
+      {
+        "name": "right stick up",
+        "stick": { "lx": 0, "ly": 0, "rx": 0, "ry": 0.5 },
+        "body_shift_sign": [0, 0],
+        "body_tilt_sign": [-1, 0]
+      }
+    ]
+  }
 }
