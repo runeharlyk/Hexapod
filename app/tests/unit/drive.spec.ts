@@ -11,9 +11,12 @@ import {
   driveMode,
   driveSimulation,
   drivenGait,
+  drivenGoal,
   drivenMode,
   simulation
 } from '../../src/lib/stores/drive'
+import { clearGoalStatus, setGoalStatus } from '../../src/lib/stores/goal'
+import { GoalKind, GoalState } from '../../src/lib/platform_shared/message'
 import { commandOf } from '../../src/lib/controller-input'
 import { GaitType } from '../../src/lib/gait'
 import { MotionModes } from '../../src/lib/motion'
@@ -106,6 +109,26 @@ describe('the controls', () => {
 
     driveSimulation(true)
     expect(sliders()).toEqual(simSliders)
+  })
+
+  it("show the robot's goal only while they drive the robot", () => {
+    setGoalStatus({
+      id: 1,
+      state: GoalState.GOAL_RUNNING,
+      kind: GoalKind.GOAL_FORWARD,
+      target: 1,
+      progress: 0.5,
+      x: 0,
+      y: 0,
+      yaw: 0,
+      passes: 1
+    })
+    expect(get(drivenGoal)?.id).toBe(1)
+    driveSimulation(true)
+    expect(get(drivenGoal)).toBeNull()
+    driveSimulation(false)
+    expect(get(drivenGoal)?.id).toBe(1)
+    clearGoalStatus()
   })
 
   it('drive the robot when the simulation view is not shown', () => {

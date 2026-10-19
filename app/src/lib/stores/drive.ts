@@ -4,6 +4,7 @@ import { GaitType } from '$lib/gait'
 import { MotionModes } from '$lib/motion'
 import type { Command } from '$lib/simulation/virtual-robot'
 import { gait, input, mode, outControllerData } from './model-store'
+import { goalStatus } from './goal'
 
 /**
  * The simulation view's own robot: the sticks, mode and gait the controls give it. None of them reaches the real
@@ -24,6 +25,11 @@ export const drivenMode = derived([drivesSimulation, simulation.mode, mode], ([s
 )
 export const drivenGait = derived([drivesSimulation, simulation.gait, gait], ([sim, own, robot]) =>
   sim ? own : robot
+)
+
+/** The robot's goal while the controls drive it; the simulation view's robot runs none. */
+export const drivenGoal = derived([drivesSimulation, goalStatus], ([sim, goal]) =>
+  sim ? null : goal
 )
 
 /** The controller's sticks and sliders, to the robot the controls drive. */

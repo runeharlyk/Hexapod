@@ -8,11 +8,12 @@
     driveGait,
     driveMode,
     drivenGait,
+    drivenGoal,
     drivenMode,
     drivesSimulation
   } from '$lib/stores/drive'
   import { isLinked } from '$lib/stores/link'
-  import { goalLine, goalStatus } from '$lib/stores/goal'
+  import { goalLine } from '$lib/stores/goal'
   import type { ControllerInput, vector } from '$lib/types/models'
   import { VerticalSlider } from '$lib/components/input'
   import { MotionModes } from '$lib/motion'
@@ -160,7 +161,7 @@
     })
   }
 
-  const goalText = $derived($goalStatus ? goalLine($goalStatus) : null)
+  const goalText = $derived($drivenGoal ? goalLine($drivenGoal) : null)
 </script>
 
 <div class="absolute top-0 left-0 h-screen w-screen">
