@@ -81,7 +81,7 @@ const bleRig = async (): Promise<Rig> => {
   }
 }
 
-const websocketRig = async (): Promise<Rig> => {
+const websocketRig = async (): Promise<Rig & { serverCloses(): void }> => {
   const received: Message[] = []
   let holding = false
   // The browser's WebSocket: bufferedAmount counts what send() took and the network has not, here while held.
@@ -127,7 +127,11 @@ const websocketRig = async (): Promise<Rig> => {
       if (FakeSocket.last) FakeSocket.last.bufferedAmount = 0
     },
     // What the network took: a frame is on its way once send() has it.
-    received: () => received
+    received: () => received,
+    // The robot closes the socket; the browser's close event follows the closing handshake, later.
+    serverCloses: () => {
+      if (FakeSocket.last) FakeSocket.last.readyState = FakeSocket.CLOSING
+    }
   }
 }
 
@@ -237,5 +241,30 @@ describe.each(RIGS)('motion frames over %s', (_, makeRig) => {
 
     await vi.waitFor(() => expect(forward(rig.received()).at(-1)).toBe(0))
     stop()
+  })
+})
+
+describe('motion frames over a WebSocket replaced while it closes', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  // A connect while the robot's close is still under way opens a new socket before the old one's close event, which
+  // then finds another socket in its place. A frame that waited for the old socket would move the robot with the past.
+  it('sends nothing that waited for the socket replaced', async () => {
+    vi.resetModules()
+    const rig = await websocketRig()
+    const broker = new DataBroker()
+    broker.addTransport(rig.transport)
+    await rig.connect()
+    rig.hold()
+    broker.emitVolatile(ControllerInputData, sticks(0.125))
+    broker.emitVolatile(ControllerInputData, sticks(0.25))
+
+    rig.serverCloses()
+    await rig.connect()
+    rig.release()
+
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(forward(rig.received())).toEqual([0.125])
+    await rig.transport.disconnect()
   })
 })

@@ -59,8 +59,20 @@ function createWebSocketAdapter(): ITransport {
     }, delay)
   }
 
+  // The link's end, once per socket: a frame waiting for this socket was for it alone.
+  const lose = (socket: WebSocket) => {
+    if (ws !== socket) return false
+    ws = undefined
+    forgetWaiting()
+    status.set('disconnected')
+    disconnectCallbacks.forEach(cb => cb())
+    return true
+  }
+
   const openSocket = () => {
     if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return
+    // A socket still closing ends here, since its close event will find another in its place.
+    if (ws) lose(ws)
 
     const host = get(location) ? get(location) : window.location.host
     status.set('connecting')
@@ -91,12 +103,7 @@ function createWebSocketAdapter(): ITransport {
     }
 
     socket.onclose = () => {
-      if (ws !== socket) return
-      ws = undefined
-      forgetWaiting()
-      status.set('disconnected')
-      disconnectCallbacks.forEach(cb => cb())
-      scheduleReconnect()
+      if (lose(socket)) scheduleReconnect()
     }
 
     socket.onmessage = frame => {
