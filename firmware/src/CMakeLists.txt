@@ -26,6 +26,8 @@ set(SRCS
 set(COMPONENT_REQUIRES
     nvs_flash
     app_update
+    espcoredump
+    esp_partition
     esp_https_ota
     esp_http_client
     mbedtls

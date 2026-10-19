@@ -56,6 +56,7 @@
 #include <animation/animation.h>
 #include <animation/animation_store.h>
 #include <file_transfer.h>
+#include <core_dump_flash.h>
 
 static const char *TAG = "main";
 
@@ -90,6 +91,7 @@ EspNowAdapter espNow;
 #endif
 CpuMonitor cpuMonitor;
 TaskStats taskStats;
+EspCoreDumpStore coreDumpStore;
 static temperature_sensor_handle_t coreTempSensor = nullptr;
 
 // Control-loop iterations since boot. The OTA image is only confirmed once this shows the loop has
@@ -132,6 +134,19 @@ static const char *resetReasonName(esp_reset_reason_t reason) {
 static void runningElfSha256(char out[65]) {
     const uint8_t *sha = esp_app_get_description()->app_elf_sha256;
     for (int i = 0; i < 32; i++) snprintf(out + 2 * i, 3, "%02x", sha[i]);
+}
+
+// Kept apart from the correlation handler, so the hash's buffer is not part of its frame.
+static void reportCoreDump(socket_message_CoreDumpReport &report) {
+    char running[65];
+    runningElfSha256(running);
+    core_dump::report(coreDumpStore, running, report);
+}
+
+static uint32_t eraseCoreDump(socket_message_CoreDumpReport &report) {
+    char running[65];
+    runningElfSha256(running);
+    return core_dump::erase(coreDumpStore, robot.resting(), running, report);
 }
 
 static void replyOta(socket_message_CorrelationResponse &res, const OtaReply &reply) {
@@ -597,6 +612,27 @@ static void registerHandlers(CommAdapterBase &c) {
                     strncpy(res.error_message, "No room for the task snapshot", sizeof(res.error_message) - 1);
                 break;
             }
+            case socket_message_CorrelationRequest_core_dump_get_tag: {
+                res.which_response = socket_message_CorrelationResponse_core_dump_report_tag;
+                reportCoreDump(res.response.core_dump_report);
+                break;
+            }
+            case socket_message_CorrelationRequest_core_dump_read_tag: {
+                const auto &r = req.request.core_dump_read;
+                res.which_response = socket_message_CorrelationResponse_file_chunk_tag;
+                res.status_code = core_dump::readChunk(coreDumpStore, r.offset, r.length, res.response.file_chunk);
+                break;
+            }
+            case socket_message_CorrelationRequest_core_dump_erase_tag: {
+                res.which_response = socket_message_CorrelationResponse_core_dump_report_tag;
+                res.status_code = eraseCoreDump(res.response.core_dump_report);
+                if (res.status_code == 409)
+                    strncpy(res.error_message, "Deactivate the robot or let it idle first",
+                            sizeof(res.error_message) - 1);
+                else if (res.status_code == 500)
+                    strncpy(res.error_message, "Erasing the core dump failed", sizeof(res.error_message) - 1);
+                break;
+            }
             default: res.status_code = 400; break;
         }
         adapter->emit(res, clientId);
@@ -718,6 +754,8 @@ static void setupServer() {
         httpd_resp_set_type(r, "application/json");
         return httpd_resp_sendstr(r, buf);
     });
+
+    server.on("/api/coredump", HTTP_GET, [](httpd_req_t *r) { return core_dump::serveDownload(r, coreDumpStore); });
 
     fs_api::registerRoutes(server);
     ota_service::registerRoutes(server);
