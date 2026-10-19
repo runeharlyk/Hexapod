@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <vector>
 #include <message_types.h>
 #include <peripherals/imu_calibration.h>
 #include <platform_shared/message.pb.h>
@@ -36,7 +35,6 @@ class Peripherals {
     void gravityBody(float out[3]) { std::copy_n(state().gravityUp, 3, out); }
     void gyroRad(float out[3]) { std::copy_n(state().gyroRad, 3, out); }
 
-    std::vector<uint8_t> scanI2C() { return {}; }
     bool imuActive() const { return true; }
     bool magActive() const { return false; }
     imu_calibration::Check calibrateIMU(ImuCalibration &) { return imu_calibration::Check::MOVING; }

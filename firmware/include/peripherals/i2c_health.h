@@ -11,6 +11,9 @@ namespace i2c_health {
 
 enum class Failure { NACK, TIMEOUT };
 
+// What a scan's probe of one address found: a device that acknowledged, none, or a bus it could not have.
+enum class Probe { PRESENT, ABSENT, BUSY };
+
 /**
  * The IDF 5.4 master driver fails a NACK and a timeout alike, with ESP_ERR_INVALID_STATE, so the bus
  * tells them apart itself: a timeout leaves a line held low or spends the transfer's whole time, which

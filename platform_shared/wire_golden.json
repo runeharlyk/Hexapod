@@ -566,9 +566,7 @@
   },
   "socket_message.GoalStatusGet": {},
   "socket_message.I2CDevice": {
-   "address": "1 int32",
-   "part_number": "2 string",
-   "name": "3 string"
+   "address": "1 int32"
   },
   "socket_message.I2CDeviceErrors": {
    "address": "1 uint32",

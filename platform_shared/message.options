@@ -1,8 +1,7 @@
 socket_message.AnglesData.angles max_count:18
 
-socket_message.I2CDevice.part_number max_size:32
-socket_message.I2CDevice.name max_size:32
-socket_message.I2CScanData.devices max_count:16
+# I2CScan::RANGE, every address from 0x08 to 0x77
+socket_message.I2CScanData.devices max_count:112
 # I2CBus::MAX_DEVICES
 socket_message.AnalyticsData.i2c_errors max_count:8
 socket_message.StaticSystemInformation.esp_platform max_size:16

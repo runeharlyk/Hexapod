@@ -73,10 +73,11 @@ message ServoStateData { bool active = 1; }
 
 // --- Correlation RPC (request/response over the websocket) ---
 
+// The app names the part from the address; the robot never filled these.
 message I2CDevice {
   int32 address = 1;
-  string part_number = 2;
-  string name = 3;
+  reserved 2, 3;
+  reserved "part_number", "name";
 }
 message I2CScanData { repeated I2CDevice devices = 1; }
 message I2CScanDataRequest {}

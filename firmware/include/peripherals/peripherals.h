@@ -4,7 +4,6 @@
 #include <platform_shared/message.pb.h>
 #include <algorithm>
 #include <atomic>
-#include <vector>
 
 #include <feature_flags.h>
 #include <message_types.h>
@@ -58,8 +57,6 @@ class Peripherals {
         else ESP_LOGI(TAG, "HMC5883 ready");
 #endif
     }
-
-    std::vector<uint8_t> scanI2C() { return I2CBus::instance().scan(1, 127); }
 
     bool readIMU() {
 #if FT_ENABLED(USE_MPU6050)

@@ -8,7 +8,6 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <functional>
-#include <vector>
 #include <cstring>
 #include <peripherals/i2c_health.h>
 
@@ -21,11 +20,11 @@ class I2CBus {
     static constexpr TickType_t LOCK_TIMEOUT = pdMS_TO_TICKS(50);
 
     // Bounded acquisition: a caller that cannot get the bus fails its transfer instead of blocking the
-    // 5 ms control loop. Recursive because begin() -> end() and scan() -> probe() re-enter.
+    // 5 ms control loop. Recursive because begin() -> end() and recover() -> begin() re-enter.
     class Lock {
       public:
-        explicit Lock(SemaphoreHandle_t mutex)
-            : _mutex(mutex), _held(xSemaphoreTakeRecursive(mutex, LOCK_TIMEOUT) == pdTRUE) {}
+        explicit Lock(SemaphoreHandle_t mutex, TickType_t timeout = LOCK_TIMEOUT)
+            : _mutex(mutex), _held(xSemaphoreTakeRecursive(mutex, timeout) == pdTRUE) {}
         ~Lock() {
             if (_held) xSemaphoreGiveRecursive(_mutex);
         }
@@ -132,20 +131,14 @@ class I2CBus {
         return i2c_master_probe(_bus, addr, TRANSFER_TIMEOUT_MS) == ESP_OK;
     }
 
-    // Deliberately unlocked: each probe() takes the lock on its own so a 127-address sweep from the
-    // service task cannot starve the 5 ms control loop for the whole scan.
-    std::vector<uint8_t> scan(uint8_t lower = 1, uint8_t upper = 127) {
-        std::vector<uint8_t> devices;
-        if (!_initialized) return devices;
-
-        for (uint8_t addr = lower; addr < upper; addr++) {
-            if (probe(addr)) {
-                devices.push_back(addr);
-                ESP_LOGI(TAG, "I2C device found at address 0x%02X", addr);
-            }
-        }
-        ESP_LOGI(TAG, "Scan complete - Found %zu device(s)", devices.size());
-        return devices;
+    // A scan's probe (peripherals/i2c_scan.h), on the control task: it takes the bus without waiting, so a sweep never
+    // stalls a tick, and it tells a bus it could not have, or one held past the probe's timeout, from an empty address.
+    i2c_health::Probe tryProbe(uint8_t addr) {
+        Lock lock(_mutex, 0);
+        if (!lock.held() || !_initialized) return i2c_health::Probe::BUSY;
+        const esp_err_t err = i2c_master_probe(_bus, addr, TRANSFER_TIMEOUT_MS);
+        if (err == ESP_OK) return i2c_health::Probe::PRESENT;
+        return err == ESP_ERR_NOT_FOUND ? i2c_health::Probe::ABSENT : i2c_health::Probe::BUSY;
     }
 
     static constexpr size_t MAX_DEVICES = 8;

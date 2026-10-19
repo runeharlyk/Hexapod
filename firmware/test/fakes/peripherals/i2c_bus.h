@@ -6,6 +6,7 @@
 // and is not marked absent, so a test can unplug a chip and plug it back with its registers intact. Each transfer,
 // answered or not, takes transferUs of the host clock, so a test can time what a driver spends on the bus. A read
 // override answers a read in place of the register file, so a test can script a chip's replies, failures included.
+// A scan's probes are recorded in order, and a busy bus refuses them, as the real one does when another task holds it.
 
 #include <array>
 #include <cstdint>
@@ -15,6 +16,7 @@
 #include <set>
 #include <vector>
 #include <host_clock.h>
+#include <peripherals/i2c_health.h>
 
 using esp_err_t = int;
 constexpr esp_err_t ESP_OK = 0;
@@ -45,6 +47,8 @@ class I2CBus {
         attempts.clear();
         readOverride = nullptr;
         transferUs = 0;
+        probed.clear();
+        busy = false;
     }
 
     // The bus is up before any driver touches it, so the servo controller's start-up has nothing to do.
@@ -52,6 +56,12 @@ class I2CBus {
     void begin(gpio_num_t, gpio_num_t, uint32_t) {}
 
     bool probe(uint8_t addr) { return registers.count(addr) != 0 && absent.count(addr) == 0; }
+
+    i2c_health::Probe tryProbe(uint8_t addr) {
+        if (busy) return i2c_health::Probe::BUSY;
+        probed.push_back(addr);
+        return probe(addr) ? i2c_health::Probe::PRESENT : i2c_health::Probe::ABSENT;
+    }
 
     esp_err_t writeReg(uint8_t addr, uint8_t reg, const uint8_t* data, size_t len) {
         transfer(addr);
@@ -80,6 +90,9 @@ class I2CBus {
     // Answers a read, filling `data` as the chip would, or declines it to the register file.
     std::function<std::optional<esp_err_t>(uint8_t addr, uint8_t reg, uint8_t* data, size_t len)> readOverride;
     int64_t transferUs = 0;
+    // The addresses tryProbe() put on the bus, in order; a refused probe puts none.
+    std::vector<uint8_t> probed;
+    bool busy = false;
 
   private:
     void transfer(uint8_t addr) {

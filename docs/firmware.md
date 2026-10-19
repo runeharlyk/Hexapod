@@ -25,6 +25,7 @@ Paths are relative to `firmware/` unless they start at the repository root.
 | Servo output (two PCA9685 boards) | `include/peripherals/servo_controller.h`, `include/peripherals/drivers/pca9685.h` |
 | IMU and magnetometer | `include/peripherals/peripherals.h`, `include/peripherals/drivers/mpu6050.h`, `include/peripherals/drivers/hmc5883.h`, `include/peripherals/imu_calibration.h` |
 | Shared I2C bus | `include/peripherals/i2c_bus.h` |
+| I2C scan | `include/peripherals/i2c_scan.h` |
 | I2C error counts and bus recovery | `include/peripherals/i2c_health.h` |
 | Servo board write backoff and restart | `include/peripherals/servo_board.h` |
 | Status LED | `include/peripherals/status_led.h`, `include/peripherals/status_led_pattern.h` |
@@ -49,7 +50,7 @@ Paths are relative to `firmware/` unless they start at the repository root.
 
 `app_main` in `src/main.cpp` initialises NVS and the LittleFS filesystem, verifies the baked-in policy against its golden vector, starts the persisted settings services, checks the stored core dump ([Decoding a core dump](#decoding-a-core-dump)) and then creates two application tasks.
 
-- The **control task** (`control`, core 1, priority 5) runs a fixed 5 ms loop: `readSensors()`, `planMotion()`, `updateActuators()` on the `Hexapod` object, then records a telemetry sample if anyone listens and publishes the servo angles every 20 ms.
+- The **control task** (`control`, core 1, priority 5) runs a fixed 5 ms loop: `readSensors()`, `planMotion()`, `updateActuators()` on the `Hexapod` object, then probes up to eight addresses of a requested I2C scan, records a telemetry sample if anyone listens and publishes the servo angles every 20 ms.
   The period is held with `xTaskDelayUntil`; after an overrun the schedule restarts from the current tick instead of replaying the missed ones.
 - The **service task** (`service`, priority 2) brings up WiFi, mDNS and the soft AP, then the HTTP server, the transports, ESP-NOW and the camera, in that order.
   It then loops every 100 ms: services WiFi and the AP, expires an abandoned OTA session, ships telemetry batches, samples CPU usage and emits analytics while subscribed, and confirms the running OTA image once the control loop has run 200 ticks.
@@ -65,7 +66,7 @@ Other tasks are created by the components that need them:
 - the ESP-IDF tasks for WiFi, the event loop, NimBLE and `esp_http_server`.
 
 The control loop owns `MotionService`, `Peripherals` and `ServoController` through `Hexapod` (`include/hexapod.h`).
-Everything else reaches the motion through the EventBus or through the few `Hexapod` methods the message handlers call (animation play, stop and pose, IMU calibration, I2C scan).
+Everything else reaches the motion through the EventBus or through the few `Hexapod` methods the message handlers call (animation play, stop and pose, IMU calibration).
 
 ### Task table
 
@@ -270,10 +271,21 @@ The states are `IDLE`, `SETTLING`, `RUNNING`, `REACHED`, `CANCELLED`, `TIMED_OUT
 
 `Peripherals` (`include/peripherals/peripherals.h`) owns the MPU6050 (DMP orientation, gravity, gyro) and the HMC5883 magnetometer, each behind its `USE_*` flag, on the shared `I2CBus` (`include/peripherals/i2c_bus.h`, `esp_driver_i2c`).
 The control task reads the IMU every 25 ms and publishes roll, pitch, yaw and compass heading together as one `IMUAnglesMsg`.
-The bus takes its lock with a bounded wait, so a busy bus fails a transfer instead of stalling the 5 ms loop, and an I2C scan from the service side locks per address for the same reason.
+The bus takes its lock with a bounded wait, so a busy bus fails a transfer instead of stalling the 5 ms loop.
 Bus pins and frequency come from the persisted peripheral settings and are applied at boot only: re-opening a live bus would invalidate every device handle.
 The two PCA9685 servo boards sit on the same bus: 0x41 drives the right legs (servos 0-8) and 0x40 the left (servos 9-17).
 IMU calibration offsets are measured on request while the robot rests, persisted by `ImuCalibrationService`, and written to the chip at boot because it forgets them at power-off.
+
+### I2C scan
+
+The I2C page's scan probes every unreserved address, 0x08 to 0x77, and the reply lists every one that acknowledged (`include/peripherals/i2c_scan.h`).
+The probes run on the control task: the bus's interrupt is bound to the core that opened the bus, the control task's core 1, and in IDF 5.4.2 an `i2c_master_probe` from core 0 can take a stale completion of the previous probe for its own and report a device that is not there.
+Probed from the BLE task on core 0, the scan returned some 16 random low addresses, cut at the reply's former 16 entries, and none of the robot's real devices; the race is read from the driver source and not yet confirmed on the robot.
+The request handler posts the scan and waits for it, at most 500 ms; the control task probes up to eight addresses after each tick's servo write, so the sweep takes 14 ticks and never holds the bus across a tick.
+The driver probes at 100 kHz whatever the bus frequency, about 0.1 ms an address on the wire, so the eight cost a tick some 1 ms by estimate; the tick's `compute_us` in the telemetry includes them, which is where to read the real cost.
+A probe takes the bus lock without waiting, so the control task never waits on another task for it.
+A bus that another task holds, or a probe that times out, fails the scan with 503 instead of reporting the address as empty; a second request while a scan runs is refused with 503 as well.
+`test/test_i2c_scan/` checks the set reported, the range, the probes per tick and the refusals against the register fake, which cannot reproduce the driver's cross-core race itself.
 
 ### I2C errors and recovery
 

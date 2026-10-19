@@ -45,6 +45,7 @@
 #include <hexapod.h>
 #include <peripherals/i2c_bus.h>
 #include <peripherals/status_led.h>
+#include <peripherals/i2c_scan.h>
 #include <cpu_stats.h>
 #include <task_stats.h>
 #include <filesystem_service.h>
@@ -89,6 +90,7 @@ Hexapod robot;
 #if FT_ENABLED(USE_ESPNOW)
 EspNowAdapter espNow;
 #endif
+I2CScan i2cScan;
 CpuMonitor cpuMonitor;
 TaskStats taskStats;
 EspCoreDumpStore coreDumpStore;
@@ -220,6 +222,21 @@ static constexpr size_t WIFI_SCAN_RESULT_CAPACITY = 20;
 // Settings are persisted as binary protobuf under FS_CONFIG_DIRECTORY (the files keep their legacy
 // .json names), so erasing NVS alone leaves WiFi credentials and servo calibration in place after a
 // factory reset.
+// The sweep takes 14 control ticks, some 70 ms; the requesting transport task waits for it at most half a second.
+static constexpr TickType_t I2C_SCAN_POLL = pdMS_TO_TICKS(5);
+static constexpr int I2C_SCAN_POLLS = 100;
+static_assert(sizeof(socket_message_I2CScanData::devices) / sizeof(socket_message_I2CDevice) >= I2CScan::RANGE,
+              "an I2C scan reply holds every address");
+
+static const char *i2cScanRefusal(I2CScan::Outcome outcome) {
+    switch (outcome) {
+        case I2CScan::Outcome::ALREADY_RUNNING: return "An I2C scan is already running";
+        case I2CScan::Outcome::BUS_BUSY: return "The I2C bus is busy";
+        case I2CScan::Outcome::TIMED_OUT: return "The control task did not finish the I2C scan";
+        default: return "";
+    }
+}
+
 static void eraseConfigDirectory() {
     DIR *dir = opendir(FS_CONFIG_DIRECTORY);
     if (!dir) return;
@@ -371,14 +388,18 @@ static void registerHandlers(CommAdapterBase &c) {
             case socket_message_CorrelationRequest_i2c_scan_data_request_tag: {
                 res.which_response = socket_message_CorrelationResponse_i2c_scan_data_tag;
                 auto &scan = res.response.i2c_scan_data;
-                scan.devices_count = 0;
-                for (uint8_t addr : robot.scanI2C()) {
-                    if (scan.devices_count >= 16) break;
-                    scan.devices[scan.devices_count++].address = addr;
+                I2CScan::Found found;
+                const I2CScan::Outcome outcome =
+                    i2cScan.request(found, [] { vTaskDelay(I2C_SCAN_POLL); }, I2C_SCAN_POLLS);
+                if (outcome != I2CScan::Outcome::DONE) {
+                    res.status_code = 503;
+                    strncpy(res.error_message, i2cScanRefusal(outcome), sizeof(res.error_message) - 1);
                 }
                 break;
             }
             case socket_message_CorrelationRequest_wifi_settings_get_tag: {
+                for (size_t i = 0; i < found.count; i++)
+                    scan.devices[scan.devices_count++].address = found.addresses[i];
                 res.which_response = socket_message_CorrelationResponse_wifi_settings_tag;
                 redactedWifiSettings(res.response.wifi_settings);
                 break;
@@ -953,6 +974,7 @@ static void serviceLoop(void *) {
     logHeap("softap");
 
     setupServer();
+        i2cScan.step();
     setupComm();
 
 #if FT_ENABLED(USE_ESPNOW)
