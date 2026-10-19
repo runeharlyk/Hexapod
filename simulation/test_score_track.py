@@ -56,11 +56,12 @@ def walk(modes, sticks, translation_scale: float, turn_scale: float, start) -> n
     return poses
 
 
-def write_recording(path, modes, sticks, strides=None, odometry=None) -> None:
+def write_recording(path, modes, sticks, strides=None, odometry=None, features=None) -> None:
+    features = {"firmwareVersion": "0.1.1"} if features is None else features
     strides = np.zeros(len(modes)) if strides is None else strides
     odometry = np.zeros((len(modes), 3)) if odometry is None else odometry
     robot_us = np.round((ROBOT_START_S + np.arange(len(modes)) * TICK_S) * 1e6).astype(int)
-    writer = RecordingWriter(path, {"version": "synthetic"})
+    writer = RecordingWriter(path, features)
     for first in range(0, len(modes), 10):
         ticks = [pb.TickSample(seq=k, t_us=int(robot_us[k]), mode=int(modes[k]), gait=int(Gait.TRI_GATE),
                                command=[*sticks[k], 0.0, 0.0, 0.0, 0.0, 0.0, strides[k]],
@@ -159,6 +160,24 @@ def test_a_stride_set_only_while_standing_does_not_change_the_walk(tmp_path):
     modes, sticks = course_ticks()
     walked = walk(modes, sticks, 1.0, 1.0, (0.0, 0.0, 0.0))
     assert telemetry.estimates["commanded"] == pytest.approx(walked, abs=1e-6)  # the sticks cross the wire as float32
+
+
+# Recordings from before the stick mapping of 2026-10-19 hold mirrored strafes and turns (docs/conventions.md); the
+# header's firmware version, as record.py and the app write it, tells them apart where it can.
+@pytest.mark.parametrize("features", [{}, {"firmwareName": "Hexapod"}, {"firmwareVersion": "0.1.0"},
+                                      {"firmwareVersion": "0.0.1"}, {"firmwareVersion": "synthetic"}])
+def test_a_recording_from_before_the_stick_mapping_is_refused(tmp_path, features):
+    modes, sticks = course_ticks()
+    write_recording(tmp_path / "run.hexrec", modes, sticks, features=features)
+    with pytest.raises(ValueError, match="stick mapping"):
+        Telemetry.from_recording(recording.load(tmp_path / "run.hexrec"))
+
+
+@pytest.mark.parametrize("version", ["0.1.1", "0.1.2", "0.2.0", "1.0.0"])
+def test_a_recording_from_a_firmware_that_may_map_the_sticks_so_is_scored(tmp_path, version):
+    modes, sticks = course_ticks()
+    write_recording(tmp_path / "run.hexrec", modes, sticks, features={"firmwareVersion": version})
+    assert Telemetry.from_recording(recording.load(tmp_path / "run.hexrec")).estimates["commanded"].shape[1] == 3
 
 
 def _ticks(command):

@@ -5,9 +5,10 @@ The robot's idea is the commanded motion: each tick's sticks (the telemetry's co
 speed model (src/hexapod/speed_model.py) while the robot is in WALK, eased in and out by the firmware's command ramp
 (GAIT_COMMAND_TAU_S) and integrated over the ticks. WALK_NN and ANIMATE count as standing still, which they are not;
 score a run that stays in STAND and WALK. The speed model is the speed-optimal stroke's (stride 0), so a recording that
-walked at another stride is refused. Where the recording's ticks also carry the firmware's odometry (the columns
-ODOMETRY_COLUMNS: x and y in metres, yaw in radians, in the frame the robot faced at its last odometry reset), that is
-scored beside it.
+walked at another stride is refused, and so is one whose header names no firmware version or one before
+STICK_MAPPING_VERSION, whose strafes and turns the current stick mapping would read mirrored. Where the recording's
+ticks also carry the firmware's odometry (the columns ODOMETRY_COLUMNS: x and y in metres, yaw in radians, in the frame
+the robot faced at its last odometry reset), that is scored beside it.
 
 The track (ground_truth.py) and the telemetry recording (record.py) run on different clocks: the camera's frames carry
 the host's monotonic time or a video's own, the ticks the robot's. The offset between the two is searched for: the
@@ -39,6 +40,10 @@ from src.robot.firmware_gait import GAIT_COMMAND_TAU_S
 from src.sim import recording
 
 ODOMETRY_COLUMNS = ("odom_x", "odom_y", "odom_yaw")
+# The oldest firmware version that may map the sticks as docs/conventions.md describes; every older one mirrors the
+# strafe and the turn. The 0.1.1 release does too, but builds after it report the same version on either mapping, so the
+# next release's version is the first that tells them apart.
+STICK_MAPPING_VERSION = (0, 1, 1)
 # The stride's place in a tick's command (lx, ly, rx, ry, h, s, s1, fd, stride); older recordings end before it.
 STRIDE = 8
 GRID_S = 0.01
@@ -112,6 +117,15 @@ def commanded_path(ticks: dict[str, np.ndarray]) -> np.ndarray:
     return poses
 
 
+def check_stick_mapping(features: dict) -> None:
+    """Refuses a recording whose header's firmware version is missing, unreadable or before STICK_MAPPING_VERSION."""
+    version = str(features.get("firmwareVersion", ""))
+    parts = version.split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts) or tuple(map(int, parts)) < STICK_MAPPING_VERSION:
+        raise ValueError(f"the recording's firmware version {version!r} does not have the current stick mapping, or "
+                         "does not say whether it does, so its strafes and turns would be read mirrored")
+
+
 @dataclass(frozen=True)
 class Telemetry:
     t: np.ndarray  # each tick on the robot's clock (s)
@@ -119,6 +133,7 @@ class Telemetry:
 
     @classmethod
     def from_recording(cls, rec: recording.Recording) -> "Telemetry":
+        check_stick_mapping(rec.features)
         estimates = {"commanded": commanded_path(rec.ticks)}
         if all(column in rec.ticks for column in ODOMETRY_COLUMNS):
             x, y, yaw = (np.asarray(rec.ticks[column], dtype=float) for column in ODOMETRY_COLUMNS)
