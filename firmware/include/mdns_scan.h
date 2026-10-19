@@ -3,7 +3,8 @@
 // The mDNS page's scan of the robot's network. A query collects answers for 3 s, and a transport task that waited for
 // them took no other message from its client meanwhile, sticks, modes and pings included. So the transport task only
 // queues the query; the service task begins it, polls it on its 100 ms pass, and sends the reply once it has ended,
-// with the request's correlation id, through the client's transport (CommAdapterBase::emit serves any task).
+// with the request's correlation id, through the client's transport; CommAdapterBase::offer drops it rather than wait
+// on a client that cannot take it now, as a subscription's frame is dropped.
 
 #include <cstdint>
 #include <cstring>

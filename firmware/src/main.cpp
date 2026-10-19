@@ -751,7 +751,8 @@ static void answerMdnsScan() {
     auto &res = *static_cast<socket_message_CorrelationResponse *>(memory);
     const std::optional<MdnsScan::Client> client = mdnsScan.answer(res);
     CommAdapterBase *transport = client ? transportOf(client->adapter) : nullptr;
-    if (transport) transport->emit(res, client->id);
+    if (transport && !transport->offer(res, client->id))
+        ESP_LOGW(TAG, "mDNS scan reply dropped: client %d takes no data now", client->id);
     heap_caps_free(memory);
 }
 

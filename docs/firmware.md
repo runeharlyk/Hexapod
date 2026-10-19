@@ -345,7 +345,9 @@ Its `ProtoDecoder` dispatches each decoded message to the handler registered for
 `registerHandlers` in `src/main.cpp` registers the same handlers on every adapter.
 Commands, modes, gaits and raw servo signals are validated and republished onto the EventBus; animation requests call into `Hexapod`; a `CorrelationRequest` is answered with a `CorrelationResponse` carrying the same correlation id (system information, features, I2C scan, WiFi, AP, mDNS, servo and peripheral settings, IMU calibration, OTA chunks, file chunks, animation listing and validation).
 The mDNS scan is answered later: its query collects answers for 3 s, and a transport task that waited them out took no other message from its client meanwhile, sticks, modes and pings included.
-So the handler only queues the query (`include/mdns_scan.h`), the service task begins it with `mdns_query_async_new` and polls it on its 100 ms pass, and sends the reply through the client's adapter once the query has ended; `emit` serves any task.
+So the handler only queues the query (`include/mdns_scan.h`), the service task begins it with `mdns_query_async_new` and polls it on its 100 ms pass, and sends the reply through the client's adapter once the query has ended.
+The reply goes out through `CommAdapterBase::offer`, which sends only when the client's socket can take data now and drops the reply otherwise, so a stalled client does not hold the service task in a blocking send; the app's request then times out after 15 s.
+A reply larger than the socket's free space can still wait for httpd's 5 s send timeout.
 One scan runs at a time, a second request is refused with 503, and a client that leaves gets no reply; `test/test_mdns_scan/` checks this against a fake mDNS stack.
 
 Outgoing data takes one of four shapes, chosen by the kind of data:

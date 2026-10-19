@@ -7,6 +7,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <communication/comm_base.hpp>
 #include <mdns_scan.h>
 
 namespace {
@@ -40,6 +41,18 @@ class FakeBrowser : public MdnsBrowser {
 };
 
 int ws = 0, ble = 0; // two transports, by address
+
+// A transport whose client's socket can or cannot take a frame now; it counts the frames that went out.
+class FakeAdapter : public CommAdapterBase {
+  public:
+    bool writable = true;
+    int sent = 0;
+    bool hasClient() const override { return true; }
+
+  protected:
+    bool ready(int) override { return writable; }
+    void send(const uint8_t*, size_t, int) override { sent++; }
+};
 
 api_MDNSQueryRequest query(const char* service, const char* protocol) {
     api_MDNSQueryRequest request = api_MDNSQueryRequest_init_zero;
@@ -200,6 +213,21 @@ void test_the_same_id_on_another_transport_is_another_client() {
     TEST_ASSERT_TRUE(scan.answer(res).has_value());
 }
 
+// The reply goes out on the service task, which ships every client's telemetry: a client that cannot take it now, a
+// stalled browser tab, loses it rather than holding that task in a blocking send for the socket's send timeout.
+void test_the_reply_is_dropped_rather_than_waited_for_when_the_client_cannot_take_it() {
+    FakeAdapter adapter;
+    socket_message_CorrelationResponse res = socket_message_CorrelationResponse_init_zero;
+
+    adapter.writable = false;
+    TEST_ASSERT_FALSE(adapter.offer(res, 3));
+    TEST_ASSERT_EQUAL(0, adapter.sent);
+
+    adapter.writable = true;
+    TEST_ASSERT_TRUE(adapter.offer(res, 3));
+    TEST_ASSERT_EQUAL(1, adapter.sent);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_a_request_queues_the_query_and_returns_without_touching_the_network);
@@ -211,5 +239,6 @@ int main(int, char**) {
     RUN_TEST(test_a_client_that_leaves_mid_scan_gets_no_reply_and_frees_the_scan);
     RUN_TEST(test_a_client_that_leaves_before_its_query_begins_sends_none);
     RUN_TEST(test_the_same_id_on_another_transport_is_another_client);
+    RUN_TEST(test_the_reply_is_dropped_rather_than_waited_for_when_the_client_cannot_take_it);
     return UNITY_END();
 }

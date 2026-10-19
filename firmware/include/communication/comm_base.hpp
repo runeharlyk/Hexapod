@@ -92,6 +92,15 @@ class CommAdapterBase {
         }
     }
 
+    // A directed message from a task that must not wait on one client (the service loop): sent only when the client can
+    // take a frame now, and dropped otherwise, as a subscription's frame is. False when it was dropped.
+    template <typename T>
+    bool offer(const T& data, int clientId) {
+        if (!ready(clientId)) return false;
+        emit(data, clientId);
+        return true;
+    }
+
   protected:
     virtual void send(const uint8_t* data, size_t len, int cid = -1) = 0;
 
