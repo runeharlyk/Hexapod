@@ -17,24 +17,24 @@ vi.mock('$lib/transport/serial-adapter', async () => {
     serialSupported: false
   }
 })
+// WiFi is a fake link that reaches the fake robot at the address connected to, if there is one.
+const wifi = vi.hoisted(() => ({ robots: new Map<string, unknown>() }))
 vi.mock('$lib/transport/websocket-adapter', async () => {
-  const { writable } = await import('svelte/store')
-  return {
-    websocket: {
-      status: writable('disconnected'),
-      connect: vi.fn(() => Promise.resolve()),
-      disconnect: vi.fn(() => Promise.resolve())
-    }
-  }
+  const { get } = await import('svelte/store')
+  const { fakeLink } = await import('../fake-robot/transport')
+  const { location } = await import('$lib/stores/location-store')
+  type Robot = import('../fake-robot/transport').FakeRobot
+  return { websocket: fakeLink(() => wifi.robots.get(get(location)) as Robot | undefined) }
 })
 
 import { dataBroker } from '$lib/transport/databroker'
 import { robotData } from '$lib/robot/data'
 import { modeState } from '$lib/robot/state'
 import { i2cScan } from '$lib/i2c'
-import { featureFlagsState, refreshFeatureFlags } from '$lib/stores/featureFlags'
+import { featureFlagsState, refreshFeatureFlags, useFeatureFlags } from '$lib/stores/featureFlags'
 import { chooseSerialPort, connectBluetooth, connectToAddress } from '$lib/stores/link'
 import { location } from '$lib/stores'
+import { websocket } from '$lib/transport/websocket-adapter'
 import { FeaturesDataResponse, ModeData, ModesEnum } from '$lib/platform_shared/message'
 import { FakeRobot, fakeLink } from '../fake-robot/transport'
 
@@ -44,6 +44,7 @@ robot.respond('featuresDataRequest', () => ({
 }))
 const link = fakeLink(robot)
 dataBroker.addTransport(link)
+dataBroker.addTransport(websocket)
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 0))
 
@@ -125,5 +126,61 @@ describe('choosing a robot', () => {
     await connectToAddress('hexapod-b.local')
     expect(reset).toHaveBeenCalledTimes(1)
     expect(get(location)).toBe('hexapod-b.local')
+  })
+})
+
+// The old robot is left before anything is forgotten: forgotten first, the state topics and the flags would be asked
+// for again on the link still up, which reaches the robot left.
+describe('connecting to another address', () => {
+  const robotAt = (version: string, mode: ModesEnum) => {
+    const at = new FakeRobot()
+    at.respond('featuresDataRequest', () => ({
+      featuresDataResponse: FeaturesDataResponse.create({ firmwareVersion: version })
+    }))
+    at.set(ModeData, { mode, handheld: false })
+    return at
+  }
+  let left: FakeRobot
+  let following: () => void
+
+  beforeEach(async () => {
+    left = robotAt('1.0.0', ModesEnum.STAND)
+    wifi.robots.set('hexapod-a.local', left)
+    location.set('hexapod-a.local')
+    await websocket.connect()
+    following = modeState.subscribe(() => {})
+    await refreshFeatureFlags()
+    await vi.waitFor(() => expect(get(modeState).status).toBe('live'))
+  })
+
+  afterEach(async () => {
+    following()
+    await websocket.disconnect()
+    wifi.robots.clear()
+  })
+
+  it('asks the robot left nothing and shows nothing of it while the new address is unreachable', async () => {
+    const heard = left.received.length
+
+    await connectToAddress('hexapod-b.local')
+    await settle()
+
+    expect(left.received.slice(heard)).toEqual([])
+    expect(get(modeState)).toMatchObject({ value: undefined, stale: false })
+    expect(get(featureFlagsState)).toEqual({ kind: 'pending' })
+  })
+
+  it("shows the new robot's state and flags once it is reached", async () => {
+    const heard = left.received.length
+    wifi.robots.set('hexapod-b.local', robotAt('2.0.0', ModesEnum.WALK))
+
+    await connectToAddress('hexapod-b.local')
+
+    await vi.waitFor(() =>
+      expect(get(modeState)).toMatchObject({ value: { mode: ModesEnum.WALK }, status: 'live' })
+    )
+    await vi.waitFor(() => expect(get(featureFlagsState)).toEqual({ kind: 'known' }))
+    expect(get(useFeatureFlags()).firmware_version).toBe('2.0.0')
+    expect(left.received.slice(heard)).toEqual([])
   })
 })

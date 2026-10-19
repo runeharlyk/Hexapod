@@ -85,12 +85,17 @@ export const connectWebsocket = () => {
   websocket.connect().catch(error => notifications.error(`WiFi connect failed: ${error}`))
 }
 
-/** Connects the WebSocket to the robot at `address`, which is another robot unless it is the address connected to. */
+/**
+ * Connects the WebSocket to the robot at `address`, which is another robot unless it is the address connected to. The
+ * robot left is disconnected before its data is forgotten, so the robot is asked again only on the next link: the new
+ * robot once it is reached, and nothing while it cannot be, rather than the robot left on the link still up.
+ */
 export const connectToAddress = async (address: string) => {
   const next = address.trim()
-  if (next !== get(location)) robotData.reset()
-  location.set(next)
+  const another = next !== get(location)
   await websocket.disconnect()
+  if (another) robotData.reset()
+  location.set(next)
   connectWebsocket()
 }
 
