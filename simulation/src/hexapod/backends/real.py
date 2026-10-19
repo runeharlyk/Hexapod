@@ -176,7 +176,9 @@ class RealBackend:
             acks = self._run(self._open(), READY_TIMEOUT_S + 1)
             features = self._run(self._ask(pb.CorrelationRequest(features_data_request=pb.FeaturesDataRequest())))
             self._imu = features.features_data_response.imu
-            self._snapshots = self._run(self._acked(acks["mode"])) is not None
+            mode_acked = self._run(self._acked(acks["mode"])) is not None
+            # A firmware from before the snapshots acks none of these; one ack lost on the way is no such firmware.
+            self._snapshots = mode_acked or any(ack.done() for ack in acks.values())
             self._goals = self._snapshots and bool(self._run(self._acked(acks["goal_status"])))
             if self._imu:
                 self._wait(lambda: self._yaw is not None, "the robot reports an IMU but sends no angles")

@@ -146,12 +146,14 @@ class FakeRobot:
     It boots DEACTIVATED in TRI_GATE and answers a subscribe as the firmware does (firmware/test/test_topic_snapshot):
     a state topic with its current value and then the subscribe echoed as the ack, anything else with the ack alone; the
     goal status is a topic only with `goals`. With `snapshots=False` it answers no subscribe, as a firmware from before
-    the snapshots. It loses the next `lost_mode_snapshots` snapshots of its mode, as a full BLE queue drops them."""
+    the snapshots. It loses the next `lost_mode_snapshots` snapshots of its mode, as a full BLE queue drops them, and
+    the next `lost_mode_acks` acks of a subscribe to it."""
 
     def __init__(self, imu=True, obey=True, reset_on_open=None, goals=False, snapshots=True):
         self.imu, self.obey, self.reset_on_open, self.goals = imu, obey, reset_on_open, goals
         self.snapshots = snapshots
         self.lost_mode_snapshots = 0
+        self.lost_mode_acks = 0
         self.gait = pb.TRI_GATE
         self.handheld = False
         self.drop_final_push = False
@@ -233,6 +235,9 @@ class FakeRobot:
                 yield pb.Message(goal_status=self.goal_status())
             elif tag == _tag("animation_status"):
                 yield pb.Message(animation_status=pb.AnimationStatus(state=pb.ANIM_IDLE))
+            if tag == _tag("mode") and self.lost_mode_acks:
+                self.lost_mode_acks -= 1
+                return
             yield pb.Message(sub_notif=pb.SubscribeNotification(tag=tag))
         elif kind == "pingmsg":
             yield pb.Message(pongmsg=pb.PongMsg())
@@ -690,6 +695,16 @@ def test_the_mode_is_refreshed_only_while_the_keep_alive_runs_or_the_handheld_dr
     _eventually(lambda: not robot.state().handheld)
     time.sleep(real.REFRESH_S)
     assert _refreshes_over(fake, 3 * real.REFRESH_S) == 0
+
+
+# One lost ack is no firmware from before the snapshots, which acks none: the robot acked the connect's other
+# subscribes, so its mode is refreshed all the same.
+def test_a_mode_ack_lost_at_connect_still_finds_the_snapshots(fake, target, monkeypatch):
+    monkeypatch.setattr(real, "REPLY_TIMEOUT_S", 0.5)
+    fake.lost_mode_acks = 1
+    with Robot(target) as robot:
+        robot.stand()
+        assert _refreshes_over(fake, 3 * real.REFRESH_S) >= 2
 
 
 # A lost snapshot delays no refresh: the refreshes go out every REFRESH_S whether or not the last was answered, so a
