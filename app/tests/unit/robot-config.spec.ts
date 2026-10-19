@@ -1,8 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { derived, writable } from 'svelte/store'
 import { dataBroker } from '$lib/transport/databroker'
-import type { ITransport, LinkStatus } from '$lib/interfaces/transport.interface'
-import { CorrelationResponse, Message } from '$lib/platform_shared/message'
+import { FakeRobot, fakeLink } from '../fake-robot/transport'
 import { PeripheralSettings, ServoSettings } from '$lib/platform_shared/api'
 import { applyConfig, exportConfig, parseConfig, serializeConfig } from '$lib/robot-config'
 
@@ -39,53 +37,21 @@ const robot = {
 }
 const updates: string[] = []
 
-function answer(request: NonNullable<Message['correlationRequest']>): Partial<CorrelationResponse> {
-  if (request.servoSettingsGet) return { servoSettings: robot.servo }
-  if (request.peripheralSettingsGet) return { peripheralSettings: robot.peripherals }
-  if (request.servoSettingsUpdate) {
-    updates.push('servo')
-    if (!robot.refuseServos) robot.servo = request.servoSettingsUpdate
-    return { servoSettings: robot.servo }
-  }
-  if (request.peripheralSettingsUpdate) {
-    updates.push('peripherals')
-    if (robot.refusePeripherals) return { statusCode: 400, peripheralSettings: robot.peripherals }
-    robot.peripherals = request.peripheralSettingsUpdate
-    return { peripheralSettings: robot.peripherals }
-  }
-  return { statusCode: 404 }
-}
-
-const status = writable<LinkStatus>('disconnected')
-const dataCallbacks: ((bytes: Uint8Array) => void)[] = []
-const connectCallbacks: (() => void)[] = []
-
-const transport: ITransport = {
-  status,
-  connected: derived(status, s => s === 'connected'),
-  connect: async () => {
-    status.set('connected')
-    connectCallbacks.forEach(cb => cb())
-  },
-  disconnect: async () => status.set('disconnected'),
-  send: bytes => {
-    const request = Message.decode(bytes).correlationRequest
-    if (!request) return
-    const reply = Message.encode(
-      Message.create({
-        correlationResponse: {
-          correlationId: request.correlationId,
-          statusCode: 200,
-          ...answer(request)
-        }
-      })
-    ).finish()
-    queueMicrotask(() => dataCallbacks.forEach(cb => cb(reply)))
-  },
-  onData: cb => dataCallbacks.push(cb),
-  onConnect: cb => connectCallbacks.push(cb),
-  onDisconnect: () => {}
-}
+const fake = new FakeRobot()
+fake.respond('servoSettingsGet', () => ({ servoSettings: robot.servo }))
+fake.respond('peripheralSettingsGet', () => ({ peripheralSettings: robot.peripherals }))
+fake.respond('servoSettingsUpdate', request => {
+  updates.push('servo')
+  if (!robot.refuseServos) robot.servo = request.servoSettingsUpdate!
+  return { servoSettings: robot.servo }
+})
+fake.respond('peripheralSettingsUpdate', request => {
+  updates.push('peripherals')
+  if (robot.refusePeripherals) return { statusCode: 400, peripheralSettings: robot.peripherals }
+  robot.peripherals = request.peripheralSettingsUpdate!
+  return { peripheralSettings: robot.peripherals }
+})
+const transport = fakeLink(fake)
 
 beforeAll(async () => {
   dataBroker.addTransport(transport)
