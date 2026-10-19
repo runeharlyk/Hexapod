@@ -1,6 +1,10 @@
 import { expect, test } from '@playwright/test'
 import { fakeRobot, tooOld } from './fake-robot'
-import { FeaturesDataResponse } from '../../src/lib/platform_shared/message'
+import {
+  CorrelationResponse,
+  FeaturesDataResponse,
+  Message
+} from '../../src/lib/platform_shared/message'
 
 const base = process.env.BASE_PATH ?? ''
 
@@ -58,4 +62,37 @@ test('a failed read of the features says why and can be retried', async ({ page 
   ).toBeVisible()
   await page.getByRole('button', { name: 'Retry' }).click()
   await expect(page.getByText('Telemetry recording', { exact: true })).toBeVisible()
+})
+
+// A drop makes the flags stale, not wrong: the page stays mounted, with its charts' history, while the same robot comes
+// back, and the flags are read again once it has.
+test('a drop and a reconnect to the same robot keep the page mounted', async ({ page }) => {
+  let featureRequests = 0
+  let drop: () => void = () => {}
+  await page.routeWebSocket('**/api/ws', socket => {
+    drop = () => socket.close()
+    socket.onMessage(frame => {
+      if (typeof frame === 'string') return
+      const request = Message.decode(new Uint8Array(frame)).correlationRequest
+      if (!request) return
+      const answer = request.featuresDataRequest ? { featuresDataResponse: features } : tooOld()
+      if (request.featuresDataRequest) featureRequests++
+      const response = CorrelationResponse.create({
+        correlationId: request.correlationId,
+        statusCode: 200,
+        ...answer
+      })
+      socket.send(Buffer.from(Message.encode({ correlationResponse: response }).finish()))
+    })
+  })
+
+  await page.goto(`${base}/system/metrics`)
+  const recording = page.getByText('Telemetry recording', { exact: true })
+  await expect(recording).toBeVisible()
+  await recording.evaluate(element => element.setAttribute('data-before-drop', ''))
+  const readsBefore = featureRequests
+
+  drop()
+  await expect.poll(() => featureRequests).toBeGreaterThan(readsBefore)
+  await expect(recording).toHaveAttribute('data-before-drop', '')
 })

@@ -105,7 +105,10 @@ export const featureFlagsState: Readable<FeatureFlagsState> = { subscribe: state
 // The read under way, which a newer read or a forgotten robot aborts, so its answer can never land.
 let reading: AbortController | null = null
 
-/** Reads the flags afresh: after a restart, which may have brought other firmware, or to retry a failed read. */
+/**
+ * Reads the flags afresh: after a restart, which may have brought other firmware, after a drop, or to retry a failed
+ * read. A failed read leaves flags already known for this robot in place: they are stale, not wrong.
+ */
 export function refreshFeatureFlags(): Promise<Features> {
   reading?.abort()
   const read = new AbortController()
@@ -123,10 +126,11 @@ export function refreshFeatureFlags(): Promise<Features> {
     error => {
       if (reading === read) {
         reading = null
-        state.set({
-          kind: 'failed',
-          message: error instanceof Error ? error.message : String(error)
-        })
+        if (get(state).kind !== 'known')
+          state.set({
+            kind: 'failed',
+            message: error instanceof Error ? error.message : String(error)
+          })
       }
       throw error
     }
@@ -155,17 +159,21 @@ const forget = () => {
 }
 
 /**
- * Follows the robot the link reaches (`robot`, null while no link is up): its flags are forgotten when the link drops
- * or reaches another robot, so a page never shows one robot's flags for another, and read whenever a link comes up,
- * which also retries a failed read. A read still under way then began while no link was up, so the broker sends it to
- * the robot now reached, and it is left to answer. Returns the function that stops following.
+ * Follows the robot the link reaches (`robot`, null while no link is up). A drop keeps the flags, and with them the
+ * pages that depend on them, since they are only stale; the link reaching another robot forgets them, so a page never
+ * shows one robot's flags for another. Whenever a link comes up they are read again, which also retries a failed read.
+ * A read still under way then began while no link was up, so the broker sends it to the robot now reached, and it is
+ * left to answer. Returns the function that stops following.
  */
 export const followFeatureFlags = (robot: Readable<string | null>) => {
   let current: string | null = null
+  let lastReached: string | null = null
   return robot.subscribe(next => {
     if (next === current) return
-    if (current !== null) forget()
     current = next
-    if (next !== null && !reading) readInBackground()
+    if (next === null) return
+    if (lastReached !== null && next !== lastReached) forget()
+    lastReached = next
+    if (!reading) readInBackground()
   })
 }

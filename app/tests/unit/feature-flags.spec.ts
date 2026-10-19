@@ -177,13 +177,32 @@ describe('followFeatureFlags', () => {
     await vi.waitFor(() => expect(state()).toEqual({ kind: 'known' }))
   })
 
-  it('forgets the flags when the link drops', async () => {
+  // A drop makes the flags stale, not wrong: the robot that comes back is the same one, so the pages that depend on
+  // them stay mounted, and the flags are read again once it is back.
+  it('keeps the flags through a drop and reads them again when the same robot is back', async () => {
     flags.followFeatureFlags(reached)
     reached.set('websocket hexapod.local')
     await vi.waitFor(() => expect(state()).toEqual({ kind: 'known' }))
     reached.set(null)
-    expect(state()).toEqual({ kind: 'pending' })
-    expect(shown().imu).toBe(false)
+    expect(state()).toEqual({ kind: 'known' })
+    expect(shown().imu).toBe(true)
+    reached.set('websocket hexapod.local')
+    await vi.waitFor(() => expect(robot.asked).toBe(2))
+    expect(state()).toEqual({ kind: 'known' })
+    expect(shown().imu).toBe(true)
+  })
+
+  it('keeps the flags it has when reading them again after a drop fails', async () => {
+    flags.followFeatureFlags(reached)
+    reached.set('websocket hexapod.local')
+    await vi.waitFor(() => expect(state()).toEqual({ kind: 'known' }))
+    reached.set(null)
+    robot.statusCode = 500
+    reached.set('websocket hexapod.local')
+    await vi.waitFor(() => expect(robot.asked).toBe(2))
+    await new Promise(resolve => setTimeout(resolve))
+    expect(state()).toEqual({ kind: 'known' })
+    expect(shown().imu).toBe(true)
   })
 
   it("never shows one robot's flags for another", async () => {
@@ -201,13 +220,26 @@ describe('followFeatureFlags', () => {
     expect(shown().imu).toBe(false)
   })
 
-  it('takes nothing from a read the link dropped under', async () => {
+  it('resets the flags when the link comes back to another robot', async () => {
+    flags.followFeatureFlags(reached)
+    reached.set('websocket hexapod-a.local')
+    await vi.waitFor(() => expect(shown().imu).toBe(true))
+    reached.set(null)
+    robot.holding = true
+    reached.set('bluetooth')
+    expect(state()).toEqual({ kind: 'pending' })
+    expect(shown().imu).toBe(false)
+  })
+
+  it('takes nothing from a read that another robot overtook', async () => {
     robot.holding = true
     flags.followFeatureFlags(reached)
-    reached.set('websocket hexapod.local')
+    reached.set('websocket hexapod-a.local')
     await vi.waitFor(() => expect(robot.held).toHaveLength(1))
     reached.set(null)
-    robot.held.forEach(deliver => deliver())
+    reached.set('websocket hexapod-b.local')
+    await vi.waitFor(() => expect(robot.held).toHaveLength(2))
+    robot.held[0]()
     await new Promise(resolve => setTimeout(resolve))
     expect(state()).toEqual({ kind: 'pending' })
     expect(shown().imu).toBe(false)
