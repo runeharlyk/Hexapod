@@ -41,3 +41,12 @@ test('animations page lists the bundled library without a robot', async ({ page 
   await expect(page.getByText('not connected', { exact: true })).toBeVisible()
   expect(errors).toEqual([])
 })
+
+// The app once answered fetches from an IndexedDB file cache that nothing has written since April 2025, at the cost
+// of two database reads before every request.
+test('the app keeps no file cache in front of fetch', async ({ page }) => {
+  await page.goto(`${base}/`)
+  await expect(page).toHaveTitle('Add robot')
+  const databases = await page.evaluate(async () => (await indexedDB.databases()).map(d => d.name))
+  expect(databases).not.toContain('fileStorageDB')
+})

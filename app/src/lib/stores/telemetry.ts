@@ -6,9 +6,6 @@ import { ask } from '$lib/transport/reply'
 import { HexrecWriter, tickTiming, type TimedTick, type TickTiming } from '$lib/recording'
 
 const telemetry_data = {
-  rssi: {
-    rssi: 0
-  },
   download_ota: {
     status: 'none',
     progress: 0,
@@ -21,12 +18,6 @@ function createTelemetry() {
 
   return {
     subscribe,
-    setRSSI: (data: number) => {
-      update(telemetry_data => ({
-        ...telemetry_data,
-        rssi: { rssi: data }
-      }))
-    },
     setDownloadOTA: (data: DownloadOTA) => {
       update(telemetry_data => ({
         ...telemetry_data,
