@@ -66,15 +66,16 @@ constexpr Topic TOPICS[] = {
 };
 
 // A transport whose clients can take a frame while `writable`; it keeps every frame it sent, decoded, with its client.
-// While `sendsFail`, a client looks ready but every send fails, as a BLE notify does without an mbuf. The `slowClient`
-// cannot take a frame, and a send to it blocks until `releaseSlow()`, as httpd's send to a full socket does for up to
-// its 5 s send timeout.
+// While `sendsFail`, a client looks ready but every send fails, as a BLE notify does without an mbuf, and so do the next
+// `failNext` sends. The `slowClient` cannot take a frame, and a send to it blocks until `releaseSlow()`, as httpd's
+// send to a full socket does for up to its 5 s send timeout.
 class FakeAdapter : public CommAdapterBase {
   public:
     FakeAdapter() { setTopics(TOPICS); }
 
     std::atomic<bool> writable {true};
     std::atomic<bool> sendsFail {false};
+    std::atomic<int> failNext {0};
     std::atomic<int> slowClient {-1};
     std::atomic<bool> blockedOnSlow {false};
 
@@ -128,6 +129,10 @@ class FakeAdapter : public CommAdapterBase {
             slowReleasedCv_.wait(lock, [this] { return slowReleased_; });
         }
         if (sendsFail) return false;
+        if (failNext > 0) {
+            failNext--;
+            return false;
+        }
         Frame frame {cid, socket_message_Message_init_zero};
         pb_istream_t stream = pb_istream_from_buffer(data, len);
         TEST_ASSERT_TRUE(pb_decode(&stream, socket_message_Message_fields, &frame.message));
@@ -352,6 +357,21 @@ void test_a_state_push_whose_send_fails_is_resent_once_it_goes_out() {
     assertFrames({STAND}, adapter.to(3));
 }
 
+// A subscribe's snapshot that does not go out is followed by no ack: the app, without it, subscribes again, and the
+// subscription is marked, so the current value is resent once a send goes out, even if the app never asks again.
+void test_a_subscribe_whose_snapshot_fails_is_left_unacked_and_resent() {
+    FakeAdapter adapter;
+    ownerMode = socket_message_ModesEnum_WALK;
+    adapter.failNext = 1;
+
+    adapter.subscribeTo(MODE_TAG, 3);
+    TEST_ASSERT_EQUAL(0, adapter.sentCount());
+    adapter.resendDirty();
+    adapter.resendDirty();
+
+    assertFrames({WALK}, adapter.to(3));
+}
+
 // A client whose socket is full subscribes. Its snapshot and ack go out on the transport's task under the adapter's
 // encode lock, so a send that blocked on it would hold every push to the adapter's other clients for as long as the
 // send waits, a mode or a stop among them. A client that cannot take a frame now gets neither: its subscription is
@@ -450,6 +470,7 @@ int main(int, char**) {
     RUN_TEST(test_a_change_made_while_the_snapshot_is_sent_is_pushed_after_it);
     RUN_TEST(test_a_dropped_state_push_is_resent_once_as_the_current_value);
     RUN_TEST(test_a_state_push_whose_send_fails_is_resent_once_it_goes_out);
+    RUN_TEST(test_a_subscribe_whose_snapshot_fails_is_left_unacked_and_resent);
     RUN_TEST(test_a_subscribe_from_a_client_that_cannot_take_a_frame_holds_up_no_push);
     RUN_TEST(test_a_dropped_stream_frame_and_a_delivered_push_are_not_resent);
     RUN_TEST(test_the_topic_table_matches_the_shared_one);
