@@ -168,6 +168,27 @@ describe('the robot state', () => {
     expect(get(state.otaStatus)).toMatchObject({ state: OtaState.OTA_ERROR, error: 'write failed' })
   })
 
+  // A robot that downloads an update itself ends it whether or not the app is linked. The end of an update the app saw
+  // under way arrives as the reconnect's snapshot, and the update dialog, which refuses to close while an update runs,
+  // would otherwise stay at the progress last seen.
+  it('shows the end of an update seen under way that ended while the link was down', async () => {
+    follow(state.otaStatus)
+    await link.connect()
+    robot.set(OtaStatusData, { state: OtaState.OTA_PROGRESS, progress: 30, error: '' })
+    await settle()
+    expect(get(state.otaStatus)).toMatchObject({ state: OtaState.OTA_PROGRESS, progress: 30 })
+
+    await link.disconnect()
+    robot.set(OtaStatusData, { state: OtaState.OTA_ERROR, progress: 30, error: 'download failed' })
+    await link.connect()
+    await settle()
+
+    expect(get(state.otaStatus)).toMatchObject({
+      state: OtaState.OTA_ERROR,
+      error: 'download failed'
+    })
+  })
+
   it('shows an update under way from its snapshot', async () => {
     robot.set(OtaStatusData, { state: OtaState.OTA_PROGRESS, progress: 60, error: '' })
     follow(state.otaStatus)

@@ -49,16 +49,20 @@ const shownGoal = (goal: Readable<Watched<GoalStatus>>): Readable<GoalStatus | n
 /**
  * The update to show. The robot keeps a failed update's error, and a finished one's end, as its status until it
  * restarts, so an end in the snapshot a subscribe is answered with, before the ack, is an earlier update's and is not
- * shown; an update under way is.
+ * shown, unless this update was seen under way: one that ended while the link was down ends in the reconnect's
+ * snapshot. An update under way is shown.
  */
 const shownOta = (ota: Readable<Watched<OtaStatusData>>): Readable<OtaStatusData | null> =>
   readable<OtaStatusData | null>(null, set => {
     let seen: OtaStatusData | undefined
+    let underWay = false
     return ota.subscribe(({ value, status }) => {
       if (value === undefined || value === seen) return
       seen = value
       const ended = value.state === OtaState.OTA_ERROR || value.state === OtaState.OTA_FINISHED
-      if (!ended || status === 'live') set(value)
+      if (ended && status !== 'live' && !underWay) return
+      underWay = value.state === OtaState.OTA_PROGRESS
+      set(value)
     })
   })
 
