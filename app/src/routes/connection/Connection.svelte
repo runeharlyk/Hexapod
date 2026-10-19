@@ -13,7 +13,7 @@
     chooseSerialPort,
     connectBluetooth,
     connectSerial,
-    connectWebsocket,
+    connectToAddress,
     link,
     serialAvailable,
     transportLabels,
@@ -35,11 +35,7 @@
   const action = $derived(wifiAction($wsStatus, $location, address))
   const pageHost = window.location.host
 
-  const connectWifi = async () => {
-    location.set(address.trim())
-    await websocket.disconnect()
-    connectWebsocket()
-  }
+  const connectWifi = () => connectToAddress(address)
 
   const onWifiAction = () => {
     if (action === 'connect') connectWifi()

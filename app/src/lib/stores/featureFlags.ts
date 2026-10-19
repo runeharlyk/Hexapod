@@ -3,6 +3,7 @@ import { dataBroker } from '$lib/transport/databroker'
 import { ask } from '$lib/transport/reply'
 import { get, writable, type Readable } from 'svelte/store'
 import { canReachRobot, location } from './location-store'
+import { robotData } from '$lib/robot/data'
 
 export interface Features {
   firmware_name: string
@@ -157,6 +158,12 @@ const forget = () => {
   flags.set(unknownFeatures)
   state.set({ kind: 'pending' })
 }
+
+// Another robot chosen: its flags are read, which waits for the link it comes on.
+robotData.register(() => {
+  forget()
+  readInBackground()
+})
 
 /**
  * Follows the robot the link reaches (`robot`, null while no link is up). A drop keeps the flags, and with them the

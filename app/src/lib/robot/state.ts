@@ -14,6 +14,7 @@ import { dataBroker, type DataBroker } from '$lib/transport/databroker'
 import { describeFailure } from '$lib/transport/reply'
 import type { Watched } from '$lib/transport/topics'
 import { watch } from './watch'
+import { robotData } from './data'
 
 /**
  * The goal to show: a running one, and an ended one for GOAL_END_HOLD_MS after it ended. An ended goal in the snapshot
@@ -89,6 +90,8 @@ export const {
   goalStatus,
   animationStatus
 } = robotState(dataBroker)
+
+robotData.register(() => dataBroker.resetStates())
 
 /**
  * Says once, each time a watch fails, why: a firmware from before the snapshots never acks a subscribe, and every watch

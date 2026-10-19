@@ -1,4 +1,5 @@
 import { writable, type Readable } from 'svelte/store'
+import { robotData } from '$lib/robot/data'
 
 export type ScanState<R> =
   | { state: 'idle' }
@@ -12,24 +13,37 @@ export type Scan<R> = Readable<ScanState<R>> & {
 }
 
 // A page's scan of the robot, kept outside the page: a page mounted again by a hot reload or a reconnect, while its
-// first scan is still out, joins that scan instead of starting a second one on the robot.
+// first scan is still out, joins that scan instead of starting a second one on the robot. Another robot chosen
+// (robotData.reset) forgets the scan, and a scan of the last robot that ends after it shows nothing.
 export const createScan = <R>(): Scan<R> => {
   const { subscribe, set } = writable<ScanState<R>>({ state: 'idle' })
   let running: Promise<void> | null = null
+  let robot = 0
+
+  robotData.register(() => {
+    robot++
+    running = null
+    set({ state: 'idle' })
+  })
 
   const run = (request: () => Promise<R>) => {
     if (running) return running
+    const scanned = robot
+    const show = (state: ScanState<R>) => {
+      if (scanned === robot) set(state)
+    }
     set({ state: 'scanning' })
-    running = request()
+    const scan: Promise<void> = request()
       .then(
-        result => set({ state: 'done', result }),
+        result => show({ state: 'done', result }),
         (error: unknown) =>
-          set({ state: 'failed', message: error instanceof Error ? error.message : String(error) })
+          show({ state: 'failed', message: error instanceof Error ? error.message : String(error) })
       )
       .finally(() => {
-        running = null
+        if (running === scan) running = null
       })
-    return running
+    running = scan
+    return scan
   }
 
   return { subscribe, run }
