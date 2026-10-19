@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import {
   AnimationStatus,
   CorrelationRequest,
@@ -15,6 +13,7 @@ import {
 import { APStatus, WifiStatus } from '../../src/lib/platform_shared/api'
 import { encodeMessage, keyOf, tagOf } from '../../src/lib/transport/message-codec'
 import type { StateTopic, ValueOf } from '../../src/lib/transport/topics'
+import topicsJson from '../../../platform_shared/topics.json' with { type: 'json' }
 
 /** A connection to the robot: what the robot sends it goes to `deliver`. */
 export interface Client {
@@ -25,9 +24,7 @@ export type RequestKey = Exclude<keyof CorrelationRequest, 'correlationId'>
 export type Answer = Partial<Omit<CorrelationResponse, 'correlationId'>>
 export type Responder = (request: CorrelationRequest) => Answer | Promise<Answer>
 
-const SHARED: { topics: { name: string; tag: number; kind: 'state' | 'stream' }[] } = JSON.parse(
-  readFileSync(resolve(__dirname, '../../../platform_shared/topics.json'), 'utf8')
-)
+const SHARED: { topics: { name: string; tag: number; kind: string }[] } = topicsJson
 
 const camel = (name: string) => name.replace(/_(\w)/g, (_, c: string) => c.toUpperCase())
 
@@ -52,13 +49,14 @@ const requestKeyOf = (request: CorrelationRequest) =>
  * It answers as the firmware does (firmware/test/test_topic_snapshot): a subscribe to a state topic with the topic's
  * current value and then the subscribe echoed as the ack, a subscribe to a stream with the ack alone, and a repeated
  * subscribe again without doubling the pushes. Every state topic of platform_shared/topics.json holds a value from the
- * start, or construction fails, as the firmware's table does without a snapshot. A request goes to its responder, and
- * one with none is answered 501, as by a firmware that does not know it. Pings get pongs.
+ * start, or construction fails, as the firmware's table does without a snapshot. A request goes to its responder, else
+ * to the fallback, and with neither is answered 501, as by a firmware that does not know it. Pings get pongs.
  */
 export class FakeRobot {
   private readonly values = new Map<number, { key: string; value: unknown }>()
   private readonly clients = new Map<Client, Set<number>>()
   private readonly responders = new Map<RequestKey, Responder>()
+  private fallback: Responder = () => ({ statusCode: 501 })
   private readonly dropping = new Map<number, number>()
   private acking = true
   private stalled = false
@@ -121,6 +119,11 @@ export class FakeRobot {
     this.responders.set(key, responder)
   }
 
+  /** Answers every request that has no responder of its own. */
+  respondOtherwise(responder: Responder) {
+    this.fallback = responder
+  }
+
   refuse(key: RequestKey, statusCode: number, errorMessage = '') {
     this.respond(key, () => ({ statusCode, errorMessage }))
   }
@@ -155,8 +158,7 @@ export class FakeRobot {
 
   private async answer(client: Client, request: CorrelationRequest) {
     const key = requestKeyOf(request)
-    const responder = key && this.responders.get(key)
-    const answer = responder ? await responder(request) : { statusCode: 501 }
+    const answer = await ((key && this.responders.get(key)) || this.fallback)(request)
     const response = CorrelationResponse.create({
       correlationId: request.correlationId,
       statusCode: 200,

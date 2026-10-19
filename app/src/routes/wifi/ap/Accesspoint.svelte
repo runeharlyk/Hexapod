@@ -1,7 +1,6 @@
 <script lang="ts">
   import { preventDefault } from 'svelte/legacy'
 
-  import { onMount } from 'svelte'
   import { slide } from 'svelte/transition'
   import { cubicOut } from 'svelte/easing'
   import { PasswordInput } from '$lib/components/input'
@@ -12,8 +11,9 @@
   import StatusItem from '$lib/components/StatusItem.svelte'
   import { ipToString, ipToU32 } from '$lib/proto-api'
   import { dataBroker } from '$lib/transport/databroker'
-  import { ask } from '$lib/transport/reply'
+  import { ask, describeFailure } from '$lib/transport/reply'
   import { APStatus } from '$lib/platform_shared/api'
+  import { watch } from '$lib/robot/watch'
   import type { ApSettings, ApStatus } from '$lib/types/models'
 
   let apSettings: ApSettings = $state({
@@ -27,32 +27,17 @@
     gateway_ip: '',
     subnet_mask: ''
   })
-  let apStatus: ApStatus = $state({
-    status: 1,
-    ip_address: '',
-    mac_address: '',
-    station_num: 0
+  // The robot answers the subscribe with its current status and pushes every change.
+  const apState = watch(APStatus)
+  const viewOf = (s: APStatus): ApStatus => ({
+    status: s.status,
+    ip_address: ipToString(s.ipAddress),
+    mac_address: s.macAddress,
+    station_num: s.stationNum
   })
+  const apStatus = $derived($apState.value === undefined ? undefined : viewOf($apState.value))
 
   let formField: HTMLFormElement | undefined = $state()
-
-  const applyApStatus = (s: APStatus) => {
-    apStatus = {
-      status: s.status,
-      ip_address: ipToString(s.ipAddress),
-      mac_address: s.macAddress,
-      station_num: s.stationNum
-    }
-  }
-
-  async function getAPStatus() {
-    // The pushes keep the status current; a failed first read leaves it to them.
-    const res = await ask(dataBroker, { apStatusGet: {} }, 'the access point status').catch(
-      () => null
-    )
-    if (res?.apStatus) applyApStatus(res.apStatus)
-    return apStatus
-  }
 
   async function getAPSettings() {
     const res = await ask(dataBroker, { apSettingsGet: {} }, 'the access point settings').catch(
@@ -76,9 +61,6 @@
     }
     return apSettings
   }
-
-  // The template's awaits read the current settings and status once; live status changes come by this subscription.
-  onMount(() => dataBroker.on(APStatus, applyApStatus))
 
   let provisionMode = [
     {
@@ -200,9 +182,16 @@
     <span>Access Point</span>
   {/snippet}
   <div class="w-full overflow-x-auto">
-    {#await getAPStatus()}
+    {#if apStatus === undefined && $apState.failure}
+      <p class="text-error">
+        Could not read the access point status: {describeFailure(
+          $apState.failure,
+          'the access point status'
+        )}
+      </p>
+    {:else if apStatus === undefined}
       <Spinner />
-    {:then}
+    {:else}
       <div
         class="flex w-full flex-col space-y-1"
         transition:slide|local={{ duration: 300, easing: cubicOut }}
@@ -220,7 +209,7 @@
 
         <StatusItem icon={Devices} title="AP Clients" description={apStatus.station_num} />
       </div>
-    {/await}
+    {/if}
   </div>
 
   <div class="bg-base-200 relative grid w-full max-w-2xl self-center overflow-hidden">

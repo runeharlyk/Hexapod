@@ -4,8 +4,8 @@
   import GithubFirmwareManager from './GithubFirmwareManager.svelte'
   import { useFeatureFlags } from '$lib/stores'
   import { telemetry } from '$lib/stores/telemetry'
-  import { dataBroker } from '$lib/transport/databroker'
-  import { OtaState, OtaStatusData } from '$lib/platform_shared/message'
+  import { OtaState } from '$lib/platform_shared/message'
+  import { otaState } from '$lib/robot/state'
 
   const features = useFeatureFlags()
 
@@ -16,14 +16,16 @@
     [OtaState.OTA_ERROR]: 'error'
   }
 
+  // The robot answers the subscribe with the update's current state, idle when none runs, and pushes every change.
   onMount(() =>
-    dataBroker.on(OtaStatusData, data =>
-      telemetry.setDownloadOTA({
-        status: OTA_STATE_NAMES[data.state] ?? 'idle',
-        progress: data.progress,
-        error: data.error
-      })
-    )
+    otaState.subscribe(({ value }) => {
+      if (value)
+        telemetry.setDownloadOTA({
+          status: OTA_STATE_NAMES[value.state] ?? 'idle',
+          progress: value.progress,
+          error: value.error
+        })
+    })
   )
 </script>
 

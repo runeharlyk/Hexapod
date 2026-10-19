@@ -34,14 +34,7 @@ const transport = fakeLink(robot)
 const sent = robot.received
 // Every request goes to `responder`; a test sets the answer for the requests it makes.
 let responder: Responder = () => ({ statusCode: 501 })
-for (const key of [
-  'fileWriteChunk',
-  'fileReadChunk',
-  'fileDelete',
-  'animationValidate',
-  'animationListRequest'
-] as const)
-  robot.respond(key, request => responder(request))
+robot.respondOtherwise(request => responder(request))
 
 const writes = () =>
   sent.flatMap(m =>
