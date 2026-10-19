@@ -88,6 +88,9 @@ CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y
 # can decode them after a crash.
 CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
 CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+# The dump names the crashed firmware by its ELF's SHA-256 in this many hex digits, from a RAM copy of the string
+# (55 bytes more than the default 9): all 64, so the status page matches it against a build's full hash.
+CONFIG_APP_RETRIEVE_LEN_ELF_SHA=64
 
 # A task the task watchdog watches that does not reset it for 5 s panics the board, which writes the core dump and
 # restarts; the restart puts both PCA9685 boards to sleep. Watched: the control task (main.cpp) and, as the IDF

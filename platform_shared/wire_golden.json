@@ -445,6 +445,24 @@
    "feet_distance": "6 float",
    "stride": "7 float"
   },
+  "socket_message.CoreDumpErase": {},
+  "socket_message.CoreDumpGet": {},
+  "socket_message.CoreDumpRead": {
+   "offset": "1 uint32",
+   "length": "2 uint32"
+  },
+  "socket_message.CoreDumpReport": {
+   "stored": "1 bool",
+   "size": "2 uint32",
+   "readable": "3 bool",
+   "task": "4 string",
+   "pc": "5 uint32",
+   "backtrace": "6 repeated uint32",
+   "backtrace_corrupted": "7 bool",
+   "panic_reason": "8 string",
+   "app_elf_sha256": "9 string",
+   "elf_matches_running": "10 bool"
+  },
   "socket_message.CorrelationRequest": {
    "correlation_id": "1 uint32",
    "features_data_request": "10 socket_message.FeaturesDataRequest",
@@ -477,7 +495,10 @@
    "goal_cancel": "132 socket_message.GoalCancel",
    "goal_status_get": "133 socket_message.GoalStatusGet",
    "mode_get": "134 socket_message.ModeGet",
-   "task_stats_request": "140 socket_message.TaskStatsRequest"
+   "task_stats_request": "140 socket_message.TaskStatsRequest",
+   "core_dump_get": "150 socket_message.CoreDumpGet",
+   "core_dump_read": "151 socket_message.CoreDumpRead",
+   "core_dump_erase": "152 socket_message.CoreDumpErase"
   },
   "socket_message.CorrelationResponse": {
    "correlation_id": "1 uint32",
@@ -502,7 +523,8 @@
    "odometry": "130 socket_message.OdometryData",
    "goal_status": "131 socket_message.GoalStatus",
    "mode": "132 socket_message.ModeData",
-   "task_stats": "140 socket_message.TaskStats"
+   "task_stats": "140 socket_message.TaskStats",
+   "core_dump_report": "150 socket_message.CoreDumpReport"
   },
   "socket_message.FeaturesDataRequest": {},
   "socket_message.FeaturesDataResponse": {

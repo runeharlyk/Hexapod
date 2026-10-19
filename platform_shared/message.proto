@@ -302,6 +302,37 @@ message GoalStatus {
   uint32 passes = 9;   // passes started, the first included
 }
 
+// The crash the robot kept: on a panic the IDF writes an ELF core dump to the coredump partition, which survives
+// restarts and updates until it is erased or the next crash replaces it (docs/firmware.md, "Decoding a core dump").
+// Answered with a CoreDumpReport.
+message CoreDumpGet {}
+// One chunk of the stored dump, counted from its first byte, answered as a FileReadChunk is: a FileChunk whose
+// total_size is the dump's size, 404 when none is stored, 400 for a length over 512. GET /api/coredump serves the
+// same bytes over HTTP.
+message CoreDumpRead {
+  uint32 offset = 1;
+  uint32 length = 2;  // at most 512
+}
+// Erases the stored dump, answered with the CoreDumpReport after it. 409 unless the robot rests (deactivated or
+// idle): erasing flash stalls both cores, the control loop's too.
+message CoreDumpErase {}
+
+message CoreDumpReport {
+  bool stored = 1;                // a dump is stored
+  uint32 size = 2;                // its bytes, as CoreDumpRead and GET /api/coredump deliver them
+  bool readable = 3;              // its checksum holds, so the fields below were read from it
+  string task = 4;                // the task that crashed
+  uint32 pc = 5;
+  repeated uint32 backtrace = 6;  // return addresses from the crash outward, at most 16
+  bool backtrace_corrupted = 7;   // the unwinding stopped at a frame it could not trust
+  string panic_reason = 8;        // the abort, assert or watchdog message; empty for an exception
+  // Hex SHA-256 of the crashed firmware's ELF, as many leading digits as its CONFIG_APP_RETRIEVE_LEN_ELF_SHA kept: 64
+  // since that is set, 9 before.
+  string app_elf_sha256 = 9;
+  // app_elf_sha256 begins the running firmware's firmware_elf_sha256, so the running build's ELF decodes the dump.
+  bool elf_matches_running = 10;
+}
+
 message CorrelationRequest {
   uint32 correlation_id = 1;
   oneof request {
@@ -336,6 +367,9 @@ message CorrelationRequest {
     GoalStatusGet goal_status_get = 133;
     ModeGet mode_get = 134;
     TaskStatsRequest task_stats_request = 140;
+    CoreDumpGet core_dump_get = 150;
+    CoreDumpRead core_dump_read = 151;
+    CoreDumpErase core_dump_erase = 152;
   }
 }
 
@@ -365,6 +399,7 @@ message CorrelationResponse {
     GoalStatus goal_status = 131;
     ModeData mode = 132;
     TaskStats task_stats = 140;
+    CoreDumpReport core_dump_report = 150;
   }
 }
 

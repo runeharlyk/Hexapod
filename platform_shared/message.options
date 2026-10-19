@@ -42,3 +42,8 @@ socket_message.TaskEntry.name max_size:16
 socket_message.TaskEntry.priority int_size:IS_8
 socket_message.TaskEntry.base_priority int_size:IS_8
 socket_message.TaskEntry.core int_size:IS_8
+# The IDF's own bounds: esp_core_dump_summary_t's task name and backtrace, and the 64 hex digits of a SHA-256.
+socket_message.CoreDumpReport.task max_size:16
+socket_message.CoreDumpReport.backtrace max_count:16
+socket_message.CoreDumpReport.panic_reason max_size:128
+socket_message.CoreDumpReport.app_elf_sha256 max_size:65

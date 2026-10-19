@@ -383,11 +383,38 @@ Bootloader rollback is enabled: the service task marks a new image valid only af
 
 ## Decoding a core dump
 
-A crash writes an ELF core dump to the `coredump` partition.
+A crash writes an ELF core dump to the 64 KB `coredump` partition, where it stays through restarts and updates until it is erased or the next crash replaces it.
 A core dump from release firmware decodes only against the ELF of the build that produced it.
-Each GitHub release attaches that ELF as `esp32-wroom-camera.elf`, beside the `.bin` images.
+Each GitHub release attaches that ELF as `esp32-wroom-camera.elf`, beside the `.bin` images ([releases](https://github.com/runeharlyk/Hexapod/releases), `docs/releasing.md`, roadmap 10.16); the workflow gained that step after `v0.1.1` was tagged, so `v0.1.1` and the releases before it hold none.
 
-Download the dump from the robot as a file, then run:
+### Reading it from the robot
+
+The app's status page shows the last crash without a decode step: the task that crashed, its PC, a backtrace of at most 16 return addresses, the abort, assert or watchdog message when there is one, and the SHA-256 of the crashed build's ELF.
+It says whether that hash begins the running build's `firmware_elf_sha256`, the case in which the running build's ELF decodes the dump.
+A build's ELF hash is the SHA-256 of the `.elf` file itself, so `sha256sum esp32-wroom-camera.elf` finds the release that crashed.
+`CONFIG_APP_RETRIEVE_LEN_ELF_SHA=64` (`sdkconfig.defaults`) has the dump keep all 64 hex digits; a build from before kept the IDF's default of 9, which the comparison accepts as a prefix.
+
+The page's Download button saves the dump as `coredump-<first 8 digits of the hash>.bin`, and its Erase button erases it after a confirmation.
+Both work over every transport:
+
+| Request (`message.proto`) | Answer |
+| --- | --- |
+| `CoreDumpGet` | `CoreDumpReport`: whether a dump is stored, its size, whether its checksum holds, and the crash summary |
+| `CoreDumpRead` (offset, length up to 512) | `FileChunk` with the bytes and the dump's size, as `FileReadChunk` is answered; 404 without a dump |
+| `CoreDumpErase` | `CoreDumpReport` after the erase; 409 unless the robot is deactivated or idle, since erasing flash stalls both cores |
+
+Over WiFi the dump is also a plain download, which the HTTP server's task streams from flash in 512-byte chunks, answering 404 without a dump:
+
+```sh
+curl -o coredump.bin http://hexapod.local/api/coredump
+```
+
+`include/core_dump.h` holds the summary's formatting, the chunked read and the hash comparison, tested on the host in `test/test_core_dump/`; `include/core_dump_flash.h` holds the IDF calls (`esp_core_dump_image_get`, `esp_core_dump_image_check`, `esp_core_dump_get_summary`, `esp_core_dump_get_panic_reason`, `esp_core_dump_image_erase`).
+The summary is read only from a dump whose checksum holds: `esp_core_dump_get_summary` parses the mapped partition without checking it.
+
+### Decoding
+
+With the dump downloaded and the ELF of the build that crashed, run:
 
 ```sh
 esp-coredump info_corefile -t raw -c <dump.bin> esp32-wroom-camera.elf

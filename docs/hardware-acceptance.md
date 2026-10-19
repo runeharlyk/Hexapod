@@ -71,3 +71,5 @@ Checks that wait for the robot, with the procedure that settles each.
 
 - The task watchdog restarts a board whose control task hangs, with the watchdog's message in the core dump (roadmap 10.14): a build with `DEBUG_HANG_CONTROL_S` set, as "Checking it on the robot" in `docs/firmware.md` describes.
   Note the time from the hang to limp servos, which `docs/firmware.md` only estimates.
+- The status page reads the core dump that hang leaves (roadmap 2.5): after the restart, the Last Crash card names the task `control`, the watchdog's message and a hash that matches the running build.
+  The Download button over Bluetooth and `curl -o coredump.bin http://hexapod.local/api/coredump` over WiFi give the same bytes, which `esp-coredump info_corefile -t raw` decodes against `.pio/build/esp32-wroom-camera/firmware.elf`; Erase is refused while the robot stands and, once it is deactivated, leaves "No crash stored".
