@@ -40,7 +40,8 @@ export const SUBSCRIBE_TRIES = 3
  * A state topic as a page sees it. `value` is the robot's last value, undefined until the first arrives. `status` is
  * `live` once the robot acked the subscribe after sending its value, `subscribing` until then, and `error` when the
  * robot never sent one; `failure` then says why. `stale` marks a value kept from a link that dropped, until the next
- * link's snapshot replaces it.
+ * link's snapshot replaces it. The design's fourth field, `pending` (a mode or gait sent and not yet reported, cleared
+ * after 1 s), is left to phase 2, whose `watchSettings.save()` counts its writes into it and is its first reader.
  */
 export interface Watched<T> {
   value: T | undefined
