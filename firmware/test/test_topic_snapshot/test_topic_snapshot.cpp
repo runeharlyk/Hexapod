@@ -4,10 +4,15 @@
 
 #include <unity.h>
 
+#include <fstream>
+#include <iterator>
+#include <sstream>
+#include <string>
 #include <vector>
 #include <pb_decode.h>
 #include <pb_encode.h>
 #include <communication/comm_base.hpp>
+#include <communication/topics.h>
 
 namespace {
 
@@ -60,6 +65,26 @@ socket_message_ModeData modeData(socket_message_ModesEnum mode) {
     return data;
 }
 
+// platform_shared/topics.json, the table the app's is checked against too: each entry's tag and kind, in file order.
+std::vector<TopicKindEntry> sharedTopics() {
+    std::ifstream file("platform_shared/topics.json");
+    TEST_ASSERT_TRUE_MESSAGE(file.good(), "platform_shared/topics.json not found; run from the repository root");
+    std::stringstream text;
+    text << file.rdbuf();
+    const std::string json = text.str();
+    std::vector<TopicKindEntry> topics;
+    for (size_t at = json.find("\"tag\":"); at != std::string::npos; at = json.find("\"tag\":", at + 1)) {
+        const int32_t tag = std::stoi(json.substr(at + 6));
+        const size_t kindAt = json.find("\"kind\":", at);
+        TEST_ASSERT_TRUE(kindAt != std::string::npos);
+        const size_t valueAt = json.find('"', kindAt + 7) + 1;
+        const std::string kind = json.substr(valueAt, json.find('"', valueAt) - valueAt);
+        TEST_ASSERT_TRUE_MESSAGE(kind == "state" || kind == "stream", kind.c_str());
+        topics.push_back({tag, kind == "state" ? TopicKind::STATE : TopicKind::STREAM});
+    }
+    return topics;
+}
+
 } // namespace
 
 void setUp() {}
@@ -96,9 +121,20 @@ void test_one_unsubscribe_ends_a_repeated_subscription() {
     TEST_ASSERT_EQUAL(0, adapter.sent.size());
 }
 
+void test_the_topic_table_matches_the_shared_one() {
+    const std::vector<TopicKindEntry> shared = sharedTopics();
+
+    TEST_ASSERT_EQUAL(std::size(TOPIC_KINDS), shared.size());
+    for (size_t i = 0; i < shared.size(); i++) {
+        TEST_ASSERT_EQUAL(shared[i].tag, TOPIC_KINDS[i].tag);
+        TEST_ASSERT_TRUE(shared[i].kind == TOPIC_KINDS[i].kind);
+    }
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_a_repeated_subscribe_from_one_client_gets_each_push_once);
     RUN_TEST(test_one_unsubscribe_ends_a_repeated_subscription);
+    RUN_TEST(test_the_topic_table_matches_the_shared_one);
     return UNITY_END();
 }

@@ -1,0 +1,16 @@
+{
+  "description": "The robot's server-to-client topics in the Message oneof of platform_shared/message.proto, by tag, with their kind. A state topic holds one current value, and the robot pushes every change of it to its subscribers. A stream topic is a sequence of frames, sent while a client subscribes. A tag not listed is no topic. The firmware's table (firmware/include/communication/topics.h, test firmware/test/test_topic_snapshot) and the app's (app/src/lib/transport/topics.ts, test app/tests/unit/topics.spec.ts) are both checked against this file.",
+  "topics": [
+    { "name": "imu", "tag": 110, "kind": "stream" },
+    { "name": "mode", "tag": 130, "kind": "state" },
+    { "name": "analytics", "tag": 150, "kind": "stream" },
+    { "name": "gait", "tag": 160, "kind": "state" },
+    { "name": "angles", "tag": 170, "kind": "stream" },
+    { "name": "wifi_status", "tag": 250, "kind": "state" },
+    { "name": "ap_status", "tag": 251, "kind": "state" },
+    { "name": "ota_status", "tag": 270, "kind": "state" },
+    { "name": "animation_status", "tag": 283, "kind": "state" },
+    { "name": "telemetry_batch", "tag": 290, "kind": "stream" },
+    { "name": "goal_status", "tag": 300, "kind": "state" }
+  ]
+}
