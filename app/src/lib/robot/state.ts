@@ -5,6 +5,7 @@ import {
   GoalState,
   GoalStatus,
   ModeData,
+  OtaState,
   OtaStatusData
 } from '$lib/platform_shared/message'
 import { GaitType } from '$lib/gait'
@@ -46,6 +47,22 @@ const shownGoal = (goal: Readable<Watched<GoalStatus>>): Readable<GoalStatus | n
   })
 
 /**
+ * The update to show. The robot keeps a failed update's error, and a finished one's end, as its status until it
+ * restarts, so an end in the snapshot a subscribe is answered with, before the ack, is an earlier update's and is not
+ * shown; an update under way is.
+ */
+const shownOta = (ota: Readable<Watched<OtaStatusData>>): Readable<OtaStatusData | null> =>
+  readable<OtaStatusData | null>(null, set => {
+    let seen: OtaStatusData | undefined
+    return ota.subscribe(({ value, status }) => {
+      if (value === undefined || value === seen) return
+      seen = value
+      const ended = value.state === OtaState.OTA_ERROR || value.state === OtaState.OTA_FINISHED
+      if (!ended || status === 'live') set(value)
+    })
+  })
+
+/**
  * The robot's state topics the layout follows, as watches, and the stores the pages read from them. The mode keeps its
  * last value while the link is down; whether the handheld drives, the animation and the goal are cleared then.
  */
@@ -60,7 +77,6 @@ export const robotState = (broker: DataBroker) => {
     gaitState,
     goalState,
     animationState,
-    otaState,
     mode: derived(modeState, ({ value }): MotionModes =>
       value === undefined ?
         MotionModes.DEACTIVATED
@@ -74,6 +90,7 @@ export const robotState = (broker: DataBroker) => {
       : (Object.values(GaitType)[value.gait] ?? GaitType.TRI_GATE)
     ),
     goalStatus: shownGoal(goalState),
+    otaStatus: shownOta(otaState),
     animationStatus: derived(animationState, ({ value, stale }) => (stale ? null : (value ?? null)))
   }
 }
@@ -83,11 +100,11 @@ export const {
   gaitState,
   goalState,
   animationState,
-  otaState,
   mode,
   handheldDriving,
   gait,
   goalStatus,
+  otaStatus,
   animationStatus
 } = robotState(dataBroker)
 

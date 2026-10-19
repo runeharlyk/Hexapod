@@ -15,7 +15,9 @@ import {
   GoalState,
   GoalStatus,
   ModeData,
-  ModesEnum
+  ModesEnum,
+  OtaState,
+  OtaStatusData
 } from '$lib/platform_shared/message'
 import { MotionModes } from '$lib/motion'
 import { GaitType } from '$lib/gait'
@@ -143,6 +145,35 @@ describe('the robot state', () => {
 
     await link.disconnect()
     expect(get(state.animationStatus)).toBeNull()
+  })
+
+  // The robot keeps a failed update's error as its OTA status until it restarts. In the snapshot a page's subscribe is
+  // answered with, that error is an earlier update's: shown, it would greet the next update as failed.
+  it("shows an update's end only when it ends while followed", async () => {
+    robot.set(OtaStatusData, {
+      state: OtaState.OTA_ERROR,
+      progress: 40,
+      error: 'checksum mismatch'
+    })
+    follow(state.otaStatus)
+    await link.connect()
+    await settle()
+    expect(get(state.otaStatus)).toBeNull()
+
+    robot.set(OtaStatusData, { state: OtaState.OTA_PROGRESS, progress: 10, error: '' })
+    await settle()
+    expect(get(state.otaStatus)).toMatchObject({ state: OtaState.OTA_PROGRESS, progress: 10 })
+    robot.set(OtaStatusData, { state: OtaState.OTA_ERROR, progress: 20, error: 'write failed' })
+    await settle()
+    expect(get(state.otaStatus)).toMatchObject({ state: OtaState.OTA_ERROR, error: 'write failed' })
+  })
+
+  it('shows an update under way from its snapshot', async () => {
+    robot.set(OtaStatusData, { state: OtaState.OTA_PROGRESS, progress: 60, error: '' })
+    follow(state.otaStatus)
+    await link.connect()
+    await settle()
+    expect(get(state.otaStatus)).toMatchObject({ state: OtaState.OTA_PROGRESS, progress: 60 })
   })
 
   // Firmware from before the snapshots never acks: the failure is said, once, in the words a request it lacks gets.

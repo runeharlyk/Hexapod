@@ -5,7 +5,7 @@
   import { useFeatureFlags } from '$lib/stores'
   import { telemetry } from '$lib/stores/telemetry'
   import { OtaState } from '$lib/platform_shared/message'
-  import { otaState } from '$lib/robot/state'
+  import { otaStatus } from '$lib/robot/state'
 
   const features = useFeatureFlags()
 
@@ -16,9 +16,10 @@
     [OtaState.OTA_ERROR]: 'error'
   }
 
-  // The robot answers the subscribe with the update's current state, idle when none runs, and pushes every change.
+  // The robot answers the subscribe with the update's current state and pushes every change; an earlier update's end
+  // is not shown (robot/state.ts).
   onMount(() =>
-    otaState.subscribe(({ value }) => {
+    otaStatus.subscribe(value => {
       if (value)
         telemetry.setDownloadOTA({
           status: OTA_STATE_NAMES[value.state] ?? 'idle',
