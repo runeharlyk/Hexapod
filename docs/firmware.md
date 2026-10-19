@@ -39,6 +39,7 @@ Paths are relative to `firmware/` unless they start at the repository root.
 | Firmware update (OTA) | `include/ota_service.h`, `include/ota_session.h`, `include/ota_flash.h`, `include/ota_image.h` |
 | Filesystem and file transfer | `include/filesystem.h`, `src/filesystem.cpp`, `include/filesystem_service.h`, `include/file_transfer.h` |
 | Camera | `include/camera_service.h` |
+| Core-dump readout (status page, `GET /api/coredump`) | `include/core_dump.h`, `include/core_dump_flash.h` |
 | Persisted settings | `include/template/` (`stateful_service.h`, `stateful_persistence.h`), `include/settings/`, `include/*_settings_service.h`, `include/imu_calibration_service.h` |
 | WiFi station, soft AP, mDNS, captive DNS | `include/wifi_service.h`, `src/wifi_service.cpp`, `include/ap_service.h`, `src/ap_service.cpp`, `include/mdns_service.h`, `src/mdns_service.cpp`, `include/wifi/` |
 | CPU usage | `include/cpu_stats.h` |
@@ -46,7 +47,7 @@ Paths are relative to `firmware/` unless they start at the repository root.
 
 ## Tasks
 
-`app_main` in `src/main.cpp` initialises NVS and the LittleFS filesystem, verifies the baked-in policy against its golden vector, starts the persisted settings services and then creates two application tasks.
+`app_main` in `src/main.cpp` initialises NVS and the LittleFS filesystem, verifies the baked-in policy against its golden vector, starts the persisted settings services, checks the stored core dump ([Decoding a core dump](#decoding-a-core-dump)) and then creates two application tasks.
 
 - The **control task** (`control`, core 1, priority 5) runs a fixed 5 ms loop: `readSensors()`, `planMotion()`, `updateActuators()` on the `Hexapod` object, then records a telemetry sample if anyone listens and publishes the servo angles every 20 ms.
   The period is held with `xTaskDelayUntil`; after an overrun the schedule restarts from the current tick instead of replaying the missed ones.
@@ -356,7 +357,7 @@ Which transport a browser may use depends on the page's origin, not on the firmw
 ## HTTP server
 
 `WebServer` (`include/communication/webserver.h`) wraps `esp_http_server`.
-It serves the WebSocket, `/api/features`, the file API (`/api/files*`, `include/filesystem_service.h`), firmware upload and download (`/api/firmware*`), the camera's MJPEG stream and settings (`/api/camera/*`), and, when built with `EMBED_WEBAPP=1`, the web app itself (`include/www_mount.hpp`).
+It serves the WebSocket, `/api/features`, the stored core dump (`/api/coredump`), the file API (`/api/files*`, `include/filesystem_service.h`), firmware upload and download (`/api/firmware*`), the camera's MJPEG stream and settings (`/api/camera/*`), and, when built with `EMBED_WEBAPP=1`, the web app itself (`include/www_mount.hpp`).
 The origin check in `include/communication/origin_policy.h` allows pages from the local network, the hosted app, and clients that send no `Origin`.
 A WebSocket opened by any other page is closed before it carries a frame, and an HTTP answer to one carries no CORS header, so the browser withholds it and refuses its preflighted requests.
 
@@ -389,7 +390,8 @@ Each GitHub release attaches that ELF as `esp32-wroom-camera.elf`, beside the `.
 
 ### Reading it from the robot
 
-The app's status page shows the last crash without a decode step: the task that crashed, its PC, a backtrace of at most 16 return addresses, the abort, assert or watchdog message when there is one, and the SHA-256 of the crashed build's ELF.
+The app's status page shows the last crash without a decode step: the task that crashed, its PC, a backtrace of at most 16 entries (the faulting PC, then the return addresses), the task watchdog's message after a watchdog panic, and the SHA-256 of the crashed build's ELF.
+IDF 5.4 keeps no other panic's message in the dump, so an exception's, assert's or abort's is on the serial log alone.
 It says whether that hash begins the running build's `firmware_elf_sha256`, the case in which the running build's ELF decodes the dump.
 A build's ELF hash is the SHA-256 of the `.elf` file itself, so `sha256sum esp32-wroom-camera.elf` finds the release that crashed.
 `CONFIG_APP_RETRIEVE_LEN_ELF_SHA=64` (`sdkconfig.defaults`) has the dump keep all 64 hex digits; a build from before kept the IDF's default of 9, which the comparison accepts as a prefix.
@@ -399,7 +401,7 @@ Both work over every transport:
 
 | Request (`message.proto`) | Answer |
 | --- | --- |
-| `CoreDumpGet` | `CoreDumpReport`: whether a dump is stored, its size, whether its checksum holds, and the crash summary |
+| `CoreDumpGet` | `CoreDumpReport`: whether a dump is stored, its size, whether it is readable (this firmware's format, checksum holding), and the crash summary |
 | `CoreDumpRead` (offset, length up to 512) | `FileChunk` with the bytes and the dump's size, as `FileReadChunk` is answered; 404 without a dump |
 | `CoreDumpErase` | `CoreDumpReport` after the erase; 409 unless the robot is deactivated or idle, since erasing flash stalls both cores |
 
@@ -410,7 +412,12 @@ curl -o coredump.bin http://hexapod.local/api/coredump
 ```
 
 `include/core_dump.h` holds the summary's formatting, the chunked read and the hash comparison, tested on the host in `test/test_core_dump/`; `include/core_dump_flash.h` holds the IDF calls (`esp_core_dump_image_get`, `esp_core_dump_image_check`, `esp_core_dump_get_summary`, `esp_core_dump_get_panic_reason`, `esp_core_dump_image_erase`).
-The summary is read only from a dump whose checksum holds: `esp_core_dump_get_summary` parses the mapped partition without checking it.
+The summary is read only from a dump in this firmware's format whose checksum holds: `esp_core_dump_get_summary` parses the mapped partition as an ELF dump without checking either.
+The format is the low half of the dump header's version word, `0x0102` for an ELF dump with a CRC32 checksum (`COREDUMP_VERSION_ELF_CRC32`); any other is reported as unreadable.
+The checksum check reads the whole dump from flash in 32-byte steps, and every flash read parks the other core, so `app_main` checks once, before the transports and the control task start, and `CoreDumpGet` and a refused erase are answered from that report.
+An erase checks again, at rest; the dump changes otherwise only by a crash, which restarts the robot.
+`CONFIG_ESP_COREDUMP_CHECK_BOOT=n` keeps the IDF from reading the dump a second time at startup, so the boot spends no more on it than it did before the readout.
+A full 64 KB dump is 2048 reads, each paying the flash driver's cache-off and other-core handshake, an estimated 20-60 ms in all; the serial log's `Core dump: ... checked in N us` line gives the measured time.
 
 ### Decoding
 
