@@ -12,6 +12,7 @@ import {
 import { decodeMessage, encodeMessage, keyOf, tagOf } from './message-codec'
 import { RequestFailed } from './reply'
 import { StateEntry, type StateLink, type Watched } from './topics'
+import { SETTING_GRACE_MS, kindOfRequest } from './request-kinds'
 
 const PING_INTERVAL_MS = 4000
 const PONG_TIMEOUT_MS = 12000
@@ -51,7 +52,12 @@ export class DataBroker {
   }
 
   // Held while no transport is connected, sent once one connects, so requests aren't lost.
-  private deferred: Array<{ id: number; send: () => void; reject: (e: Error) => void }> = []
+  private deferred: Array<{
+    id: number
+    send: () => void
+    sent: () => void
+    reject: (e: Error) => void
+  }> = []
   private static readonly MAX_DEFERRED = 16
 
   request(
@@ -63,6 +69,7 @@ export class DataBroker {
       if (signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'))
       const id = ++this.correlationId
 
+      let grace: ReturnType<typeof setTimeout> | undefined
       const forget = () => {
         this.deferred = this.deferred.filter(d => d.id !== id)
         const p = this.pending.get(id)
@@ -70,6 +77,7 @@ export class DataBroker {
           clearTimeout(p.timer)
           this.pending.delete(id)
         }
+        clearTimeout(grace)
         signal?.removeEventListener('abort', cancel)
       }
       const settle = {
@@ -85,36 +93,44 @@ export class DataBroker {
       const cancel = () => settle.reject(new DOMException('Aborted', 'AbortError'))
       signal?.addEventListener('abort', cancel, { once: true })
 
-      // Timeout starts only once the request is on the wire, so a deferred request doesn't
-      // expire before it's sent.
-      const send = () => {
-        const timer = setTimeout(
-          () => settle.reject(new RequestFailed({ kind: 'timeout' })),
-          REQUEST_TIMEOUT_MS
-        )
-        this.pending.set(id, { ...settle, timer })
-        this.emit(CorrelationRequest, { correlationId: id, ...payload })
-      }
+      // The timeout counts from the call, so a read held for a link fails in the same time as one sent at once.
+      const timer = setTimeout(
+        () => settle.reject(new RequestFailed({ kind: 'timeout' })),
+        REQUEST_TIMEOUT_MS
+      )
+      this.pending.set(id, { ...settle, timer })
+      const send = () => this.emit(CorrelationRequest, { correlationId: id, ...payload })
       if (this.activeTransport()) {
         send()
         return
       }
-      this.deferred.push({ id, send, reject: settle.reject })
+      // While no link is up, the request's kind decides (transport/request-kinds.ts).
+      const kind = kindOfRequest(payload)
+      const notSent = () => settle.reject(new RequestFailed({ kind: 'disconnected' }))
+      if (kind === 'action') return notSent()
+      if (kind === 'setting') grace = setTimeout(notSent, SETTING_GRACE_MS)
+      this.deferred.push({ id, send, sent: () => clearTimeout(grace), reject: settle.reject })
       if (this.deferred.length > DataBroker.MAX_DEFERRED) {
         this.deferred[0].reject(new RequestFailed({ kind: 'disconnected' }))
       }
     })
   }
 
+  // A settings write sent here is no longer held: its grace ends with the wait.
   private flushDeferred() {
     const queued = this.deferred
     this.deferred = []
-    queued.forEach(({ send }) => send())
+    queued.forEach(({ send, sent }) => {
+      sent()
+      send()
+    })
   }
 
+  // The requests on the wire; one still held for a link waits on.
   private rejectPending() {
-    for (const { reject } of [...this.pending.values()])
-      reject(new RequestFailed({ kind: 'disconnected' }))
+    const held = new Set(this.deferred.map(d => d.id))
+    for (const [id, { reject }] of [...this.pending.entries()])
+      if (!held.has(id)) reject(new RequestFailed({ kind: 'disconnected' }))
   }
 
   // Registration order is priority order; keep it in step with stores/link.ts so requests and
@@ -215,9 +231,10 @@ export class DataBroker {
     }
   }
 
-  emit<T>(fns: MessageFns<T>, data: T) {
+  /** Sends on the active link; false, and nothing is sent or held, while no link is up. */
+  emit<T>(fns: MessageFns<T>, data: T): boolean {
     const message = Message.create({ [keyOf(fns)]: data })
-    this.broadcast(encodeMessage(message))
+    return this.broadcast(encodeMessage(message))
   }
 
   /**
@@ -280,7 +297,9 @@ export class DataBroker {
   }
 
   private broadcast(bytes: Uint8Array) {
-    this.activeTransport()?.send(bytes)
+    const transport = this.activeTransport()
+    transport?.send(bytes)
+    return transport !== undefined
   }
 
   private activeTransport() {

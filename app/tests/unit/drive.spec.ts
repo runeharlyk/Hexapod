@@ -54,7 +54,7 @@ describe('the controls', () => {
   afterAll(() => following.forEach(stop => stop()))
 
   beforeEach(async () => {
-    emit = vi.spyOn(dataBroker, 'emit').mockImplementation(() => {})
+    emit = vi.spyOn(dataBroker, 'emit').mockImplementation(() => true)
     outControllerData.set(CENTRED)
     robot.set(ModeData, { mode: ModesEnum.STAND, handheld: false })
     robot.set(GaitData, { gait: GaitEnum.TRI_GATE })

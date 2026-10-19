@@ -2,6 +2,8 @@ import { GaitType } from '$lib/gait'
 import { MotionModes } from '$lib/motion'
 import { mode as modeStore } from '$lib/robot/state'
 import { dataBroker } from '$lib/transport/databroker'
+import { describeFailure } from '$lib/transport/reply'
+import { notifications } from '$lib/components/toasts/notifications'
 import { get } from 'svelte/store'
 import { throttler } from '$lib/utilities'
 import type { ParamId, LegTarget } from '$lib/platform_shared/animation'
@@ -11,27 +13,34 @@ import {
   AnimationStop,
   ModeData,
   GaitData,
-  PoseData
+  PoseData,
+  type MessageFns
 } from '$lib/platform_shared/message'
+
+// An action that moves the robot fails at once while no link is up, and says so, rather than wait for a link and move a
+// robot whose state may have changed meanwhile (transport/request-kinds.ts).
+const act = <T>(fns: MessageFns<T>, data: T, failed: string) => {
+  const sent = dataBroker.emit(fns, data)
+  if (!sent) notifications.error(`${failed}: ${describeFailure({ kind: 'disconnected' }, '')}`)
+  return sent
+}
 
 // The mode and the gait shown are the robot's, from its pushes: a request is pending until the robot pushes the change,
 // or a second at most, since a mode it refuses pushes nothing.
 export const requestMode = (nextMode: MotionModes) => {
   // The robot reads the mode alone; whether the handheld drives is its own to report.
-  dataBroker.emit(ModeData, { mode: Object.values(MotionModes).indexOf(nextMode), handheld: false })
-  dataBroker.markPending(ModeData)
+  const mode = { mode: Object.values(MotionModes).indexOf(nextMode), handheld: false }
+  if (act(ModeData, mode, 'Mode not changed')) dataBroker.markPending(ModeData)
 }
 
 export const requestGait = (nextGait: GaitType) => {
-  dataBroker.emit(GaitData, { gait: Object.values(GaitType).indexOf(nextGait) })
-  dataBroker.markPending(GaitData)
+  const gait = { gait: Object.values(GaitType).indexOf(nextGait) }
+  if (act(GaitData, gait, 'Gait not changed')) dataBroker.markPending(GaitData)
 }
 
 export const playAnimation = (name: string, values: Map<ParamId, number>) => {
-  dataBroker.emit(AnimationPlay, {
-    name,
-    params: [...values].map(([id, value]) => ({ id, value }))
-  })
+  const play = { name, params: [...values].map(([id, value]) => ({ id, value })) }
+  act(AnimationPlay, play, `${name} not played`)
 }
 
 export const stopAnimation = () => dataBroker.emit(AnimationStop, {})
