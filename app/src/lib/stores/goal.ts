@@ -1,5 +1,6 @@
 import { get, writable, type Readable } from 'svelte/store'
 import { GoalKind, GoalState, GoalStatus } from '$lib/platform_shared/message'
+import { ask, type Reply } from '$lib/transport/reply'
 
 export const GOAL_END_HOLD_MS = 3000
 
@@ -61,7 +62,7 @@ export const setGoalStatus = (s: GoalStatus) => {
 /** What the goal status needs of the data broker (transport/databroker.ts): its pushes and one request. */
 export interface GoalStatusLink {
   on(fns: typeof GoalStatus, callback: (status: GoalStatus) => void): () => void
-  request(payload: { goalStatusGet: object }): Promise<{ goalStatus?: GoalStatus }>
+  request(payload: { goalStatusGet: object }): Promise<{ goalStatus?: GoalStatus } & Reply>
 }
 
 /**
@@ -71,7 +72,7 @@ export interface GoalStatusLink {
  */
 export const followGoalStatus = (broker: GoalStatusLink, linked: Readable<boolean>) => {
   const requestRunningGoal = async () => {
-    const res = await broker.request({ goalStatusGet: {} }).catch(() => null)
+    const res = await ask(broker, { goalStatusGet: {} }, 'the goal status').catch(() => null)
     if (res?.goalStatus && isGoalActive(res.goalStatus) && !get(status))
       setGoalStatus(res.goalStatus)
   }

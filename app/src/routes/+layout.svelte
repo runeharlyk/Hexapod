@@ -19,7 +19,8 @@
   import { setAnimationStatus } from '$lib/stores/animation'
   import { followGoalStatus } from '$lib/stores/goal'
   import { followMode } from '$lib/stores/robot-mode'
-  import { connectWebsocket, isLinked } from '$lib/stores/link'
+  import { connectWebsocket, isLinked, reachedRobot } from '$lib/stores/link'
+  import { followFeatureFlags } from '$lib/stores/featureFlags'
   import { COMMAND_HEARTBEAT_MS, needsHeartbeat } from '$lib/control-link'
   import { toControllerInput } from '$lib/controller-input'
   import type { Command } from '$lib/simulation/virtual-robot'
@@ -41,10 +42,12 @@
   let stopWatchingUpdate: (() => void) | undefined
   let stopFollowingGoal: (() => void) | undefined
   let stopFollowingMode: (() => void) | undefined
+  let stopFollowingFeatures: (() => void) | undefined
 
   let { children }: Props = $props()
 
   onMount(() => {
+    stopFollowingFeatures = followFeatureFlags(reachedRobot)
     stopWatchingUpdate = watchUpdateOutcome()
     if (canReachRobot(page.url, $location)) connectWebsocket()
 
@@ -96,6 +99,7 @@
     stopWatchingUpdate?.()
     stopFollowingGoal?.()
     stopFollowingMode?.()
+    stopFollowingFeatures?.()
   })
 
   let menuOpen = $state(false)

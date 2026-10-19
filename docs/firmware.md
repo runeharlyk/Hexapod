@@ -347,6 +347,8 @@ Its `ProtoDecoder` dispatches each decoded message to the handler registered for
 
 `registerHandlers` in `src/main.cpp` registers the same handlers on every adapter.
 Commands, modes, gaits and raw servo signals are validated and republished onto the EventBus; animation requests call into `Hexapod`; a `CorrelationRequest` is answered with a `CorrelationResponse` carrying the same correlation id (system information, features, I2C scan, WiFi, AP, mDNS, servo and peripheral settings, IMU calibration, OTA chunks, file chunks, animation listing and validation).
+A request the firmware does not know is answered 501 without a message, and no other reply is a 501, so the app reads it as firmware too old for the request (`app/src/lib/transport/reply.ts`).
+Firmware up to v0.1.1 answered a bare 400 there, the status of a malformed request too, so the app reads that as too old only for a request without fields.
 The mDNS scan is answered later: its query collects answers for 3 s, and a transport task that waited them out took no other message from its client meanwhile, sticks, modes and pings included.
 So the handler only queues the query (`include/mdns_scan.h`), the service task begins it with `mdns_query_async_new` and polls it on its 100 ms pass, and sends the reply through the client's adapter once the query has ended.
 The reply goes out through `CommAdapterBase::offer`, which sends only when the client's socket can take data now and drops the reply otherwise, so a stalled client does not hold the service task in a blocking send; the app's request then times out after 15 s.

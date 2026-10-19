@@ -20,15 +20,10 @@
 
   const calibrate = async () => {
     calibrating = true
-    try {
-      const result = await calibrateImu()
-      if (result.ok) notifications.success('IMU calibrated and saved.', 4000)
-      else notifications.error(result.error, 6000)
-    } catch (error) {
-      notifications.error(`IMU calibration failed: ${error}`, 6000)
-    } finally {
-      calibrating = false
-    }
+    const result = await calibrateImu()
+    calibrating = false
+    if (result.ok) notifications.success('IMU calibrated and saved.', 4000)
+    else notifications.error(`IMU calibration failed: ${result.error}`, 6000)
   }
 
   Chart.register(...registerables)

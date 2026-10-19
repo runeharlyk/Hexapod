@@ -10,6 +10,7 @@ import {
   type MessageFns
 } from '$lib/platform_shared/message'
 import { decodeMessage, encodeMessage, keyOf, tagOf } from './message-codec'
+import { RequestFailed } from './reply'
 
 const PING_INTERVAL_MS = 4000
 const PONG_TIMEOUT_MS = 12000
@@ -73,7 +74,7 @@ export class DataBroker {
       // expire before it's sent.
       const send = () => {
         const timer = setTimeout(
-          () => settle.reject(new Error(`request ${id} timed out`)),
+          () => settle.reject(new RequestFailed({ kind: 'timeout' })),
           REQUEST_TIMEOUT_MS
         )
         this.pending.set(id, { ...settle, timer })
@@ -85,7 +86,7 @@ export class DataBroker {
       }
       this.deferred.push({ id, send, reject: settle.reject })
       if (this.deferred.length > DataBroker.MAX_DEFERRED) {
-        this.deferred[0].reject(new Error('request dropped: not connected'))
+        this.deferred[0].reject(new RequestFailed({ kind: 'disconnected' }))
       }
     })
   }
@@ -97,7 +98,8 @@ export class DataBroker {
   }
 
   private rejectPending() {
-    for (const { reject } of [...this.pending.values()]) reject(new Error('disconnected'))
+    for (const { reject } of [...this.pending.values()])
+      reject(new RequestFailed({ kind: 'disconnected' }))
   }
 
   // Registration order is priority order; keep it in step with stores/link.ts so requests and

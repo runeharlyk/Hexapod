@@ -18,7 +18,14 @@ import { dataBroker } from '$lib/transport/databroker'
 import type { ITransport, LinkStatus } from '$lib/interfaces/transport.interface'
 import { CorrelationResponse, Message } from '$lib/platform_shared/message'
 import { Animation, ParamId } from '$lib/platform_shared/animation'
-import { CHUNK, animationPath, downloadAnimation, uploadAnimation } from '$lib/animation/transfer'
+import {
+  CHUNK,
+  animationPath,
+  deleteAnimation,
+  downloadAnimation,
+  listAnimations,
+  uploadAnimation
+} from '$lib/animation/transfer'
 import { PoseSender, playAnimation, stopAnimation } from '$lib/control'
 import { MotionModes } from '$lib/motion'
 import { stancePose } from '$lib/animation/model'
@@ -141,7 +148,6 @@ describe('uploadAnimation', () => {
 
     expect(result.ok).toBe(false)
     expect(result.ok === false && result.error).toContain('offset 512')
-    expect(result.ok === false && result.error).toContain('400')
     expect(writes().map(w => w.offset)).toEqual([0, 512, 0, 512])
     expect(validates()).toHaveLength(0)
   })
@@ -158,11 +164,36 @@ describe('uploadAnimation', () => {
     expect(writes()).toHaveLength(3)
   })
 
-  it('throws with the status when validate answers without a report', async () => {
+  it('throws when validate answers without a report', async () => {
     responder = m =>
       m.correlationRequest?.animationValidate ? { statusCode: 500, empty: {} } : { empty: {} }
 
-    await expect(uploadAnimation(animationLargerThan(10))).rejects.toThrow(/validate pad.*500/)
+    await expect(uploadAnimation(animationLargerThan(10))).rejects.toThrow(
+      'the robot refused the validation of pad'
+    )
+  })
+})
+
+describe('listAnimations', () => {
+  it("lists the robot's animations", async () => {
+    responder = () => ({ animationList: { entries: [{ name: 'wave', size: 120 }] } })
+    await expect(listAnimations()).resolves.toEqual([{ name: 'wave', size: 120 }])
+  })
+
+  // AnimationListRequest has no fields, so a bare 400 is a firmware from before the library.
+  it('names a firmware that predates the library', async () => {
+    responder = () => ({ statusCode: 400 })
+    await expect(listAnimations()).rejects.toThrow(
+      "the robot's firmware does not support the animation library; update it"
+    )
+  })
+})
+
+describe('deleteAnimation', () => {
+  // A path the robot cannot resolve or unlink is a bare 400 to a request with fields: a refusal.
+  it('reports a refused delete with its name', async () => {
+    responder = () => ({ statusCode: 400 })
+    await expect(deleteAnimation('wave')).rejects.toThrow('the robot refused deleting wave')
   })
 })
 
@@ -188,9 +219,9 @@ describe('downloadAnimation', () => {
     expect(a).toEqual(source)
   })
 
-  it('throws with the offset and status on a failed read', async () => {
+  it('throws with the offset on a failed read', async () => {
     responder = () => ({ statusCode: 404 })
-    await expect(downloadAnimation('gone')).rejects.toThrow(/offset 0.*404/)
+    await expect(downloadAnimation('gone')).rejects.toThrow(/offset 0/)
   })
 })
 

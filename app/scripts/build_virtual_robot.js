@@ -9,6 +9,7 @@ import os from 'os'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { findPython, pyEnv } from './python.js'
+import { hashInputs, stampPath, writeStamp } from './virtual-robot-inputs.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..', '..')
@@ -69,6 +70,10 @@ for (const script of ['compile_protos.py', 'pack_animations.py']) {
   })
 }
 
+// A build that fails leaves no record, so the check before the unit tests (check_virtual_robot.js) rebuilds it.
+fs.rmSync(stampPath(outputDir), { force: true })
+const inputs = hashInputs(root)
+
 const generated = path.join('firmware', 'src', 'platform_shared')
 const sources = [
   'firmware/host/virtual_robot_api.cpp',
@@ -100,4 +105,5 @@ execFileSync(
   ],
   { stdio: 'inherit', cwd: root }
 )
+writeStamp(outputDir, inputs)
 console.log(`Virtual robot built: ${path.relative(root, output)}`)

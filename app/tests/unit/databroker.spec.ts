@@ -108,7 +108,17 @@ describe('DataBroker', () => {
     const request = broker.request({ featuresDataRequest: {} })
     await link.transport.disconnect()
 
-    await expect(request).rejects.toThrow('disconnected')
+    await expect(request).rejects.toMatchObject({ failure: { kind: 'disconnected' } })
+  })
+
+  it('drops the oldest request held while no transport is connected once too many wait', async () => {
+    const link = createFakeTransport()
+    broker.addTransport(link.transport)
+
+    const oldest = broker.request({ featuresDataRequest: {} })
+    for (let i = 0; i < 16; i++) broker.request({ modeGet: {} }).catch(() => {})
+
+    await expect(oldest).rejects.toMatchObject({ failure: { kind: 'disconnected' } })
   })
 
   it('resolves a request by correlation id and ignores later timeouts', async () => {
@@ -141,7 +151,7 @@ describe('DataBroker', () => {
     const request = broker.request({ featuresDataRequest: {} }, { signal: controller.signal })
     vitest.advanceTimersByTime(15000)
 
-    await expect(request).rejects.toThrow('timed out')
+    await expect(request).rejects.toMatchObject({ failure: { kind: 'timeout' } })
     expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function))
   })
 })

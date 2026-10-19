@@ -126,7 +126,7 @@ describe('readCoreDump', () => {
   // The request has no fields to get wrong: a bare 400 is a firmware that does not know it.
   it('names a firmware that predates the readout', async () => {
     await expect(readCoreDump(answering(reply({ statusCode: 400 })))).rejects.toThrow(
-      /firmware has no core-dump readout/
+      "the robot's firmware does not support the core-dump readout; update it"
     )
   })
 
@@ -159,7 +159,16 @@ describe('downloadCoreDump', () => {
           reply({ fileChunk: { content: dump.slice(0, 512), totalSize: dump.length } })
         : reply({ statusCode: 404 })
     }
-    await expect(downloadCoreDump(link)).rejects.toThrow(/offset 512 failed with status 404/)
+    await expect(downloadCoreDump(link)).rejects.toThrow(
+      'the robot refused the core-dump read at offset 512'
+    )
+  })
+
+  // CoreDumpRead has fields, so a bare 400 is a read the robot refused, not a firmware without the readout.
+  it('reports a bare 400 to a read as a refusal', async () => {
+    await expect(downloadCoreDump(answering(reply({ statusCode: 400 })))).rejects.toThrow(
+      'the robot refused the core-dump read at offset 0'
+    )
   })
 
   it('fails on a chunk that brings nothing before the end', async () => {

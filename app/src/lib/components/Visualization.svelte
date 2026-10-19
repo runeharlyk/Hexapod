@@ -11,7 +11,6 @@
   import { dataBroker } from '$lib/transport/databroker'
   import { AnglesData, IMUData } from '$lib/platform_shared/message'
   import { Vector3 } from 'three'
-  import { requestMode } from '$lib/control'
   import { isLinked } from '$lib/stores/link'
   import { animationPreview, type AnimationPreview } from '$lib/stores/animation'
   import Kinematics from '$lib/kinematic'
@@ -27,6 +26,8 @@
   import { DEFAULT_FEET } from '$lib/animation/model'
   import { handleColor, legMask, sceneToOffset, stanceToScene } from '$lib/animation/handles'
 
+  // A view of the robot, never a control: it reads the robot's angles, mode and gait and sends the robot nothing, so
+  // only the controller changes the robot's mode. Its panel poses the drawn model alone.
   interface Props {
     sky?: boolean
     orbit?: boolean
@@ -139,11 +140,11 @@
     general.add(settings, 'Auto orient robot')
 
     const limbs = gui_panel.addFolder('Limbs')
-    limbs.add({ center: resetLimbs }, 'center')
+    limbs.add({ center: centerLimbs }, 'center')
     for (const name of $jointNames) {
       limbs
         .add(jointAngles, name, -Math.PI / 1.2, Math.PI / 1.2)
-        .onChange(updateLimbs)
+        .onChange(poseByHand)
         .listen()
     }
 
@@ -151,15 +152,17 @@
     visualization.add(settings, 'Smooth motion')
   }
 
-  const resetLimbs = () => {
+  const centerLimbs = () => {
     for (const name of $jointNames) {
       jointAngles[name] = 0
     }
-    requestMode(MotionModes.IDLE)
-    updateLimbs()
+    poseByHand()
   }
 
-  const updateLimbs = () => {
+  // The virtual robot stops, so the pose holds until 'Internal kinematic' is ticked again; angles the robot sends
+  // still replace it, since they are the truth.
+  const poseByHand = () => {
+    settings['Internal kinematic'] = false
     for (let i = 0; i < $jointNames.length; i++) {
       targetAngles[i] = jointAngles[$jointNames[i]]
     }

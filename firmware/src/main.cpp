@@ -721,7 +721,9 @@ static void registerHandlers(CommAdapterBase &c) {
                     strncpy(res.error_message, "Erasing the core dump failed", sizeof(res.error_message) - 1);
                 break;
             }
-            default: res.status_code = 400; break;
+            // A request this firmware does not know. No other reply is a 501, so the app reads it as firmware too old
+            // for the request (app/src/lib/transport/reply.ts); firmware up to v0.1.1 answered a bare 400 here.
+            default: res.status_code = 501; break;
         }
         adapter->emit(res, clientId);
     });

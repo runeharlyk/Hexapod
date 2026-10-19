@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { get } from 'svelte/store'
-import { answered, createScan } from '../../src/lib/scan'
+import { createScan } from '../../src/lib/scan'
+import { ask } from '../../src/lib/transport/reply'
 import type { CorrelationResponse } from '../../src/lib/platform_shared/message'
 
 // A robot request the test settles: each call is one request on the wire.
@@ -75,19 +76,17 @@ describe('createScan', () => {
 })
 
 // The data broker resolves every reply, refusals included: a 503 must not read as "no devices".
-describe('answered', () => {
-  it('passes a 200 reply through', () => {
-    const ok = reply({ statusCode: 200 })
-    expect(answered(ok)).toBe(ok)
-  })
-
-  it('turns a refusal into an error with the robot reason', () => {
-    expect(() => answered(reply({ statusCode: 503, errorMessage: 'The I2C bus is busy' }))).toThrow(
-      'The I2C bus is busy'
+describe('a scan the robot refuses', () => {
+  it("fails with the robot's reason rather than reading as empty", async () => {
+    const scan = createScan<number>()
+    const link = {
+      request: async () => reply({ statusCode: 503, errorMessage: 'The I2C bus is busy' })
+    }
+    await scan.run(
+      async () =>
+        (await ask(link, { i2cScanDataRequest: {} }, 'the I2C scan')).i2cScanData?.devices.length ??
+        0
     )
-  })
-
-  it('names the status when the robot gave no reason', () => {
-    expect(() => answered(reply({ statusCode: 400 }))).toThrow('status 400')
+    expect(get(scan)).toEqual({ state: 'failed', message: 'The I2C bus is busy' })
   })
 })

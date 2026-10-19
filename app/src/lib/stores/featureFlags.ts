@@ -1,6 +1,7 @@
 import { api } from '$lib/api'
 import { dataBroker } from '$lib/transport/databroker'
-import { get, writable, type Writable } from 'svelte/store'
+import { ask } from '$lib/transport/reply'
+import { get, writable, type Readable } from 'svelte/store'
 import { canReachRobot, location } from './location-store'
 
 export interface Features {
@@ -51,8 +52,13 @@ const buildFeatures = {
   upload_firmware: true
 }
 
-const requestFeatures = async (): Promise<Features> => {
-  const { featuresDataResponse: f } = await dataBroker.request({ featuresDataRequest: {} })
+const requestFeatures = async (signal: AbortSignal): Promise<Features> => {
+  const { featuresDataResponse: f } = await ask(
+    dataBroker,
+    { featuresDataRequest: {} },
+    'the feature list',
+    { signal }
+  )
   if (!f) throw new Error('features response missing')
   return {
     ...buildFeatures,
@@ -73,39 +79,101 @@ const fetchFeaturesOverHttp = async (): Promise<Features> => {
   return { ...unknownFeatures, ...result.inner }
 }
 
-let featureFlagsStore: Writable<Features> | undefined
-let loading = false
-
-const fetchFeatures = () =>
-  requestFeatures().catch(error => {
-    // A page that can reach the robot can still ask its webserver when the link is not up yet.
-    if (!canReachRobot(new URL(window.location.href), get(location))) throw error
-    return fetchFeaturesOverHttp()
+// A page that can reach the robot can still ask its webserver when the link fails. When that fails too, the link's
+// failure is the one the page shows: it carries the robot's own reason.
+const fetchFeatures = (signal: AbortSignal) =>
+  requestFeatures(signal).catch(error => {
+    if (signal.aborted || !canReachRobot(new URL(window.location.href), get(location))) throw error
+    return fetchFeaturesOverHttp().catch(() => {
+      throw error
+    })
   })
 
-export function useFeatureFlags() {
-  featureFlagsStore ??= writable<Features>(unknownFeatures)
-  const store = featureFlagsStore
+/** Whether the flags are the robot's: pending until they are in, or failed with the sentence a page shows. */
+export type FeatureFlagsState =
+  { kind: 'pending' } | { kind: 'known' } | { kind: 'failed'; message: string }
 
-  if (!loading) {
-    loading = true
-    fetchFeatures()
-      .then(features => store.set(features))
-      .catch(error => {
-        // Leave the flags unknown and let the next page that needs them try again.
-        loading = false
-        console.warn('Feature flags could not be fetched:', error)
-      })
-  }
+const flags = writable<Features>(unknownFeatures)
+const state = writable<FeatureFlagsState>({ kind: 'pending' })
 
-  return store
+/**
+ * Until the flags are the robot's every one reads false, so a page that depends on one waits for this rather than
+ * deciding on that default, and shows the failure when the read fails.
+ */
+export const featureFlagsState: Readable<FeatureFlagsState> = { subscribe: state.subscribe }
+
+// The read under way, which a newer read or a forgotten robot aborts, so its answer can never land.
+let reading: AbortController | null = null
+
+/**
+ * Reads the flags afresh: after a restart, which may have brought other firmware, after a drop, or to retry a failed
+ * read. A failed read leaves flags already known for this robot in place: they are stale, not wrong.
+ */
+export function refreshFeatureFlags(): Promise<Features> {
+  reading?.abort()
+  const read = new AbortController()
+  reading = read
+  if (get(state).kind === 'failed') state.set({ kind: 'pending' })
+  return fetchFeatures(read.signal).then(
+    features => {
+      if (reading === read) {
+        reading = null
+        flags.set(features)
+        state.set({ kind: 'known' })
+      }
+      return features
+    },
+    error => {
+      if (reading === read) {
+        reading = null
+        if (get(state).kind !== 'known')
+          state.set({
+            kind: 'failed',
+            message: error instanceof Error ? error.message : String(error)
+          })
+      }
+      throw error
+    }
+  )
 }
 
-// After a restart the robot may run different firmware than the flags were read from.
-export async function refreshFeatureFlags(): Promise<Features> {
-  const features = await fetchFeatures()
-  featureFlagsStore ??= writable<Features>(unknownFeatures)
-  featureFlagsStore.set(features)
-  loading = true
-  return features
+// A read that a newer one or a forgotten robot aborted failed nothing.
+const readInBackground = () => {
+  refreshFeatureFlags().catch(error => {
+    if (!(error instanceof DOMException && error.name === 'AbortError'))
+      console.warn('Feature flags could not be read:', error)
+  })
+}
+
+/** The robot's flags. Reads them unless they are in or being read, so a page that mounts after a failure retries. */
+export function useFeatureFlags(): Readable<Features> {
+  if (get(state).kind !== 'known' && !reading) readInBackground()
+  return { subscribe: flags.subscribe }
+}
+
+const forget = () => {
+  reading?.abort()
+  reading = null
+  flags.set(unknownFeatures)
+  state.set({ kind: 'pending' })
+}
+
+/**
+ * Follows the robot the link reaches (`robot`, null while no link is up). A drop keeps the flags, and with them the
+ * pages that depend on them, since they are only stale; the link reaching another robot forgets them, so a page never
+ * shows one robot's flags for another. Whenever a link comes up they are read again, which also retries a failed read.
+ * A read still under way then began while no link was up, so the broker sends it to the robot now reached, and it is
+ * left to answer. Returns the function that stops following.
+ */
+export const followFeatureFlags = (robot: Readable<string | null>) => {
+  let current: string | null = null
+  let lastReached: string | null = null
+  return robot.subscribe(next => {
+    if (next === current) return
+    current = next
+    if (next === null) return
+    if (lastReached !== null && next !== lastReached) forget()
+    lastReached = next
+    if (!reading) readInBackground()
+  })
 }

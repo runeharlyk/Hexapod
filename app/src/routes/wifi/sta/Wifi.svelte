@@ -16,6 +16,7 @@
   import type { KnownNetworkItem, WifiStatus as WifiStatusView } from '$lib/types/models'
   import { ipToString, ipToU32 } from '$lib/proto-api'
   import { dataBroker } from '$lib/transport/databroker'
+  import { ask } from '$lib/transport/reply'
   import { WifiSettings, WifiStatus, type WifiNetwork } from '$lib/platform_shared/api'
 
   // The page keeps the UI's snake_case shape; the proto carries IPs as uint32.
@@ -139,9 +140,10 @@
   }
 
   async function getWifiStatus() {
-    const res = await dataBroker
-      .request({ wifiStatusGet: {} }, { signal: pageAbort.signal })
-      .catch(() => null)
+    // The pushes keep the status current; a failed first read leaves it to them.
+    const res = await ask(dataBroker, { wifiStatusGet: {} }, 'the Wi-Fi status', {
+      signal: pageAbort.signal
+    }).catch(() => null)
     if (res?.wifiStatus) applyWifiStatus(res.wifiStatus)
     return wifiStatus
   }
@@ -150,7 +152,9 @@
 
   async function getWifiSettings() {
     try {
-      const res = await dataBroker.request({ wifiSettingsGet: {} }, { signal: pageAbort.signal })
+      const res = await ask(dataBroker, { wifiSettingsGet: {} }, 'the Wi-Fi settings', {
+        signal: pageAbort.signal
+      })
       const w = res.wifiSettings
       if (!w) return
       wifiSettings = {
@@ -163,27 +167,28 @@
       return wifiSettings
     } catch (e) {
       if ((e as Error)?.name === 'AbortError') return
-      notifications.error('Could not read Wi-Fi settings — is the robot connected?', 3000)
+      notifications.error(`Could not read the Wi-Fi settings: ${(e as Error).message}`, 5000)
     }
   }
 
   async function postWiFiSettings(data: WifiSettingsForm) {
     try {
-      const res = await dataBroker.request({
-        wifiSettingsUpdate: WifiSettings.create({
-          hostname: data.hostname,
-          priorityRssi: data.priority_rssi ?? true,
-          selectedNetwork: data.selected_network ?? 0,
-          wifiNetworks: (data.wifi_networks ?? []).map(formToNet)
-        })
-      })
-      if (!res.wifiSettings) {
-        notifications.error('Failed to update Wi-Fi settings.', 3000)
-        return
-      }
+      // The robot answers a refused update with a 400 and the settings it kept.
+      await ask(
+        dataBroker,
+        {
+          wifiSettingsUpdate: WifiSettings.create({
+            hostname: data.hostname,
+            priorityRssi: data.priority_rssi ?? true,
+            selectedNetwork: data.selected_network ?? 0,
+            wifiNetworks: (data.wifi_networks ?? []).map(formToNet)
+          })
+        },
+        'the Wi-Fi settings'
+      )
       notifications.success('Wi-Fi settings updated.', 3000)
-    } catch {
-      notifications.error('Failed to update Wi-Fi settings — is the robot connected?', 3000)
+    } catch (e) {
+      notifications.error(`Not saved: ${(e as Error).message}`, 5000)
     }
   }
 
@@ -490,6 +495,7 @@
         >
         <button
           class="btn btn-primary text-primary-content btn-md absolute -top-14 right-0"
+          aria-label="Scan for networks"
           onclick={() => {
             if (checkNetworkList()) {
               scanForNetworks()
