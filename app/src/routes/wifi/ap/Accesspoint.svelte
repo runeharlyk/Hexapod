@@ -192,6 +192,9 @@
     {:else if apStatus === undefined}
       <Spinner />
     {:else}
+      {#if $apState.stale}
+        <p class="text-warning">The robot is not connected: this is the last status it sent.</p>
+      {/if}
       <div
         class="flex w-full flex-col space-y-1"
         transition:slide|local={{ duration: 300, easing: cubicOut }}

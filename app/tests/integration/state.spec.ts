@@ -65,3 +65,36 @@ test('the Wi-Fi and access point pages name a firmware without snapshots as too 
     )
   ).toBeVisible({ timeout: 15000 })
 })
+
+// After a drop the status shown is the last the robot sent, which may no longer hold; the page says so.
+const LAST_KNOWN = 'The robot is not connected: this is the last status it sent.'
+
+test('the Wi-Fi page marks the status as the last known once the link drops', async ({ page }) => {
+  const robot = new FakeRobot()
+  robot.set(WifiStatus, WifiStatus.create({ status: 3, ssid: 'home-network', rssi: -60 }))
+  const link = await serveRobot(page, robot)
+  await page.goto(`${base}/wifi/sta`)
+  await expect(page.getByText('home-network', { exact: true })).toBeVisible()
+  await expect(page.getByText(LAST_KNOWN)).toHaveCount(0)
+
+  link.drop()
+
+  await expect(page.getByText(LAST_KNOWN)).toBeVisible()
+  await expect(page.getByText('home-network', { exact: true })).toBeVisible()
+})
+
+test('the access point page marks the status as the last known once the link drops', async ({
+  page
+}) => {
+  const robot = new FakeRobot()
+  robot.set(APStatus, APStatus.create({ status: 0, macAddress: 'AA:BB:CC:DD:EE:FF' }))
+  const link = await serveRobot(page, robot)
+  await page.goto(`${base}/wifi/ap`)
+  await expect(page.getByText('AA:BB:CC:DD:EE:FF', { exact: true })).toBeVisible()
+  await expect(page.getByText(LAST_KNOWN)).toHaveCount(0)
+
+  link.drop()
+
+  await expect(page.getByText(LAST_KNOWN)).toBeVisible()
+  await expect(page.getByText('AA:BB:CC:DD:EE:FF', { exact: true })).toBeVisible()
+})
