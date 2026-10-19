@@ -41,13 +41,13 @@ pnpm install
 pnpm dev                # vite dev server (--host)
 pnpm build              # production build -> app/build (used for GitHub Pages deploy)
 pnpm build:embedded     # build with VITE_USE_HOST_NAME=true (for embedding into firmware)
-pnpm virtual-robot      # compile the firmware's motion code to WebAssembly for the simulation view (needs Emscripten; also run by dev/build)
+pnpm virtual-robot      # compile the firmware's motion code to WebAssembly for the simulation view (needs Emscripten; also run by dev/build, and by test:unit when its inputs changed)
 pnpm check              # svelte-check type checking
 pnpm lint               # prettier --check + eslint
 pnpm format             # prettier --write
 pnpm test               # integration (playwright) + unit (vitest)
-pnpm test:unit          # vitest only
-pnpm test:unit -- <file># run a single test file, e.g. tests/unit/throttler.spec.ts
+pnpm test:unit          # vitest only, after rebuilding a virtual robot older than its firmware sources (fails naming them without Emscripten)
+pnpm test:unit <file>   # run a single test file, e.g. tests/unit/throttler.spec.ts (pnpm 10 passes a `--` on to vitest, which then runs every file)
 pnpm test:integration   # playwright only
 ```
 
