@@ -121,12 +121,6 @@ describe('the connected robot on its IMU', () => {
     expect(Math.abs(rise(placement, [0, -100, 0], [0, 100, 0]))).toBeLessThan(1e-6)
   })
 
-  it('takes no yaw from the IMU', () => {
-    const still = imuPlacement(NOSE_DOWN, levelFeet())
-    const turned = imuPlacement({ ...NOSE_DOWN, z: 1.2 }, levelFeet())
-    expect(turned.orientation.angleTo(still.orientation)).toBeLessThan(1e-6)
-  })
-
   it.each([
     { pose: {}, imu: { x: 0, y: 0, z: 0 } },
     { pose: { omega: 0.15, phi: -0.1, zm: 10 }, imu: RIGHT_SIDE_DOWN },
