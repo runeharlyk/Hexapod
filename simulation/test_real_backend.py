@@ -142,16 +142,16 @@ class FakeRobot:
     exactly, and is zeroed RESET_LAG_S after a reset's reply, as the control task's next tick does it. Without, it
     answers every goal and odometry request 400, as a firmware from before goals does.
 
-    It boots DEACTIVATED and answers the request for its mode, unless `mode_request=False`, as a firmware from before
-    that request does; with `stale_mode_reply` it pushes its mode first and then answers with that stale one, as a push
-    that overtook the reply. It loses the replies to the next `lost_mode_replies` of those requests, as a full BLE queue
-    drops them."""
+    It boots DEACTIVATED in TRI_GATE and answers a subscribe as the firmware does (firmware/test/test_topic_snapshot):
+    a state topic with its current value and then the subscribe echoed as the ack, anything else with the ack alone; the
+    goal status is a topic only with `goals`. With `snapshots=False` it answers no subscribe, as a firmware from before
+    the snapshots. It loses the next `lost_mode_snapshots` snapshots of its mode, as a full BLE queue drops them."""
 
-    def __init__(self, imu=True, obey=True, reset_on_open=None, goals=False, mode_request=True):
+    def __init__(self, imu=True, obey=True, reset_on_open=None, goals=False, snapshots=True):
         self.imu, self.obey, self.reset_on_open, self.goals = imu, obey, reset_on_open, goals
-        self.mode_request = mode_request
-        self.stale_mode_reply = None
-        self.lost_mode_replies = 0
+        self.snapshots = snapshots
+        self.lost_mode_snapshots = 0
+        self.gait = pb.TRI_GATE
         self.handheld = False
         self.drop_final_push = False
         self.goal_count, self.goal_started = 0, None
@@ -217,30 +217,38 @@ class FakeRobot:
     def _replies(self, message):
         kind = message.WhichOneof("message")
         if kind == "sub_notif":
-            self.subscribed.add(message.sub_notif.tag)
+            tag = message.sub_notif.tag
+            self.subscribed.add(tag)
+            if not self.snapshots:
+                return
+            if tag == _tag("mode"):
+                if self.lost_mode_snapshots:
+                    self.lost_mode_snapshots -= 1
+                else:
+                    yield pb.Message(mode=pb.ModeData(mode=self.mode, handheld=self.handheld))
+            elif tag == _tag("gait"):
+                yield pb.Message(gait=pb.GaitData(gait=self.gait))
+            elif tag == _tag("goal_status") and self.goals:
+                yield pb.Message(goal_status=self.goal_status())
+            elif tag == _tag("animation_status"):
+                yield pb.Message(animation_status=pb.AnimationStatus(state=pb.ANIM_IDLE))
+            yield pb.Message(sub_notif=pb.SubscribeNotification(tag=tag))
         elif kind == "pingmsg":
             yield pb.Message(pongmsg=pb.PongMsg())
         elif kind == "mode" and self.obey:
             self.mode = message.mode.mode
             if _tag("mode") in self.subscribed:
                 yield pb.Message(mode=pb.ModeData(mode=self.mode))
-        elif kind == "gait" and _tag("gait") in self.subscribed:
-            yield pb.Message(gait=pb.GaitData(gait=message.gait.gait))
+        elif kind == "gait":
+            self.gait = message.gait.gait
+            if _tag("gait") in self.subscribed:
+                yield pb.Message(gait=pb.GaitData(gait=self.gait))
         elif kind == "correlation_request":
             request = message.correlation_request
             response = pb.CorrelationResponse(correlation_id=request.correlation_id, status_code=self.status)
             asked = request.WhichOneof("request")
             if asked == "features_data_request":
                 response.features_data_response.imu = self.imu
-            elif asked == "mode_get" and self.mode_request:
-                if self.lost_mode_replies:
-                    self.lost_mode_replies -= 1
-                    return
-                if self.stale_mode_reply is None:
-                    response.mode.mode, response.mode.handheld = self.mode, self.handheld
-                else:
-                    yield pb.Message(mode=pb.ModeData(mode=self.mode))
-                    response.mode.mode = self.stale_mode_reply
             elif not self.goals:
                 response.status_code = 400
             elif asked == "goal_move":
@@ -256,8 +264,6 @@ class FakeRobot:
                 else:
                     response.status_code = 409
                     response.error_message = "Only a standing or walking robot takes a goal"
-            elif asked == "goal_status_get":
-                response.goal_status.CopyFrom(self.goal_status())
             elif asked == "odometry_get":
                 if self.reset_at is not None and time.monotonic() >= self.reset_at:
                     self.odometry, self.reset_at = pb.OdometryData(), None
@@ -321,8 +327,8 @@ class FakeRobot:
 
     def push_mode(self, mode, handheld=False, lost=False):
         """A mode change from elsewhere, as the app's stop button or the handheld controller makes; with `handheld`,
-        the report that the ESP-NOW handheld drives, which the mode request answers from then on. With `lost` the push
-        is dropped, as a full BLE queue or WebSocket send buffer drops one."""
+        the report that the ESP-NOW handheld drives, which the mode's snapshot carries from then on. With `lost` the push
+        is dropped, as a full BLE queue drops one."""
         self.mode, self.handheld, self.pushed_at = mode, handheld, time.monotonic()
         if lost:
             return
@@ -392,7 +398,7 @@ def test_connecting_subscribes_sets_the_gait_and_reads_the_imu(robot, fake):
     assert {_tag("mode"), _tag("gait"), _tag("imu")} <= fake.subscribed
     assert [m.gait.gait for _, m in fake.received if m.WhichOneof("message") == "gait"] == [pb.TRI_GATE]
     state = robot.state()
-    assert state.mode is Mode.DEACTIVATED and state.gait is Gait.TRI_GATE  # the mode asked for once, at connect
+    assert state.mode is Mode.DEACTIVATED and state.gait is Gait.TRI_GATE  # the mode from the subscribe's snapshot
     assert state.yaw == pytest.approx(-math.degrees(0.3))  # the DMP yaw is clockwise-positive
 
 
@@ -410,25 +416,18 @@ def test_the_websocket_link_keeps_its_keep_alive(fake):
     assert asyncio.run(opened_interval()) is not None
 
 
-# A firmware from before the mode request answers it 400: the mode is unknown until the robot pushes one.
-def test_a_firmware_without_the_mode_request_leaves_the_mode_unknown(transport, monkeypatch):
-    fake = FakeRobot(mode_request=False)
+# A firmware from before the snapshots acks no subscribe: the mode is unknown until the robot pushes one, nothing is
+# subscribed to again, and no goal is sent.
+def test_a_firmware_without_snapshots_leaves_the_mode_unknown_and_takes_no_goals(transport, monkeypatch):
+    monkeypatch.setattr(real, "REPLY_TIMEOUT_S", 0.5)
+    fake = FakeRobot(goals=True, snapshots=False)
     try:
         with Robot(_target(fake, transport, monkeypatch)) as robot:
-            assert robot.state().mode is None
+            assert robot.state().mode is None and not robot._backend.supports_goals()
             fake.push_mode(pb.STAND)
             _eventually(lambda: robot.state().mode is Mode.STAND)
-    finally:
-        fake.stop()
-
-
-# The mode is pushed on every change, so a push that arrived before the reply to the request is the newer of the two.
-def test_a_mode_pushed_before_the_reply_wins_over_it(transport, monkeypatch):
-    fake = FakeRobot()
-    fake.mode, fake.stale_mode_reply = pb.STAND, pb.IDLE
-    try:
-        with Robot(_target(fake, transport, monkeypatch)) as robot:
-            assert robot.state().mode is Mode.STAND
+            robot.sleep(3 * real.REFRESH_S)
+            assert fake.kinds().count("sub_notif") == 4
     finally:
         fake.stop()
 
@@ -592,67 +591,69 @@ def test_the_next_walk_after_the_handheld_lets_go_is_obeyed(fake, target, monkey
         robot.stop()
 
 
-# A push can be dropped, so the handheld's report is confirmed by a mode request every MODE_POLL_S while the keep-alive
-# runs or the handheld drives. A lost report that it let go clears within one poll, and the script walks again.
-def test_a_lost_report_that_the_handheld_let_go_clears_within_one_poll(robot, fake):
+# A push can be dropped, so the handheld's report is confirmed by subscribing to the mode again every REFRESH_S while the
+# keep-alive runs or the handheld drives. A lost report that it let go clears within one refresh, and the script walks
+# again.
+def test_a_lost_report_that_the_handheld_let_go_clears_within_one_refresh(robot, fake):
     robot.stand()
     fake.push_mode(pb.WALK, True)
     _eventually(lambda: robot.state().handheld)
     fake.push_mode(pb.WALK, False, lost=True)
-    _eventually(lambda: not robot.state().handheld, timeout=real.MODE_POLL_S + 0.3)
+    _eventually(lambda: not robot.state().handheld, timeout=real.REFRESH_S + 0.3)
     robot.set_velocity(0.1, 0.0, 0.0)
     _eventually(lambda: any(data.left.y for t, data in fake.inputs() if t > fake.pushed_at))
     robot.stop()
 
 
-# A lost report that the handheld took over is found within one poll too: the keep-alive's stick is centred from then
+# A lost report that the handheld took over is found within one refresh too: the keep-alive's stick is centred from then
 # on, so the app's centred heartbeat cannot hand the robot back to it, and the walk raises.
 def test_a_lost_report_that_the_handheld_took_over_still_centres_the_walk(robot, fake):
     robot.stand()
     robot.set_velocity(0.1, 0.0, 0.0)
     threading.Timer(0.3, fake.push_mode, (pb.WALK, True), {"lost": True}).start()
     with pytest.raises(RobotError, match="handheld controller took over"):
-        robot.sleep(0.3 + real.MODE_POLL_S + 0.3)
+        robot.sleep(0.3 + real.REFRESH_S + 0.3)
     assert robot.state().handheld
-    robot.sleep(real.MODE_POLL_S + 0.5)
-    confirmed = fake.pushed_at + real.MODE_POLL_S + 0.1
+    robot.sleep(real.REFRESH_S + 0.5)
+    confirmed = fake.pushed_at + real.REFRESH_S + 0.1
     assert len([t for t, _ in fake.inputs() if t > confirmed]) >= 2  # the keep-alive goes on
     assert not any(data.left.y for t, data in fake.inputs() if t > confirmed)
 
 
-def _polls_over(fake, seconds):
+def _refreshes_over(fake, seconds):
     since = time.monotonic()
     time.sleep(seconds)
-    return len([t for t, _ in fake.requests("mode_get") if t > since])
+    return len([t for t, m in fake.received if t > since and m.WhichOneof("message") == "sub_notif"
+                and m.sub_notif.tag == _tag("mode")])
 
 
-# The poll keeps the link light: none while the robot rests outside the keep-alive's modes with no handheld driving,
-# one per MODE_POLL_S while the keep-alive runs or the handheld drives, and none again once both have ended. A poll
-# sent before a change may still be handled after it, so each count starts a poll period after the change.
-def test_the_mode_is_polled_only_while_the_keep_alive_runs_or_the_handheld_drives(robot, fake):
-    assert _polls_over(fake, 3 * real.MODE_POLL_S) == 0
+# The refresh keeps the link light: none while the robot rests outside the keep-alive's modes with no handheld driving,
+# one per REFRESH_S while the keep-alive runs or the handheld drives, and none again once both have ended. A refresh
+# sent before a change may still be handled after it, so each count starts a refresh period after the change.
+def test_the_mode_is_refreshed_only_while_the_keep_alive_runs_or_the_handheld_drives(robot, fake):
+    assert _refreshes_over(fake, 3 * real.REFRESH_S) == 0
     robot.stand()
-    assert 2 <= _polls_over(fake, 3 * real.MODE_POLL_S) <= 4
+    assert 2 <= _refreshes_over(fake, 3 * real.REFRESH_S) <= 4
     fake.push_mode(pb.IDLE)
     _eventually(lambda: robot.state().mode is Mode.IDLE)
-    time.sleep(real.MODE_POLL_S)
-    assert _polls_over(fake, 3 * real.MODE_POLL_S) == 0
+    time.sleep(real.REFRESH_S)
+    assert _refreshes_over(fake, 3 * real.REFRESH_S) == 0
     fake.push_mode(pb.IDLE, True)
     _eventually(lambda: robot.state().handheld)
-    assert 2 <= _polls_over(fake, 3 * real.MODE_POLL_S) <= 4
+    assert 2 <= _refreshes_over(fake, 3 * real.REFRESH_S) <= 4
     fake.push_mode(pb.IDLE, False)
     _eventually(lambda: not robot.state().handheld)
-    time.sleep(real.MODE_POLL_S)
-    assert _polls_over(fake, 3 * real.MODE_POLL_S) == 0
+    time.sleep(real.REFRESH_S)
+    assert _refreshes_over(fake, 3 * real.REFRESH_S) == 0
 
 
-# A lost reply delays no poll: the polls go out every MODE_POLL_S whether or not the last was answered, so a report
-# that the handheld took over, its push lost, is found by the next poll, not after the reply timeout.
-def test_a_lost_poll_reply_delays_the_next_poll_by_nothing(robot, fake):
+# A lost snapshot delays no refresh: the refreshes go out every REFRESH_S whether or not the last was answered, so a
+# report that the handheld took over, its push lost, is found by the next refresh, not after the reply timeout.
+def test_a_lost_snapshot_delays_the_next_refresh_by_nothing(robot, fake):
     robot.stand()
-    fake.lost_mode_replies = 1
+    fake.lost_mode_snapshots = 1
     fake.push_mode(pb.STAND, True, lost=True)
-    _eventually(lambda: robot.state().handheld, timeout=2 * real.MODE_POLL_S + 0.3)
+    _eventually(lambda: robot.state().handheld, timeout=2 * real.REFRESH_S + 0.3)
 
 
 # The first stick of a connection is sent after a centred one too: the firmware may still be waiting for this client to
@@ -668,7 +669,7 @@ def test_the_first_walk_of_a_connection_follows_a_centred_input(fake, target, mo
         assert first_walking > 0 and inputs[first_walking - 1].left.y == 0
 
 
-# Connecting while the handheld drives, the reply to the mode request says so.
+# Connecting while the handheld drives, the mode's snapshot says so.
 def test_a_connection_made_while_the_handheld_drives_knows_it(fake, target, monkeypatch):
     fake.mode, fake.handheld = pb.WALK, True
     with Robot(target) as robot:
@@ -791,6 +792,16 @@ def test_robot_animate_drives_the_robot_through_the_same_link(fake, monkeypatch)
     _eventually(lambda: fake.connections == 0)  # the tool closes the port behind it
 
 
+# The robot answers the tool's subscribes with the idle status and the mode it is in before the command: read as the
+# answer, an idle status and then a mode would end the following at once, as a finished run's hand-back does.
+def test_robot_animate_follows_what_comes_after_the_command_not_the_snapshots(fake, monkeypatch, capsys):
+    _target(fake, "serial", monkeypatch)
+    monkeypatch.setattr(robot_animate, "QUIET_S", 0.3)
+    assert robot_animate.main(["--port", SERIAL_PORT, "stop"]) == 0
+    printed = capsys.readouterr().out
+    assert "ANIM_IDLE" not in printed and "mode DEACTIVATED" not in printed
+
+
 # --- goal moves ----------------------------------------------------------------------------------------------------
 
 @pytest.fixture
@@ -814,7 +825,7 @@ def test_connecting_finds_that_the_robot_takes_goals(goal_robot, goal_fake):
 
 
 def test_a_robot_from_before_goals_walks_timed_moves(robot, fake):
-    assert not robot._backend.supports_goals()  # it answers the probe 400
+    assert not robot._backend.supports_goals()  # it acks the goal status's subscribe without a snapshot
     robot.stand()
     robot.move_forward(0.05)
     assert fake.requests("goal_move") == [] and any(data.left.y for _, data in fake.inputs())
@@ -860,7 +871,8 @@ def test_a_goal_starts_from_centred_sticks_and_is_kept_alive_in_its_style(goal_r
     assert len(after) >= 3 and max(b - a for a, b in zip(times, times[1:])) < 0.35
 
 
-# The status push can be dropped, so the end is confirmed by a request; progress follows the pushes.
+# The status push can be dropped, so the end is confirmed by the snapshot of a new subscribe; progress follows the
+# pushes.
 @pytest.mark.parametrize("drop_final_push", [False, True])
 def test_a_goal_follows_the_pushes_and_confirms_its_end(goal_robot, goal_fake, drop_final_push):
     goal_fake.drop_final_push = drop_final_push
@@ -870,8 +882,9 @@ def test_a_goal_follows_the_pushes_and_confirms_its_end(goal_robot, goal_fake, d
     assert status.state is GoalState.REACHED and status.x == pytest.approx(0.3)  # REP-103: the body's y is forward
     running = [s.progress for s in seen if s.state is GoalState.RUNNING]
     assert len(running) >= 3 and running == sorted(running)
-    asks = len(goal_fake.requests("goal_status_get")) - 1  # less connect()'s probe
-    assert 1 <= asks <= 3  # the pushes carry the progress; the requests only confirm
+    asks = [m for _, m in goal_fake.received if m.WhichOneof("message") == "sub_notif"
+            and m.sub_notif.tag == _tag("goal_status")]
+    assert 1 <= len(asks) - 1 <= 3  # less connect()'s subscribe: the pushes carry the progress, the snapshots confirm
 
 
 def test_a_goal_the_robot_refuses_raises_its_reason(goal_robot, goal_fake):

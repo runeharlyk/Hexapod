@@ -18,6 +18,7 @@ import argparse
 import queue
 import shlex
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -29,6 +30,8 @@ from src.robot.animation_files import load_json, to_proto
 ROOT = Path(__file__).resolve().parents[1]
 CHUNK = 512
 QUIET_S = 2.0
+# A firmware from before the snapshots acks no subscribe, so the wait for the acks is bounded.
+ACK_WAIT_S = 1.0
 ANIMATION_STATUS_TAG = message_pb2.Message.DESCRIPTOR.fields_by_name["animation_status"].number
 MODE_TAG = message_pb2.Message.DESCRIPTOR.fields_by_name["mode"].number
 
@@ -81,15 +84,25 @@ def follow(link: SerialLink, send) -> None:
     quiet that long. A hold, or QUIET_S of PLAYING whose clock has wrapped, never settles on its own, so
     following ends there with the reason; Ctrl-C ends it too."""
     events = queue.Queue()
+    # The robot answers each subscribe with the topic's current value and then the ack: the state before the command,
+    # no answer to it, so what comes before both acks is not followed.
+    unacked = {ANIMATION_STATUS_TAG, MODE_TAG}
+    acked = threading.Event()
 
     def route(msg):
         kind = msg.WhichOneof("message")
-        if kind in ("animation_status", "mode"):
+        if kind == "sub_notif":
+            unacked.discard(msg.sub_notif.tag)
+            if not unacked:
+                acked.set()
+        elif kind in ("animation_status", "mode") and acked.is_set():
             events.put((kind, getattr(msg, kind)))
 
     link.on_message = route
     link.subscribe(ANIMATION_STATUS_TAG)
     link.subscribe(MODE_TAG)
+    acked.wait(ACK_WAIT_S)
+    acked.set()
     send()
     idle = False
     state, since, last_t, wrapped = None, time.time(), 0.0, False
