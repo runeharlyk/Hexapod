@@ -248,6 +248,7 @@ export default class SceneBuilder {
     this.modelGroup.add(model)
     this.model = model
     this.scene.add(this.modelGroup)
+    this.invalidate()
     return this
   }
 
