@@ -169,7 +169,8 @@ message FeaturesDataResponse {
 
 // Calibrates the MPU6050 on a robot lying still and level: the gyro bias goes to zero and the
 // accelerometer to straight down. Answered with an empty response: 200 calibrated, 409 the robot is
-// not resting (deactivated or idle), 422 it moved or lies tilted, 503 there is no IMU.
+// not resting (deactivated or idle), 422 it moved or lies tilted, 503 there is no IMU, 500 the
+// calibration could not start, 504 it did not finish within 10 s.
 message ImuCalibrateRequest {}
 
 // The offsets the calibration wrote into the chip, persisted and applied at boot.

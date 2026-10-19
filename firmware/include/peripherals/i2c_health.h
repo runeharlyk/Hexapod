@@ -68,13 +68,21 @@ class ErrorTable {
  * its byte. Clocking frees only that case: a held SCL is a device stretching the clock, or one without
  * power clamping both lines. A recovery restarts the bus, which costs more than a transfer, so a device
  * that never lets go is tried at most once a second rather than on every failed transfer.
+ *
+ * The restart binds the bus's interrupt to the core it runs on (IDF 5.4.2), and a transfer from the
+ * other core can take a stale completion for its own. So only the core that opened the bus recovers it:
+ * the held SDA fails that core's next transfer as well, and the other core's failure leaves the slot.
  */
 class RecoveryLimiter {
   public:
     static constexpr int64_t INTERVAL_US = 1000000;
 
-    bool due(bool sdaLow, bool sclLow, int64_t nowUs) {
-        if (!sdaLow || sclLow || nowUs < _nextUs) return false;
+    // The bus was opened on `core`, which its interrupt is now bound to.
+    void opened(int core) { _ownerCore = core; }
+
+    // Whether a transfer that failed on `core` with these line levels clocks the bus free now.
+    bool due(bool sdaLow, bool sclLow, int64_t nowUs, int core) {
+        if (core != _ownerCore || !sdaLow || sclLow || nowUs < _nextUs) return false;
         _nextUs = nowUs + INTERVAL_US;
         _count++;
         return true;
@@ -86,6 +94,7 @@ class RecoveryLimiter {
   private:
     int64_t _nextUs = 0;
     uint32_t _count = 0;
+    int _ownerCore = 0;
 };
 
 /**

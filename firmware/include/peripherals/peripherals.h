@@ -131,8 +131,9 @@ class Peripherals {
 #endif
     }
 
-    // Runs on the requesting adapter task for the second or two the PID loops take; the control
-    // loop skips its IMU reads meanwhile. The caller checks that the robot rests.
+    // Runs for the second or two the PID loops take, on a task on core 1 that the request waits for
+    // (main.cpp, calibrateImuOnCore1); the control loop skips its IMU reads meanwhile. The caller
+    // checks that the robot rests.
     imu_calibration::Check calibrateIMU(ImuCalibration &result) {
 #if FT_ENABLED(USE_MPU6050)
         static int16_t gyro[100][3];

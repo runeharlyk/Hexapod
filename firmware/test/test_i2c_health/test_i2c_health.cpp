@@ -12,6 +12,9 @@ namespace {
 
 constexpr int TIMEOUT_MS = 20;
 constexpr int TICK_MS = 1;
+// The control task's core, which opens the bus, and the core the BLE transport task is pinned to.
+constexpr int CONTROL_CORE = 1;
+constexpr int OTHER_CORE = 0;
 
 // Two open-drain lines with pull-ups, the master's drivers, and a device that was cut off mid-read: it
 // holds SDA low until SCL has risen `heldForPulses` more times, or for good when that is negative. It
@@ -120,9 +123,10 @@ void test_a_full_table_keeps_the_devices_it_lists() {
 // A device that never lets go fails every transfer: 150 of them 10 ms apart get two recoveries, not 150.
 void test_a_held_sda_is_recovered_at_most_once_a_second() {
     i2c_health::RecoveryLimiter limiter;
+    limiter.opened(CONTROL_CORE);
     int64_t now = 5000000;
     int recoveries = 0;
-    for (int i = 0; i < 150; i++, now += 10000) recoveries += limiter.due(true, false, now);
+    for (int i = 0; i < 150; i++, now += 10000) recoveries += limiter.due(true, false, now, CONTROL_CORE);
     TEST_ASSERT_EQUAL_INT(2, recoveries);
     TEST_ASSERT_EQUAL_UINT32(2, limiter.count());
 }
@@ -131,11 +135,33 @@ void test_a_held_sda_is_recovered_at_most_once_a_second() {
 // pulses free neither.
 void test_only_a_held_sda_on_a_free_clock_is_recovered() {
     i2c_health::RecoveryLimiter limiter;
-    TEST_ASSERT_FALSE(limiter.due(true, true, 5000000));
-    TEST_ASSERT_FALSE(limiter.due(false, true, 5000000));
-    TEST_ASSERT_FALSE(limiter.due(false, false, 5000000));
+    limiter.opened(CONTROL_CORE);
+    TEST_ASSERT_FALSE(limiter.due(true, true, 5000000, CONTROL_CORE));
+    TEST_ASSERT_FALSE(limiter.due(false, true, 5000000, CONTROL_CORE));
+    TEST_ASSERT_FALSE(limiter.due(false, false, 5000000, CONTROL_CORE));
     TEST_ASSERT_EQUAL_UINT32(0, limiter.count());
-    TEST_ASSERT_TRUE(limiter.due(true, false, 5000000));
+    TEST_ASSERT_TRUE(limiter.due(true, false, 5000000, CONTROL_CORE));
+}
+
+// A recovery reopens the bus, and the driver binds the bus's interrupt to the core that opens it: one from the
+// other core would move the interrupt there for good. It is left to the owner core, whose next failing transfer
+// finds the same held SDA, and the other core's failure does not spend the once-a-second slot.
+void test_a_held_sda_seen_from_another_core_is_left_to_the_core_that_opened_the_bus() {
+    i2c_health::RecoveryLimiter limiter;
+    limiter.opened(CONTROL_CORE);
+    TEST_ASSERT_FALSE(limiter.due(true, false, 5000000, OTHER_CORE));
+    TEST_ASSERT_EQUAL_UINT32(0, limiter.count());
+    TEST_ASSERT_TRUE(limiter.due(true, false, 5000000, CONTROL_CORE));
+    TEST_ASSERT_EQUAL_UINT32(1, limiter.count());
+}
+
+// The owner is the core that opened the bus last, as the driver binds the interrupt anew at every opening.
+void test_the_bus_belongs_to_the_core_that_opened_it_last() {
+    i2c_health::RecoveryLimiter limiter;
+    limiter.opened(CONTROL_CORE);
+    limiter.opened(OTHER_CORE);
+    TEST_ASSERT_FALSE(limiter.due(true, false, 5000000, CONTROL_CORE));
+    TEST_ASSERT_TRUE(limiter.due(true, false, 5000000, OTHER_CORE));
 }
 
 // The ESP32 reset while the IMU was sending a byte of zeros with four bits left: four pulses free it,
@@ -178,6 +204,8 @@ int main() {
     RUN_TEST(test_a_full_table_keeps_the_devices_it_lists);
     RUN_TEST(test_a_held_sda_is_recovered_at_most_once_a_second);
     RUN_TEST(test_only_a_held_sda_on_a_free_clock_is_recovered);
+    RUN_TEST(test_a_held_sda_seen_from_another_core_is_left_to_the_core_that_opened_the_bus);
+    RUN_TEST(test_the_bus_belongs_to_the_core_that_opened_it_last);
     RUN_TEST(test_a_device_holding_sda_is_clocked_free_and_stopped);
     RUN_TEST(test_a_device_that_never_lets_go_gets_nine_pulses);
     RUN_TEST(test_a_free_bus_gets_only_a_stop);

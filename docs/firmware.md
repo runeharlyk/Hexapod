@@ -62,6 +62,7 @@ Other tasks are created by the components that need them:
 - `BLE_Process` (core 0, priority 6), which reassembles and decodes BLE frames;
 - `serial_rx` (priority 4), which reads and decodes the USB serial link;
 - `dns_server` for the soft AP's captive-portal resolver;
+- `imu_cal` (core 1, priority 4, 4 KB stack), started for an IMU calibration request and ended with the calibration, so its I2C transfers run on the core the bus's interrupt is bound to ([I2C scan](#i2c-scan)); the transport task waits for it at most 10 s, within the app's 15 s request timeout, and answers 504 past that, and a calibration that ends later is dropped;
 - `ota_download` while an HTTPS firmware download runs (the camera is released first to free its internal RAM); the restart after an update runs from a one-shot `esp_timer` created at boot, so it needs no memory when the update ends;
 - the ESP-IDF tasks for WiFi, the event loop, NimBLE and `esp_http_server`.
 
@@ -281,6 +282,7 @@ IMU calibration offsets are measured on request while the robot rests, persisted
 The I2C page's scan probes every unreserved address, 0x08 to 0x77, and the reply lists every one that acknowledged (`include/peripherals/i2c_scan.h`).
 The probes run on the control task: the bus's interrupt is bound to the core that opened the bus, the control task's core 1, and in IDF 5.4.2 an `i2c_master_probe` from core 0 can take a stale completion of the previous probe for its own and report a device that is not there.
 Probed from the BLE task on core 0, the scan returned some 16 random low addresses, cut at the reply's former 16 entries, and none of the robot's real devices; the race is read from the driver source and not yet confirmed on the robot.
+Every other transfer runs on core 1 as well: the control task's, the EventBus worker's servo writes and the IMU calibration's `imu_cal` task, so no transfer from core 0 meets a probe's latched completion.
 The request handler posts the scan and waits for it, at most 500 ms; the control task probes up to eight addresses after each tick's servo write, so the sweep takes 14 ticks and never holds the bus across a tick.
 The driver probes at 100 kHz whatever the bus frequency, about 0.1 ms an address on the wire, so the eight cost a tick some 1 ms by estimate; the tick's `compute_us` in the telemetry includes them, which is where to read the real cost.
 A probe takes the bus lock without waiting, so the control task never waits on another task for it.
@@ -294,6 +296,7 @@ A failure that left SDA or SCL low, or that spent the transfer timeout (20 ms, l
 The counts are kept per device address since boot, survive a restart of the bus, and reach the app in `AnalyticsData.i2c_errors` with `i2c_bus_recoveries`; the metrics page lists them.
 A device cut off mid-read holds SDA low until it has clocked out its byte, and the driver's own bus clear does not free it on the ESP32-S3, because the peripheral reset that follows cuts the hardware's pulses short.
 So after a failure with SDA low and SCL high the bus releases its pins, gives up to nine SCL pulses on them and a STOP, and starts again, at most once a second.
+Only the core that opened the bus recovers it, as starting the bus binds its interrupt to the core that starts it: a failure on the other core leaves the once-a-second slot to the owner core's next transfer, which finds the same held SDA.
 A held SCL is clock stretching or a device without power clamping the lines, which pulses cannot free.
 
 Each PCA9685 is a `ServoBoard` with its own write backoff, so a board that stops answering neither stalls the control loop nor stops the other board's writes.

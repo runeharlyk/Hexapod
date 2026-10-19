@@ -237,6 +237,46 @@ static const char *i2cScanRefusal(I2CScan::Outcome outcome) {
     }
 }
 
+// IMU calibration's 1-2 s of transfers run on core 1, where the bus's interrupt is bound, like every other transfer: a
+// transfer from core 0 can take a stale completion for its own (I2C scan in docs/firmware.md). So a short-lived task
+// below the control task's priority calibrates, and the transport task waits for it, at most 10 s, within the app's
+// 15 s request timeout. A calibration that outlasts the wait is dropped when it ends.
+static constexpr TickType_t IMU_CALIBRATION_WAIT = pdMS_TO_TICKS(10000);
+
+enum class ImuCalibrationRun { DONE, NOT_STARTED, TIMED_OUT };
+
+// Shared by the waiting transport task and the calibration task; the later of the two to let go frees it.
+struct ImuCalibrationJob {
+    SemaphoreHandle_t done = xSemaphoreCreateBinary();
+    ImuCalibration result = ImuCalibration_defaults();
+    imu_calibration::Check check = imu_calibration::Check::MOVING;
+    ~ImuCalibrationJob() {
+        if (done) vSemaphoreDelete(done);
+    }
+};
+
+static void runImuCalibration(void *arg) {
+    std::unique_ptr<std::shared_ptr<ImuCalibrationJob>> job(static_cast<std::shared_ptr<ImuCalibrationJob> *>(arg));
+    (*job)->check = robot.calibrateIMU((*job)->result);
+    xSemaphoreGive((*job)->done);
+    job.reset();
+    vTaskDelete(nullptr);
+}
+
+static ImuCalibrationRun calibrateImuOnCore1(ImuCalibration &result, imu_calibration::Check &check) {
+    auto job = std::make_shared<ImuCalibrationJob>();
+    if (!job->done) return ImuCalibrationRun::NOT_STARTED;
+    auto *taskJob = new std::shared_ptr<ImuCalibrationJob>(job);
+    if (xTaskCreatePinnedToCore(runImuCalibration, "imu_cal", 4096, taskJob, 4, nullptr, 1) != pdPASS) {
+        delete taskJob;
+        return ImuCalibrationRun::NOT_STARTED;
+    }
+    if (xSemaphoreTake(job->done, IMU_CALIBRATION_WAIT) != pdTRUE) return ImuCalibrationRun::TIMED_OUT;
+    result = job->result;
+    check = job->check;
+    return ImuCalibrationRun::DONE;
+}
+
 // Settings are persisted as binary protobuf under FS_CONFIG_DIRECTORY (the files keep their legacy
 // .json names), so erasing NVS alone leaves WiFi credentials and servo calibration in place after a
 // factory reset.
@@ -509,7 +549,17 @@ static void registerHandlers(CommAdapterBase &c) {
                     res.status_code = 409;
                 } else {
                     ImuCalibration calibration;
-                    const imu_calibration::Check check = robot.calibrateIMU(calibration);
+                    imu_calibration::Check check;
+                    const ImuCalibrationRun run = calibrateImuOnCore1(calibration, check);
+                    if (run != ImuCalibrationRun::DONE) {
+                        const bool late = run == ImuCalibrationRun::TIMED_OUT;
+                        res.status_code = late ? 504 : 500;
+                        strncpy(res.error_message,
+                                late ? "The IMU calibration did not finish in time" : "No memory for the calibration",
+                                sizeof(res.error_message) - 1);
+                        ESP_LOGW(TAG, "IMU calibration: %s", res.error_message);
+                        break;
+                    }
                     if (check == imu_calibration::Check::OK) {
                         imuCalibrationService.update(
                             [&](ImuCalibration &state) { return ImuCalibration_update(calibration, state); },

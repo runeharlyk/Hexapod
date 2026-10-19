@@ -76,6 +76,7 @@ class I2CBus {
         }
 
         _initialized = true;
+        _recovery.opened(xPortGetCoreID());
         return ESP_OK;
     }
 
@@ -211,7 +212,7 @@ class I2CBus {
         const bool sclLow = gpio_get_level(_scl) == 0;
         _errors.count(addr, i2c_health::classify(err == ESP_ERR_TIMEOUT, elapsedUs, TRANSFER_TIMEOUT_MS,
                                                  portTICK_PERIOD_MS, sdaLow, sclLow));
-        if (_recovery.due(sdaLow, sclLow, esp_timer_get_time())) recover();
+        if (_recovery.due(sdaLow, sclLow, esp_timer_get_time(), xPortGetCoreID())) recover();
     }
 
     struct BusPins {
