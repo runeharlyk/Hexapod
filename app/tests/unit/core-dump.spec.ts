@@ -71,13 +71,12 @@ describe('lastCrash', () => {
   it('names the task, the PC, the backtrace and the build of a stored crash', () => {
     expect(lastCrash(watchdogCrash)).toEqual({
       kind: 'crash',
-      size: 1300,
       task: 'control',
       pc: '0x42012345',
       backtrace: '0x42012345 0x42023456 0x40378abc',
       panicReason: 'Task watchdog got triggered.',
       elf: RUNNING,
-      runningBuild: true
+      build: 'running'
     })
   })
 
@@ -88,7 +87,13 @@ describe('lastCrash', () => {
       appElfSha256: '0'.repeat(64),
       elfMatchesRunning: false
     })
-    expect(view).toMatchObject({ kind: 'crash', runningBuild: false, elf: '0'.repeat(64) })
+    expect(view).toMatchObject({ kind: 'crash', build: 'other', elf: '0'.repeat(64) })
+  })
+
+  // A dump without its version note names no build, so no hash can be matched against a release's.
+  it('says when the dump does not name the build that crashed', () => {
+    const view = lastCrash({ ...watchdogCrash, appElfSha256: '', elfMatchesRunning: false })
+    expect(view).toMatchObject({ kind: 'crash', build: 'unnamed', elf: '' })
   })
 
   it('marks a backtrace the unwinding could not trust to its end', () => {
@@ -103,7 +108,7 @@ describe('lastCrash', () => {
     })
   })
 
-  it('shows a stored dump that fails its checksum by its size alone', () => {
+  it('shows a stored dump it could not read by its size alone', () => {
     expect(lastCrash(report({ stored: true, size: 4096 }))).toEqual({
       kind: 'unreadable',
       size: 4096

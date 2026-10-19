@@ -87,13 +87,19 @@
     <p>No crash stored.</p>
   {:else if crash.kind === 'unreadable'}
     <div class="alert alert-warning" role="alert">
-      A dump of {crash.size} bytes is stored, but it fails its checksum, so it has no summary.
+      A dump of {crash.size} bytes is stored, but the robot could not read a summary from it: it fails
+      its checksum, as a dump cut short does, or is not an ELF core dump.
     </div>
   {:else}
     <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
+      <dt class="font-bold">Reason</dt>
       {#if crash.panicReason}
-        <dt class="font-bold">Reason</dt>
         <dd class="whitespace-pre-line">{crash.panicReason}</dd>
+      {:else}
+        <dd class="opacity-75">
+          Not in the dump, which keeps only a task watchdog's; an exception's, assert's or abort's
+          is on the serial log.
+        </dd>
       {/if}
       <dt class="font-bold">Task</dt>
       <dd>{crash.task}</dd>
@@ -103,13 +109,20 @@
         <dt class="font-bold">Backtrace</dt>
         <dd class="font-mono break-all">{crash.backtrace}</dd>
       {/if}
-      <dt class="font-bold">Firmware ELF</dt>
-      <dd class="font-mono break-all">{crash.elf}</dd>
+      {#if crash.elf}
+        <dt class="font-bold">Firmware ELF</dt>
+        <dd class="font-mono break-all">{crash.elf}</dd>
+      {/if}
     </dl>
-    {#if !crash.runningBuild}
+    {#if crash.build === 'other'}
       <div class="alert alert-warning mt-2" role="alert">
         The crash came from another build than the one running now: decode it with the ELF of the
         build whose SHA-256 begins as above.
+      </div>
+    {:else if crash.build === 'unnamed'}
+      <div class="alert alert-warning mt-2" role="alert">
+        The dump does not name the build that crashed: decode it with the ELF of the build that was
+        running then.
       </div>
     {/if}
   {/if}

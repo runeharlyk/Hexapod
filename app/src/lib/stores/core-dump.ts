@@ -32,33 +32,37 @@ export type LastCrash =
   | { kind: 'unreadable'; size: number }
   | {
       kind: 'crash'
-      size: number
       task: string
       pc: string
       backtrace: string
       panicReason: string
       elf: string
-      /** The running build's ELF decodes the dump; otherwise the ELF of the build that crashed does. */
-      runningBuild: boolean
+      /**
+       * Whose ELF decodes the dump: the running build's, another build's whose hash begins `elf`, or, when the dump
+       * names none, the build that was running at the crash.
+       */
+      build: 'running' | 'other' | 'unnamed'
     }
 
 const hex = (address: number) => `0x${address.toString(16).padStart(8, '0')}`
 
-/** What the card shows of a report: nothing stored, a dump that fails its checksum, or the crash it holds. */
+/** What the card shows of a report: nothing stored, a dump the robot could not read, or the crash it holds. */
 export const lastCrash = (report: CoreDumpReport): LastCrash => {
   if (!report.stored) return { kind: 'none' }
   if (!report.readable) return { kind: 'unreadable', size: report.size }
   const addresses = report.backtrace.map(hex).join(' ')
   return {
     kind: 'crash',
-    size: report.size,
     task: report.task,
     pc: hex(report.pc),
     // As the IDF's panic handler prints a backtrace whose unwinding stopped.
     backtrace: report.backtraceCorrupted ? `${addresses} |<-CORRUPTED` : addresses,
     panicReason: report.panicReason,
     elf: report.appElfSha256,
-    runningBuild: report.elfMatchesRunning
+    build:
+      report.elfMatchesRunning ? 'running'
+      : report.appElfSha256 ? 'other'
+      : 'unnamed'
   }
 }
 
