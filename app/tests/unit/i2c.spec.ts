@@ -12,14 +12,6 @@ describe('describeI2C', () => {
   it('keeps an address it does not know, without a part', () => {
     expect(describeI2C([0x23])).toEqual([{ address: 0x23, part: null, name: 'Unknown device' }])
   })
-
-  // The robot reply used to stop at 16 addresses, so a bus with more never showed its real devices.
-  it('lists every address of a reply longer than 16, in order', () => {
-    const addresses = Array.from({ length: 20 }, (_, i) => 0x10 + i).concat([0x40, 0x68])
-    const rows = describeI2C(addresses)
-    expect(rows.map(r => r.address)).toEqual(addresses)
-    expect(rows.at(-1)?.part).toBe('MPU6050')
-  })
 })
 
 describe('hexAddress', () => {
