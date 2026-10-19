@@ -92,6 +92,7 @@ EspNowAdapter espNow;
 CpuMonitor cpuMonitor;
 TaskStats taskStats;
 EspCoreDumpStore coreDumpStore;
+core_dump::Readout coreDump(coreDumpStore);
 static temperature_sensor_handle_t coreTempSensor = nullptr;
 
 // Control-loop iterations since boot. The OTA image is only confirmed once this shows the loop has
@@ -136,17 +137,24 @@ static void runningElfSha256(char out[65]) {
     for (int i = 0; i < 32; i++) snprintf(out + 2 * i, 3, "%02x", sha[i]);
 }
 
-// Kept apart from the correlation handler, so the hash's buffer is not part of its frame.
-static void reportCoreDump(socket_message_CoreDumpReport &report) {
+// Before the transports and the control task start: the check reads the whole dump from flash, parking the other
+// core for each read.
+static void checkCoreDump() {
     char running[65];
     runningElfSha256(running);
-    core_dump::report(coreDumpStore, running, report);
+    const int64_t startUs = esp_timer_get_time();
+    coreDump.check(running);
+    const int64_t tookUs = esp_timer_get_time() - startUs;
+    socket_message_CoreDumpReport report;
+    coreDump.report(report);
+    ESP_LOGI(TAG, "Core dump: %lu bytes, %s, checked in %lld us", (unsigned long)report.size,
+             report.readable ? "readable" : "unreadable", tookUs);
 }
 
 static uint32_t eraseCoreDump(socket_message_CoreDumpReport &report) {
     char running[65];
     runningElfSha256(running);
-    return core_dump::erase(coreDumpStore, robot.resting(), running, report);
+    return coreDump.erase(robot.resting(), running, report);
 }
 
 static void replyOta(socket_message_CorrelationResponse &res, const OtaReply &reply) {
@@ -614,7 +622,7 @@ static void registerHandlers(CommAdapterBase &c) {
             }
             case socket_message_CorrelationRequest_core_dump_get_tag: {
                 res.which_response = socket_message_CorrelationResponse_core_dump_report_tag;
-                reportCoreDump(res.response.core_dump_report);
+                coreDump.report(res.response.core_dump_report);
                 break;
             }
             case socket_message_CorrelationRequest_core_dump_read_tag: {
@@ -1007,6 +1015,7 @@ extern "C" void app_main() {
     servoSettingsService.begin();
     peripheralSettingsService.begin();
     imuCalibrationService.begin();  // before the control task applies the offsets
+    checkCoreDump();
 
     xTaskCreate(serviceLoop, "service", 8192, nullptr, 2, nullptr);
     xTaskCreatePinnedToCore(controlLoop, "control", 8192, nullptr, 5, nullptr, 1);

@@ -88,6 +88,8 @@ CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y
 # can decode them after a crash.
 CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
 CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+# app_main checks the dump once for the status page (core_dump::Readout); the IDF's own boot check would read it twice.
+CONFIG_ESP_COREDUMP_CHECK_BOOT=n
 # The dump names the crashed firmware by its ELF's SHA-256 in this many hex digits, from a RAM copy of the string
 # (55 bytes more than the default 9): all 64, so the status page matches it against a build's full hash.
 CONFIG_APP_RETRIEVE_LEN_ELF_SHA=64

@@ -11,8 +11,8 @@
 #include <core_dump.h>
 #include <communication/webserver.h>
 
-#if !CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH || !CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF
-#error "the core-dump summary needs CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH and CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF"
+#if !CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH || !CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF || !CONFIG_ESP_COREDUMP_CHECKSUM_CRC32
+#error "the core-dump readout reads ELF dumps with a CRC32 checksum from flash (core_dump::ELF_CRC32)"
 #endif
 #if !CONFIG_IDF_TARGET_ARCH_XTENSA
 #error "the backtrace is read from the Xtensa summary; a RISC-V dump holds the stack instead"
@@ -26,21 +26,23 @@ class EspCoreDumpStore : public core_dump::Store {
     }
 
     // esp_core_dump_get_summary parses the mapped dump without checking it, so a dump cut short by a reset is
-    // checked first, which reads the whole dump in 32-byte steps on the asking transport's task. The summary starts
-    // zeroed: the IDF fills only what the dump's notes and segments hold.
+    // checked first, which reads the whole dump in 32-byte steps; core_dump::Readout has that done once, at boot. The
+    // summary starts zeroed: the IDF fills only what the dump's notes and segments hold.
     bool summary(core_dump::Summary& out) override {
         if (esp_core_dump_image_check() != ESP_OK) return false;
         esp_core_dump_summary_t summary {};
         if (esp_core_dump_get_summary(&summary) != ESP_OK) return false;
         core_dump::copyTerminated(out.task, summary.exc_task);
         out.pc = summary.exc_pc;
+        // The IDF writes the faulting PC and up to 16 frames after it, so a deep stack's 17th entry lands on depth,
+        // which then reads 17 (esp_core_dump_summary_parse_backtrace_info, port/xtensa/core_dump_port.c).
         out.depth = std::min<uint32_t>(summary.exc_bt_info.depth, std::size(out.backtrace));
         std::copy_n(summary.exc_bt_info.bt, out.depth, out.backtrace);
         out.backtraceCorrupted = summary.exc_bt_info.corrupted;
         static_assert(sizeof(summary.app_elf_sha256) <= sizeof(out.elfSha256));
         core_dump::copyTerminated(
             out.elfSha256, reinterpret_cast<const char(&)[sizeof(summary.app_elf_sha256)]>(summary.app_elf_sha256));
-        // Only aborts, asserts and watchdogs leave a reason.
+        // Only a task-watchdog panic leaves a reason; an assert's or abort's message goes to the serial log alone.
         if (esp_core_dump_get_panic_reason(out.panicReason, sizeof(out.panicReason)) != ESP_OK)
             out.panicReason[0] = '\0';
         return true;

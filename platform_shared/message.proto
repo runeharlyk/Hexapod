@@ -304,7 +304,7 @@ message GoalStatus {
 
 // The crash the robot kept: on a panic the IDF writes an ELF core dump to the coredump partition, which survives
 // restarts and updates until it is erased or the next crash replaces it (docs/firmware.md, "Decoding a core dump").
-// Answered with a CoreDumpReport.
+// Answered with a CoreDumpReport, from the check of the dump the robot makes at boot and after an erase.
 message CoreDumpGet {}
 // One chunk of the stored dump, counted from its first byte, answered as a FileReadChunk is: a FileChunk whose
 // total_size is the dump's size, 404 when none is stored, 400 for a length over 512. GET /api/coredump serves the
@@ -320,12 +320,14 @@ message CoreDumpErase {}
 message CoreDumpReport {
   bool stored = 1;                // a dump is stored
   uint32 size = 2;                // its bytes, as CoreDumpRead and GET /api/coredump deliver them
-  bool readable = 3;              // its checksum holds, so the fields below were read from it
+  bool readable = 3;              // an ELF dump whose checksum holds, so the fields below were read from it
   string task = 4;                // the task that crashed
   uint32 pc = 5;
-  repeated uint32 backtrace = 6;  // return addresses from the crash outward, at most 16
+  repeated uint32 backtrace = 6;  // the faulting PC, then the return addresses outward, at most 16 in all
   bool backtrace_corrupted = 7;   // the unwinding stopped at a frame it could not trust
-  string panic_reason = 8;        // the abort, assert or watchdog message; empty for an exception
+  // The task watchdog's message: the IDF (5.4) keeps no other panic's in the dump, so an abort's or assert's is on the
+  // serial log alone, and this is empty.
+  string panic_reason = 8;
   // Hex SHA-256 of the crashed firmware's ELF, as many leading digits as its CONFIG_APP_RETRIEVE_LEN_ELF_SHA kept: 64
   // since that is set, 9 before.
   string app_elf_sha256 = 9;
