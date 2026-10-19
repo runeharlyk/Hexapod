@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { derived, get, writable, type Writable } from 'svelte/store'
-import type { ITransport, LinkStatus } from '$lib/interfaces/transport.interface'
-import { CorrelationResponse, FeaturesDataResponse, Message } from '$lib/platform_shared/message'
+import { get, writable, type Writable } from 'svelte/store'
+import { FeaturesDataResponse } from '$lib/platform_shared/message'
+import { FakeRobot, fakeLink } from '../fake-robot/transport'
 
 type FeatureFlagsModule = typeof import('$lib/stores/featureFlags')
 
@@ -28,41 +28,20 @@ let robot: {
   asked: number
 }
 
+// The fake robot's features responder reads `robot`, so a test can change the answer or hold it.
 const fakeTransport = () => {
-  const status = writable<LinkStatus>('disconnected')
-  const dataCallbacks: ((bytes: Uint8Array) => void)[] = []
-  const connectCallbacks: (() => void)[] = []
-  const transport: ITransport = {
-    status,
-    connected: derived(status, s => s === 'connected'),
-    connect: async () => {
-      status.set('connected')
-      connectCallbacks.forEach(cb => cb())
-    },
-    disconnect: async () => status.set('disconnected'),
-    send: bytes => {
-      const request = Message.decode(bytes).correlationRequest
-      if (!request?.featuresDataRequest) return
-      robot.asked++
-      const reply = Message.encode(
-        Message.create({
-          correlationResponse: CorrelationResponse.create({
-            correlationId: request.correlationId,
-            statusCode: robot.statusCode,
-            errorMessage: robot.errorMessage,
-            featuresDataResponse: robot.features
-          })
-        })
-      ).finish()
-      const deliver = () => dataCallbacks.forEach(cb => cb(reply))
-      if (robot.holding) robot.held.push(deliver)
-      else queueMicrotask(deliver)
-    },
-    onData: cb => dataCallbacks.push(cb),
-    onConnect: cb => connectCallbacks.push(cb),
-    onDisconnect: () => {}
-  }
-  return transport
+  const fake = new FakeRobot()
+  fake.respond('featuresDataRequest', () => {
+    robot.asked++
+    const answer = {
+      statusCode: robot.statusCode,
+      errorMessage: robot.errorMessage,
+      featuresDataResponse: robot.features
+    }
+    if (!robot.holding) return answer
+    return new Promise<typeof answer>(release => robot.held.push(() => release(answer)))
+  })
+  return fakeLink(fake)
 }
 
 // The flags and the broker are module state: every test starts from a fresh load of both.

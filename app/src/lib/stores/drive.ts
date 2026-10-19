@@ -3,8 +3,8 @@ import { requestGait, requestMode } from '$lib/control'
 import { GaitType } from '$lib/gait'
 import { MotionModes } from '$lib/motion'
 import type { Command } from '$lib/simulation/virtual-robot'
-import { gait, input, mode, outControllerData } from './model-store'
-import { goalStatus } from './goal'
+import { gait, goalStatus, mode } from '$lib/robot/state'
+import { input, outControllerData } from './model-store'
 
 /**
  * The simulation view's own robot: the sticks, mode and gait the controls give it. None of them reaches the real

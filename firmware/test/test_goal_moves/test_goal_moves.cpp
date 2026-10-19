@@ -156,7 +156,7 @@ class FakeAdapter : public CommAdapterBase {
     }
 
   protected:
-    void send(const uint8_t *, size_t, int) override {}
+    bool send(const uint8_t *, size_t, int) override { return true; }
 };
 
 // A goal walked from a stand to its end: every tick's joint angles, and the body height the walk held at the end.

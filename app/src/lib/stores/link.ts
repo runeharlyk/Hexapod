@@ -5,6 +5,8 @@ import { ble } from '$lib/transport/ble-adapter'
 import { websocket } from '$lib/transport/websocket-adapter'
 import { serial, serialSupported } from '$lib/transport/serial-adapter'
 import { dataBroker } from '$lib/transport/databroker'
+import { get } from 'svelte/store'
+import { robotData } from '$lib/robot/data'
 import { location } from './location-store'
 
 export const latencyMs = dataBroker.latencyMs
@@ -83,12 +85,26 @@ export const connectWebsocket = () => {
   websocket.connect().catch(error => notifications.error(`WiFi connect failed: ${error}`))
 }
 
-export const connectBluetooth = () => {
-  ble.connect().catch(error => {
+/**
+ * Connects the WebSocket to the robot at `address`, which is another robot unless it is the address connected to. The
+ * robot left is disconnected before its data is forgotten, so the robot is asked again only on the next link: the new
+ * robot once it is reached, and nothing while it cannot be, rather than the robot left on the link still up.
+ */
+export const connectToAddress = async (address: string) => {
+  const next = address.trim()
+  const another = next !== get(location)
+  await websocket.disconnect()
+  if (another) robotData.reset()
+  location.set(next)
+  connectWebsocket()
+}
+
+// The device chosen may be another robot; a closed chooser chose none.
+export const connectBluetooth = () =>
+  ble.connect().then(robotData.reset, error => {
     if (error instanceof DOMException && error.name === 'NotFoundError') return
     notifications.error(`Bluetooth connect failed: ${error}`)
   })
-}
 
 export const serialAvailable = serialSupported
 
@@ -100,4 +116,5 @@ const reportSerialError = (error: unknown) => {
 
 export const connectSerial = () => serial.connect().catch(reportSerialError)
 
-export const chooseSerialPort = () => serial.choosePort().catch(reportSerialError)
+// The port chosen may lead to another robot.
+export const chooseSerialPort = () => serial.choosePort().then(robotData.reset, reportSerialError)

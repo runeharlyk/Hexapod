@@ -1,5 +1,3 @@
-import { GaitType } from '$lib/gait'
-import { MotionModes } from '$lib/motion'
 import type { ControllerInput } from '$lib/types/models'
 import type { Command } from '$lib/simulation/virtual-robot'
 import type { URDFRobot } from 'urdf-loader'
@@ -9,10 +7,6 @@ import { writable, type Writable } from 'svelte/store'
 export const jointNames = persistentStore('joint_names', <string[]>[])
 
 export const model = writable<URDFRobot>()
-
-export const mode: Writable<MotionModes> = writable(MotionModes.DEACTIVATED)
-
-export const gait: Writable<GaitType> = writable(GaitType.TRI_GATE)
 
 export const outControllerData = writable<Command>([0, 0, 0, 0, 0, 0, 0, 0, 0])
 

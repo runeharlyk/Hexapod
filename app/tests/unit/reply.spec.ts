@@ -22,7 +22,7 @@ const failing = (error: unknown) => ({
 
 describe('interpret', () => {
   it('reads any 2xx as an answer, the 202 of a running scan included', () => {
-    expect(interpret({ modeGet: {} }, reply(200)).kind).toBe('ok')
+    expect(interpret({ taskStatsRequest: {} }, reply(200)).kind).toBe('ok')
     expect(interpret({ wifiNetworksGet: {} }, reply(202)).kind).toBe('ok')
   })
 
@@ -190,8 +190,13 @@ describe('describeFailure', () => {
 
 describe('ask', () => {
   it('resolves to the reply the robot answered', async () => {
-    const answer = { ...reply(200), mode: { mode: 3, handheld: false } }
-    await expect(ask(answering(answer), { modeGet: {} }, 'the mode')).resolves.toBe(answer)
+    const answer = {
+      ...reply(200),
+      taskStats: { windowUs: 1, snapshotUs: 0, taskCount: 0, tasks: [] }
+    }
+    await expect(ask(answering(answer), { taskStatsRequest: {} }, 'the task table')).resolves.toBe(
+      answer
+    )
   })
 
   it('rejects with the failure and a sentence naming the feature', async () => {
@@ -205,18 +210,26 @@ describe('ask', () => {
 
   it("names the feature in the broker's timeout and drop", async () => {
     await expect(
-      ask(failing(new RequestFailed({ kind: 'timeout' })), { modeGet: {} }, 'the mode')
+      ask(
+        failing(new RequestFailed({ kind: 'timeout' })),
+        { taskStatsRequest: {} },
+        'the task table'
+      )
     ).rejects.toMatchObject({
       failure: { kind: 'timeout' },
-      message: 'the robot did not answer in time for the mode'
+      message: 'the robot did not answer in time for the task table'
     })
     await expect(
-      ask(failing(new RequestFailed({ kind: 'disconnected' })), { modeGet: {} }, 'the mode')
+      ask(
+        failing(new RequestFailed({ kind: 'disconnected' })),
+        { taskStatsRequest: {} },
+        'the task table'
+      )
     ).rejects.toMatchObject({ failure: { kind: 'disconnected' } })
   })
 
   it('lets an abort through as the AbortError it is', async () => {
     const abort = new DOMException('Aborted', 'AbortError')
-    await expect(ask(failing(abort), { wifiStatusGet: {} }, 'the Wi-Fi status')).rejects.toBe(abort)
+    await expect(ask(failing(abort), { coreDumpGet: {} }, 'the core dump')).rejects.toBe(abort)
   })
 })

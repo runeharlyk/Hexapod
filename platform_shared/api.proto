@@ -90,7 +90,6 @@ message WifiSettings {
 
 message WifiSettingsRequest {}
 message WifiNetworksRequest {}
-message WifiStatusRequest {}
 
 // WiFi scan result - single network found during scan
 message WifiNetworkScan {

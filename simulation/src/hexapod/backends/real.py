@@ -1,10 +1,10 @@
 """The real hexapod over its WebSocket (ws://<host>/api/ws) or its native USB serial port (COMx, /dev/tty*), in
 platform_shared/message.proto frames; both links carry the same messages, so only the transport differs.
 
-One thread runs an asyncio loop that owns the link; the public methods are synchronous. Once subscribed, the robot
-pushes its mode and gait on every change and its IMU angles at up to 40 Hz. Its mode is asked for at connect, and
-polled for the handheld's report (below); a firmware from before that request answers it 400, and the mode is then
-unknown until the first push, and never polled.
+One thread runs an asyncio loop that owns the link; the public methods are synchronous. The robot answers a subscribe
+to a state topic (mode, gait, goal status) with its current value, the snapshot, and then the subscribe echoed as its
+ack, and pushes every change after; it streams its IMU angles at up to 40 Hz. A firmware from before the snapshots
+acks nothing: the mode is then unknown until the first push, and the backend neither refreshes it nor takes goals.
 
 Keep-alive: while the robot is in a mode the app heartbeats (STAND, WALK, WALK_NN; app/src/lib/control-link.ts), the
 last input is re-sent every KEEPALIVE_S. The firmware drops a walk command after 600 ms without input while a stick
@@ -20,12 +20,13 @@ centred, so the robot stays stopped once the handheld lets go, and a walk in pro
 sleep or set_velocity, or at the next goal_move; a goal ends CANCELLED. A walk while the handheld drives is refused at
 once. After the handheld, the robot ignores this client's sticks until it has sent a centred one, so the first stick
 after a takeover, and the first of a connection, is sent after a centred input. The report is pushed only on a change,
-and a push can be dropped, so while the keep-alive runs or the handheld drives the mode is asked for every
-MODE_POLL_S, answered or not; a reply is dropped when a push arrived since its request, which is the newer.
+and a push can be dropped, so while the keep-alive runs or the handheld drives the mode is subscribed to again every
+REFRESH_S, which the robot answers with the current mode; the snapshot follows every push sent before it and precedes
+every push after, so it is never older than the mode last heard.
 
-Goals: a firmware from before them answers their requests 400, which connect() probes. The robot pushes a goal's
-status on each change, but a push can be dropped, so the status is asked for when none came for CONFIRM_S and to
-confirm the end a push reported.
+Goals: a firmware takes them when it answers the subscribe to the goal status with a snapshot before the ack, which
+connect() waits for. The robot pushes a goal's status on each change, but a push can be dropped, so the status is
+subscribed to again, for its snapshot, when none came for CONFIRM_S and to confirm the end a push reported.
 
 Dead-man detection: the firmware reports that timeout only in its per-tick telemetry (TickSample.link_lost), which this
 client does not subscribe to, so the client bounds it. Every input is followed by a ping on the same socket, and the
@@ -56,10 +57,11 @@ STEERING_TIMEOUT_S = 0.6
 HEARTBEAT_MODES = (Mode.STAND, Mode.WALK, Mode.WALK_NN)
 WALKING_MODES = (Mode.WALK, Mode.WALK_NN)
 REPLY_TIMEOUT_S = 3.0
+MODE_WAIT_S = 1.0  # fresh_mode's wait for the mode's snapshot, on the way out of a script
 SILENCE_S = 2.0  # pongs arrive every KEEPALIVE_S: this long without a frame means the link is gone
 CONFIRM_S = 1.0
-# Under the handheld's 600 ms window (motion_inbox.h HANDHELD_PRIORITY_MS), so a poll falls inside every drive.
-MODE_POLL_S = 0.4
+# Under the handheld's 600 ms window (motion_inbox.h HANDHELD_PRIORITY_MS), so a refresh falls inside every drive.
+REFRESH_S = 0.4
 RESET_POLL_S = 0.02
 ODOMETRY_ZERO = 1e-4  # m and rad: what a reset pose reads, a still robot's tick having moved it by less
 # The DMP yaw (mpu6050.h dmpGetYawPitchRoll) is atan2(2(xy - wz), 2(w^2 + x^2) - 1), clockwise-positive about the
@@ -151,8 +153,10 @@ class RealBackend:
         self._yaw: float | None = None
         self._sticks = speed_model.CENTRED
         self._handheld = False
-        self._polls_mode = False  # the firmware answers the mode request
-        self._mode_pushes = 0
+        self._snapshots = False  # the firmware answers a subscribe with the current value and an ack
+        # Per tag: the frames of it heard, and the subscribes awaiting their ack with that count when they went out.
+        self._heard: collections.Counter[int] = collections.Counter()
+        self._acks: dict[int, list[tuple[asyncio.Future, int]]] = {}
         self._taken_over = False  # the handheld took over a walk, which the script has not been told of yet
         self._centre_first = True  # the robot may be waiting for this client to send a centred stick
         self._style = Style()  # the posture and stride every input carries: set_height's height, then each goal's
@@ -169,12 +173,13 @@ class RealBackend:
     def connect(self) -> None:
         self._thread.start()
         try:
-            self._run(self._open(), READY_TIMEOUT_S + 1)
+            acks = self._run(self._open(), READY_TIMEOUT_S + 1)
             features = self._run(self._ask(pb.CorrelationRequest(features_data_request=pb.FeaturesDataRequest())))
             self._imu = features.features_data_response.imu
-            probe = self._run(self._ask(pb.CorrelationRequest(goal_status_get=pb.GoalStatusGet()), check=False))
-            self._goals = probe.status_code < 400 and probe.WhichOneof("response") == "goal_status"
-            self._polls_mode = self._run(self._ask_mode())
+            mode_acked = self._run(self._acked(acks["mode"])) is not None
+            # A firmware from before the snapshots acks none of these; one ack lost on the way is no such firmware.
+            self._snapshots = mode_acked or any(ack.done() for ack in acks.values())
+            self._goals = self._snapshots and bool(self._run(self._acked(acks["goal_status"])))
             if self._imu:
                 self._wait(lambda: self._yaw is not None, "the robot reports an IMU but sends no angles")
         except BaseException:
@@ -197,11 +202,27 @@ class RealBackend:
         await asyncio.gather(*self._tasks, return_exceptions=True)
         await self._transport.close()
 
-    async def _open(self) -> None:
+    async def _open(self) -> dict[str, asyncio.Future]:
         await self._transport.open()
-        for name in ("mode", "gait", "imu", "goal_status"):
-            await self._send(pb.Message(sub_notif=pb.SubscribeNotification(tag=_tag(name))))
-        self._tasks = [self._loop.create_task(task()) for task in (self._read, self._keep_alive, self._confirm_mode)]
+        acks = {name: await self._subscribe(name) for name in ("mode", "gait", "imu", "goal_status")}
+        self._tasks = [self._loop.create_task(task()) for task in (self._read, self._keep_alive, self._refresh_mode)]
+        return acks
+
+    # The future resolves on the subscribe's ack to whether a value of the topic, its snapshot, came before it.
+    async def _subscribe(self, name: str) -> asyncio.Future:
+        tag = _tag(name)
+        ack = self._loop.create_future()
+        with self._changed:
+            self._acks.setdefault(tag, []).append((ack, self._heard[tag]))
+        await self._send(pb.Message(sub_notif=pb.SubscribeNotification(tag=tag)))
+        return ack
+
+    # None when no ack came within the timeout, as from a firmware from before the snapshots.
+    async def _acked(self, ack: asyncio.Future, timeout: float | None = None) -> bool | None:
+        try:
+            return await asyncio.wait_for(asyncio.shield(ack), timeout or REPLY_TIMEOUT_S)
+        except TimeoutError:
+            return None
 
     async def _read(self) -> None:
         try:
@@ -232,10 +253,17 @@ class RealBackend:
                 future.set_result(reply)
             return
         with self._changed:
+            if kind == "sub_notif":
+                tag = message.sub_notif.tag
+                for ack, heard in self._acks.pop(tag, []):
+                    if not ack.done():
+                        ack.set_result(self._heard[tag] > heard)
+                return
+            if kind in ("mode", "gait", "goal_status"):
+                self._heard[_tag(kind)] += 1
             if kind == "goal_status":
                 self._hear_goal(message.goal_status, arrived)
             elif kind == "mode":
-                self._mode_pushes += 1
                 self._mode = Mode(message.mode.mode)
                 self._hear_handheld(message.mode.handheld)
             elif kind == "gait":
@@ -265,43 +293,18 @@ class RealBackend:
     def _hear_goal(self, status: pb.GoalStatus, arrived: float) -> None:
         self._goal, self._goal_heard = _goal_status(status), arrived
 
-    # A mode pushed after the request was sent is the newer: the robot pushes every change. False when the firmware
-    # predates the request.
-    async def _ask_mode(self) -> bool:
-        with self._changed:
-            pushes = self._mode_pushes
-        reply = await self._ask(pb.CorrelationRequest(mode_get=pb.ModeGet()), check=False)
-        answered = reply.status_code < 400 and reply.WhichOneof("response") == "mode"
-        with self._changed:
-            if answered and self._mode_pushes == pushes:
-                self._mode = Mode(reply.mode.mode)
-                self._hear_handheld(reply.mode.handheld)
-                self._changed.notify_all()
-        return answered
-
-    # Each poll goes out MODE_POLL_S after the last, answered or not, so neither the round trip nor a lost reply
-    # stretches the period past the handheld's window.
-    async def _confirm_mode(self) -> None:
-        polls: set[asyncio.Task] = set()
-        try:
-            while self._error is None:
-                await asyncio.sleep(MODE_POLL_S)
-                with self._changed:
-                    due = self._polls_mode and (self._handheld or self._mode in HEARTBEAT_MODES)
-                if due:
-                    poll = asyncio.create_task(self._poll_mode())
-                    polls.add(poll)
-                    poll.add_done_callback(polls.discard)
-        finally:
-            for poll in polls:
-                poll.cancel()
-            await asyncio.gather(*polls, return_exceptions=True)
-
-    async def _poll_mode(self) -> None:
-        try:
-            await self._ask_mode()
-        except (RobotError, asyncio.TimeoutError):
-            pass  # the reader reports a link that is gone; the next poll asks again
+    # Each refresh goes out REFRESH_S after the last, its snapshot heard or not, so a lost one stretches nothing; the
+    # snapshot comes in as a push does.
+    async def _refresh_mode(self) -> None:
+        while self._error is None:
+            await asyncio.sleep(REFRESH_S)
+            with self._changed:
+                due = self._snapshots and (self._handheld or self._mode in HEARTBEAT_MODES)
+            if due:
+                try:
+                    await self._send(pb.Message(sub_notif=pb.SubscribeNotification(tag=_tag("mode"))))
+                except RobotError:
+                    pass  # the reader reports a link that is gone
 
     async def _keep_alive(self) -> None:
         while self._error is None:
@@ -416,6 +419,20 @@ class RealBackend:
             return RobotState(t=time.monotonic(), mode=self._mode, gait=self._gait,
                               yaw=self._yaw if self._imu else None, link_drops=self._drops, handheld=self._handheld)
 
+    # Subscribes to the mode again, for its snapshot. A firmware from before the snapshots answers nothing but pushes
+    # every change, so the mode last heard is then as current as any. From a firmware that answers subscribes, an ack
+    # without the snapshot means the snapshot was lost, and no answer within MODE_WAIT_S that the link stalls, which
+    # holds back the pushes too: either way the mode last heard may be the very one the robot has left.
+    def fresh_mode(self) -> Mode | None:
+        async def ask() -> bool | None:
+            return await self._acked(await self._subscribe("mode"), MODE_WAIT_S)
+
+        snapshot = self._run(ask(), MODE_WAIT_S + 1)
+        with self._changed:
+            if snapshot is False or (snapshot is None and self._snapshots):
+                return None
+            return self._mode
+
     def now(self) -> float:
         return time.monotonic()
 
@@ -445,7 +462,14 @@ class RealBackend:
             heard, at = self._goal, self._goal_heard
         if heard is not None and not heard.ended and time.monotonic() - at < CONFIRM_S:
             return heard
-        return _goal_status(self._run(self._ask(pb.CorrelationRequest(goal_status_get=pb.GoalStatusGet()))).goal_status)
+        return self._run(self._goal_snapshot())
+
+    # Subscribes to the goal status again: the robot answers with the current status before the ack.
+    async def _goal_snapshot(self) -> GoalStatus:
+        if await self._acked(await self._subscribe("goal_status")) is None:
+            raise RobotTimeout(f"{self._transport.name} did not answer for the goal status")
+        with self._changed:
+            return self._goal
 
     def odometry(self) -> Odometry:
         o = self._read_odometry()

@@ -71,7 +71,7 @@ The mixed-content exemption is the load-bearing claim here and has not been prot
 
 Web Serial is a third transport: the firmware carries the same protobuf frames over the ESP32-S3's native USB Serial/JTAG port (`firmware/include/communication/serial_adapter.h`), and the app opens it from https like Web Bluetooth.
 Provisioning is the `wifi_settings_update` `CorrelationRequest` (`platform_shared/message.proto`), which works over every transport; the app's WiFi page sends it.
-`wifi_status_get` / `ap_status_get` answer with the current state, and `WifiStatus` / `APStatus` messages are pushed on change to subscribed clients.
+A subscribe to `WifiStatus` / `APStatus` is answered with the current state, and the messages are pushed on change to subscribed clients.
 Stored passwords are never sent back: reads return them empty, and an update with an empty password keeps the stored one.
 
 The `NET_STATUS` / `NET_COMMAND` topics, the `FORCE_AP` command, `app/src/lib/stores/network.ts` and the "Open over WiFi" offer described in earlier revisions of this document were never committed; they exist only in the local git stash `animation and nets`.

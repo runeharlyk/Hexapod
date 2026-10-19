@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
-  import { gait, jointNames, mode, model, outControllerData } from '$lib/stores'
+  import { jointNames, model, outControllerData } from '$lib/stores'
+  import { gait, mode } from '$lib/robot/state'
   import { populateModelCache } from '$lib/utilities'
   import SceneBuilder from '$lib/sceneBuilder'
   import { GUI } from 'three/addons/libs/lil-gui.module.min.js'

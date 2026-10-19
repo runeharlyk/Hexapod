@@ -1,10 +1,13 @@
 // The controls drive either the robot or the simulation view's own robot. While the simulation view is shown, its
 // sticks, mode and gait must never reach the robot's command path: the stick store the layout sends to the robot
-// (outControllerData) and the mode and gait requests sent over the data broker.
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+// (outControllerData) and the mode and gait requests sent over the data broker. The robot's mode, gait and goal come from
+// the fake robot's pushes, as the layout follows them.
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { get } from 'svelte/store'
 import { dataBroker } from '../../src/lib/transport/databroker'
-import { gait, input, mode, outControllerData } from '../../src/lib/stores'
+import { input, outControllerData } from '../../src/lib/stores'
+import { gait, goalStatus, mode, modeState } from '../../src/lib/robot/state'
+import { FakeRobot, fakeLink } from '../fake-robot/transport'
 import {
   drive,
   driveGait,
@@ -15,8 +18,15 @@ import {
   drivenMode,
   simulation
 } from '../../src/lib/stores/drive'
-import { clearGoalStatus, setGoalStatus } from '../../src/lib/stores/goal'
-import { GoalKind, GoalState } from '../../src/lib/platform_shared/message'
+import {
+  GaitData,
+  GaitEnum,
+  GoalKind,
+  GoalState,
+  GoalStatus,
+  ModeData,
+  ModesEnum
+} from '../../src/lib/platform_shared/message'
 import { commandOf } from '../../src/lib/controller-input'
 import { GaitType } from '../../src/lib/gait'
 import { MotionModes } from '../../src/lib/motion'
@@ -26,14 +36,29 @@ const CENTRED: Command = [0, 0, 0, 0, 0, 0, 0, 0, 0]
 const DEFLECTED: Command = [0.5, 0.4, -0.3, 0.2, 0.1, 0, 0, 0, 0]
 const sticks = (c: Command) => c.slice(0, 4)
 
-describe('the controls', () => {
-  let emit: ReturnType<typeof vi.spyOn>
+// Lets the robot's pushes, which arrive on later microtasks, land.
+const settle = () => new Promise(resolve => setTimeout(resolve, 0))
 
-  beforeEach(() => {
-    emit = vi.spyOn(dataBroker, 'emit').mockImplementation(() => {})
+describe('the controls', () => {
+  const robot = new FakeRobot()
+  const link = fakeLink(robot)
+  let emit: ReturnType<typeof vi.spyOn>
+  let following: (() => void)[] = []
+
+  beforeAll(async () => {
+    dataBroker.addTransport(link)
+    await link.connect()
+    following = [mode, gait, goalStatus, modeState].map(store => store.subscribe(() => {}))
+  })
+
+  afterAll(() => following.forEach(stop => stop()))
+
+  beforeEach(async () => {
+    emit = vi.spyOn(dataBroker, 'emit').mockImplementation(() => true)
     outControllerData.set(CENTRED)
-    mode.set(MotionModes.STAND)
-    gait.set(GaitType.TRI_GATE)
+    robot.set(ModeData, { mode: ModesEnum.STAND, handheld: false })
+    robot.set(GaitData, { gait: GaitEnum.TRI_GATE })
+    await settle()
   })
 
   afterEach(() => {
@@ -56,10 +81,12 @@ describe('the controls', () => {
     expect([get(drivenMode), get(drivenGait)]).toEqual([MotionModes.WALK, GaitType.WAVE])
   })
 
-  it("leave the simulation's mode where it is when the robot reports another", () => {
+  it("leave the simulation's mode where it is when the robot reports another", async () => {
     driveSimulation(true)
     driveMode(MotionModes.IDLE)
-    mode.set(MotionModes.WALK)
+    robot.set(ModeData, { mode: ModesEnum.WALK, handheld: false })
+    await settle()
+    expect(get(mode)).toBe(MotionModes.WALK)
     expect(get(simulation.mode)).toBe(MotionModes.IDLE)
     expect(get(drivenMode)).toBe(MotionModes.IDLE)
   })
@@ -111,31 +138,38 @@ describe('the controls', () => {
     expect(sliders()).toEqual(simSliders)
   })
 
-  it("show the robot's goal only while they drive the robot", () => {
-    setGoalStatus({
-      id: 1,
-      state: GoalState.GOAL_RUNNING,
-      kind: GoalKind.GOAL_FORWARD,
-      target: 1,
-      progress: 0.5,
-      x: 0,
-      y: 0,
-      yaw: 0,
-      passes: 1
-    })
+  it("show the robot's goal only while they drive the robot", async () => {
+    robot.set(
+      GoalStatus,
+      GoalStatus.create({
+        id: 1,
+        state: GoalState.GOAL_RUNNING,
+        kind: GoalKind.GOAL_FORWARD,
+        target: 1,
+        progress: 0.5,
+        passes: 1
+      })
+    )
+    await settle()
     expect(get(drivenGoal)?.id).toBe(1)
     driveSimulation(true)
     expect(get(drivenGoal)).toBeNull()
     driveSimulation(false)
     expect(get(drivenGoal)?.id).toBe(1)
-    clearGoalStatus()
+    robot.set(GoalStatus, GoalStatus.create())
+    await settle()
   })
 
-  it('drive the robot when the simulation view is not shown', () => {
+  // The mode shown is the robot's: the request changes it only once the robot pushes the change.
+  it('drive the robot when the simulation view is not shown', async () => {
     drive(DEFLECTED)
     driveMode(MotionModes.WALK)
     expect(get(outControllerData)).toEqual(DEFLECTED)
-    expect(get(mode)).toBe(MotionModes.WALK)
     expect(emit).toHaveBeenCalledTimes(1)
+    expect(get(mode)).toBe(MotionModes.STAND)
+
+    robot.set(ModeData, { mode: ModesEnum.WALK, handheld: false })
+    await settle()
+    expect(get(mode)).toBe(MotionModes.WALK)
   })
 })

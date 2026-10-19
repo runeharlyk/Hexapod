@@ -120,12 +120,14 @@ class SerialLink:
             with self._changed:
                 del self._replies[request.correlation_id]
 
-    def subscribe(self, tag: int) -> None:
-        """Once per tag: the robot records every subscription, so a repeat would double each frame."""
+    def subscribe(self, tag: int) -> bool:
+        """Once per tag: firmware before the idempotent subscribe records every subscription, so a repeat would double
+        each frame there. Whether it was sent now, and so is answered with the snapshot and the ack."""
         if tag in self._subscribed:
-            return
+            return False
         self.send(pb.Message(sub_notif=pb.SubscribeNotification(tag=tag)))
         self._subscribed.add(tag)
+        return True
 
     def _read(self) -> None:
         while not self._closing and self._error is None:

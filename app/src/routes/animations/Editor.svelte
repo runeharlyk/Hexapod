@@ -10,7 +10,8 @@
   import { MotionModes } from '$lib/motion'
   import { outControllerData } from '$lib/stores'
   import { isLinked } from '$lib/stores/link'
-  import { animationPreview, animationStatus } from '$lib/stores/animation'
+  import { animationPreview } from '$lib/stores/animation'
+  import { animationStatus, modeState } from '$lib/robot/state'
   import { clampedJoints, editor, sliderBase } from '$lib/stores/animation-editor'
   import {
     PoseSender,
@@ -19,8 +20,7 @@
     requestMode,
     stopAnimation
   } from '$lib/control'
-  import { dataBroker } from '$lib/transport/databroker'
-  import { AnimationState, ModeData } from '$lib/platform_shared/message'
+  import { AnimationState, type ModeData } from '$lib/platform_shared/message'
   import {
     froundAnimation,
     loadAnimationJson,
@@ -73,8 +73,11 @@
       pose.subscribe(p => sender?.send(p)),
       // The robot drops a pose sent before it applied ANIMATE, and after a play it rests at stance;
       // both leave it off the preview until the pose changes, so the pose goes out again.
-      dataBroker.on(ModeData, data => {
-        if (Object.values(MotionModes)[data.mode] === MotionModes.ANIMATE) sender?.resend()
+      modeState.subscribe(({ value }) => {
+        if (value === modeSeen) return
+        modeSeen = value
+        if (value && Object.values(MotionModes)[value.mode] === MotionModes.ANIMATE)
+          sender?.resend()
       }),
       animationStatus.subscribe(status => {
         const state = status?.state ?? AnimationState.ANIM_IDLE
@@ -86,6 +89,8 @@
   })
 
   let lastState = AnimationState.ANIM_IDLE
+  // Every mode the robot reports, a repeat of ANIMATE among them, arrives as a new value.
+  let modeSeen: ModeData | undefined
 
   onDestroy(() => {
     unsubscribers.forEach(unsubscribe => unsubscribe())

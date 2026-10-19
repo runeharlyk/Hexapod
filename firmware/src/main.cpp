@@ -473,11 +473,6 @@ static void registerHandlers(CommAdapterBase &c) {
                 else if (count == -2) res.status_code = 503;  // radio busy (STA connecting); give up
                 break;
             }
-            case socket_message_CorrelationRequest_wifi_status_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_wifi_status_tag;
-                WiFiService::statusProto(res.response.wifi_status);
-                break;
-            }
             case socket_message_CorrelationRequest_ap_settings_get_tag: {
                 res.which_response = socket_message_CorrelationResponse_ap_settings_tag;
                 redactedApSettings(res.response.ap_settings);
@@ -490,11 +485,6 @@ static void registerHandlers(CommAdapterBase &c) {
                 if (r == StateUpdateResult::ERROR) res.status_code = 400;
                 res.which_response = socket_message_CorrelationResponse_ap_settings_tag;
                 redactedApSettings(res.response.ap_settings);
-                break;
-            }
-            case socket_message_CorrelationRequest_ap_status_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_ap_status_tag;
-                apService.statusProto(res.response.ap_status);
                 break;
             }
             case socket_message_CorrelationRequest_mdns_status_get_tag: {
@@ -682,17 +672,6 @@ static void registerHandlers(CommAdapterBase &c) {
                 robot.cancelGoal();
                 break;
             }
-            case socket_message_CorrelationRequest_goal_status_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_goal_status_tag;
-                res.response.goal_status = robot.motion().goalStatus();
-                break;
-            }
-            case socket_message_CorrelationRequest_mode_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_mode_tag;
-                res.response.mode.mode = static_cast<socket_message_ModesEnum>(robot.motion().appliedMode());
-                res.response.mode.handheld = robot.motion().handheldDriving();
-                break;
-            }
             case socket_message_CorrelationRequest_task_stats_request_tag: {
                 res.which_response = socket_message_CorrelationResponse_task_stats_tag;
                 res.status_code = taskStats.fill(res.response.task_stats);
@@ -756,6 +735,15 @@ static void answerMdnsScan() {
     if (transport && !transport->offer(res, client->id))
         ESP_LOGW(TAG, "mDNS scan reply dropped: client %d takes no data now", client->id);
     heap_caps_free(memory);
+}
+
+// A state push a client could not take is sent again, as the current value, once it can (CommAdapterBase::resendDirty).
+static void resendDroppedState() {
+    wsSocket.resendDirty();
+    bleAdapter.resendDirty();
+#if FT_ENABLED(USE_SERIAL_LINK)
+    serialAdapter.resendDirty();
+#endif
 }
 
 template <typename T>
@@ -831,6 +819,61 @@ static void observeStatus() {
     addBridge<ProtoT, Bus>(MessageTraits<ProtoT>::tag, [](const ProtoT &s) { emitAll(s); });
 }
 
+// A status no one has published yet is its idle value, the zero of its message (OTA_IDLE, ANIM_IDLE, and TRI_GATE,
+// the gait MotionService starts in), so every state topic has a value from boot.
+template <typename ProtoT, typename Bus = EventBus<ProtoT>>
+static ProtoT latestOr(ProtoT idle) {
+    ProtoT latest;
+    return Bus::peek(latest) ? latest : idle;
+}
+
+// What a subscribe to each topic is answered with (communication/topics.h). The snapshots read the owners the bridges
+// above push from, as the replies do; none waits on an EventBus worker, and no owner pushes while holding a lock its
+// snapshot takes: MotionInbox and the services publish to the EventBus, never to an adapter.
+static constexpr Topic TOPICS[] = {
+    {MessageTraits<socket_message_IMUData>::tag, TopicKind::STREAM, nullptr},
+    {MessageTraits<socket_message_ModeData>::tag, TopicKind::STATE,
+     [](SnapshotSink &sink) {
+         socket_message_ModeData mode = socket_message_ModeData_init_zero;
+         mode.mode = static_cast<socket_message_ModesEnum>(robot.motion().appliedMode());
+         mode.handheld = robot.motion().handheldDriving();
+         sink.put(mode);
+     }},
+    {MessageTraits<socket_message_AnalyticsData>::tag, TopicKind::STREAM, nullptr},
+    {MessageTraits<socket_message_GaitData>::tag, TopicKind::STATE,
+     [](SnapshotSink &sink) {
+         // The gait last asked for, which the bridge pushes too; MotionService::begin() publishes the one it starts in.
+         socket_message_GaitData gait = socket_message_GaitData_init_zero;
+         gait.gait = static_cast<socket_message_GaitEnum>(latestOr<GaitMsg>({GaitType::TRI_GATE}).gait);
+         sink.put(gait);
+     }},
+    {MessageTraits<socket_message_AnglesData>::tag, TopicKind::STREAM, nullptr},
+    {MessageTraits<api_WifiStatus>::tag, TopicKind::STATE,
+     [](SnapshotSink &sink) {
+         api_WifiStatus status = api_WifiStatus_init_zero;
+         WiFiService::statusProto(status);
+         sink.put(status);
+     }},
+    {MessageTraits<api_APStatus>::tag, TopicKind::STATE,
+     [](SnapshotSink &sink) {
+         api_APStatus status = api_APStatus_init_zero;
+         apService.statusProto(status);
+         sink.put(status);
+     }},
+    {MessageTraits<socket_message_OtaStatusData>::tag, TopicKind::STATE,
+     [](SnapshotSink &sink) {
+         sink.put(latestOr<socket_message_OtaStatusData>(socket_message_OtaStatusData_init_zero));
+     }},
+    {MessageTraits<socket_message_AnimationStatus>::tag, TopicKind::STATE,
+     [](SnapshotSink &sink) {
+         sink.put(latestOr<socket_message_AnimationStatus>(socket_message_AnimationStatus_init_zero));
+     }},
+    {MessageTraits<socket_message_TelemetryBatch>::tag, TopicKind::STREAM, nullptr},
+    {MessageTraits<socket_message_GoalStatus>::tag, TopicKind::STATE,
+     [](SnapshotSink &sink) { sink.put(robot.motion().goalStatus()); }},
+};
+static_assert(servesEveryTopic(TOPICS), "TOPICS serves every topic of TOPIC_KINDS, a snapshot for each state");
+
 static void initNvs() {
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -886,8 +929,11 @@ static void setupServer() {
 static void setupComm() {
     registerHandlers(wsSocket);
     registerHandlers(bleAdapter);
+    wsSocket.setTopics(TOPICS);
+    bleAdapter.setTopics(TOPICS);
 #if FT_ENABLED(USE_SERIAL_LINK)
     registerHandlers(serialAdapter);
+    serialAdapter.setTopics(TOPICS);
     serialAdapter.onSubscriptionChange(refreshBridge);
 #endif
 
@@ -1096,6 +1142,7 @@ static void serviceLoop(void *) {
         EXECUTE_EVERY_N_MS(1000, otaSession.expire(esp_timer_get_time() / 1000));
         sendTelemetry();
         answerMdnsScan();
+        resendDroppedState();
         EXECUTE_EVERY_N_MS(2000, {
             // sample() keeps running regardless: its uint32 idle-counter deltas only stay valid
             // over short windows. fillAnalytics() stats the filesystem, so that waits for a client.

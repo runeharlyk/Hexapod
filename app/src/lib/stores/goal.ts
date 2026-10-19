@@ -1,13 +1,6 @@
-import { get, writable, type Readable } from 'svelte/store'
 import { GoalKind, GoalState, GoalStatus } from '$lib/platform_shared/message'
-import { ask, type Reply } from '$lib/transport/reply'
 
 export const GOAL_END_HOLD_MS = 3000
-
-const status = writable<GoalStatus | null>(null)
-let dropTimer: ReturnType<typeof setTimeout> | undefined
-
-export const goalStatus: Readable<GoalStatus | null> = { subscribe: status.subscribe }
 
 export const isGoalActive = (s: GoalStatus) =>
   s.state === GoalState.GOAL_SETTLING || s.state === GoalState.GOAL_RUNNING
@@ -40,49 +33,4 @@ export const goalLine = (s: GoalStatus): string | null => {
   }
   const ended = ENDED[s.state]
   return ended ? `${move.noun} ${ended}` : null
-}
-
-const stopDrop = () => {
-  clearTimeout(dropTimer)
-  dropTimer = undefined
-}
-
-export const clearGoalStatus = () => {
-  stopDrop()
-  status.set(null)
-}
-
-export const setGoalStatus = (s: GoalStatus) => {
-  stopDrop()
-  if (s.state === GoalState.GOAL_IDLE) return status.set(null)
-  status.set(s)
-  if (!isGoalActive(s)) dropTimer = setTimeout(clearGoalStatus, GOAL_END_HOLD_MS)
-}
-
-/** What the goal status needs of the data broker (transport/databroker.ts): its pushes and one request. */
-export interface GoalStatusLink {
-  on(fns: typeof GoalStatus, callback: (status: GoalStatus) => void): () => void
-  request(payload: { goalStatusGet: object }): Promise<{ goalStatus?: GoalStatus } & Reply>
-}
-
-/**
- * Follows the robot's goal: every push updates the status, and it clears at once when the link drops. A goal already
- * running when the link comes up pushed its status before anyone listened, so it is requested once; a push that beat
- * the reply is newer than it. Returns the function that stops following.
- */
-export const followGoalStatus = (broker: GoalStatusLink, linked: Readable<boolean>) => {
-  const requestRunningGoal = async () => {
-    const res = await ask(broker, { goalStatusGet: {} }, 'the goal status').catch(() => null)
-    if (res?.goalStatus && isGoalActive(res.goalStatus) && !get(status))
-      setGoalStatus(res.goalStatus)
-  }
-  const stopPushes = broker.on(GoalStatus, setGoalStatus)
-  const stopLink = linked.subscribe(up => {
-    if (!up) return clearGoalStatus()
-    requestRunningGoal()
-  })
-  return () => {
-    stopPushes()
-    stopLink()
-  }
 }

@@ -1,13 +1,4 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { derived, writable } from 'svelte/store'
-
-const linked = vi.hoisted(() => ({ value: null as null | { set: (v: boolean) => void } }))
-vi.mock('$lib/stores/link', async () => {
-  const { writable } = await import('svelte/store')
-  const isLinked = writable(true)
-  linked.value = isLinked
-  return { isLinked }
-})
 
 vi.mock('$lib/stores', async () => {
   const { writable } = await import('svelte/store')
@@ -15,8 +6,8 @@ vi.mock('$lib/stores', async () => {
 })
 
 import { dataBroker } from '$lib/transport/databroker'
-import type { ITransport, LinkStatus } from '$lib/interfaces/transport.interface'
-import { CorrelationResponse, Message } from '$lib/platform_shared/message'
+import { FakeRobot, fakeLink } from '../fake-robot/transport'
+import type { Responder } from '../fake-robot/robot'
 import { Animation, ParamId } from '$lib/platform_shared/animation'
 import {
   CHUNK,
@@ -30,44 +21,12 @@ import { PoseSender, playAnimation, stopAnimation } from '$lib/control'
 import { MotionModes } from '$lib/motion'
 import { stancePose } from '$lib/animation/model'
 
-type Responder = (request: Message) => Partial<CorrelationResponse> | null
-
-const status = writable<LinkStatus>('disconnected')
-const sent: Message[] = []
-const dataCallbacks: ((bytes: Uint8Array) => void)[] = []
-const connectCallbacks: (() => void)[] = []
-let responder: Responder = () => null
-
-const transport: ITransport = {
-  status,
-  connected: derived(status, s => s === 'connected'),
-  connect: async () => {
-    status.set('connected')
-    connectCallbacks.forEach(cb => cb())
-  },
-  disconnect: async () => status.set('disconnected'),
-  send: bytes => {
-    const message = Message.decode(bytes)
-    sent.push(message)
-    const req = message.correlationRequest
-    const reply = req ? responder(message) : null
-    if (req && reply)
-      queueMicrotask(() =>
-        dataCallbacks.forEach(cb =>
-          cb(
-            Message.encode(
-              Message.create({
-                correlationResponse: { correlationId: req.correlationId, statusCode: 200, ...reply }
-              })
-            ).finish()
-          )
-        )
-      )
-  },
-  onData: cb => dataCallbacks.push(cb),
-  onConnect: cb => connectCallbacks.push(cb),
-  onDisconnect: () => {}
-}
+const robot = new FakeRobot()
+const transport = fakeLink(robot)
+const sent = robot.received
+// Every request goes to `responder`; a test sets the answer for the requests it makes.
+let responder: Responder = () => ({ statusCode: 501 })
+robot.respondOtherwise(request => responder(request))
 
 const writes = () =>
   sent.flatMap(m =>
@@ -100,8 +59,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   sent.length = 0
-  responder = () => null
-  linked.value?.set(true)
+  responder = () => ({ statusCode: 501 })
 })
 
 afterEach(() => vi.useRealTimers())
@@ -112,7 +70,7 @@ describe('uploadAnimation', () => {
     const total = Animation.encode(a).finish().length
     expect(total).toBeGreaterThan(2 * CHUNK)
     expect(total).toBeLessThanOrEqual(3 * CHUNK)
-    responder = m => (m.correlationRequest?.animationValidate ? okReport : { empty: {} })
+    responder = m => (m.animationValidate ? okReport : { empty: {} })
     const progress: number[] = []
 
     const result = await uploadAnimation(a, done => progress.push(done))
@@ -130,7 +88,7 @@ describe('uploadAnimation', () => {
   it('restarts once from offset 0 after a failed chunk', async () => {
     let writeCount = 0
     responder = m => {
-      if (m.correlationRequest?.animationValidate) return okReport
+      if (m.animationValidate) return okReport
       return ++writeCount === 2 ? { statusCode: 400 } : { empty: {} }
     }
 
@@ -141,8 +99,7 @@ describe('uploadAnimation', () => {
   })
 
   it('gives up after a second failure without validating', async () => {
-    responder = m =>
-      m.correlationRequest?.fileWriteChunk?.offset === 512 ? { statusCode: 400 } : { empty: {} }
+    responder = m => (m.fileWriteChunk?.offset === 512 ? { statusCode: 400 } : { empty: {} })
 
     const result = await uploadAnimation(animationLargerThan(1030))
 
@@ -154,7 +111,7 @@ describe('uploadAnimation', () => {
 
   it('reports the validator error that the firmware sends with status 422', async () => {
     responder = m =>
-      m.correlationRequest?.animationValidate ?
+      m.animationValidate ?
         { statusCode: 422, animationReport: { ok: false, error: 'bad keyframe', clampedMask: 0 } }
       : { empty: {} }
 
@@ -165,8 +122,7 @@ describe('uploadAnimation', () => {
   })
 
   it('throws when validate answers without a report', async () => {
-    responder = m =>
-      m.correlationRequest?.animationValidate ? { statusCode: 500, empty: {} } : { empty: {} }
+    responder = m => (m.animationValidate ? { statusCode: 500, empty: {} } : { empty: {} })
 
     await expect(uploadAnimation(animationLargerThan(10))).rejects.toThrow(
       'the robot refused the validation of pad'
@@ -204,7 +160,7 @@ describe('downloadAnimation', () => {
     expect(bytes.length).toBeGreaterThan(CHUNK)
     expect(bytes.length).toBeLessThanOrEqual(2 * CHUNK)
     responder = m => {
-      const r = m.correlationRequest!.fileReadChunk!
+      const r = m.fileReadChunk!
       return {
         fileChunk: { content: bytes.slice(r.offset, r.offset + r.length), totalSize: bytes.length }
       }
@@ -292,10 +248,13 @@ describe('PoseSender', () => {
     expect(poses()).toHaveLength(0)
   })
 
-  it('sends nothing while the link is down', () => {
+  // A pose is motion: dropped while the link is down, and not sent when it comes back.
+  it('sends nothing while the link is down, nor after it comes back', async () => {
     vi.useFakeTimers()
-    linked.value?.set(false)
+    await transport.disconnect()
     new PoseSender().send(pose())
+    vi.advanceTimersByTime(200)
+    await transport.connect()
     vi.advanceTimersByTime(200)
     expect(poses()).toHaveLength(0)
   })

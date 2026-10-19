@@ -1,7 +1,7 @@
 #pragma once
 
-// Host stand-in for the FreeRTOS types the motion code names. The host builds run one thread, so a
-// mutex is always free and a task never needs to yield.
+// Host stand-in for the FreeRTOS types the motion code names. The host builds run the robot's tasks on one thread, so
+// a task never needs to yield; a semaphore still excludes (freertos/semphr.h) for a test that runs two.
 
 #include <cstdint>
 

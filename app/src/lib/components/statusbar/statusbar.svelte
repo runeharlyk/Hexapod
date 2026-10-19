@@ -5,7 +5,7 @@
   import FullscreenButton from './FullscreenButton.svelte'
   import ViewSelector from './ViewSelector.svelte'
   import { Hamburger } from '../icons'
-  import { handheldDriving } from '$lib/stores/robot-mode'
+  import { handheldDriving } from '$lib/robot/state'
 </script>
 
 <div

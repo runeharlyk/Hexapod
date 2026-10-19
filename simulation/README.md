@@ -289,10 +289,14 @@ On the real robot the input is re-sent every 200 ms inside the firmware's 600 ms
 While the ESP-NOW handheld controller drives, the robot drops the script's sticks and refuses its goals (423, a `RobotError`), and `state().handheld` is true.
 A velocity walk or a timed move it takes over raises `RobotError` ("the handheld controller took over") at its next `sleep()`, `set_velocity()` or goal move, a goal ends `CANCELLED`, and a walk asked for while the handheld drives is refused at once.
 The keep-alive goes on with centred sticks, so the robot stays stopped once the handheld lets go, and the script's next move is obeyed.
-The robot pushes that report only on a change and a push can be dropped, so while the keep-alive runs or the handheld drives the backend also asks for the mode every 0.4 s (`MODE_POLL_S`), shorter than the handheld's 600 ms window, whether or not the last request was answered.
-A lost report is so corrected within one poll, 0.4 s and a round trip at most, unless that poll's reply is lost too; a lost reply costs only its own poll.
+The robot pushes that report only on a change and a push can be dropped, so while the keep-alive runs or the handheld drives the backend also subscribes to the mode again every 0.4 s (`REFRESH_S`), shorter than the handheld's 600 ms window, and the robot answers each subscribe with the current mode.
+A lost report is so corrected within one refresh, 0.4 s and a round trip at most, unless that refresh's answer is lost too; a lost answer costs only its own refresh.
+A firmware from before these answers acks no subscribe: the mode is then unknown until the robot pushes one, nothing is refreshed, and no goal is sent.
 A mode change returns once the robot reports it applied, so a goal sent right after `stand()` is accepted; during an animation the robot applies it only after the clip's exit, and an exit longer than the 3 s reply timeout raises `RobotTimeout` although the robot still switches.
 Leaving the `with` block, also on an exception or Ctrl-C, stops the robot, lowers it onto its belly and switches the servos off.
+Lowering takes STAND, which would stand up a robot that is not standing, so the robot is asked for its mode on the way out (its snapshot, waited for up to 1 s) and lowered only when it reports STAND or WALK.
+A robot whose mode stays unknown, as with a firmware from before the snapshots that has pushed none, is switched off where it is: a 50 mm drop for a standing robot, never a deactivated one stood up.
+A firmware that sends snapshots and does not answer within that second leaves the mode unknown too, since a stalled link holds back its pushes as well; only a firmware from before the snapshots, which answers no subscribe but pushes every change, is taken to be in the mode last heard.
 
 ## Goals
 
@@ -318,7 +322,7 @@ robot.state().odometry               # the pose in the frame the robot faced at 
   `reset_odometry()` sets the heading the goals then mean; call it with the robot still, as a walk under way would be counted into the new frame.
   The robot refuses it while a goal runs (409, a `RobotError`), as the pose is the goal's origin.
 - Goals take TRI, BI, WAVE, RIPPLE and AUTO.
-  `move_forward`, `move_sideways` and `rotate` fall back to the timed motions above for TUNED, which has no speed envelope, and for a firmware from before goals, which answers a goal request 400; `walk`, `turn` and `arc` refuse there.
+  `move_forward`, `move_sideways` and `rotate` fall back to the timed motions above for TUNED, which has no speed envelope, and for a firmware that answers the subscribe to the goal status with no status, as one from before goals or before the snapshots does; `walk`, `turn` and `arc` refuse there.
   The speed model converts the speeds those three take (m/s and rad/s) to the share a goal asks for.
 - An arc's drift correction changes its length as well as its end heading.
 - The keep-alive that holds the link carries the last style's posture and stride (`s1`, `h`, `fd`, `stride`), so the robot keeps it after a goal.

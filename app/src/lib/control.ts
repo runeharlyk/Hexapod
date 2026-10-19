@@ -1,10 +1,11 @@
 import { GaitType } from '$lib/gait'
 import { MotionModes } from '$lib/motion'
-import { gait as gaitStore, mode as modeStore } from '$lib/stores'
+import { mode as modeStore } from '$lib/robot/state'
 import { dataBroker } from '$lib/transport/databroker'
+import { describeFailure } from '$lib/transport/reply'
+import { notifications } from '$lib/components/toasts/notifications'
 import { get } from 'svelte/store'
 import { throttler } from '$lib/utilities'
-import { isLinked } from '$lib/stores/link'
 import type { ParamId, LegTarget } from '$lib/platform_shared/animation'
 import type { Pose } from '$lib/animation/model'
 import {
@@ -12,31 +13,39 @@ import {
   AnimationStop,
   ModeData,
   GaitData,
-  PoseData
+  PoseData,
+  type MessageFns
 } from '$lib/platform_shared/message'
 
+// An action that moves the robot fails at once while no link is up, and says so, rather than wait for a link and move a
+// robot whose state may have changed meanwhile (transport/request-kinds.ts).
+const act = <T>(fns: MessageFns<T>, data: T, failed: string) => {
+  const sent = dataBroker.emit(fns, data)
+  if (!sent) notifications.error(`${failed}: ${describeFailure({ kind: 'disconnected' }, '')}`)
+  return sent
+}
+
+// The mode and the gait shown are the robot's, from its pushes, never the request's: a mode it refuses pushes nothing.
 export const requestMode = (nextMode: MotionModes) => {
-  modeStore.set(nextMode)
   // The robot reads the mode alone; whether the handheld drives is its own to report.
-  dataBroker.emit(ModeData, { mode: Object.values(MotionModes).indexOf(nextMode), handheld: false })
+  const mode = { mode: Object.values(MotionModes).indexOf(nextMode), handheld: false }
+  act(ModeData, mode, 'Mode not changed')
 }
 
 export const requestGait = (nextGait: GaitType) => {
-  gaitStore.set(nextGait)
-  dataBroker.emit(GaitData, { gait: Object.values(GaitType).indexOf(nextGait) })
+  const gait = { gait: Object.values(GaitType).indexOf(nextGait) }
+  act(GaitData, gait, 'Gait not changed')
 }
 
 export const playAnimation = (name: string, values: Map<ParamId, number>) => {
-  dataBroker.emit(AnimationPlay, {
-    name,
-    params: [...values].map(([id, value]) => ({ id, value }))
-  })
+  const play = { name, params: [...values].map(([id, value]) => ({ id, value })) }
+  act(AnimationPlay, play, `${name} not played`)
 }
 
 export const stopAnimation = () => dataBroker.emit(AnimationStop, {})
 
-// The robot ignores a play from DEACTIVATED or IDLE. The mode store only learns the robot's mode
-// from changes after connecting, so this is a warning and the play is still sent.
+// The robot ignores a play from DEACTIVATED or IDLE. The mode shown may be a stale one kept from a link that dropped, so
+// this is a warning and the play is still sent.
 export const inactiveModeWarning = (): string | null => {
   const current = get(modeStore)
   return current === MotionModes.DEACTIVATED || current === MotionModes.IDLE ?
@@ -70,9 +79,7 @@ export class PoseSender {
   private emitLast() {
     const data = this.last
     if (!data) return
-    this.limiter.throttle(() => {
-      if (get(isLinked)) dataBroker.emit(PoseData, data)
-    }, POSE_INTERVAL_MS)
+    this.limiter.throttle(() => dataBroker.emitVolatile(PoseData, data), POSE_INTERVAL_MS)
   }
 
   cancel() {

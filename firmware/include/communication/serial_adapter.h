@@ -34,7 +34,7 @@ class SerialAdapter : public CommAdapterBase {
     // tag subscriptions by client and they must be dropped when the host goes away.
     static constexpr int CLIENT_ID = 0;
 
-    void send(const uint8_t* data, size_t len, int cid = -1) override;
+    bool send(const uint8_t* data, size_t len, int cid = -1) override;
 
     static void rxTask(void* arg);
     void readLoop();

@@ -1,12 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vitest } from 'vitest'
-import { derived, writable } from 'svelte/store'
+import { derived, get, writable } from 'svelte/store'
 import { DataBroker } from '../../src/lib/transport/databroker'
+import { tagOf } from '../../src/lib/transport/message-codec'
 import type { ITransport, LinkStatus } from '../../src/lib/interfaces/transport.interface'
-import { CorrelationResponse, IMUData, Message } from '../../src/lib/platform_shared/message'
+import {
+  ControllerInputData,
+  CorrelationResponse,
+  IMUData,
+  Message
+} from '../../src/lib/platform_shared/message'
 
 const createFakeTransport = () => {
   const status = writable<LinkStatus>('disconnected')
   const sent: Message[] = []
+  // The motion frames handed over as the latest of their kind (transport/latest-frames.ts), with that kind.
+  const latest: { kind: number; message: Message }[] = []
   const callbacks = {
     data: [] as ((bytes: Uint8Array) => void)[],
     connect: [] as (() => void)[],
@@ -24,16 +32,22 @@ const createFakeTransport = () => {
       callbacks.disconnect.forEach(cb => cb())
     },
     send: bytes => sent.push(Message.decode(bytes)),
+    sendLatest: (kind, bytes) => {
+      if (get(status) !== 'connected') return false
+      latest.push({ kind, message: Message.decode(bytes) })
+      return true
+    },
     onData: cb => callbacks.data.push(cb),
     onConnect: cb => callbacks.connect.push(cb),
     onDisconnect: cb => callbacks.disconnect.push(cb)
   }
   const receive = (message: Message) =>
     callbacks.data.forEach(cb => cb(Message.encode(message).finish()))
-  return { transport, sent, receive }
+  return { transport, sent, latest, receive }
 }
 
 const imu = (x: number) => Message.create({ imu: IMUData.create({ x }) })
+const sticks = (y: number) => ControllerInputData.create({ left: { x: 0, y } })
 
 describe('DataBroker', () => {
   let broker: DataBroker
@@ -116,7 +130,7 @@ describe('DataBroker', () => {
     broker.addTransport(link.transport)
 
     const oldest = broker.request({ featuresDataRequest: {} })
-    for (let i = 0; i < 16; i++) broker.request({ modeGet: {} }).catch(() => {})
+    for (let i = 0; i < 16; i++) broker.request({ taskStatsRequest: {} }).catch(() => {})
 
     await expect(oldest).rejects.toMatchObject({ failure: { kind: 'disconnected' } })
   })
@@ -153,5 +167,23 @@ describe('DataBroker', () => {
 
     await expect(request).rejects.toMatchObject({ failure: { kind: 'timeout' } })
     expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function))
+  })
+
+  // Motion goes to the link up as the latest frame of its kind, which the link coalesces; nothing is held for a link
+  // that is down, so nothing old is sent after a reconnect.
+  it('hands a volatile frame to the link up as the latest of its kind, and takes none while no link is up', async () => {
+    const serial = createFakeTransport()
+    broker.addTransport(serial.transport)
+    await serial.transport.connect()
+
+    expect(broker.emitVolatile(ControllerInputData, sticks(0.5))).toBe(true)
+    await serial.transport.disconnect()
+    expect(broker.emitVolatile(ControllerInputData, sticks(0.75))).toBe(false)
+    await serial.transport.connect()
+
+    expect(serial.latest.map(({ kind, message }) => [kind, message.input?.left?.y])).toEqual([
+      [tagOf(ControllerInputData), 0.5]
+    ])
+    expect(serial.sent.filter(m => m.input)).toEqual([])
   })
 })

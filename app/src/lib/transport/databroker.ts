@@ -11,6 +11,8 @@ import {
 } from '$lib/platform_shared/message'
 import { decodeMessage, encodeMessage, keyOf, tagOf } from './message-codec'
 import { RequestFailed } from './reply'
+import { StateEntry, type StateLink, type Watched } from './topics'
+import { SETTING_GRACE_MS, kindOfRequest } from './request-kinds'
 
 const PING_INTERVAL_MS = 4000
 const PONG_TIMEOUT_MS = 12000
@@ -35,8 +37,27 @@ export class DataBroker {
       timer: ReturnType<typeof setTimeout>
     }
   >()
+  // The state topics followed (follow()), and the listener each feeds its values through.
+  private states = new Map<number, StateEntry<unknown>>()
+  private stateListeners = new Map<number, (data: unknown) => void>()
+  // The transport the subscriptions went out on, and what has been heard: every frame, and whether that link acked.
+  private carrier: ITransport | undefined
+  private framesHeard = 0
+  private ackHeard = false
+  private readonly stateLink: StateLink = {
+    linked: () => this.activeTransport() !== undefined,
+    subscribe: tag => this.sendSubscribe(tag),
+    framesHeard: () => this.framesHeard,
+    ackHeard: () => this.ackHeard
+  }
+
   // Held while no transport is connected, sent once one connects, so requests aren't lost.
-  private deferred: Array<{ id: number; send: () => void; reject: (e: Error) => void }> = []
+  private deferred: Array<{
+    id: number
+    send: () => void
+    sent: () => void
+    reject: (e: Error) => void
+  }> = []
   private static readonly MAX_DEFERRED = 16
 
   request(
@@ -48,6 +69,7 @@ export class DataBroker {
       if (signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'))
       const id = ++this.correlationId
 
+      let grace: ReturnType<typeof setTimeout> | undefined
       const forget = () => {
         this.deferred = this.deferred.filter(d => d.id !== id)
         const p = this.pending.get(id)
@@ -55,6 +77,7 @@ export class DataBroker {
           clearTimeout(p.timer)
           this.pending.delete(id)
         }
+        clearTimeout(grace)
         signal?.removeEventListener('abort', cancel)
       }
       const settle = {
@@ -70,36 +93,44 @@ export class DataBroker {
       const cancel = () => settle.reject(new DOMException('Aborted', 'AbortError'))
       signal?.addEventListener('abort', cancel, { once: true })
 
-      // Timeout starts only once the request is on the wire, so a deferred request doesn't
-      // expire before it's sent.
-      const send = () => {
-        const timer = setTimeout(
-          () => settle.reject(new RequestFailed({ kind: 'timeout' })),
-          REQUEST_TIMEOUT_MS
-        )
-        this.pending.set(id, { ...settle, timer })
-        this.emit(CorrelationRequest, { correlationId: id, ...payload })
-      }
+      // The timeout counts from the call, so a read held for a link fails in the same time as one sent at once.
+      const timer = setTimeout(
+        () => settle.reject(new RequestFailed({ kind: 'timeout' })),
+        REQUEST_TIMEOUT_MS
+      )
+      this.pending.set(id, { ...settle, timer })
+      const send = () => this.emit(CorrelationRequest, { correlationId: id, ...payload })
       if (this.activeTransport()) {
         send()
         return
       }
-      this.deferred.push({ id, send, reject: settle.reject })
+      // While no link is up, the request's kind decides (transport/request-kinds.ts).
+      const kind = kindOfRequest(payload)
+      const notSent = () => settle.reject(new RequestFailed({ kind: 'disconnected' }))
+      if (kind === 'action') return notSent()
+      if (kind === 'setting') grace = setTimeout(notSent, SETTING_GRACE_MS)
+      this.deferred.push({ id, send, sent: () => clearTimeout(grace), reject: settle.reject })
       if (this.deferred.length > DataBroker.MAX_DEFERRED) {
         this.deferred[0].reject(new RequestFailed({ kind: 'disconnected' }))
       }
     })
   }
 
+  // A settings write sent here is no longer held: its grace ends with the wait.
   private flushDeferred() {
     const queued = this.deferred
     this.deferred = []
-    queued.forEach(({ send }) => send())
+    queued.forEach(({ send, sent }) => {
+      sent()
+      send()
+    })
   }
 
+  // The requests on the wire; one still held for a link waits on.
   private rejectPending() {
-    for (const { reject } of [...this.pending.values()])
-      reject(new RequestFailed({ kind: 'disconnected' }))
+    const held = new Set(this.deferred.map(d => d.id))
+    for (const [id, { reject }] of [...this.pending.entries()])
+      if (!held.has(id)) reject(new RequestFailed({ kind: 'disconnected' }))
   }
 
   // Registration order is priority order; keep it in step with stores/link.ts so requests and
@@ -108,30 +139,81 @@ export class DataBroker {
     this.transports.push(transport)
     transport.onData(bytes => this.handleIncoming(bytes))
     transport.onConnect(() => {
-      this.resubscribeAll()
+      // A link of lower priority than the one carrying the subscriptions changes nothing for them.
+      if (this.activeTransport() !== this.carrier) this.moveSubscriptions(false)
       this.startPinging()
       this.flushDeferred()
     })
     transport.onDisconnect(() => {
       if (this.activeTransport()) {
-        this.resubscribeAll()
+        if (transport === this.carrier) this.moveSubscriptions(true)
         return
       }
+      this.carrier = undefined
+      this.states.forEach(entry => entry.linkLost())
       this.stopPinging()
       this.rejectPending()
     })
   }
 
+  // The subscriptions go to the link that now carries them, and every state topic waits for its snapshot there; after a
+  // fail-over the values held are stale until then.
+  private moveSubscriptions(failover: boolean) {
+    this.carrier = this.activeTransport()
+    this.ackHeard = false
+    if (failover) this.states.forEach(entry => entry.linkLost())
+    this.resubscribeAll()
+    this.states.forEach(entry => entry.subscribed())
+  }
+
   on<T>(fns: MessageFns<T>, callback: (data: T, frame: Uint8Array) => void): () => void {
     const tag = tagOf(fns)
+    if (this.addListener(tag, callback as (data: unknown, frame: Uint8Array) => void))
+      this.sendSubscribe(tag)
+    return () => this.off(tag, callback as (data: unknown, frame: Uint8Array) => void)
+  }
+
+  /**
+   * Follows a state topic (transport/topics.ts): `watcher` gets its state now and on every change. Every follower of a
+   * tag shares one entry and one subscription; the robot is asked for the current value when the first follows, even
+   * where a stream listener of the tag already subscribed. Returns the function that stops following.
+   */
+  follow<T>(fns: MessageFns<T>, watcher: (state: Watched<T>) => void): () => void {
+    const tag = tagOf(fns)
+    let entry = this.states.get(tag) as StateEntry<T> | undefined
+    if (!entry) {
+      const created = new StateEntry<T>(tag, this.stateLink)
+      const listener = (data: unknown) => created.received(data as T)
+      this.states.set(tag, created as StateEntry<unknown>)
+      this.stateListeners.set(tag, listener)
+      this.addListener(tag, listener)
+      created.subscribe()
+      entry = created
+    }
+    const remove = entry.add(watcher)
+    return () => {
+      if (!remove()) return
+      this.states.delete(tag)
+      const listener = this.stateListeners.get(tag)
+      this.stateListeners.delete(tag)
+      if (listener) this.off(tag, listener)
+    }
+  }
+
+  /** Forgets every state topic's value and asks the robot again, for a link that may reach another robot. */
+  resetStates() {
+    this.states.forEach(entry => entry.reset())
+  }
+
+  private addListener(tag: number, callback: (data: unknown, frame: Uint8Array) => void) {
     let set = this.listeners.get(tag)
+    const first = !set
     if (!set) {
       set = new Set()
       this.listeners.set(tag, set)
-      this.sendSubscribe(tag)
     }
-    set.add(callback as (data: unknown, frame: Uint8Array) => void)
-    return () => this.off(tag, callback as (data: unknown, frame: Uint8Array) => void)
+    set.add(callback)
+    return first
   }
 
   private off(tag: number, callback: (data: unknown, frame: Uint8Array) => void) {
@@ -144,14 +226,37 @@ export class DataBroker {
     }
   }
 
-  emit<T>(fns: MessageFns<T>, data: T) {
+  /** Sends on the active link; false, and nothing is sent or held, while no link is up. */
+  emit<T>(fns: MessageFns<T>, data: T): boolean {
     const message = Message.create({ [keyOf(fns)]: data })
-    this.broadcast(encodeMessage(message))
+    return this.broadcast(encodeMessage(message))
+  }
+
+  /**
+   * Motion (sticks, heartbeats, animation preview poses): sent at once when the link is idle; while a write is under
+   * way only the newest frame of its kind waits, and goes out when the write completes (transport/latest-frames.ts).
+   * The last frame, a released stick's stop or a drag's final pose, therefore always arrives while the link is up.
+   * Never queued for a link that is down nor sent after a reconnect, since a frame that waited would move the robot
+   * with the past. False when no link is up.
+   */
+  emitVolatile<T>(fns: MessageFns<T>, data: T): boolean {
+    const transport = this.activeTransport()
+    return (
+      transport !== undefined &&
+      transport.sendLatest(tagOf(fns), encodeMessage(Message.create({ [keyOf(fns)]: data })))
+    )
   }
 
   private handleIncoming(bytes: Uint8Array) {
     const decoded = decodeMessage(bytes)
     if (!decoded) return
+    this.framesHeard++
+    if (decoded.key === 'subNotif') {
+      // The robot echoes a subscribe as its ack, after a state topic's current value.
+      this.ackHeard = true
+      this.states.get((decoded.value as SubscribeNotification).tag)?.acked()
+      return
+    }
     if (decoded.key === 'pongmsg') {
       this.lastPongAt = performance.now()
       this.latencyMs.set(Math.max(0, Math.round(this.lastPongAt - this.lastPingAt)))
@@ -189,7 +294,9 @@ export class DataBroker {
   }
 
   private broadcast(bytes: Uint8Array) {
-    this.activeTransport()?.send(bytes)
+    const transport = this.activeTransport()
+    transport?.send(bytes)
+    return transport !== undefined
   }
 
   private activeTransport() {

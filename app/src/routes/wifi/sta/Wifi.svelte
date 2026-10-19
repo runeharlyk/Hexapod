@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte'
+  import { onDestroy } from 'svelte'
   import { modals } from 'svelte-modals'
   import { slide } from 'svelte/transition'
   import { cubicOut } from 'svelte/easing'
@@ -16,8 +16,9 @@
   import type { KnownNetworkItem, WifiStatus as WifiStatusView } from '$lib/types/models'
   import { ipToString, ipToU32 } from '$lib/proto-api'
   import { dataBroker } from '$lib/transport/databroker'
-  import { ask } from '$lib/transport/reply'
+  import { ask, describeFailure } from '$lib/transport/reply'
   import { WifiSettings, WifiStatus, type WifiNetwork } from '$lib/platform_shared/api'
+  import { watch } from '$lib/robot/watch'
 
   // The page keeps the UI's snake_case shape; the proto carries IPs as uint32.
   type WifiSettingsForm = {
@@ -84,18 +85,8 @@
   let newNetwork: boolean = $state(true)
   let showNetworkEditor: boolean = $state(false)
 
-  let wifiStatus: WifiStatusView = $state({
-    status: 0,
-    local_ip: '',
-    mac_address: '',
-    rssi: 0,
-    ssid: '',
-    bssid: '',
-    channel: 0,
-    subnet_mask: '',
-    gateway_ip: '',
-    dns_ip_1: ''
-  })
+  // The robot answers the subscribe with its current status and pushes every change.
+  const wifiState = watch(WifiStatus)
   let wifiSettings: WifiSettingsForm = $state({
     hostname: 'hexapod',
     priority_rssi: true,
@@ -123,32 +114,21 @@
   const pageAbort = new AbortController()
   onDestroy(() => pageAbort.abort())
 
-  const applyWifiStatus = (s: WifiStatus) => {
-    wifiStatus = {
-      status: s.status,
-      local_ip: ipToString(s.localIp),
-      mac_address: s.macAddress,
-      rssi: s.rssi,
-      ssid: s.ssid,
-      bssid: s.bssid,
-      channel: s.channel,
-      subnet_mask: ipToString(s.subnetMask),
-      gateway_ip: ipToString(s.gatewayIp),
-      dns_ip_1: ipToString(s.dnsIp1),
-      dns_ip_2: ipToString(s.dnsIp2)
-    }
-  }
+  const viewOf = (s: WifiStatus): WifiStatusView => ({
+    status: s.status,
+    local_ip: ipToString(s.localIp),
+    mac_address: s.macAddress,
+    rssi: s.rssi,
+    ssid: s.ssid,
+    bssid: s.bssid,
+    channel: s.channel,
+    subnet_mask: ipToString(s.subnetMask),
+    gateway_ip: ipToString(s.gatewayIp),
+    dns_ip_1: ipToString(s.dnsIp1),
+    dns_ip_2: ipToString(s.dnsIp2)
+  })
 
-  async function getWifiStatus() {
-    // The pushes keep the status current; a failed first read leaves it to them.
-    const res = await ask(dataBroker, { wifiStatusGet: {} }, 'the Wi-Fi status', {
-      signal: pageAbort.signal
-    }).catch(() => null)
-    if (res?.wifiStatus) applyWifiStatus(res.wifiStatus)
-    return wifiStatus
-  }
-
-  onMount(() => dataBroker.on(WifiStatus, applyWifiStatus))
+  const wifiStatus = $derived($wifiState.value === undefined ? undefined : viewOf($wifiState.value))
 
   async function getWifiSettings() {
     try {
@@ -414,9 +394,16 @@
     <span>WiFi Connection</span>
   {/snippet}
   <div class="w-full overflow-x-auto">
-    {#await getWifiStatus()}
+    {#if wifiStatus === undefined && $wifiState.failure}
+      <p class="text-error">
+        Could not read the Wi-Fi status: {describeFailure($wifiState.failure, 'the Wi-Fi status')}
+      </p>
+    {:else if wifiStatus === undefined}
       <Spinner />
-    {:then}
+    {:else}
+      {#if $wifiState.stale}
+        <p class="text-warning">The robot is not connected: this is the last status it sent.</p>
+      {/if}
       <div
         class="flex w-full flex-col space-y-1"
         transition:slide|local={{ duration: 300, easing: cubicOut }}
@@ -469,7 +456,7 @@
           <StatusItem icon={DNS} title="DNS" description={wifiStatus.dns_ip_1} />
         </div>
       {/if}
-    {/await}
+    {/if}
   </div>
 
   <div class="bg-base-200 relative grid w-full max-w-2xl self-center overflow-hidden">

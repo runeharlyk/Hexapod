@@ -31,11 +31,24 @@ export class FakeSerialPort extends EventTarget {
     this.baudRate = options.baudRate
     this.readable = new ReadableStream({ start: controller => (this.controller = controller) })
     this.writable = new WritableStream({
-      write: chunk => {
+      write: async chunk => {
+        await this.held
         this.written.push(chunk.slice())
         this.onWrite(chunk.slice())
       }
     })
+  }
+
+  private held: Promise<void> | undefined
+
+  /** Keeps every write under way, as a host that has stopped reading does, until the returned function is called. */
+  hold(): () => void {
+    let release = () => {}
+    this.held = new Promise(resolve => (release = resolve))
+    return () => {
+      this.held = undefined
+      release()
+    }
   }
 
   async setSignals(signals: SerialOutputSignals) {

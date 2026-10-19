@@ -155,6 +155,10 @@ const createLink = (featuresStatus = 200) => {
       const request = message.correlationRequest
       if (request?.featuresDataRequest) queueMicrotask(() => answerFeatures(request.correlationId))
     },
+    sendLatest: (_kind, bytes) => {
+      transport.send(bytes)
+      return true
+    },
     onData: listener => listeners.push(listener),
     onConnect: () => {},
     onDisconnect: () => {}
