@@ -14,8 +14,8 @@
   import { requestMode } from '$lib/control'
   import { isLinked } from '$lib/stores/link'
   import { animationPreview, type AnimationPreview } from '$lib/stores/animation'
-  import Kinematics, { levelBody } from '$lib/kinematic'
-  import { groundPlacement, imuPlacement, type DmpAngles } from '$lib/ground-placement'
+  import Kinematics from '$lib/kinematic'
+  import { ShownRobot } from '$lib/ground-placement'
   import { config } from '$lib/components/config'
   import {
     loadVirtualRobot,
@@ -54,12 +54,7 @@
   const targetAngles = new Array(18).fill(0)
 
   type LegRad = [number, number, number]
-  const kinematics = new Kinematics(config)
-  // The joint angles shown (radians, per leg, IK order), whoever produced them, which set the robot on the ground.
-  // Before any arrive, the robot stands level on its stance.
-  let shownLegs: LegRad[] | null = null
-  // The robot's last IMU reading, which tilts the model while the robot's own angles are shown.
-  let imu: DmpAngles | null = null
+  const shown = new ShownRobot(new Kinematics(config))
 
   // While no robot sends its angles, the firmware's own motion code animates the model. The robot-hosted build is
   // always linked, and the build-time constant leaves the virtual robot out of it.
@@ -101,12 +96,11 @@
         settings['Internal kinematic'] = false
         show(data.angles)
       }),
-      dataBroker.on(IMUData, data => (imu = data)),
+      dataBroker.on(IMUData, data => shown.measure(data)),
       // Without a link no angles arrive, so the local model has to animate the robot again.
       isLinked.subscribe(linked => {
-        if (linked) return
-        settings['Internal kinematic'] = true
-        imu = null
+        shown.link(linked)
+        if (!linked) settings['Internal kinematic'] = true
       }),
       gait.subscribe(g => virtualRobot?.setGait(gaitIndex(g))),
       animationPreview.subscribe(value => (preview = value)),
@@ -175,7 +169,7 @@
   const show = (anglesDeg: ArrayLike<number>) => {
     const rad = Array.from(anglesDeg, degToRad)
     setTargetAngles(urdfJointOrder(rad))
-    shownLegs = legsOf(rad)
+    shown.show(legsOf(rad))
   }
 
   const legsOf = (rad: readonly number[]): LegRad[] =>
@@ -260,23 +254,11 @@
 
   const ORIENT_SMOOTH = 0.1
 
-  // The connected robot's angles are shown tilted as its IMU measures, and lowered onto its lowest foot. The animation
-  // preview and the virtual robot have no IMU, so they stand on the ground under their feet, the preview turned by its
-  // body yaw (ground-placement.ts).
-  const placement = () => {
-    if (preview)
-      return groundPlacement(kinematics.groundUnderFeet(legsOf(preview.angles)), -preview.body.psi)
-    if (settings['Internal kinematic'])
-      return groundPlacement(shownLegs && kinematics.groundUnderFeet(shownLegs), 0)
-    return imuPlacement(
-      imu,
-      shownLegs ? kinematics.forwardKinematics(levelBody(), shownLegs) : DEFAULT_FEET
-    )
-  }
-
   const placeRobot = (robot: URDFRobot) => {
     if (!settings['Auto orient robot']) return
-    const { orientation, position } = placement()
+    const { orientation, position } = shown.placement(
+      preview && { legs: legsOf(preview.angles), yaw: -preview.body.psi }
+    )
     if (settings['Smooth motion']) {
       robot.quaternion.slerp(orientation, ORIENT_SMOOTH)
       robot.position.lerp(position, ORIENT_SMOOTH)

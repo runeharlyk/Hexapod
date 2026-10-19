@@ -1,5 +1,7 @@
 import { Quaternion, Vector3 } from 'three'
-import type { Ground } from '$lib/kinematic'
+import type Kinematics from '$lib/kinematic'
+import { levelBody, type Ground } from '$lib/kinematic'
+import { DEFAULT_FEET } from '$lib/animation/model'
 import { stanceToScene } from '$lib/animation/handles'
 import { LEVEL } from '$lib/model-frame'
 import { DMP_ANGLE_SIGNS } from '$lib/simulation/virtual-robot'
@@ -79,5 +81,51 @@ export const imuPlacement = (
   return {
     orientation: tilt.multiply(LEVEL),
     position: new Vector3(origin.x - turned.x, -lowest, origin.z - turned.z)
+  }
+}
+
+type LegRad = [number, number, number]
+
+/** An animation preview's joint angles (radians, per leg, IK order) and its body yaw (radians). */
+export interface PreviewPose {
+  legs: LegRad[]
+  yaw: number
+}
+
+/**
+ * What the 3D view knows of the robot it draws, and where it places it. A linked robot is tilted by its IMU, over the
+ * angles shown whoever produced them: it sends none in DEACTIVATED, IDLE and POSE, where the virtual robot's stand the
+ * view keeps drawing sets only its height. An unlinked robot and the animation preview have no IMU, so they stand on
+ * the ground under their feet.
+ */
+export class ShownRobot {
+  private legs: LegRad[] | null = null
+  private imu: DmpAngles | null = null
+  private linked = false
+
+  constructor(private readonly kinematics: Kinematics) {}
+
+  /** The joint angles drawn, in radians, per leg, in IK order. */
+  show(legs: LegRad[]) {
+    this.legs = legs
+  }
+
+  measure(imu: DmpAngles) {
+    this.imu = imu
+  }
+
+  link(linked: boolean) {
+    this.linked = linked
+    if (!linked) this.imu = null
+  }
+
+  placement(preview: PreviewPose | null): Placement {
+    if (preview) return groundPlacement(this.kinematics.groundUnderFeet(preview.legs), preview.yaw)
+    if (!this.linked)
+      return groundPlacement(this.legs && this.kinematics.groundUnderFeet(this.legs), 0)
+    return imuPlacement(
+      this.imu,
+      this.legs ? this.kinematics.forwardKinematics(levelBody(), this.legs) : DEFAULT_FEET
+    )
   }
 }

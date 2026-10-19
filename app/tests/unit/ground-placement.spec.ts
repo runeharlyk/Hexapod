@@ -7,7 +7,12 @@ import Kinematics, { levelBody, type body_state_t } from '../../src/lib/kinemati
 import { config } from '../../src/lib/components/config'
 import { DEFAULT_FEET } from '../../src/lib/animation/model'
 import { stanceToScene } from '../../src/lib/animation/handles'
-import { groundPlacement, imuPlacement, type Placement } from '../../src/lib/ground-placement'
+import {
+  groundPlacement,
+  imuPlacement,
+  ShownRobot,
+  type Placement
+} from '../../src/lib/ground-placement'
 import { loadAnimationEngine, type AnimationEngine } from '../../src/lib/animation/engine'
 import { firmwareInverseKinematics } from './firmware-ik'
 
@@ -152,5 +157,51 @@ describe('the connected robot on its IMU', () => {
     const tilted = imuPlacement(NOSE_DOWN, onTiltedGround)
     expect(tilted.orientation.angleTo(level.orientation)).toBeLessThan(1e-6)
     expect(fromLegs.orientation.angleTo(level.orientation)).toBeGreaterThan(0.05)
+  })
+})
+
+// The view draws whatever angles it has, the robot's or the virtual robot's, and places them by the link: a linked
+// robot by its IMU, whether or not it has sent angles yet (it sends none in DEACTIVATED, IDLE and POSE), and only an
+// unlinked robot and the animation preview on the ground under their feet.
+describe('the view places the robot by its link', () => {
+  const NOSE_DOWN = { x: (-12 * Math.PI) / 180, y: 0, z: 0 }
+
+  beforeAll(async () => {
+    engine = await loadAnimationEngine()
+  })
+
+  const stand = () => firmwareInverseKinematics(engine, body({}))
+  const onTiltedGround = () => firmwareInverseKinematics(engine, body({ omega: 0.2, phi: -0.15 }))
+
+  it('tilts a linked robot by its IMU before it has sent any angles', () => {
+    const view = new ShownRobot(kinematics)
+    view.show(stand())
+    view.link(true)
+    view.measure(NOSE_DOWN)
+    const expected = imuPlacement(NOSE_DOWN, kinematics.forwardKinematics(levelBody(), stand()))
+    const placement = view.placement(null)
+    expect(placement.orientation.angleTo(expected.orientation)).toBeLessThan(1e-6)
+    expect(placement.position.distanceTo(expected.position)).toBeLessThan(ON_THE_FLOOR)
+    expect(placement.orientation.angleTo(LEVEL)).toBeCloseTo((12 * Math.PI) / 180, 6)
+  })
+
+  it('stands an unlinked robot on the ground under its feet, whatever the last reading', () => {
+    const view = new ShownRobot(kinematics)
+    view.link(true)
+    view.measure(NOSE_DOWN)
+    view.link(false)
+    view.show(onTiltedGround())
+    const expected = groundPlacement(kinematics.groundUnderFeet(onTiltedGround()), 0)
+    expect(view.placement(null).orientation.angleTo(expected.orientation)).toBeLessThan(1e-6)
+  })
+
+  it('stands the animation preview on the ground under its feet while linked', () => {
+    const view = new ShownRobot(kinematics)
+    view.link(true)
+    view.measure(NOSE_DOWN)
+    view.show(stand())
+    const preview = { legs: onTiltedGround(), yaw: 0.3 }
+    const expected = groundPlacement(kinematics.groundUnderFeet(preview.legs), preview.yaw)
+    expect(view.placement(preview).orientation.angleTo(expected.orientation)).toBeLessThan(1e-6)
   })
 })
