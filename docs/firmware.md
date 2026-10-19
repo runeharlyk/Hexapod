@@ -31,7 +31,7 @@ Paths are relative to `firmware/` unless they start at the repository root.
 | Status LED | `include/peripherals/status_led.h`, `include/peripherals/status_led_pattern.h` |
 | Transport base and protobuf dispatch | `include/communication/comm_base.hpp`, `include/communication/proto_helpers.h` |
 | WebSocket transport | `include/communication/websocket.h`, `src/communication/websocket.cpp`, `include/communication/ws_frame.h`, `include/communication/stall_tracker.h` |
-| BLE transport (Nordic UART Service) | `include/communication/ble.h`, `src/communication/ble.cpp` |
+| BLE transport (Nordic UART Service) | `include/communication/ble.h`, `include/communication/ble_frame.h`, `src/communication/ble.cpp` |
 | USB serial transport | `include/communication/serial_adapter.h`, `src/communication/serial_adapter.cpp`, `include/communication/serial_frame.h` |
 | ESP-NOW controller receiver | `include/communication/espnow_adapter.h`, `src/communication/espnow_adapter.cpp`, `include/communication/controller_packet.h`, `include/communication/handheld_input.h` |
 | HTTP server and origin check | `include/communication/webserver.h`, `src/communication/webserver.cpp`, `include/communication/origin_policy.h` |
@@ -377,7 +377,13 @@ An owner never pushes while it holds a lock that its snapshot reads under: owner
 A snapshot never waits on an EventBus worker, since that worker may itself be waiting for the adapter's `encodeMutex_`.
 A state push that a client cannot take now (`ready()` false, a full WebSocket) is dropped as every frame is, but it marks that client's subscription dirty; the service task's 100 ms pass calls `resendDirty()` on each adapter, which sends each dirty client that can take a frame the topic's current value from its snapshot, once, and clears the mark.
 A dropped stream frame is not resent: the next frame supersedes it.
-A push whose send fails on a client that looked ready is marked the same way: `send()` reports whether the frame went out, a BLE notify fails when NimBLE has no mbuf for it, a serial write when the host does not take it within 20 ms, and a WebSocket send on a socket error.
+A push whose send fails on a client that looked ready is marked the same way: `send()` reports whether the frame went out, a serial write fails when the host does not take it within 20 ms, a WebSocket send on a socket error, and a BLE frame when it did not go out whole.
+A serial frame cut short is dropped by the app's CRC, and the next delimiter finds the next frame.
+A BLE frame is a notification per 180-byte chunk (`include/communication/ble_frame.h`), and a notify fails when NimBLE finds no mbuf for it within its own 10 ms of retries.
+A frame whose first chunk fails is lost whole and resent as above.
+A later chunk is retried five times, 10 ms apart, because the app reassembles a frame by its length prefix and would complete one cut short with the next frames' bytes.
+A chunk that still fails ends the BLE connection, so no frame follows the cut one: the app reconnects with an empty buffer, and its subscribes bring every state topic's current value.
+The app also drops a stream whose notifications break the framing, and reconnects (`src/lib/transport/ble-framing.ts`).
 A subscribe from a client that cannot take a frame now (`ready()` false) is answered with nothing: a send that waited on that client would hold the encode lock, and with it every push to the adapter's other clients, a mode or a stop among them, for up to httpd's 5 s send timeout.
 Its state topic is marked dirty instead, so `resendDirty()` sends the current value once the client can take it, and the client, without its ack, subscribes again; a snapshot whose send fails is left unacked and marked the same way.
 When the last client on every transport has gone, a playing animation stops, so nothing runs unattended.
