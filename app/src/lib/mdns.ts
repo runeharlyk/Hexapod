@@ -1,5 +1,6 @@
 import type { MDNSQueryResult, MDNSServiceDef, MDNSTxtRecord } from '$lib/platform_shared/api'
 import { compareIp } from '$lib/utilities'
+import { createScan } from '$lib/scan'
 
 export type ServiceType = Pick<MDNSServiceDef, 'service' | 'protocol'>
 
@@ -33,3 +34,7 @@ export const sortScanResults = (results: MDNSQueryResult[]) =>
       (a.ip && b.ip ? compareIp(a.ip, b.ip) : 0) ||
       a.name.localeCompare(b.name)
   )
+
+export type MdnsScanResult = { type: string; results: MDNSQueryResult[] }
+
+export const mdnsScan = createScan<MdnsScanResult>()

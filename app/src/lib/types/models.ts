@@ -141,12 +141,6 @@ export type IMU = {
   pressure: number
 }
 
-export interface I2CDevice {
-  address: number
-  part_number: string
-  name: string
-}
-
 export type PinConfig = {
   pin: number
   mode: string
