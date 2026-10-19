@@ -11,6 +11,7 @@ import {
 } from '$lib/platform_shared/message'
 import { decodeMessage, encodeMessage, keyOf, tagOf } from './message-codec'
 import { RequestFailed } from './reply'
+import { StateEntry, type StateLink, type Watched } from './topics'
 
 const PING_INTERVAL_MS = 4000
 const PONG_TIMEOUT_MS = 12000
@@ -35,6 +36,20 @@ export class DataBroker {
       timer: ReturnType<typeof setTimeout>
     }
   >()
+  // The state topics followed (follow()), and the listener each feeds its values through.
+  private states = new Map<number, StateEntry<unknown>>()
+  private stateListeners = new Map<number, (data: unknown) => void>()
+  // The transport the subscriptions went out on, and what has been heard: every frame, and whether that link acked.
+  private carrier: ITransport | undefined
+  private framesHeard = 0
+  private ackHeard = false
+  private readonly stateLink: StateLink = {
+    linked: () => this.activeTransport() !== undefined,
+    subscribe: tag => this.sendSubscribe(tag),
+    framesHeard: () => this.framesHeard,
+    ackHeard: () => this.ackHeard
+  }
+
   // Held while no transport is connected, sent once one connects, so requests aren't lost.
   private deferred: Array<{ id: number; send: () => void; reject: (e: Error) => void }> = []
   private static readonly MAX_DEFERRED = 16
@@ -108,30 +123,86 @@ export class DataBroker {
     this.transports.push(transport)
     transport.onData(bytes => this.handleIncoming(bytes))
     transport.onConnect(() => {
-      this.resubscribeAll()
+      // A link of lower priority than the one carrying the subscriptions changes nothing for them.
+      if (this.activeTransport() !== this.carrier) this.moveSubscriptions(false)
       this.startPinging()
       this.flushDeferred()
     })
     transport.onDisconnect(() => {
       if (this.activeTransport()) {
-        this.resubscribeAll()
+        if (transport === this.carrier) this.moveSubscriptions(true)
         return
       }
+      this.carrier = undefined
+      this.states.forEach(entry => entry.linkLost())
       this.stopPinging()
       this.rejectPending()
     })
   }
 
+  // The subscriptions go to the link that now carries them, and every state topic waits for its snapshot there; after a
+  // fail-over the values held are stale until then.
+  private moveSubscriptions(failover: boolean) {
+    this.carrier = this.activeTransport()
+    this.ackHeard = false
+    if (failover) this.states.forEach(entry => entry.linkLost())
+    this.resubscribeAll()
+    this.states.forEach(entry => entry.subscribed())
+  }
+
   on<T>(fns: MessageFns<T>, callback: (data: T, frame: Uint8Array) => void): () => void {
     const tag = tagOf(fns)
+    if (this.addListener(tag, callback as (data: unknown, frame: Uint8Array) => void))
+      this.sendSubscribe(tag)
+    return () => this.off(tag, callback as (data: unknown, frame: Uint8Array) => void)
+  }
+
+  /**
+   * Follows a state topic (transport/topics.ts): `watcher` gets its state now and on every change. Every follower of a
+   * tag shares one entry and one subscription; the robot is asked for the current value when the first follows, even
+   * where a stream listener of the tag already subscribed. Returns the function that stops following.
+   */
+  follow<T>(fns: MessageFns<T>, watcher: (state: Watched<T>) => void): () => void {
+    const tag = tagOf(fns)
+    let entry = this.states.get(tag) as StateEntry<T> | undefined
+    if (!entry) {
+      const created = new StateEntry<T>(tag, this.stateLink)
+      const listener = (data: unknown) => created.received(data as T)
+      this.states.set(tag, created as StateEntry<unknown>)
+      this.stateListeners.set(tag, listener)
+      this.addListener(tag, listener)
+      created.subscribe()
+      entry = created
+    }
+    const remove = entry.add(watcher)
+    return () => {
+      if (!remove()) return
+      this.states.delete(tag)
+      const listener = this.stateListeners.get(tag)
+      this.stateListeners.delete(tag)
+      if (listener) this.off(tag, listener)
+    }
+  }
+
+  /** A write the robot answers with a push, such as a mode, is pending until that push comes or PENDING_MS pass. */
+  markPending<T>(fns: MessageFns<T>) {
+    this.states.get(tagOf(fns))?.markPending()
+  }
+
+  /** Forgets every state topic's value and asks the robot again, for a link that may reach another robot. */
+  resetStates() {
+    this.states.forEach(entry => entry.reset())
+  }
+
+  private addListener(tag: number, callback: (data: unknown, frame: Uint8Array) => void) {
     let set = this.listeners.get(tag)
+    const first = !set
     if (!set) {
       set = new Set()
       this.listeners.set(tag, set)
-      this.sendSubscribe(tag)
     }
-    set.add(callback as (data: unknown, frame: Uint8Array) => void)
-    return () => this.off(tag, callback as (data: unknown, frame: Uint8Array) => void)
+    set.add(callback)
+    return first
   }
 
   private off(tag: number, callback: (data: unknown, frame: Uint8Array) => void) {
@@ -152,6 +223,13 @@ export class DataBroker {
   private handleIncoming(bytes: Uint8Array) {
     const decoded = decodeMessage(bytes)
     if (!decoded) return
+    this.framesHeard++
+    if (decoded.key === 'subNotif') {
+      // The robot echoes a subscribe as its ack, after a state topic's current value.
+      this.ackHeard = true
+      this.states.get((decoded.value as SubscribeNotification).tag)?.acked()
+      return
+    }
     if (decoded.key === 'pongmsg') {
       this.lastPongAt = performance.now()
       this.latencyMs.set(Math.max(0, Math.round(this.lastPongAt - this.lastPingAt)))
