@@ -428,7 +428,7 @@ void test_an_off_centre_stick_cancels_the_goal_and_drives_the_walk() {
         TEST_ASSERT_EQUAL(GoalState::CANCELLED, rig.state());
         const gait_state_t &target = rig.robot.gaitCommand();
         if (axis == 0)
-            TEST_ASSERT_LESS_THAN_FLOAT(-GAIT_STRIDE_DEADBAND_MM, target.step_x); // lx > 0 walks left
+            TEST_ASSERT_GREATER_THAN_FLOAT(GAIT_STRIDE_DEADBAND_MM, target.step_x); // lx > 0 walks right
         else
             TEST_ASSERT_EQUAL_FLOAT(0, target.step_x);
         if (axis == 1)
@@ -436,7 +436,7 @@ void test_an_off_centre_stick_cancels_the_goal_and_drives_the_walk() {
         else
             TEST_ASSERT_EQUAL_FLOAT(0, target.step_y);
         if (axis == 2)
-            TEST_ASSERT_GREATER_THAN_FLOAT(GAIT_YAW_DEADBAND_RAD, target.step_angle);
+            TEST_ASSERT_LESS_THAN_FLOAT(-GAIT_YAW_DEADBAND_RAD, target.step_angle); // rx > 0 turns clockwise
         else
             TEST_ASSERT_EQUAL_FLOAT(0, target.step_angle);
     }

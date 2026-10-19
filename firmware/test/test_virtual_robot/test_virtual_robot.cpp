@@ -281,7 +281,7 @@ void test_the_app_is_heard_again_600_ms_after_the_handheld_lets_go() {
         if (t == release) robot.handheld(handheldFrame(0, 0));
         if (t % APP_HEARTBEAT_TICKS == 3) robot.command(heartbeat);
         robot.tick();
-        if (t < release) TEST_ASSERT_GREATER_THAN_FLOAT(0, robot.bodyCommand().xm);
+        if (t < release) TEST_ASSERT_LESS_THAN_FLOAT(0, robot.bodyCommand().xm); // lx > 0 shifts the body right
         if (t == release) TEST_ASSERT_EQUAL_FLOAT(0, robot.bodyCommand().xm);
         if (heightTaken < 0 && robot.bodyCommand().zm != standingZm) heightTaken = t;
     }
@@ -577,7 +577,7 @@ void test_nothing_posted_changes_the_motion_before_the_next_tick() {
         host_bus::drainAll();
         TEST_ASSERT_EQUAL_FLOAT(0.f, robot.bodyCommand().xm);
         robot.tick();
-        TEST_ASSERT_EQUAL_FLOAT(50.f, robot.bodyCommand().xm);
+        TEST_ASSERT_EQUAL_FLOAT(-50.f, robot.bodyCommand().xm);
     }
     {
         VirtualRobot robot;

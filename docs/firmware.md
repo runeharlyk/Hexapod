@@ -103,7 +103,9 @@ The mode is a `MOTION_STATE`: `DEACTIVATED`, `IDLE`, `POSE`, `STAND`, `WALK`, `W
 - `DEACTIVATED` puts both PCA9685 boards to sleep; `IDLE` keeps them powered and produces no angles; `POSE` drives every servo to its centre pulse for calibration.
 - `STAND` eases the body toward the commanded offset, height and tilt; the gait stays idle, except that a new stance width is reached by stepping the feet there rather than sliding them.
   A posture change is clamped to what the legs can stand in (`clampStandPosture`) and taken only once the feet are at rest.
+  The left stick pushed right shifts the body right and pushed up forward; the right stick pushed right lowers the right side and pushed up the nose (`docs/conventions.md`).
 - `WALK` turns the stick into a locomotion command for `GaitController`; with `GaitType::TUNED` the stick is a velocity command mapped through the searched gait in `gait_tuned.h` instead.
+  For an operator behind the robot, +ly walks forward, +lx strafes right and +rx turns clockwise, in every gait (`docs/conventions.md`).
   A classical gait (`TRI_GATE`, `BI_GATE`, `WAVE`, `RIPPLE`) takes its stroke and cadence from `classicWalkTarget` in `include/gait_speed.h`.
   The `stride` slider picks the stroke per axis: 0 is each gait's speed-optimal stroke at the posture, +1 the longest feasible stroke and -1 0.3 of the optimum, linear in between.
   A positive stride changes nothing where the speed-optimal stroke is already the longest: BI at the default posture and in most yaw postures, TRI in most yaw postures; at the default posture TRI, WAVE and RIPPLE have room (forward 65 to 82 mm).
@@ -121,6 +123,7 @@ The mode is a `MOTION_STATE`: `DEACTIVATED`, `IDLE`, `POSE`, `STAND`, `WALK`, `W
 - `WALK_NN` hands stride, lift, cadence and ride height to `PolicyRunner`, which runs the exported network every fourth tick on top of the analytic gait.
   Its observation and action decoding is `PolicyCore` (`include/policy/policy_core.h`), which the training environment runs through `host/policy_api.cpp`, so the network trains on the code that deploys it.
   Its `h` and `fd` are clamped to the classic gaits' walkable region (`clampPosture`).
+  `PolicyRunner::setCommand` turns the sticks into the policy's trained command (forward, right, counter-clockwise) with the walk's signs, so the policy's own input is unchanged by the stick mapping.
 - `ANIMATE` plays a clip or a streamed puppeteer pose through `AnimationRunner`.
 
 Each tick in a stepping mode follows the same order: the body state eases toward its target, the gait command ramps toward the commanded one (`approachGaitCommand`), `GaitController::step` advances the phase and writes the six foot targets (Bezier swing, sinusoidal stance), and `Kinematics::inverseKinematics` turns body pose and feet into 18 joint angles.

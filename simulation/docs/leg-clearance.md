@@ -25,6 +25,7 @@ Centre clearance is the least distance between centre lines; surface clearance s
 
 Default sweep: 9^3 stick commands x 40 phases, step-height stick `s1 = 0`, body-height stick `h = 0`.
 Travel is the share of samples with any joint commanded beyond its travel; hits are stick commands that touch somewhere in the cycle.
+The commands below are in the stick mapping before 2026-10-19, when +lx strafed left and +rx turned counter-clockwise; under today's (`docs/conventions.md`) the same motion is the stick with `lx` and `rx` negated.
 
 | gait | travel | clamped surface (mm) | clamped hits | worst clamped command (lx, ly, rx) @ phase, legs, segments | commanded surface (mm) | commanded hits |
 | ---- | ------ | -------------------- | ------------ | ---------------------------------------------------------- | ---------------------- | -------------- |
@@ -43,7 +44,7 @@ A finer grid, 17^3 commands x 80 phases, moves the minimum by at most 0.2 mm: tr
 With the servos stopped at their travel, no stick command in any gait brings two neighbouring legs into contact: the least surface clearance is 9.5 mm over the whole swept envelope, 10.4 mm at default height and lift.
 No clamp task is needed for leg-leg contact.
 The margin comes from the travel clamp, though, not from the gait.
-The raw IK angles collide on 104 to 287 of the 729 commands, femur against femur of neighbours such as legs 0-1 at (-0.25, -1.00, -1.00), because combined forward, lateral and yaw strokes ask a coxa to swing up to 89.5 deg (tripod), far past its 31.5 deg travel.
+The raw IK angles collide on 104 to 287 of the 729 commands, femur against femur of neighbours such as legs 0-1 at (+0.25, -1.00, +1.00) in today's mapping, because combined forward, lateral and yaw strokes ask a coxa to swing up to 89.5 deg (tripod), far past its 31.5 deg travel.
 Same-side neighbours are mounted only 45 deg apart, so the travel alone does not rule contact out; it is the clamped sweep that shows the legs stay apart within it.
 Widening `JOINT_LIMIT_DEG` for the coxa, or adding a mode that bypasses `setAngles`, needs this sweep re-run before it ships.
 `test_leg_clearance.py` keeps the tripod and TUNED sweeps on a 5^3 grid above 5 mm, so a gait change that brings the legs together fails there.

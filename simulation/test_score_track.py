@@ -20,9 +20,10 @@ START = (0.4, 0.5, 0.3)  # x, y, yaw on the floor
 TRACK_FPS = 30.0
 TRACK_NOISE_M, TRACK_NOISE_RAD = 0.001, np.radians(0.3)
 # (mode, seconds, lx, ly, rx): a turn in place to start with, then forward, a turn back and a strafe to the right.
-COURSE = [(Mode.STAND, 2.0, 0.0, 0.0, 0.0), (Mode.WALK, 3.0, 0.0, 0.0, 0.4), (Mode.STAND, 1.0, 0.0, 0.0, 0.0),
-          (Mode.WALK, 4.0, 0.0, 0.5, 0.0), (Mode.STAND, 1.0, 0.0, 0.0, 0.0), (Mode.WALK, 2.0, 0.0, 0.0, -0.3),
-          (Mode.STAND, 1.0, 0.0, 0.0, 0.0), (Mode.WALK, 3.0, -0.5, 0.0, 0.0), (Mode.STAND, 2.0, 0.0, 0.0, 0.0)]
+# A counter-clockwise turn, a forward walk, a clockwise turn and a strafe to the right.
+COURSE = [(Mode.STAND, 2.0, 0.0, 0.0, 0.0), (Mode.WALK, 3.0, 0.0, 0.0, -0.4), (Mode.STAND, 1.0, 0.0, 0.0, 0.0),
+          (Mode.WALK, 4.0, 0.0, 0.5, 0.0), (Mode.STAND, 1.0, 0.0, 0.0, 0.0), (Mode.WALK, 2.0, 0.0, 0.0, 0.3),
+          (Mode.STAND, 1.0, 0.0, 0.0, 0.0), (Mode.WALK, 3.0, 0.5, 0.0, 0.0), (Mode.STAND, 2.0, 0.0, 0.0, 0.0)]
 
 
 def course_ticks():

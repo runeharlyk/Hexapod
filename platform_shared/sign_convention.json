@@ -33,7 +33,7 @@
     },
     {
       "name": "right strafe",
-      "stick": { "lx": -0.5, "ly": 0, "rx": 0 },
+      "stick": { "lx": 0.5, "ly": 0, "rx": 0 },
       "gait": { "step_x": 52.4, "step_y": 0, "step_angle": 0 },
       "body_velocity_sign": [1, 0],
       "yaw_sign": 0,
@@ -48,7 +48,7 @@
     },
     {
       "name": "counter-clockwise turn",
-      "stick": { "lx": 0, "ly": 0, "rx": 0.5 },
+      "stick": { "lx": 0, "ly": 0, "rx": -0.5 },
       "gait": { "step_x": 0, "step_y": 0, "step_angle": 0.435 },
       "body_velocity_sign": [0, 0],
       "yaw_sign": 1,
@@ -70,7 +70,7 @@
       {
         "name": "left stick right",
         "stick": { "lx": 0.5, "ly": 0, "rx": 0, "ry": 0 },
-        "body_shift_sign": [-1, 0],
+        "body_shift_sign": [1, 0],
         "body_tilt_sign": [0, 0]
       },
       {
@@ -83,7 +83,7 @@
         "name": "right stick right",
         "stick": { "lx": 0, "ly": 0, "rx": 0.5, "ry": 0 },
         "body_shift_sign": [0, 0],
-        "body_tilt_sign": [0, -1]
+        "body_tilt_sign": [0, 1]
       },
       {
         "name": "right stick up",

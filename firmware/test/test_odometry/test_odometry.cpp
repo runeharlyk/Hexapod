@@ -526,8 +526,8 @@ void test_a_stand_tilt_and_shift_are_no_travel() {
     standUp(robot);
     const CommandMsg leaning {1, 1, 1, 1, 0, 0, 0, 0};
     run(robot, leaning, 1.0f);
-    TEST_ASSERT_GREATER_THAN_FLOAT(0.2f, robot.bodyCommand().phi);
-    TEST_ASSERT_GREATER_THAN_FLOAT(40.0f, robot.bodyCommand().xm);
+    TEST_ASSERT_LESS_THAN_FLOAT(-0.2f, robot.bodyCommand().phi); // +rx lowers the right side: a negative phi
+    TEST_ASSERT_LESS_THAN_FLOAT(-40.0f, robot.bodyCommand().xm); // +lx shifts the body right: a negative xm
     const OdometryEstimate e = robot.odometry();
     TEST_ASSERT_EQUAL_FLOAT(0, e.x);
     TEST_ASSERT_EQUAL_FLOAT(0, e.y);
@@ -563,7 +563,7 @@ void test_a_stand_tilt_ramp_does_not_keep_the_bias_from_being_learned() {
         drifting.tick(robot);
         robot.tick();
     }
-    TEST_ASSERT_GREATER_THAN_FLOAT(0.2f, robot.bodyCommand().phi);
+    TEST_ASSERT_LESS_THAN_FLOAT(-0.2f, robot.bodyCommand().phi);
     TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS * WALK_S, 0, yawWalkedOnGyro(robot, GYRO_BIAS));
 }
 

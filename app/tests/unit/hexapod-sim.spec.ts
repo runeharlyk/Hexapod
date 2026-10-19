@@ -20,6 +20,8 @@ const sceneXml = readFileSync(
 const STAND = 3
 const WALK = 4
 const FORWARD: Command = [0, 1, 0, 0, 0, 0, 0, 0, 0]
+const STRAFE_RIGHT: Command = [1, 0, 0, 0, 0, 0, 0, 0, 0]
+const TURN_RIGHT: Command = [0, 0, 1, 0, 0, 0, 0, 0, 0]
 
 let mujoco: MainModule
 let robot: VirtualRobot
@@ -30,6 +32,27 @@ function run(sim: HexapodSim, seconds: number, command?: Command) {
     if (command) robot.command(command)
     sim.step(0.02)
   }
+}
+
+// The base's heading about world +z, counter-clockwise from above.
+function yaw(sim: HexapodSim) {
+  const [w, x, y, z] = sim.baseQuaternion()
+  return Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+}
+
+// Stands, walks `command` from a stand for `seconds`, and returns how far the base moved and turned.
+function walkFromStand(command: Command, seconds: number) {
+  const sim = new HexapodSim(mujoco, sceneXml, robot)
+  robot.setMode(STAND)
+  run(sim, 1)
+  robot.setMode(WALK)
+  const [x0, y0] = sim.basePosition()
+  const yaw0 = yaw(sim)
+  run(sim, seconds, command)
+  const [x1, y1] = sim.basePosition()
+  const moved = { x: x1 - x0, y: y1 - y0, yaw: yaw(sim) - yaw0, fallen: sim.hasFallen() }
+  sim.dispose()
+  return moved
 }
 
 describe("the simulated IMU's angle signs", () => {
@@ -82,5 +105,20 @@ describe('the simulated hexapod', () => {
     expect(y1 - y0).toBeGreaterThan(0.1)
     expect(Math.abs(x1 - x0)).toBeLessThan((y1 - y0) / 4)
     sim.dispose()
+  })
+
+  // docs/conventions.md: for an operator behind the robot, a stick pushed right walks it to its right, +x.
+  it('strafes right, along +x, for the left stick pushed right', () => {
+    const moved = walkFromStand(STRAFE_RIGHT, 3)
+    expect(moved.fallen).toBe(false)
+    expect(moved.x).toBeGreaterThan(0.1)
+    expect(Math.abs(moved.y)).toBeLessThan(moved.x / 4)
+  })
+
+  it('turns clockwise for the right stick pushed right', () => {
+    const moved = walkFromStand(TURN_RIGHT, 1)
+    expect(moved.fallen).toBe(false)
+    expect(moved.yaw).toBeLessThan(-0.3)
+    expect(Math.hypot(moved.x, moved.y)).toBeLessThan(0.05)
   })
 })

@@ -1,7 +1,8 @@
 // Host test of the body-frame sign convention against platform_shared/sign_convention.json, which the
 // app's sign-convention.spec.ts and the simulation's test_sign_convention.py pass too, so no copy of the gait can
-// mirror an axis on its own. The gait's signs are checked on gait.h, the STAND sticks' from the stick on, through
-// the virtual robot (firmware/host/virtual_robot.h). docs/conventions.md derives the expected signs.
+// mirror an axis on its own. The gait's signs are checked on gait.h, the walk sticks' on the classical WALK mapping
+// (gait_speed.h), the STAND sticks' from the stick on, through the virtual robot (firmware/host/virtual_robot.h).
+// docs/conventions.md derives the expected signs.
 
 #include <unity.h>
 
@@ -19,6 +20,7 @@ namespace {
 
 struct Command {
     std::string name;
+    float lx, ly, rx;
     float stepX, stepY, stepAngle;
     int bodyVelocitySign[2];
     int yawSign;
@@ -154,6 +156,10 @@ Fixture readFixture() {
     while (r.ok && c.ok && c.has("\"name\"")) {
         Command command {};
         command.name = c.string("\"name\"");
+        const std::vector<float> stick = c.numbers("\"stick\"", '{', '}', 3);
+        command.lx = stick[0];
+        command.ly = stick[1];
+        command.rx = stick[2];
         const std::vector<float> gait = c.numbers("\"gait\"", '{', '}', 3);
         command.stepX = gait[0];
         command.stepY = gait[1];
@@ -369,6 +375,18 @@ void test_kinematic_mounts_put_each_leg_on_its_fixture_side() {
     }
 }
 
+// The stick through MotionService's classical WALK mapping, at the default speed, posture and stride.
+void test_stick_maps_to_the_fixture_gait_command() {
+    const Fixture f = readFixture();
+    TEST_ASSERT_EQUAL_MESSAGE(3, f.commands.size(), "sign_convention.json missing or unreadable");
+    for (const Command& c : f.commands) {
+        const WalkTarget w = classicWalkTarget(GaitType::TRI_GATE, c.lx, c.ly, c.rx, 0, 0, 0, 0, 0);
+        TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.05f, c.stepX, w.stepX, c.name.c_str());
+        TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.05f, c.stepY, w.stepY, c.name.c_str());
+        TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.0005f, c.stepAngle, w.stepAngle, c.name.c_str());
+    }
+}
+
 void test_stance_feet_move_with_the_fixture_signs() {
     const Fixture f = readFixture();
     TEST_ASSERT_EQUAL_MESSAGE(3, f.commands.size(), "sign_convention.json missing or unreadable");
@@ -416,6 +434,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_fixture_is_readable);
     RUN_TEST(test_resting_stance_puts_each_leg_on_its_fixture_side);
     RUN_TEST(test_kinematic_mounts_put_each_leg_on_its_fixture_side);
+    RUN_TEST(test_stick_maps_to_the_fixture_gait_command);
     RUN_TEST(test_stance_feet_move_with_the_fixture_signs);
     RUN_TEST(test_body_motion_has_the_fixture_signs);
     RUN_TEST(test_a_standing_body_shifts_and_tilts_with_the_fixture_signs);

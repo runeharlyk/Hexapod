@@ -481,10 +481,10 @@ def test_a_walk_is_kept_alive_inside_the_dead_man_and_stopped_at_once(robot, fak
     assert all(data.left.y == 0 for t, data in fake.inputs() if t > stopped)
 
 
-# REP-103 on the wire as the simulation measured it: +lx walks left, +rx turns counter-clockwise.
+# REP-103 on the wire as the simulation measured it: +lx walks right, +rx turns clockwise.
 @pytest.mark.parametrize("velocity, stick", [
-    (Velocity(0.1, 0, 0), "ly+"), (Velocity(-0.1, 0, 0), "ly-"), (Velocity(0, 0.1, 0), "lx+"),
-    (Velocity(0, -0.1, 0), "lx-"), (Velocity(0, 0, 0.5), "rx+"), (Velocity(0, 0, -0.5), "rx-"),
+    (Velocity(0.1, 0, 0), "ly+"), (Velocity(-0.1, 0, 0), "ly-"), (Velocity(0, 0.1, 0), "lx-"),
+    (Velocity(0, -0.1, 0), "lx+"), (Velocity(0, 0, 0.5), "rx-"), (Velocity(0, 0, -0.5), "rx+"),
 ])
 def test_each_axis_reaches_its_stick(robot, fake, velocity, stick):
     robot.stand()

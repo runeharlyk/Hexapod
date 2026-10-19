@@ -8,6 +8,8 @@ measured on its own, from rest, through the same firmware control loop the sim b
 
     ly -> forward speed vx    lx -> leftward speed vy    rx -> counter-clockwise yaw rate
 
+with +lx and +rx measured as negative vy and yaw rate: they strafe right and turn clockwise.
+
 over `--settle` seconds of ramp-up and then a `--window` of steady walking, in the robot's body frame.
 This is the simulated robot; the real one slips differently, so check a distance on the floor before relying on it.
 
