@@ -1,5 +1,4 @@
 import { writable, type Readable } from 'svelte/store'
-import type { CorrelationResponse } from '$lib/platform_shared/message'
 
 export type ScanState<R> =
   | { state: 'idle' }
@@ -34,11 +33,4 @@ export const createScan = <R>(): Scan<R> => {
   }
 
   return { subscribe, run }
-}
-
-// The data broker resolves every reply, refusals included; a refused scan must fail rather than read as empty.
-export const answered = (res: CorrelationResponse): CorrelationResponse => {
-  if (res.statusCode !== 200)
-    throw new Error(res.errorMessage || `the robot answered with status ${res.statusCode}`)
-  return res
 }

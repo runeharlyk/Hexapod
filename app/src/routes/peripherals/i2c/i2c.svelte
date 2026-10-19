@@ -4,12 +4,12 @@
   import { dataBroker } from '$lib/transport/databroker'
   import { Connection } from '$lib/components/icons'
   import { describeI2C, hexAddress, i2cScan } from '$lib/i2c'
-  import { answered } from '$lib/scan'
+  import { ask } from '$lib/transport/reply'
   import I2CSetting from './i2cSetting.svelte'
 
   const scan = () =>
     i2cScan.run(async () => {
-      const res = answered(await dataBroker.request({ i2cScanDataRequest: {} }))
+      const res = await ask(dataBroker, { i2cScanDataRequest: {} }, 'the I2C scan')
       return describeI2C(res.i2cScanData?.devices.map(device => device.address) ?? [])
     })
 

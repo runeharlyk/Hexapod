@@ -1,4 +1,5 @@
 import { dataBroker } from '$lib/transport/databroker'
+import { ask } from '$lib/transport/reply'
 import { Animation } from '$lib/platform_shared/animation'
 import type { AnimationEntry, AnimationReport } from '$lib/platform_shared/message'
 import { froundAnimation, validate } from './model'
@@ -13,18 +14,17 @@ const writeAll = async (
   path: string,
   bytes: Uint8Array,
   onProgress?: (sent: number, total: number) => void
-): Promise<string | null> => {
+): Promise<void> => {
   const total = bytes.length
   for (let offset = 0; offset < total; offset += CHUNK) {
     const content = bytes.slice(offset, offset + CHUNK)
-    const res = await dataBroker.request({
-      fileWriteChunk: { path, offset, totalSize: total, content }
-    })
-    if (res.statusCode !== 200)
-      return `write at offset ${offset} failed with status ${res.statusCode}`
+    await ask(
+      dataBroker,
+      { fileWriteChunk: { path, offset, totalSize: total, content } },
+      `the write at offset ${offset}`
+    )
     onProgress?.(offset + content.length, total)
   }
-  return null
 }
 
 const writeWithRetry = async (
@@ -32,14 +32,20 @@ const writeWithRetry = async (
   bytes: Uint8Array,
   onProgress?: (sent: number, total: number) => void
 ): Promise<string | null> => {
-  const attempt = () => writeAll(path, bytes, onProgress).catch(e => `write failed: ${e}`)
+  const attempt = () =>
+    writeAll(path, bytes, onProgress).then(
+      () => null,
+      (e: unknown) => (e instanceof Error ? e.message : `write failed: ${e}`)
+    )
   return (await attempt()) === null ? null : attempt()
 }
 
 export const validateAnimation = async (name: string): Promise<AnimationReport> => {
-  const res = await dataBroker.request({ animationValidate: { name } })
   // The firmware answers a refused file with status 422 and the report, so the report decides.
-  if (!res.animationReport) throw new Error(`validate ${name} failed with status ${res.statusCode}`)
+  const res = await ask(dataBroker, { animationValidate: { name } }, `the validation of ${name}`, {
+    accept: [422]
+  })
+  if (!res.animationReport) throw new Error(`the validation of ${name} returned no report`)
   return res.animationReport
 }
 
@@ -63,9 +69,12 @@ export const downloadAnimation = async (name: string): Promise<Animation> => {
   let offset = 0
   let totalSize = 0
   do {
-    const res = await dataBroker.request({ fileReadChunk: { path, offset, length: CHUNK } })
-    if (res.statusCode !== 200 || !res.fileChunk)
-      throw new Error(`read at offset ${offset} failed with status ${res.statusCode}`)
+    const res = await ask(
+      dataBroker,
+      { fileReadChunk: { path, offset, length: CHUNK } },
+      `the read of ${name} at offset ${offset}`
+    )
+    if (!res.fileChunk) throw new Error(`the read of ${name} at offset ${offset} returned no chunk`)
     if (res.fileChunk.content.length === 0 && offset < res.fileChunk.totalSize)
       throw new Error(`read at offset ${offset} returned no data`)
     parts.push(res.fileChunk.content)
@@ -86,12 +95,10 @@ export const downloadAnimation = async (name: string): Promise<Animation> => {
 }
 
 export const listAnimations = async (): Promise<AnimationEntry[]> => {
-  const res = await dataBroker.request({ animationListRequest: {} })
-  if (res.statusCode !== 200) throw new Error(`list failed with status ${res.statusCode}`)
+  const res = await ask(dataBroker, { animationListRequest: {} }, 'the animation library')
   return res.animationList?.entries ?? []
 }
 
 export const deleteAnimation = async (name: string): Promise<void> => {
-  const res = await dataBroker.request({ fileDelete: { path: animationPath(name) } })
-  if (res.statusCode !== 200) throw new Error(`delete ${name} failed with status ${res.statusCode}`)
+  await ask(dataBroker, { fileDelete: { path: animationPath(name) } }, `deleting ${name}`)
 }

@@ -127,7 +127,7 @@ describe('the .hexrec format', () => {
 
 const TELEMETRY_BATCH_TAG = 290
 
-const createLink = () => {
+const createLink = (featuresStatus = 200) => {
   const status = writable<LinkStatus>('disconnected')
   const sent: Message[] = []
   const listeners: ((bytes: Uint8Array) => void)[] = []
@@ -138,7 +138,7 @@ const createLink = () => {
         Message.create({
           correlationResponse: CorrelationResponse.create({
             correlationId,
-            statusCode: 200,
+            statusCode: featuresStatus,
             featuresDataResponse: FEATURES
           })
         })
@@ -185,6 +185,22 @@ describe('the telemetry recorder', () => {
       : m.unsubNotif ? [`unsub ${m.unsubNotif.tag}`]
       : []
     )
+
+  it('does not start, and says why, when the robot refuses its features', async () => {
+    const refusing = createLink(500)
+    const broker = new DataBroker()
+    broker.addTransport(refusing.transport)
+    await refusing.transport.connect()
+    const refused = createTelemetryRecorder({ broker, linked, hostUs: () => 0 })
+
+    await refused.start()
+
+    expect(get(refused)).toMatchObject({
+      recording: false,
+      starting: false,
+      error: 'Recording not started: the robot refused the feature list (status 500)'
+    })
+  })
 
   it('subscribes to the telemetry batches only while recording', async () => {
     expect(subscriptions()).toEqual([])

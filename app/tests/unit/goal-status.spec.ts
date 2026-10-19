@@ -125,10 +125,16 @@ describe('goalStatus store', () => {
   })
 })
 
+const ok = (goalStatus: GoalStatus) => ({ statusCode: 200, errorMessage: '', goalStatus })
+
 // The data broker as followGoalStatus uses it: its goal status pushes, and requests answered when the test says.
 const fakeBroker = () => {
   const pushes = new Set<(s: GoalStatus) => void>()
-  const replies: ((reply: { goalStatus?: GoalStatus }) => void)[] = []
+  const replies: ((reply: {
+    goalStatus?: GoalStatus
+    statusCode: number
+    errorMessage: string
+  }) => void)[] = []
   const broker: GoalStatusLink = {
     on: (_fns, callback) => {
       pushes.add(callback)
@@ -164,7 +170,7 @@ describe('followGoalStatus', () => {
     expect(fake.replies).toHaveLength(0)
     linked.set(true)
     expect(fake.replies).toHaveLength(1)
-    fake.replies[0]({ goalStatus: status({ progress: 0.4 }) })
+    fake.replies[0](ok(status({ progress: 0.4 })))
     await vi.runAllTimersAsync()
     expect(get(goalStatus)?.progress).toBe(0.4)
     fake.push(status({ progress: 0.5 }))
@@ -175,7 +181,7 @@ describe('followGoalStatus', () => {
     const fake = fakeBroker()
     stop = followGoalStatus(fake.broker, linked)
     linked.set(true)
-    fake.replies[0]({ goalStatus: status({ state: GoalState.GOAL_REACHED }) })
+    fake.replies[0](ok(status({ state: GoalState.GOAL_REACHED })))
     await vi.runAllTimersAsync()
     expect(get(goalStatus)).toBeNull()
   })
@@ -185,7 +191,7 @@ describe('followGoalStatus', () => {
     stop = followGoalStatus(fake.broker, linked)
     linked.set(true)
     fake.push(status({ id: 2, progress: 0.1 }))
-    fake.replies[0]({ goalStatus: status({ id: 1, progress: 0.9 }) })
+    fake.replies[0](ok(status({ id: 1, progress: 0.9 })))
     await vi.runAllTimersAsync()
     expect(get(goalStatus)?.id).toBe(2)
   })

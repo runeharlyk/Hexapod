@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { RotateCcw, RotateCw } from '$lib/components/icons'
   import { dataBroker } from '$lib/transport/databroker'
+  import { ask } from '$lib/transport/reply'
   import { notifications } from '$lib/components/toasts/notifications'
   import type { Servo } from '$lib/platform_shared/api'
   import LegDiagram from '$lib/components/LegDiagram.svelte'
@@ -11,18 +12,22 @@
   let servos: Servo[] = $state([])
 
   const load = async () => {
-    const res = await dataBroker.request({ servoSettingsGet: {} }).catch(() => null)
+    const res = await ask(dataBroker, { servoSettingsGet: {} }, 'the servo calibration').catch(
+      (error: Error) => {
+        notifications.error(`Could not read the servo calibration: ${error.message}`, 5000)
+        return null
+      }
+    )
     servos = res?.servoSettings?.servos ?? []
   }
   onMount(load)
 
   const save = async () => {
     try {
-      const response = await dataBroker.request({ servoSettingsUpdate: { servos } })
-      if (response.statusCode >= 400) throw new Error(`status ${response.statusCode}`)
+      await ask(dataBroker, { servoSettingsUpdate: { servos } }, 'the servo calibration')
       notifications.success('Servo calibration saved.', 3000)
-    } catch {
-      notifications.error('Failed to save servo calibration.', 3000)
+    } catch (error) {
+      notifications.error(`Failed to save the servo calibration: ${(error as Error).message}`, 5000)
     }
   }
 

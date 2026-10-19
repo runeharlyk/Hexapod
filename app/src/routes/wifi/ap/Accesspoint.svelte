@@ -12,6 +12,7 @@
   import StatusItem from '$lib/components/StatusItem.svelte'
   import { ipToString, ipToU32 } from '$lib/proto-api'
   import { dataBroker } from '$lib/transport/databroker'
+  import { ask } from '$lib/transport/reply'
   import { APStatus } from '$lib/platform_shared/api'
   import type { ApSettings, ApStatus } from '$lib/types/models'
 
@@ -45,13 +46,21 @@
   }
 
   async function getAPStatus() {
-    const res = await dataBroker.request({ apStatusGet: {} }).catch(() => null)
+    // The pushes keep the status current; a failed first read leaves it to them.
+    const res = await ask(dataBroker, { apStatusGet: {} }, 'the access point status').catch(
+      () => null
+    )
     if (res?.apStatus) applyApStatus(res.apStatus)
     return apStatus
   }
 
   async function getAPSettings() {
-    const res = await dataBroker.request({ apSettingsGet: {} }).catch(() => null)
+    const res = await ask(dataBroker, { apSettingsGet: {} }, 'the access point settings').catch(
+      (error: Error) => {
+        notifications.error(`Could not read the access point settings: ${error.message}`, 5000)
+        return null
+      }
+    )
     if (!res?.apSettings) return
     const a = res.apSettings
     apSettings = {
@@ -68,11 +77,8 @@
     return apSettings
   }
 
-  onMount(() => {
-    getAPSettings()
-    getAPStatus() // current value now; live changes via the subscription below
-    return dataBroker.on(APStatus, applyApStatus)
-  })
+  // The template's awaits read the current settings and status once; live status changes come by this subscription.
+  onMount(() => dataBroker.on(APStatus, applyApStatus))
 
   let provisionMode = [
     {
@@ -106,26 +112,30 @@
 
   async function postAPSettings() {
     try {
-      const res = await dataBroker.request({
-        apSettingsUpdate: {
-          provisionMode: Number(apSettings.provision_mode),
-          ssid: apSettings.ssid,
-          password: apSettings.password,
-          channel: Number(apSettings.channel),
-          ssidHidden: apSettings.ssid_hidden,
-          maxClients: Number(apSettings.max_clients),
-          localIp: ipToU32(apSettings.local_ip),
-          gatewayIp: ipToU32(apSettings.gateway_ip),
-          subnetMask: ipToU32(apSettings.subnet_mask)
-        }
-      })
-      if (!res.apSettings) {
-        notifications.error('Failed to update Access Point settings.', 3000)
-        return
-      }
+      // The robot answers a refused update with a 400 and the settings it kept.
+      await ask(
+        dataBroker,
+        {
+          apSettingsUpdate: {
+            provisionMode: Number(apSettings.provision_mode),
+            ssid: apSettings.ssid,
+            password: apSettings.password,
+            channel: Number(apSettings.channel),
+            ssidHidden: apSettings.ssid_hidden,
+            maxClients: Number(apSettings.max_clients),
+            localIp: ipToU32(apSettings.local_ip),
+            gatewayIp: ipToU32(apSettings.gateway_ip),
+            subnetMask: ipToU32(apSettings.subnet_mask)
+          }
+        },
+        'the access point settings'
+      )
       notifications.success('Access Point settings updated.', 3000)
-    } catch {
-      notifications.error('Failed to update Access Point settings — is the robot connected?', 3000)
+    } catch (e) {
+      notifications.error(
+        `Failed to update the access point settings: ${(e as Error).message}`,
+        5000
+      )
     }
   }
 

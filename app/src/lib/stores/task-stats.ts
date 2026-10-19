@@ -1,4 +1,5 @@
 import { TaskState, type TaskStats } from '$lib/platform_shared/message'
+import { ask } from '$lib/transport/reply'
 
 type TaskStatsReply = { statusCode: number; errorMessage: string; taskStats?: TaskStats }
 
@@ -33,16 +34,6 @@ export interface TaskStatsFeed {
   stop(): void
 }
 
-const failureOf = (reply: TaskStatsReply) => {
-  if (reply.statusCode === 200)
-    return reply.taskStats ? null : 'the robot answered without a task table'
-  if (reply.errorMessage) return reply.errorMessage
-  // The request has no fields to get wrong: a bare 400 is a firmware that does not know it.
-  if (reply.statusCode === 400)
-    return "the robot's firmware has no task table; update it to see the tasks"
-  return `the robot answered with status ${reply.statusCode}`
-}
-
 /** Hands `show` the page's view on every change; nothing is requested until `refresh` is called. */
 export const watchTaskStats = (
   broker: TaskStatsLink,
@@ -66,9 +57,11 @@ export const watchTaskStats = (
     clearTimeout(timer)
     update({ loading: true })
     try {
-      const reply = await broker.request({ taskStatsRequest: {} }, { signal: aborter.signal })
+      const reply = await ask(broker, { taskStatsRequest: {} }, 'the task table', {
+        signal: aborter.signal
+      })
       if (aborter.signal.aborted) return
-      const error = failureOf(reply)
+      const error = reply.taskStats ? null : 'the robot answered without a task table'
       update({ loading: false, error, ...(error ? {} : { stats: reply.taskStats }) })
     } catch (e) {
       if (aborter.signal.aborted) return

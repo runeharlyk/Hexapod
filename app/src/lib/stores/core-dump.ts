@@ -1,5 +1,6 @@
 import type { CoreDumpReport } from '$lib/platform_shared/message'
 import type { FileChunk } from '$lib/platform_shared/api'
+import { ask } from '$lib/transport/reply'
 
 /**
  * The crash the robot kept (CoreDumpGet, CoreDumpRead and CoreDumpErase in message.proto). Every transport carries
@@ -66,17 +67,8 @@ export const lastCrash = (report: CoreDumpReport): LastCrash => {
   }
 }
 
-const refusal = (reply: CoreDumpReply) =>
-  reply.errorMessage || `the robot answered with status ${reply.statusCode}`
-
 export const readCoreDump = async (link: CoreDumpLink): Promise<CoreDumpReport> => {
-  const reply = await link.request({ coreDumpGet: {} })
-  // The request has no fields to get wrong: a bare 400 is a firmware that does not know it.
-  if (reply.statusCode === 400 && !reply.errorMessage)
-    throw new Error(
-      "the robot's firmware has no core-dump readout; update it to see the last crash"
-    )
-  if (reply.statusCode !== 200) throw new Error(refusal(reply))
+  const reply = await ask(link, { coreDumpGet: {} }, 'the core-dump readout')
   if (!reply.coreDumpReport) throw new Error('the robot answered without a core-dump report')
   return reply.coreDumpReport
 }
@@ -90,10 +82,13 @@ export const downloadCoreDump = async (
   let offset = 0
   let total: number | undefined
   do {
-    const reply = await link.request({ coreDumpRead: { offset, length: CORE_DUMP_CHUNK } })
+    const reply = await ask(
+      link,
+      { coreDumpRead: { offset, length: CORE_DUMP_CHUNK } },
+      `the core-dump read at offset ${offset}`
+    )
     const chunk = reply.fileChunk
-    if (reply.statusCode !== 200 || !chunk)
-      throw new Error(`read at offset ${offset} failed with status ${reply.statusCode}`)
+    if (!chunk) throw new Error(`the read at offset ${offset} returned no chunk`)
     if (total !== undefined && chunk.totalSize !== total)
       throw new Error('the core dump changed while it downloaded')
     total = chunk.totalSize
@@ -115,8 +110,7 @@ export const downloadCoreDump = async (
 
 /** Erases the stored dump; the robot refuses unless it rests. Resolves to the report after the erase. */
 export const eraseCoreDump = async (link: CoreDumpLink): Promise<CoreDumpReport> => {
-  const reply = await link.request({ coreDumpErase: {} })
-  if (reply.statusCode !== 200) throw new Error(refusal(reply))
+  const reply = await ask(link, { coreDumpErase: {} }, 'the core-dump erase')
   if (!reply.coreDumpReport) throw new Error('the robot answered without a core-dump report')
   return reply.coreDumpReport
 }

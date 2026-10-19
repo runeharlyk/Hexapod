@@ -1,5 +1,6 @@
 import { api } from '$lib/api'
 import { dataBroker } from '$lib/transport/databroker'
+import { ask } from '$lib/transport/reply'
 import { get, writable, type Writable } from 'svelte/store'
 import { canReachRobot, location } from './location-store'
 
@@ -52,7 +53,11 @@ const buildFeatures = {
 }
 
 const requestFeatures = async (): Promise<Features> => {
-  const { featuresDataResponse: f } = await dataBroker.request({ featuresDataRequest: {} })
+  const { featuresDataResponse: f } = await ask(
+    dataBroker,
+    { featuresDataRequest: {} },
+    'the feature list'
+  )
   if (!f) throw new Error('features response missing')
   return {
     ...buildFeatures,

@@ -18,7 +18,14 @@ import { dataBroker } from '$lib/transport/databroker'
 import type { ITransport, LinkStatus } from '$lib/interfaces/transport.interface'
 import { CorrelationResponse, Message } from '$lib/platform_shared/message'
 import { Animation, ParamId } from '$lib/platform_shared/animation'
-import { CHUNK, animationPath, downloadAnimation, uploadAnimation } from '$lib/animation/transfer'
+import {
+  CHUNK,
+  animationPath,
+  deleteAnimation,
+  downloadAnimation,
+  listAnimations,
+  uploadAnimation
+} from '$lib/animation/transfer'
 import { PoseSender, playAnimation, stopAnimation } from '$lib/control'
 import { MotionModes } from '$lib/motion'
 import { stancePose } from '$lib/animation/model'
@@ -162,7 +169,34 @@ describe('uploadAnimation', () => {
     responder = m =>
       m.correlationRequest?.animationValidate ? { statusCode: 500, empty: {} } : { empty: {} }
 
-    await expect(uploadAnimation(animationLargerThan(10))).rejects.toThrow(/validate pad.*500/)
+    await expect(uploadAnimation(animationLargerThan(10))).rejects.toThrow(
+      'the robot refused the validation of pad (status 500)'
+    )
+  })
+})
+
+describe('listAnimations', () => {
+  it("lists the robot's animations", async () => {
+    responder = () => ({ animationList: { entries: [{ name: 'wave', size: 120 }] } })
+    await expect(listAnimations()).resolves.toEqual([{ name: 'wave', size: 120 }])
+  })
+
+  // AnimationListRequest has no fields, so a bare 400 is a firmware from before the library.
+  it('names a firmware that predates the library', async () => {
+    responder = () => ({ statusCode: 400 })
+    await expect(listAnimations()).rejects.toThrow(
+      "the robot's firmware does not support the animation library; update it"
+    )
+  })
+})
+
+describe('deleteAnimation', () => {
+  // A path the robot cannot resolve or unlink is a bare 400 to a request with fields: a refusal.
+  it('reports a refused delete with its name and status', async () => {
+    responder = () => ({ statusCode: 400 })
+    await expect(deleteAnimation('wave')).rejects.toThrow(
+      'the robot refused deleting wave (status 400)'
+    )
   })
 })
 

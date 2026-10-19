@@ -13,6 +13,7 @@
     type StaticSystemInformation
   } from '$lib/platform_shared/message'
   import { dataBroker } from '$lib/transport/databroker'
+  import { ask } from '$lib/transport/reply'
   import { convertSeconds } from '$lib/utilities'
   import { useFeatureFlags } from '$lib/stores/featureFlags'
   import {
@@ -43,7 +44,7 @@
   let statusRequest = $state(getSystemStatus())
 
   async function getSystemStatus() {
-    const res = await dataBroker.request({ systemInformationRequest: {} })
+    const res = await ask(dataBroker, { systemInformationRequest: {} }, 'the system status')
     const info = res.systemInformationResponse
     staticInfo = info?.staticSystemInformation
     analytics = info?.analyticsData

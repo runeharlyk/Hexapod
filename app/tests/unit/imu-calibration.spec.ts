@@ -1,11 +1,17 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { describeCalibration } from '../../src/lib/imu-calibration'
+import { calibrateImu } from '../../src/lib/imu-calibration'
+import { RequestFailed } from '../../src/lib/transport/reply'
 import { cardinalDirection } from '../../src/lib/compass'
 
-describe('describeCalibration', () => {
-  it('maps every status the firmware answers with', () => {
+// The robot as calibrateImu asks it: one reply, or a failure as the data broker raises it.
+const answering = (statusCode: number, errorMessage = '') => ({
+  request: async () => ({ statusCode, errorMessage })
+})
+
+describe('calibrateImu', () => {
+  it('explains every status the firmware answers with', async () => {
     // The firmware's codes, read from its handler so a renumbering there fails here.
     const main = readFileSync(resolve(__dirname, '../../../firmware/src/main.cpp'), 'utf-8')
     const handler = main.slice(main.indexOf('CorrelationRequest_imu_calibrate_tag'))
@@ -18,17 +24,33 @@ describe('describeCalibration', () => {
     ])
     expect(firmwareCodes).toEqual(new Set([200, 409, 422, 503]))
     for (const code of firmwareCodes) {
-      const result = describeCalibration(code)
+      const result = await calibrateImu(answering(code))
       expect(result.ok).toBe(code === 200)
       if (!result.ok) expect(result.error).not.toMatch(/status/)
     }
   })
 
-  it('reports an unexpected status as such', () => {
-    expect(describeCalibration(500)).toEqual({
+  it("passes on the robot's reason for a failure it explains itself", async () => {
+    expect(
+      await calibrateImu(answering(504, 'The IMU calibration did not finish in time'))
+    ).toEqual({ ok: false, error: 'The IMU calibration did not finish in time' })
+  })
+
+  // ImuCalibrateRequest has no fields, so a bare 400 is a firmware from before the calibration.
+  it('names a firmware that predates the calibration', async () => {
+    expect(await calibrateImu(answering(400))).toEqual({
       ok: false,
-      error: 'Calibration failed with status 500.'
+      error: "the robot's firmware does not support IMU calibration; update it"
     })
+  })
+
+  it('reports a link that drops before the robot answers', async () => {
+    const dropped = {
+      request: async (): Promise<{ statusCode: number; errorMessage: string }> => {
+        throw new RequestFailed({ kind: 'disconnected' })
+      }
+    }
+    expect(await calibrateImu(dropped)).toEqual({ ok: false, error: 'the robot is not connected' })
   })
 })
 

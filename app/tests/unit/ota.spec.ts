@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { OTA_CHUNK_BYTES, OtaError, sendFirmware } from '../../src/lib/firmware/ota'
+import { OTA_CHUNK_BYTES, sendFirmware } from '../../src/lib/firmware/ota'
 import type { CorrelationRequest, CorrelationResponse } from '../../src/lib/platform_shared/message'
 
 type Payload = Omit<CorrelationRequest, 'correlationId'>
@@ -44,7 +44,7 @@ describe('sendFirmware', () => {
       p.otaChunk?.index === 1 ? reply(500, 'Writing the update slot failed') : undefined
     )
     await expect(sendFirmware(image, robot.request)).rejects.toThrow(
-      new OtaError('Writing the update slot failed')
+      'Writing the update slot failed'
     )
     expect(robot.sent.some(p => p.otaFinish)).toBe(false)
     expect(robot.sent.filter(p => p.otaChunk)).toHaveLength(2)
@@ -53,7 +53,7 @@ describe('sendFirmware', () => {
   it('names the step when the robot gives no reason', async () => {
     const robot = fakeRobot(p => (p.otaStart ? reply(409) : undefined))
     await expect(sendFirmware(image, robot.request)).rejects.toThrow(
-      'Starting the update failed with status 409'
+      'the robot refused starting the update (status 409)'
     )
   })
 })

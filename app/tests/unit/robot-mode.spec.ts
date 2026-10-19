@@ -4,11 +4,12 @@ import { ModeData, ModesEnum } from '../../src/lib/platform_shared/message'
 import { MotionModes } from '../../src/lib/motion'
 import { mode } from '../../src/lib/stores/model-store'
 import { followMode, handheldDriving, type ModeLink } from '../../src/lib/stores/robot-mode'
+import { RequestFailed, type Reply } from '../../src/lib/transport/reply'
 
 // The data broker as followMode uses it: its mode pushes, and requests answered when the test says.
 const fakeBroker = () => {
   const pushes = new Set<(m: ModeData) => void>()
-  const replies: ((reply: { mode?: ModeData }) => void)[] = []
+  const replies: ((reply: { mode?: ModeData } & Reply) => void)[] = []
   const rejections: ((error: Error) => void)[] = []
   const broker: ModeLink = {
     on: (_fns, callback) => {
@@ -29,6 +30,11 @@ const fakeBroker = () => {
     listening: () => pushes.size
   }
 }
+
+const ok = (fields: { mode?: ModeData }) => ({ statusCode: 200, errorMessage: '', ...fields })
+
+// Every reply handed to the fake has been read once the microtasks queued before this macrotask have run.
+const settled = () => new Promise(resolve => setTimeout(resolve, 0))
 
 describe('followMode', () => {
   const linked = writable(false)
@@ -66,7 +72,7 @@ describe('followMode', () => {
     expect(fake.replies).toHaveLength(0)
     linked.set(true)
     expect(fake.replies).toHaveLength(1)
-    fake.replies[0]({ mode: { mode: ModesEnum.STAND, handheld: true } })
+    fake.replies[0](ok({ mode: { mode: ModesEnum.STAND, handheld: true } }))
     await vi.waitFor(() => expect(get(handheldDriving)).toBe(true))
     expect(get(mode)).toBe(MotionModes.STAND)
   })
@@ -76,9 +82,8 @@ describe('followMode', () => {
     stop = followMode(fake.broker, linked)
     linked.set(true)
     fake.push({ mode: ModesEnum.WALK, handheld: false })
-    fake.replies[0]({ mode: { mode: ModesEnum.STAND, handheld: true } })
-    await Promise.resolve()
-    await Promise.resolve()
+    fake.replies[0](ok({ mode: { mode: ModesEnum.STAND, handheld: true } }))
+    await settled()
     expect(get(mode)).toBe(MotionModes.WALK)
     expect(get(handheldDriving)).toBe(false)
   })
@@ -87,12 +92,11 @@ describe('followMode', () => {
     const fake = fakeBroker()
     stop = followMode(fake.broker, linked)
     linked.set(true)
-    fake.replies[0]({}) // a firmware from before the request answers it 400, with no mode
+    fake.replies[0]({ statusCode: 400, errorMessage: '' }) // a firmware from before the request
     linked.set(false)
     linked.set(true)
-    fake.rejections[1](new Error('request 2 timed out'))
-    await Promise.resolve()
-    await Promise.resolve()
+    fake.rejections[1](new RequestFailed({ kind: 'timeout' }))
+    await settled()
     expect(get(mode)).toBe(MotionModes.DEACTIVATED)
     expect(get(handheldDriving)).toBe(false)
   })

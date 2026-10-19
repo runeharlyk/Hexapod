@@ -5,21 +5,29 @@
   import { Cancel, Edit, EditOff, Power } from '$lib/components/icons'
   import { notifications } from '$lib/components/toasts/notifications'
   import { dataBroker } from '$lib/transport/databroker'
+  import { ask } from '$lib/transport/reply'
   import type { PeripheralSettings } from '$lib/platform_shared/api'
 
   let settings: PeripheralSettings | null = $state(null)
   let isEditing = $state(false)
 
   const load = async () => {
-    const res = await dataBroker.request({ peripheralSettingsGet: {} }).catch(() => null)
+    const res = await ask(dataBroker, { peripheralSettingsGet: {} }, 'the I2C settings').catch(
+      (error: Error) => {
+        notifications.error(`Could not read the I2C settings: ${error.message}`, 5000)
+        return null
+      }
+    )
     if (res?.peripheralSettings) settings = res.peripheralSettings
   }
   onMount(load)
 
   const save = async () => {
     if (!settings) return
-    const res = await dataBroker
-      .request({
+    // The firmware rejects out-of-range pins or frequencies with 400 and keeps the stored config.
+    const res = await ask(
+      dataBroker,
+      {
         peripheralSettingsUpdate: {
           ...settings,
           sda: Number(settings.sda),
@@ -27,14 +35,13 @@
           frequency: Number(settings.frequency),
           pins: []
         }
-      })
-      .catch(() => null)
-
-    // The firmware rejects out-of-range pins or frequencies with 400 and keeps the stored config.
-    if (!res || res.statusCode >= 400) {
-      notifications.error('The robot rejected the I2C configuration.', 4000)
-      return
-    }
+      },
+      'the I2C configuration'
+    ).catch((error: Error) => {
+      notifications.error(`The I2C configuration was not saved: ${error.message}`, 5000)
+      return null
+    })
+    if (!res) return
     if (res.peripheralSettings) settings = res.peripheralSettings
     // The bus is opened once at boot, so new pins take effect on the next restart.
     notifications.success('I2C configuration saved - restart the robot to apply it.', 5000)
@@ -111,7 +118,13 @@
           />
         </label>
         <div>
-          <button class="btn btn-outline btn-primary" onclick={() => (isEditing = !isEditing)}>
+          <button
+            class="btn btn-outline btn-primary"
+            aria-label={isEditing ?
+              'Stop editing the I2C configuration'
+            : 'Edit the I2C configuration'}
+            onclick={() => (isEditing = !isEditing)}
+          >
             <Icon class="h-6 w-6" />
           </button>
           {#if isEditing}

@@ -6,7 +6,7 @@
   import { AP, DNS, Devices, Remote, Server, info as Info } from '$lib/components/icons'
   import { dataBroker } from '$lib/transport/databroker'
   import type { MDNSStatus } from '$lib/platform_shared/api'
-  import { answered } from '$lib/scan'
+  import { ask } from '$lib/transport/reply'
   import {
     advertisedLabel,
     localName,
@@ -18,6 +18,7 @@
   } from '$lib/mdns'
 
   let mdnsStatus: MDNSStatus | null | undefined = $state()
+  let statusFailure = $state('')
   let selectedType = $state('_http._tcp')
 
   const types = $derived(scanTypes(mdnsStatus?.services ?? []))
@@ -27,14 +28,19 @@
     if (!target) return
     const type = selectedType
     mdnsScan.run(async () => {
-      const res = answered(await dataBroker.request({ mdnsQuery: target }))
+      const res = await ask(dataBroker, { mdnsQuery: target }, 'the mDNS scan')
       return { type, results: sortScanResults(res.mdnsQueryResponse?.services ?? []) }
     })
   }
 
   onMount(async () => {
     runScan()
-    const res = await dataBroker.request({ mdnsStatusGet: {} }).catch(() => null)
+    const res = await ask(dataBroker, { mdnsStatusGet: {} }, 'the mDNS status').catch(
+      (error: Error) => {
+        statusFailure = error.message
+        return null
+      }
+    )
     mdnsStatus = res?.mdnsStatus ?? null
   })
 </script>
@@ -50,7 +56,9 @@
   {#if mdnsStatus === undefined}
     <Spinner />
   {:else if mdnsStatus === null}
-    <div role="alert" class="alert alert-error">The robot did not report its mDNS status.</div>
+    <div role="alert" class="alert alert-error">
+      The robot did not report its mDNS status{statusFailure ? `: ${statusFailure}` : ''}.
+    </div>
   {:else}
     <div class="flex flex-col gap-1">
       <StatusItem

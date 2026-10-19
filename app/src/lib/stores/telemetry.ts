@@ -2,6 +2,7 @@ import type { DownloadOTA } from '$lib/types/models'
 import { get, writable, type Readable } from 'svelte/store'
 import { FeaturesDataResponse, TelemetryBatch } from '$lib/platform_shared/message'
 import type { DataBroker } from '$lib/transport/databroker'
+import { ask } from '$lib/transport/reply'
 import { HexrecWriter, tickTiming, type TimedTick, type TickTiming } from '$lib/recording'
 
 const telemetry_data = {
@@ -94,10 +95,15 @@ export function createTelemetryRecorder({
     state.update(s => ({ ...s, starting: true, error: undefined }))
     let features: FeaturesDataResponse | undefined
     try {
-      features = (await broker.request({ featuresDataRequest: {} })).featuresDataResponse
+      features = (await ask(broker, { featuresDataRequest: {} }, 'the feature list'))
+        .featuresDataResponse
       if (!features) throw new Error('the robot sent no features')
     } catch (error) {
-      state.update(s => ({ ...s, starting: false, error: `Recording not started: ${error}` }))
+      state.update(s => ({
+        ...s,
+        starting: false,
+        error: `Recording not started: ${error instanceof Error ? error.message : error}`
+      }))
       return
     }
     const recording = new HexrecWriter(FeaturesDataResponse.toJSON(features) as object)

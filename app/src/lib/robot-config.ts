@@ -1,6 +1,6 @@
 import { dataBroker } from '$lib/transport/databroker'
 import { PeripheralSettings, ServoSettings } from '$lib/platform_shared/api'
-import type { CorrelationRequest, CorrelationResponse } from '$lib/platform_shared/message'
+import { ask, RequestFailed, type RequestPayload } from '$lib/transport/reply'
 
 const FORMAT = 'hexapod-robot-config'
 const VERSION = 1
@@ -22,19 +22,25 @@ const NOT_A_CONFIG = 'This file is not a hexapod configuration'
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-async function ask(
-  payload: Omit<CorrelationRequest, 'correlationId'>,
-  refusal: string
-): Promise<CorrelationResponse> {
-  const response = await dataBroker.request(payload)
-  if (response.statusCode >= 400)
-    throw new Error(response.errorMessage ? `${refusal}: ${response.errorMessage}` : refusal)
-  return response
+// The reply's reason after this module's own sentence; a refusal without a reason is the sentence alone.
+async function askOr(payload: RequestPayload, feature: string, refusal: string) {
+  try {
+    return await ask(dataBroker, payload, feature)
+  } catch (error) {
+    if (
+      error instanceof RequestFailed &&
+      error.failure.kind === 'refused' &&
+      !error.failure.message
+    )
+      throw new Error(refusal)
+    throw new Error(`${refusal}: ${error instanceof Error ? error.message : error}`)
+  }
 }
 
 async function robotServos(): Promise<ServoSettings> {
-  const { servoSettings } = await ask(
+  const { servoSettings } = await askOr(
     { servoSettingsGet: {} },
+    'the servo calibration',
     'The robot did not send its servo calibration'
   )
   if (!servoSettings) throw new Error('The robot did not send its servo calibration')
@@ -43,8 +49,9 @@ async function robotServos(): Promise<ServoSettings> {
 
 export async function exportConfig(now = new Date()): Promise<RobotConfig> {
   const servo = await robotServos()
-  const { peripheralSettings } = await ask(
+  const { peripheralSettings } = await askOr(
     { peripheralSettingsGet: {} },
+    'the peripheral settings',
     'The robot did not send its peripheral settings'
   )
   if (!peripheralSettings) throw new Error('The robot did not send its peripheral settings')
@@ -118,11 +125,16 @@ export async function applyConfig(config: RobotConfig) {
   if (!validI2c(config.peripherals)) throw new Error('The I2C settings in this file are invalid')
 
   const servoRefusal = 'The robot rejected the servo calibration'
-  const { servoSettings } = await ask({ servoSettingsUpdate: config.servo }, servoRefusal)
+  const { servoSettings } = await askOr(
+    { servoSettingsUpdate: config.servo },
+    'the servo calibration',
+    servoRefusal
+  )
   if (!servoSettings || !sameServos(servoSettings, config.servo)) throw new Error(servoRefusal)
 
-  await ask(
+  await askOr(
     { peripheralSettingsUpdate: await keepingCompassOffset(config.peripherals) },
+    'the peripheral settings',
     'The robot rejected the peripheral settings; the servo calibration was already applied'
   )
 }
@@ -131,8 +143,9 @@ export async function applyConfig(config: RobotConfig) {
 // written to JSON), and restoring it must not wipe the offset the robot has fitted since.
 async function keepingCompassOffset(saved: PeripheralSettings): Promise<PeripheralSettings> {
   if (saved.magOffsetX || saved.magOffsetY || saved.magOffsetZ) return saved
-  const { peripheralSettings } = await ask(
+  const { peripheralSettings } = await askOr(
     { peripheralSettingsGet: {} },
+    'the peripheral settings',
     'The robot did not send its peripheral settings'
   )
   if (!peripheralSettings) throw new Error('The robot did not send its peripheral settings')

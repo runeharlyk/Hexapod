@@ -5,6 +5,7 @@
   import RssiIndicator from '$lib/components/statusbar/RSSIIndicator.svelte'
   import type { NetworkItem } from '$lib/types/models'
   import { dataBroker } from '$lib/transport/databroker'
+  import { ask, RequestFailed } from '$lib/transport/reply'
   import type { CorrelationResponse } from '$lib/platform_shared/message'
   import { AP, Network, Reload, Cancel, WiFi } from '$lib/components/icons'
   import { notifications } from '$lib/components/toasts/notifications'
@@ -78,23 +79,28 @@
     pollAttempts += 1
     let res: CorrelationResponse
     try {
-      res = await dataBroker.request({ wifiNetworksGet: {} })
+      res = await ask(dataBroker, { wifiNetworksGet: {} }, 'the Wi-Fi scan')
     } catch (error) {
+      const failure = error instanceof RequestFailed ? error.failure : undefined
+      // 503: the radio can't scan while mid-connection to a saved network - stop, don't poll forever.
+      if (failure?.kind === 'refused' && failure.status === 503) {
+        abortScan(
+          "Can't scan while the robot is connecting to Wi-Fi. Fix or clear the saved network first."
+        )
+        return true
+      }
+      const reason = error instanceof Error ? error.message : String(error)
+      // A refusal or a firmware without the scan answers the same every time; only a lost answer is tried again.
+      if (failure?.kind === 'refused' || failure?.kind === 'too-old') {
+        abortScan(`Wi-Fi scan failed: ${reason}`)
+        return true
+      }
       consecutiveFailures += 1
       if (consecutiveFailures < MAX_CONSECUTIVE_FAILURES) return false
-      const reason = error instanceof Error ? error.message : String(error)
       abortScan(`Wi-Fi scan failed - is the robot connected? (${reason})`)
       return true
     }
     consecutiveFailures = 0
-
-    // 503: the radio can't scan while mid-connection to a saved network — stop, don't poll forever.
-    if (res.statusCode === 503) {
-      abortScan(
-        "Can't scan while the robot is connecting to Wi-Fi. Fix or clear the saved network first."
-      )
-      return true
-    }
 
     const networks = res.wifiNetworkList?.networks
     if (!networks?.length) {

@@ -9,6 +9,7 @@ import {
   type TaskStatsLink,
   type TaskStatsView
 } from '../../src/lib/stores/task-stats'
+import { RequestFailed } from '../../src/lib/transport/reply'
 
 const entry = (fields: Partial<TaskEntry>): TaskEntry => ({
   name: 'task',
@@ -274,18 +275,18 @@ describe('watchTaskStats', () => {
     feed.refresh()
     fake.replies[0]({ statusCode: 503, errorMessage: '' })
     await vi.advanceTimersByTimeAsync(0)
-    expect(last().error).toBe('the robot answered with status 503')
+    expect(last().error).toBe('the robot refused the task table (status 503)')
     expect(last().stats).toBeNull()
   })
 
   // A firmware from before the task table answers a request it does not know with a bare 400.
-  it('says the firmware has no task table when the robot answers 400 without a message', async () => {
+  it('says the firmware lacks the task table when the robot answers 400 without a message', async () => {
     const fake = fakeBroker()
     start(fake.broker)
     feed.refresh()
     fake.replies[0]({ statusCode: 400, errorMessage: '' })
     await vi.advanceTimersByTimeAsync(0)
-    expect(last().error).toBe("the robot's firmware has no task table; update it to see the tasks")
+    expect(last().error).toBe("the robot's firmware does not support the task table; update it")
   })
 
   it('keeps the last good table when a request fails, and clears the error on the next good one', async () => {
@@ -296,9 +297,13 @@ describe('watchTaskStats', () => {
     fake.replies[0](ok(table))
     await vi.advanceTimersByTimeAsync(0)
     feed.refresh()
-    fake.failures[1](new Error('request 2 timed out'))
+    fake.failures[1](new RequestFailed({ kind: 'timeout' }))
     await vi.advanceTimersByTimeAsync(0)
-    expect(last()).toEqual({ stats: table, error: 'request 2 timed out', loading: false })
+    expect(last()).toEqual({
+      stats: table,
+      error: 'the robot did not answer in time for the task table',
+      loading: false
+    })
     const next = stats({ taskCount: 2, tasks: [entry({}), entry({ number: 2 })] })
     feed.refresh()
     fake.replies[2](ok(next))
