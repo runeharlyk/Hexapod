@@ -46,4 +46,18 @@ inline PolicyParams exportedParams() {
     return p;
 }
 
+// Joystick [-1,1] -> the command ranges the policy was trained on, in the frame PolicyCore::setCommand takes: forward,
+// rightward and counter-clockwise. The sticks are signed as the classic WALK mapping (classicWalkTarget): forward
+// (+ly) is forward, stick right (+lx) is rightward, and right stick right (+rx) is clockwise, a negative yaw rate.
+// The forward stick reaches CMD_VX_MAX and backward CMD_VX_MIN, since the training range is asymmetric. Stick
+// values are scaled, not clamped: the inputs are already in [-1,1].
+struct PolicyCommand {
+    float vx, vy, yawRate;
+};
+
+inline PolicyCommand stickToPolicyCommand(float lx, float ly, float rx) {
+    namespace hp = hexapod_policy;
+    return {ly * (ly >= 0.0f ? hp::CMD_VX_MAX : -hp::CMD_VX_MIN), lx * hp::CMD_VY_MAX, -rx * hp::CMD_YAW_MAX};
+}
+
 } // namespace policy_layout

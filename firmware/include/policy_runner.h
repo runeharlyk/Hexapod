@@ -33,15 +33,11 @@ class PolicyRunner {
         core.reset(gait, trained_feet);
     }
 
-    // Joystick [-1,1] -> the command ranges the policy was trained on, signed as the classic WALK mapping
-    // (classicWalkTarget): the forward stick ly reaches CMD_VX_MAX and backward CMD_VX_MIN (the training range is
-    // asymmetric), stick right (+lx) is a rightward velocity and stick right (+rx) a clockwise, negative, yaw rate.
-    // The policy's command frame (PolicyCore::setCommand) is what it was trained on; only the stick is converted.
+    // The stick-to-command conversion is policy_layout::stickToPolicyCommand; PolicyCore::setCommand takes the frame
+    // the policy was trained on.
     void setCommand(CommandMsg const &c) {
-        namespace hp = hexapod_policy;
-        const float fwd = c.ly;
-        core.setCommand(fwd * (fwd >= 0.0f ? hp::CMD_VX_MAX : -hp::CMD_VX_MIN), c.lx * hp::CMD_VY_MAX,
-                        -c.rx * hp::CMD_YAW_MAX);
+        const policy_layout::PolicyCommand cmd = policy_layout::stickToPolicyCommand(c.lx, c.ly, c.rx);
+        core.setCommand(cmd.vx, cmd.vy, cmd.yawRate);
     }
 
     // Call every control tick (5 ms); the network runs every 4th tick (CONTROL_DT = 20 ms,
