@@ -369,7 +369,7 @@ A bridge holds its EventBus subscription only while some client on some transpor
 
 `platform_shared/topics.json` names each topic's kind, state or stream, and `include/communication/topics.h` and the app's `src/lib/transport/topics.ts` are checked against it (`test/test_topic_snapshot/`, `app/tests/unit/topics.spec.ts`).
 `main.cpp`'s `TOPICS` gives each state topic a snapshot function that reads its owner, as the replies do: `MotionInbox` for the mode and the goal, `EventBus::peek` for the gait, the OTA and the animation status, and the WiFi and AP services for theirs.
-A status nobody has published yet is its idle value, so every state topic has a value from boot; a `static_assert` holds `TOPICS` to the shared table.
+A status nobody has published yet is its idle value, so every state topic has a value from boot; a `static_assert` holds `TOPICS` to `TOPIC_KINDS` in `topics.h`, which `test/test_topic_snapshot/` holds to the shared table.
 `CommAdapterBase::subscribe` adds the client unless it already subscribes, attaches the bridge on the tag's first subscriber, and then, under the adapter's `encodeMutex_`, sends a state topic's snapshot and then the `sub_notif` echoed to that client as the ack; a stream, and a tag that is no topic, get the ack alone.
 Every push to the adapter encodes and sends under the same lock, so a change made after the snapshot's read is pushed after the snapshot, never before it, and the bridge attaching first means no such change goes unpushed; a change made before the read may arrive twice, which only repeats the value.
 Two rules follow, and `test/test_topic_snapshot/` checks the ordering with a change made between the read and the send.

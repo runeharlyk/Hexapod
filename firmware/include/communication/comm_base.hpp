@@ -151,7 +151,7 @@ class CommAdapterBase {
             if (!findClient(clients, cid)) clients.push_back({cid, false});
         }
         if (first) notifyTagChange(tag);
-        ESP_LOGI("ProtoComm", "Client %d subscribed to tag %d", cid, (int)tag);
+        ESP_LOGD("ProtoComm", "Client %d subscribed to tag %d", cid, (int)tag);
 
         ScopedLock lock(encodeMutex_);
         const Topic* topic = topicOf(tag);
