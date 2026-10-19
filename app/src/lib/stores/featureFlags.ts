@@ -1,7 +1,7 @@
 import { api } from '$lib/api'
 import { dataBroker } from '$lib/transport/databroker'
 import { ask } from '$lib/transport/reply'
-import { get, writable, type Writable } from 'svelte/store'
+import { get, writable, type Readable, type Writable } from 'svelte/store'
 import { canReachRobot, location } from './location-store'
 
 export interface Features {
@@ -80,6 +80,13 @@ const fetchFeaturesOverHttp = async (): Promise<Features> => {
 
 let featureFlagsStore: Writable<Features> | undefined
 let loading = false
+const known = writable(false)
+
+/**
+ * Whether the flags are the robot's. Until they are, every flag reads false, so a page that depends on one waits for
+ * this rather than deciding on that default.
+ */
+export const featureFlagsKnown: Readable<boolean> = { subscribe: known.subscribe }
 
 const fetchFeatures = () =>
   requestFeatures().catch(error => {
@@ -95,7 +102,10 @@ export function useFeatureFlags() {
   if (!loading) {
     loading = true
     fetchFeatures()
-      .then(features => store.set(features))
+      .then(features => {
+        store.set(features)
+        known.set(true)
+      })
       .catch(error => {
         // Leave the flags unknown and let the next page that needs them try again.
         loading = false
@@ -111,6 +121,7 @@ export async function refreshFeatureFlags(): Promise<Features> {
   const features = await fetchFeatures()
   featureFlagsStore ??= writable<Features>(unknownFeatures)
   featureFlagsStore.set(features)
+  known.set(true)
   loading = true
   return features
 }

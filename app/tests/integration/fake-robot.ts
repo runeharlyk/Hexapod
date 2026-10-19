@@ -9,18 +9,22 @@ type Answer = Partial<Omit<CorrelationResponse, 'correlationId'>>
 
 /**
  * Stands in for the robot behind the WebSocket the layout opens by itself on an http origin: every request goes to
- * `answer`, whose reply is sent back with the request's correlation id and status 200 unless it names another.
+ * `answer`, whose reply, when it settles, is sent back with the request's correlation id and status 200 unless it
+ * names another.
  */
-export const fakeRobot = (page: Page, answer: (request: CorrelationRequest) => Answer) =>
+export const fakeRobot = (
+  page: Page,
+  answer: (request: CorrelationRequest) => Answer | Promise<Answer>
+) =>
   page.routeWebSocket('**/api/ws', socket => {
-    socket.onMessage(frame => {
+    socket.onMessage(async frame => {
       if (typeof frame === 'string') return
       const request = Message.decode(new Uint8Array(frame)).correlationRequest
       if (!request) return
       const response = CorrelationResponse.create({
         correlationId: request.correlationId,
         statusCode: 200,
-        ...answer(request)
+        ...(await answer(request))
       })
       socket.send(Buffer.from(Message.encode({ correlationResponse: response }).finish()))
     })

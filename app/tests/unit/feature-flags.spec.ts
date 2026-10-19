@@ -1,9 +1,9 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { derived, writable } from 'svelte/store'
+import { derived, get, writable } from 'svelte/store'
 import { dataBroker } from '$lib/transport/databroker'
 import type { ITransport, LinkStatus } from '$lib/interfaces/transport.interface'
 import { CorrelationResponse, FeaturesDataResponse, Message } from '$lib/platform_shared/message'
-import { refreshFeatureFlags } from '$lib/stores/featureFlags'
+import { featureFlagsKnown, refreshFeatureFlags } from '$lib/stores/featureFlags'
 
 // The robot's webserver, which the flags fall back to on an origin that can reach it: here it never answers.
 const httpFeatures = vi.hoisted(() => vi.fn())
@@ -57,6 +57,15 @@ beforeEach(() => {
   statusCode = 200
   httpFeatures.mockReset()
   httpFeatures.mockResolvedValue({ isErr: () => true, inner: new Error('no webserver') })
+})
+
+// The first test of the file: the flags are module state, and the later ones load them.
+describe('featureFlagsKnown', () => {
+  it('holds until the robot has sent its features', async () => {
+    expect(get(featureFlagsKnown)).toBe(false)
+    await refreshFeatureFlags()
+    expect(get(featureFlagsKnown)).toBe(true)
+  })
 })
 
 describe('refreshFeatureFlags', () => {
