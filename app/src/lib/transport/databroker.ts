@@ -220,6 +220,19 @@ export class DataBroker {
     this.broadcast(encodeMessage(message))
   }
 
+  /**
+   * Motion (sticks, heartbeats, animation preview poses): sent only when the link can take it now, and otherwise
+   * dropped, never queued or sent after a reconnect, since a frame that waited would move the robot with the past.
+   * False when it was dropped.
+   */
+  emitVolatile<T>(fns: MessageFns<T>, data: T): boolean {
+    const transport = this.activeTransport()
+    return (
+      transport !== undefined &&
+      transport.trySend(encodeMessage(Message.create({ [keyOf(fns)]: data })))
+    )
+  }
+
   private handleIncoming(bytes: Uint8Array) {
     const decoded = decodeMessage(bytes)
     if (!decoded) return

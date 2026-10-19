@@ -4,7 +4,6 @@ import { mode as modeStore } from '$lib/robot/state'
 import { dataBroker } from '$lib/transport/databroker'
 import { get } from 'svelte/store'
 import { throttler } from '$lib/utilities'
-import { isLinked } from '$lib/stores/link'
 import type { ParamId, LegTarget } from '$lib/platform_shared/animation'
 import type { Pose } from '$lib/animation/model'
 import {
@@ -72,9 +71,7 @@ export class PoseSender {
   private emitLast() {
     const data = this.last
     if (!data) return
-    this.limiter.throttle(() => {
-      if (get(isLinked)) dataBroker.emit(PoseData, data)
-    }, POSE_INTERVAL_MS)
+    this.limiter.throttle(() => dataBroker.emitVolatile(PoseData, data), POSE_INTERVAL_MS)
   }
 
   cancel() {

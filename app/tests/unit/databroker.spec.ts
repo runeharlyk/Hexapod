@@ -1,12 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vitest } from 'vitest'
-import { derived, writable } from 'svelte/store'
+import { derived, get, writable } from 'svelte/store'
 import { DataBroker } from '../../src/lib/transport/databroker'
 import type { ITransport, LinkStatus } from '../../src/lib/interfaces/transport.interface'
-import { CorrelationResponse, IMUData, Message } from '../../src/lib/platform_shared/message'
+import {
+  ControllerInputData,
+  CorrelationResponse,
+  IMUData,
+  Message
+} from '../../src/lib/platform_shared/message'
 
 const createFakeTransport = () => {
   const status = writable<LinkStatus>('disconnected')
   const sent: Message[] = []
+  // Whether a write is still under way, so a frame that must not wait cannot go out now.
+  const link = { busy: false }
   const callbacks = {
     data: [] as ((bytes: Uint8Array) => void)[],
     connect: [] as (() => void)[],
@@ -24,16 +31,22 @@ const createFakeTransport = () => {
       callbacks.disconnect.forEach(cb => cb())
     },
     send: bytes => sent.push(Message.decode(bytes)),
+    trySend: bytes => {
+      if (link.busy || get(status) !== 'connected') return false
+      sent.push(Message.decode(bytes))
+      return true
+    },
     onData: cb => callbacks.data.push(cb),
     onConnect: cb => callbacks.connect.push(cb),
     onDisconnect: cb => callbacks.disconnect.push(cb)
   }
   const receive = (message: Message) =>
     callbacks.data.forEach(cb => cb(Message.encode(message).finish()))
-  return { transport, sent, receive }
+  return { transport, sent, receive, link }
 }
 
 const imu = (x: number) => Message.create({ imu: IMUData.create({ x }) })
+const sticks = (y: number) => ControllerInputData.create({ left: { x: 0, y } })
 
 describe('DataBroker', () => {
   let broker: DataBroker
@@ -153,5 +166,23 @@ describe('DataBroker', () => {
 
     await expect(request).rejects.toMatchObject({ failure: { kind: 'timeout' } })
     expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function))
+  })
+
+  // Motion is dropped, never queued: a stick frame that waited would arrive late and steer the robot with the past.
+  it('sends a volatile frame only when the link can take it now, and never later', async () => {
+    const serial = createFakeTransport()
+    broker.addTransport(serial.transport)
+    await serial.transport.connect()
+    serial.sent.length = 0
+
+    expect(broker.emitVolatile(ControllerInputData, sticks(0.5))).toBe(true)
+    serial.link.busy = true
+    expect(broker.emitVolatile(ControllerInputData, sticks(0.6))).toBe(false)
+    serial.link.busy = false
+    await serial.transport.disconnect()
+    expect(broker.emitVolatile(ControllerInputData, sticks(0.7))).toBe(false)
+    await serial.transport.connect()
+
+    expect(serial.sent.flatMap(m => (m.input ? [m.input.left?.y] : []))).toEqual([0.5])
   })
 })

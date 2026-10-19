@@ -1,13 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const linked = vi.hoisted(() => ({ value: null as null | { set: (v: boolean) => void } }))
-vi.mock('$lib/stores/link', async () => {
-  const { writable } = await import('svelte/store')
-  const isLinked = writable(true)
-  linked.value = isLinked
-  return { isLinked }
-})
-
 vi.mock('$lib/stores', async () => {
   const { writable } = await import('svelte/store')
   return { mode: writable('idle'), gait: writable('tri_gate') }
@@ -68,7 +60,6 @@ beforeAll(async () => {
 beforeEach(() => {
   sent.length = 0
   responder = () => ({ statusCode: 501 })
-  linked.value?.set(true)
 })
 
 afterEach(() => vi.useRealTimers())
@@ -257,10 +248,13 @@ describe('PoseSender', () => {
     expect(poses()).toHaveLength(0)
   })
 
-  it('sends nothing while the link is down', () => {
+  // A pose is motion: dropped while the link is down, and not sent when it comes back.
+  it('sends nothing while the link is down, nor after it comes back', async () => {
     vi.useFakeTimers()
-    linked.value?.set(false)
+    await transport.disconnect()
     new PoseSender().send(pose())
+    vi.advanceTimersByTime(200)
+    await transport.connect()
     vi.advanceTimersByTime(200)
     expect(poses()).toHaveLength(0)
   })

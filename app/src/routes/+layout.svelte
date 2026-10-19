@@ -8,7 +8,6 @@
   import Menu from '../lib/components/menu/Menu.svelte'
   import Statusbar from '../lib/components/statusbar/statusbar.svelte'
   import { canReachRobot, location, outControllerData } from '$lib/stores'
-  import { MotionModes } from '$lib/motion'
   import {
     animationState,
     gaitState,
@@ -23,12 +22,9 @@
   import { ble } from '$lib/transport/ble-adapter'
   import { websocket } from '$lib/transport/websocket-adapter'
   import { ControllerInputData } from '$lib/platform_shared/message'
-  import { throttler } from '$lib/utilities'
   import { connectWebsocket, isLinked, reachedRobot } from '$lib/stores/link'
   import { followFeatureFlags } from '$lib/stores/featureFlags'
-  import { COMMAND_HEARTBEAT_MS, needsHeartbeat } from '$lib/control-link'
-  import { toControllerInput } from '$lib/controller-input'
-  import type { Command } from '$lib/simulation/virtual-robot'
+  import { followSticks } from '$lib/stick-link'
   import { watchUpdateOutcome } from '$lib/firmware/watch-update'
 
   interface Props {
@@ -39,11 +35,7 @@
   dataBroker.addTransport(websocket)
   dataBroker.addTransport(ble)
 
-  const throttle = new throttler()
-  let lastCommand: Command = [0, 0, 0, 0, 0, 0, 0, 0, 0]
-  let currentMode = MotionModes.DEACTIVATED
-  let linked = false
-  let commandHeartbeatId: ReturnType<typeof setInterval> | undefined
+  let stopSendingSticks: (() => void) | undefined
   let stopWatchingUpdate: (() => void) | undefined
   let stopFollowingState: (() => void)[] = []
   let stopFollowingFeatures: (() => void) | undefined
@@ -55,48 +47,25 @@
     stopWatchingUpdate = watchUpdateOutcome()
     if (canReachRobot(page.url, $location)) connectWebsocket()
 
-    let wasStop = true
-    outControllerData.subscribe(data => {
-      lastCommand = [...data]
-      const isStop = data[0] === 0 && data[1] === 0 && data[2] === 0 && data[3] === 0
-
-      if (isStop) {
-        throttle.cancel()
-        if (!wasStop) {
-          dataBroker.emit(ControllerInputData, toControllerInput(data))
-          wasStop = true
-        }
-      } else {
-        wasStop = false
-        throttle.throttle(() => dataBroker.emit(ControllerInputData, toControllerInput(data)), 40)
-      }
+    stopSendingSticks = followSticks({
+      commands: outControllerData,
+      mode,
+      linked: isLinked,
+      send: input => dataBroker.emitVolatile(ControllerInputData, input)
     })
 
     // The robot's state is followed for as long as the app runs, so every page finds it current. A firmware from before
     // the snapshots acks no subscribe, and says so here rather than leaving every watch failed in silence.
     stopFollowingState = [
-      mode.subscribe(value => {
-        currentMode = value
-      }),
       ...[gaitState, goalState, animationState].map(state => state.subscribe(() => {})),
       reportFailure(modeState, 'live state', message =>
         notifications.error(`Robot state: ${message}`, 10000)
       )
     ]
-
-    isLinked.subscribe(value => {
-      linked = value
-    })
-
-    commandHeartbeatId = setInterval(() => {
-      if (!linked) return
-      if (!needsHeartbeat(currentMode)) return
-      dataBroker.emit(ControllerInputData, toControllerInput(lastCommand))
-    }, COMMAND_HEARTBEAT_MS)
   })
 
   onDestroy(() => {
-    if (commandHeartbeatId) clearInterval(commandHeartbeatId)
+    stopSendingSticks?.()
     stopWatchingUpdate?.()
     stopFollowingState.forEach(stop => stop())
     stopFollowingFeatures?.()

@@ -18,6 +18,8 @@ function createBLEAdapter(): BLEAdapter {
   let device: BluetoothDevice | undefined
   let rx: BluetoothRemoteGATTCharacteristic | undefined
   let writeQueue = Promise.resolve()
+  // Chunks queued and not yet written: each write waits for the one before it.
+  let writesInFlight = 0
 
   // Framing: [uint16 LE length][payload] chunked to the MTU; rxBuffer reassembles by length prefix.
   const CHUNK = 180
@@ -96,6 +98,7 @@ function createBLEAdapter(): BLEAdapter {
     framed.set(data, 2)
     for (let offset = 0; offset < framed.length; offset += CHUNK) {
       const chunk = framed.slice(offset, offset + CHUNK)
+      writesInFlight++
       writeQueue = writeQueue
         .then(() =>
           typeof characteristic.writeValueWithoutResponse === 'function' ?
@@ -103,7 +106,14 @@ function createBLEAdapter(): BLEAdapter {
           : characteristic.writeValue(chunk)
         )
         .catch(err => console.error('BLE write error:', err))
+        .finally(() => writesInFlight--)
     }
+  }
+
+  const trySend = (data: Uint8Array) => {
+    if (!rx || !device?.gatt?.connected || writesInFlight > 0) return false
+    send(data)
+    return true
   }
 
   return {
@@ -113,6 +123,7 @@ function createBLEAdapter(): BLEAdapter {
     connect,
     disconnect,
     send,
+    trySend,
     onData: cb => dataCallbacks.push(cb),
     onConnect: cb => connectCallbacks.push(cb),
     onDisconnect: cb => disconnectCallbacks.push(cb)

@@ -71,6 +71,8 @@ export function createSerialAdapter(): SerialTransport {
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
   let reading = Promise.resolve()
   let writeQueue = Promise.resolve()
+  // Frames queued and not yet written: each write waits for the one before it.
+  let writesInFlight = 0
   let probeId: ReturnType<typeof setInterval> | undefined
   let waiting: AbortController | undefined
 
@@ -89,6 +91,7 @@ export function createSerialAdapter(): SerialTransport {
   const write = (frame: Uint8Array) => {
     const target = opened?.writable
     if (!target) return
+    writesInFlight++
     writeQueue = writeQueue
       .then(async () => {
         const writer = target.getWriter()
@@ -98,6 +101,7 @@ export function createSerialAdapter(): SerialTransport {
           writer.releaseLock()
         }
       })
+      .finally(() => writesInFlight--)
       .catch(error => console.error('Serial write failed:', error))
   }
 
@@ -197,6 +201,13 @@ export function createSerialAdapter(): SerialTransport {
     write(encodeSerialFrame(data))
   }
 
+  const trySend = (data: Uint8Array) => {
+    if (!answering || !opened?.writable || writesInFlight > 0 || data.length > SERIAL_MAX_MESSAGE)
+      return false
+    write(encodeSerialFrame(data))
+    return true
+  }
+
   return {
     status,
     connected,
@@ -208,6 +219,7 @@ export function createSerialAdapter(): SerialTransport {
     },
     disconnect,
     send,
+    trySend,
     onData: cb => dataCallbacks.push(cb),
     onConnect: cb => connectCallbacks.push(cb),
     onDisconnect: cb => disconnectCallbacks.push(cb)

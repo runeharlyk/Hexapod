@@ -116,12 +116,19 @@ function createWebSocketAdapter(): ITransport {
     ws.send(data)
   }
 
+  const trySend = (data: Uint8Array) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN || ws.bufferedAmount > 0) return false
+    ws.send(data)
+    return true
+  }
+
   return {
     status,
     connected,
     connect,
     disconnect,
     send,
+    trySend,
     onData: cb => dataCallbacks.push(cb),
     onConnect: cb => connectCallbacks.push(cb),
     onDisconnect: cb => disconnectCallbacks.push(cb)

@@ -40,6 +40,11 @@ export const fakeLink = (robot: FakeRobot) => {
     send: bytes => {
       if (client) robot.receive(client, bytes)
     },
+    trySend: bytes => {
+      if (!client) return false
+      robot.receive(client, bytes)
+      return true
+    },
     onData: cb => callbacks.data.push(cb),
     onConnect: cb => callbacks.connect.push(cb),
     onDisconnect: cb => callbacks.disconnect.push(cb)
