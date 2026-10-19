@@ -12,16 +12,19 @@ import path from 'path'
  */
 
 // Relative to the repository root. Whole directories stand for the headers the sources include, since a header can
-// only reach the build from them; generated files the build writes itself are left out.
+// only reach the build from them; generated files the build writes itself are left out, as is the gitignored secrets.h:
+// only settings/ap_settings.h and wifi_service.cpp include it, and the build compiles neither (checked with em++ -M on
+// the three sources), so editing the Wi-Fi credentials does not rebuild.
 /** @type {(InputDir | InputFile)[]} */
 const INPUTS = [
   { dir: 'firmware/host' },
-  { dir: 'firmware/include', skip: ['firmware/include/WWWData.h'] },
+  { dir: 'firmware/include', skip: ['firmware/include/WWWData.h', 'firmware/include/secrets.h'] },
   { dir: 'firmware/src', only: /\.h$/, skip: ['firmware/src/platform_shared'] },
   { dir: 'platform_shared', only: /\.(proto|options)$/ },
   { dir: 'animations', only: /\.json$/, depth: 1 },
   { dir: 'submodules/nanopb', only: /^pb.*\.[ch]$/, depth: 1 },
   { file: 'submodules/nanopb/generator/nanopb_generator.py' },
+  { dir: 'submodules/nanopb/generator/proto', only: /.proto$/ },
   { file: 'firmware/features.ini' },
   { file: 'firmware/scripts/compile_protos.py' },
   { file: 'firmware/scripts/pack_animations.py' },
@@ -110,4 +113,32 @@ export function readStamp(outputDir) {
   } catch {
     return null
   }
+}
+
+const SHOWN = 5
+/** @param {string[]} files */
+const list = files =>
+  files.length > SHOWN ?
+    `${files.slice(0, SHOWN).join(', ')} and ${files.length - SHOWN} more`
+  : files.join(', ')
+
+/**
+ * Why the virtual robot in `outputDir` would test other code than the firmware sources under `root`, or null when it
+ * was built from them.
+ * @param {string} root
+ * @param {string} outputDir
+ * @returns {string | null}
+ */
+export function staleBuild(root, outputDir) {
+  const built = fs.existsSync(path.join(outputDir, 'virtual_robot.wasm')) && readStamp(outputDir)
+  const changed = built ? changedInputs(built, hashInputs(root)) : null
+  if (changed?.length === 0) return null
+  return (
+    `The virtual robot (src/lib/simulation/virtual-robot/virtual_robot.wasm) is ${
+      changed ?
+        `older than ${list(changed)}`
+      : 'missing or has no record of the sources it was built from'
+    }, so a test that runs the firmware's motion code through it would test other code. ` +
+    'Build it with `pnpm virtual-robot`, which needs Emscripten: set EMSDK to the emsdk directory or put em++ on PATH.'
+  )
 }

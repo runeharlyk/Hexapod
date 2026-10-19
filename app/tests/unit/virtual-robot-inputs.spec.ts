@@ -7,6 +7,7 @@ import {
   changedInputs,
   hashInputs,
   readStamp,
+  staleBuild,
   writeStamp
 } from '../../scripts/virtual-robot-inputs.js'
 
@@ -79,11 +80,57 @@ describe('the virtual robot inputs', () => {
     expect(changedSince(built)).toEqual([])
   })
 
+  // secrets.h is included only by settings/ap_settings.h and wifi_service.cpp, neither of which the build compiles.
+  it('leave out the Wi-Fi credentials, which the build does not compile', () => {
+    write('firmware/include/secrets.h', '#define WIFI_PASSWORD "one"')
+    const built = hashInputs(root)
+    write('firmware/include/secrets.h', '#define WIFI_PASSWORD "two"')
+    expect(Object.keys(built)).not.toContain('firmware/include/secrets.h')
+    expect(changedSince(built)).toEqual([])
+  })
+
+  it('name the protobuf generator and the options schema it reads', () => {
+    write('submodules/nanopb/generator/nanopb_generator.py', '# generator')
+    write('submodules/nanopb/generator/proto/nanopb.proto', 'message NanoPBOptions {}')
+    const built = hashInputs(root)
+    write(
+      'submodules/nanopb/generator/proto/nanopb.proto',
+      'message NanoPBOptions { int32 max_size = 1; }'
+    )
+    expect(changedSince(built)).toEqual(['submodules/nanopb/generator/proto/nanopb.proto'])
+  })
+
   it('read back the stamp a build wrote, and nothing where none was written', () => {
     const outputDir = path.join(root, 'out')
     fs.mkdirSync(outputDir)
     expect(readStamp(outputDir)).toBeNull()
     writeStamp(outputDir, hashInputs(root))
     expect(readStamp(outputDir)).toEqual(hashInputs(root))
+  })
+})
+
+describe('staleBuild', () => {
+  const outputDir = () => path.join(root, 'out')
+  const build = () => {
+    fs.mkdirSync(outputDir(), { recursive: true })
+    write('out/virtual_robot.wasm', 'wasm')
+    writeStamp(outputDir(), hashInputs(root))
+  }
+
+  it('finds nothing wrong with a build made from the current sources', () => {
+    build()
+    expect(staleBuild(root, outputDir())).toBeNull()
+  })
+
+  it('names the sources a build predates and how to rebuild it', () => {
+    build()
+    write('firmware/include/motion.h', 'struct Motion { int mode; };')
+    const reason = staleBuild(root, outputDir())
+    expect(reason).toContain('older than firmware/include/motion.h')
+    expect(reason).toContain('pnpm virtual-robot')
+  })
+
+  it('reports a build that is missing or has no record', () => {
+    expect(staleBuild(root, outputDir())).toContain('missing or has no record')
   })
 })

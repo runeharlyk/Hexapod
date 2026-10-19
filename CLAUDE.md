@@ -46,7 +46,7 @@ pnpm check              # svelte-check type checking
 pnpm lint               # prettier --check + eslint
 pnpm format             # prettier --write
 pnpm test               # integration (playwright) + unit (vitest)
-pnpm test:unit          # vitest only, after rebuilding a virtual robot older than its firmware sources (fails naming them without Emscripten)
+pnpm test:unit          # vitest only, after rebuilding a virtual robot older than its firmware sources (without Emscripten only the suites that load it fail, naming the changed sources)
 pnpm test:unit <file>   # run a single test file, e.g. tests/unit/throttler.spec.ts (pnpm 10 passes a `--` on to vitest, which then runs every file)
 pnpm test:integration   # playwright only
 ```
