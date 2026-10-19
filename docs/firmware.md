@@ -53,7 +53,7 @@ Paths are relative to `firmware/` unless they start at the repository root.
 - The **control task** (`control`, core 1, priority 5) runs a fixed 5 ms loop: `readSensors()`, `planMotion()`, `updateActuators()` on the `Hexapod` object, then probes up to eight addresses of a requested I2C scan, records a telemetry sample if anyone listens and publishes the servo angles every 20 ms.
   The period is held with `xTaskDelayUntil`; after an overrun the schedule restarts from the current tick instead of replaying the missed ones.
 - The **service task** (`service`, priority 2) brings up WiFi, mDNS and the soft AP, then the HTTP server, the transports, ESP-NOW and the camera, in that order.
-  It then loops every 100 ms: services WiFi and the AP, expires an abandoned OTA session, ships telemetry batches, begins and polls a requested mDNS scan and sends its reply, samples CPU usage and emits analytics while subscribed, and confirms the running OTA image once the control loop has run 200 ticks.
+  It then loops every 100 ms: services WiFi and the AP, expires an abandoned OTA session, ships telemetry batches, begins and polls a requested mDNS scan and sends its reply, resends the state pushes a client could not take, samples CPU usage and emits analytics while subscribed, and confirms the running OTA image once the control loop has run 200 ticks.
 
 Other tasks are created by the components that need them:
 
@@ -375,6 +375,9 @@ Every push to the adapter encodes and sends under the same lock, so a change mad
 Two rules follow, and `test/test_topic_snapshot/` checks the ordering with a change made between the read and the send.
 An owner never pushes while it holds a lock that its snapshot reads under: owners publish to the EventBus, whose `publish` never waits, and the bridges push from the bus worker after the owner's lock is gone.
 A snapshot never waits on an EventBus worker, since that worker may itself be waiting for the adapter's `encodeMutex_`.
+A state push that a client cannot take now (`ready()` false, a full WebSocket) is dropped as every frame is, but it marks that client's subscription dirty; the service task's 100 ms pass calls `resendDirty()` on each adapter, which sends each dirty client that can take a frame the topic's current value from its snapshot, once, and clears the mark.
+A dropped stream frame is not resent: the next frame supersedes it.
+BLE never reports a failed notify, so a push lost there stays lost until the next change or the client's next subscribe.
 When the last client on every transport has gone, a playing animation stops, so nothing runs unattended.
 
 Per-tick telemetry (`include/telemetry/telemetry.h`) is recorded by the control task into a lock-free single-producer ring, only while someone subscribes, and shipped in whole batches by the service task; a full ring drops samples and counts them rather than blocking the control loop.

@@ -758,6 +758,15 @@ static void answerMdnsScan() {
     heap_caps_free(memory);
 }
 
+// A state push a client could not take is sent again, as the current value, once it can (CommAdapterBase::resendDirty).
+static void resendDroppedState() {
+    wsSocket.resendDirty();
+    bleAdapter.resendDirty();
+#if FT_ENABLED(USE_SERIAL_LINK)
+    serialAdapter.resendDirty();
+#endif
+}
+
 template <typename T>
 static void emitAll(const T &msg) {
     wsSocket.emit(msg);
@@ -1154,6 +1163,7 @@ static void serviceLoop(void *) {
         EXECUTE_EVERY_N_MS(1000, otaSession.expire(esp_timer_get_time() / 1000));
         sendTelemetry();
         answerMdnsScan();
+        resendDroppedState();
         EXECUTE_EVERY_N_MS(2000, {
             // sample() keeps running regardless: its uint32 idle-counter deltas only stay valid
             // over short windows. fillAnalytics() stats the filesystem, so that waits for a client.

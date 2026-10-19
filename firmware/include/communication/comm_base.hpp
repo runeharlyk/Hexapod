@@ -3,7 +3,6 @@
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
-#include <algorithm>
 #include <cstdlib>
 #include <functional>
 #include <list>
@@ -91,6 +90,26 @@ class CommAdapterBase {
         encodeAndSend(data, clientId);
     }
 
+    // From the service loop: a state push a client could not take marked its subscription dirty (sendToSubscribers),
+    // and each dirty client that can take a frame now gets the topic's current value instead, once. A client that still
+    // cannot keeps its mark for the next pass, so the service loop never waits on one.
+    void resendDirty() {
+        std::vector<std::pair<int32_t, int>> due;
+        {
+            ScopedLock lock(mutex_);
+            for (const auto& [tag, clients] : client_subscriptions_)
+                for (const Subscriber& client : clients)
+                    if (client.dirty) due.emplace_back(tag, client.cid);
+        }
+        if (due.empty()) return;
+        ScopedLock lock(encodeMutex_);
+        for (const auto& [tag, cid] : due) {
+            if (!ready(cid) || !clearDirty(tag, cid)) continue;
+            SnapshotSink sink(*this, cid);
+            topicOf(tag)->snapshot(sink);
+        }
+    }
+
     // A directed message from a task that must not wait on one client (the service loop): sent only when the client can
     // take a frame now, and dropped otherwise, as a subscription's frame is. False when it was dropped.
     template <typename T>
@@ -122,7 +141,7 @@ class CommAdapterBase {
             ScopedLock lock(mutex_);
             auto& clients = client_subscriptions_[tag];
             first = clients.empty();
-            if (std::find(clients.begin(), clients.end(), cid) == clients.end()) clients.push_back(cid);
+            if (!findClient(clients, cid)) clients.push_back({cid, false});
         }
         if (first) notifyTagChange(tag);
         ESP_LOGI("ProtoComm", "Client %d subscribed to tag %d", cid, (int)tag);
@@ -143,7 +162,7 @@ class CommAdapterBase {
         {
             ScopedLock lock(mutex_);
             auto& clients = client_subscriptions_[tag];
-            clients.remove(cid);
+            clients.remove_if([cid](const Subscriber& client) { return client.cid == cid; });
             last = clients.empty();
         }
         if (last) notifyTagChange(tag);
@@ -156,7 +175,7 @@ class CommAdapterBase {
             ScopedLock lock(mutex_);
             for (auto& [tag, clients] : client_subscriptions_) {
                 if (clients.empty()) continue;
-                clients.remove(cid);
+                clients.remove_if([cid](const Subscriber& client) { return client.cid == cid; });
                 if (clients.empty()) emptied.push_back(tag);
             }
         }
@@ -259,23 +278,57 @@ class CommAdapterBase {
         uint8_t* data_ = nullptr;
     };
 
-    // Sends to a copy of the list, so a slow client never holds up subscribing or closing a session.
+    // A client on a tag's list, and whether the latest state push to it was dropped (resendDirty).
+    struct Subscriber {
+        int cid;
+        bool dirty;
+    };
+
+    static Subscriber* findClient(std::list<Subscriber>& clients, int cid) {
+        for (Subscriber& client : clients)
+            if (client.cid == cid) return &client;
+        return nullptr;
+    }
+
+    // Sends to a copy of the list, so a slow client never holds up subscribing or closing a session. A state push a
+    // client cannot take marks it dirty for resendDirty, and one it takes clears the mark; a stream frame is just lost.
     void sendToSubscribers(int32_t tag, const uint8_t* data, size_t len) {
-        std::list<int> clients;
+        std::vector<Subscriber> clients;
         {
             ScopedLock lock(mutex_);
             auto it = client_subscriptions_.find(tag);
             if (it == client_subscriptions_.end()) return;
-            clients = it->second;
+            clients.assign(it->second.begin(), it->second.end());
         }
-        for (int cid : clients) {
-            if (ready(cid)) send(data, len, cid);
+        const Topic* topic = topicOf(tag);
+        const bool state = topic && topic->kind == TopicKind::STATE;
+        for (const Subscriber& client : clients) {
+            const bool delivered = ready(client.cid);
+            if (delivered) send(data, len, client.cid);
+            if (state && delivered == client.dirty) markDirty(tag, client.cid, !delivered);
         }
+    }
+
+    void markDirty(int32_t tag, int cid, bool dirty) {
+        ScopedLock lock(mutex_);
+        auto it = client_subscriptions_.find(tag);
+        if (it == client_subscriptions_.end()) return;
+        if (Subscriber* client = findClient(it->second, cid)) client->dirty = dirty;
+    }
+
+    // Whether the client was marked; it no longer is.
+    bool clearDirty(int32_t tag, int cid) {
+        ScopedLock lock(mutex_);
+        auto it = client_subscriptions_.find(tag);
+        Subscriber* client = it == client_subscriptions_.end() ? nullptr : findClient(it->second, cid);
+        if (!client || !client->dirty) return false;
+        client->dirty = false;
+        return true;
     }
 
     SemaphoreHandle_t mutex_;
     SemaphoreHandle_t encodeMutex_;
-    std::map<int32_t, std::list<int>> client_subscriptions_;
+    std::map<int32_t, std::list<Subscriber>> client_subscriptions_;
     std::function<void(int32_t)> tagChangeCb_;
     std::function<void(const CommAdapterBase*, int)> clientGoneCb_;
     std::function<void(const CommAdapterBase*, int)> clientHeardCb_;

@@ -64,11 +64,12 @@ constexpr Topic TOPICS[] = {
     {GAIT_TAG, TopicKind::STATE, gaitSnapshot},
 };
 
-// A transport whose clients can always take a frame; it keeps every frame it sent, decoded, with its client.
+// A transport whose clients can take a frame while `writable`; it keeps every frame it sent, decoded, with its client.
 class FakeAdapter : public CommAdapterBase {
   public:
     FakeAdapter() { setTopics(TOPICS); }
 
+    std::atomic<bool> writable {true};
     bool hasClient() const override { return true; }
 
     void receive(const socket_message_Message& message, int cid) {
@@ -104,6 +105,7 @@ class FakeAdapter : public CommAdapterBase {
     }
 
   protected:
+    bool ready(int) override { return writable; }
     void send(const uint8_t* data, size_t len, int cid) override {
         Frame frame {cid, socket_message_Message_init_zero};
         pb_istream_t stream = pb_istream_from_buffer(data, len);
@@ -285,6 +287,44 @@ void test_a_change_made_while_the_snapshot_is_sent_is_pushed_after_it() {
     assertFrames({DEACTIVATED, MODE_ACK, STAND}, adapter.to(3));
 }
 
+// A state push the client cannot take now is dropped, as every frame is; left at that, the client would show the value
+// before it until the next change. The service loop's resend sends the current value once the client can take it.
+void test_a_dropped_state_push_is_resent_once_as_the_current_value() {
+    FakeAdapter adapter;
+    adapter.subscribeTo(MODE_TAG, 3);
+    adapter.forget();
+    adapter.writable = false;
+    ownerMode = socket_message_ModesEnum_STAND;
+    adapter.emit(modeData(socket_message_ModesEnum_STAND));
+    ownerMode = socket_message_ModesEnum_WALK;
+    adapter.emit(modeData(socket_message_ModesEnum_WALK));
+    adapter.resendDirty();
+    TEST_ASSERT_EQUAL(0, adapter.sentCount());
+
+    adapter.writable = true;
+    adapter.resendDirty();
+    adapter.resendDirty();
+
+    assertFrames({WALK}, adapter.to(3));
+}
+
+// A stream's next frame supersedes the one dropped, and a client that took every push has nothing to catch up on.
+void test_a_dropped_stream_frame_and_a_delivered_push_are_not_resent() {
+    FakeAdapter adapter;
+    adapter.subscribeTo(IMU_TAG, 3);
+    adapter.subscribeTo(MODE_TAG, 4);
+    adapter.forget();
+    adapter.writable = false;
+    adapter.emit(socket_message_IMUData(socket_message_IMUData_init_zero));
+    adapter.writable = true;
+    adapter.emit(modeData(socket_message_ModesEnum_STAND));
+
+    adapter.resendDirty();
+
+    TEST_ASSERT_EQUAL(0, adapter.to(3).size());
+    assertFrames({STAND}, adapter.to(4));
+}
+
 void test_the_topic_table_matches_the_shared_one() {
     const std::vector<TopicKindEntry> shared = sharedTopics();
 
@@ -333,6 +373,8 @@ int main(int, char**) {
     RUN_TEST(test_the_snapshot_is_the_value_at_the_subscribe_and_a_later_push_follows_the_ack);
     RUN_TEST(test_the_bridge_attaches_before_the_owner_is_read);
     RUN_TEST(test_a_change_made_while_the_snapshot_is_sent_is_pushed_after_it);
+    RUN_TEST(test_a_dropped_state_push_is_resent_once_as_the_current_value);
+    RUN_TEST(test_a_dropped_stream_frame_and_a_delivered_push_are_not_resent);
     RUN_TEST(test_the_topic_table_matches_the_shared_one);
     RUN_TEST(test_a_table_serves_every_topic_only_with_each_topic_and_a_snapshot_for_each_state);
     return UNITY_END();
