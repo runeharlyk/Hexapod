@@ -74,67 +74,67 @@
         />
       {/if}
     </div>
+  {/if}
 
-    <div class="divider my-0"></div>
+  <div class="divider my-0"></div>
 
-    <div class="flex flex-wrap items-end justify-between gap-2">
-      <div>
-        <h3 class="font-medium">Devices on the robot's network</h3>
-        <p class="text-sm opacity-70">
-          The robot asks its network for this service type, which takes about 3 seconds.
-        </p>
-      </div>
-      <div class="flex gap-2">
-        <select
-          class="select select-sm w-36"
-          aria-label="Service type"
-          bind:value={selectedType}
-          disabled={$mdnsScan.state === 'scanning'}
-        >
-          {#each types as type (serviceTypeLabel(type))}
-            <option value={serviceTypeLabel(type)}>{serviceTypeLabel(type)}</option>
-          {/each}
-        </select>
-        <button
-          class="btn btn-primary btn-sm"
-          onclick={runScan}
-          disabled={$mdnsScan.state === 'scanning'}
-        >
-          {#if $mdnsScan.state === 'scanning'}
-            <span class="loading loading-ring loading-xs"></span>
-          {/if}
-          Scan
-        </button>
-      </div>
+  <div class="flex flex-wrap items-end justify-between gap-2">
+    <div>
+      <h3 class="font-medium">Devices on the robot's network</h3>
+      <p class="text-sm opacity-70">
+        The robot asks its network for this service type, which takes about 3 seconds.
+      </p>
     </div>
+    <div class="flex gap-2">
+      <select
+        class="select select-sm w-36"
+        aria-label="Service type"
+        bind:value={selectedType}
+        disabled={$mdnsScan.state === 'scanning'}
+      >
+        {#each types as type (serviceTypeLabel(type))}
+          <option value={serviceTypeLabel(type)}>{serviceTypeLabel(type)}</option>
+        {/each}
+      </select>
+      <button
+        class="btn btn-primary btn-sm"
+        onclick={runScan}
+        disabled={$mdnsScan.state === 'scanning'}
+      >
+        {#if $mdnsScan.state === 'scanning'}
+          <span class="loading loading-ring loading-xs"></span>
+        {/if}
+        Scan
+      </button>
+    </div>
+  </div>
 
-    {#if $mdnsScan.state === 'failed'}
-      <div role="alert" class="alert alert-error">Scan failed: {$mdnsScan.message}</div>
-    {:else if $mdnsScan.state === 'done' && $mdnsScan.result.results.length === 0}
-      <p class="text-sm opacity-70">No {$mdnsScan.result.type} services answered.</p>
-    {:else if $mdnsScan.state === 'done'}
-      <div class="w-full overflow-x-auto">
-        <table class="table table-sm">
-          <thead>
+  {#if $mdnsScan.state === 'failed'}
+    <div role="alert" class="alert alert-error">Scan failed: {$mdnsScan.message}</div>
+  {:else if $mdnsScan.state === 'done' && $mdnsScan.result.results.length === 0}
+    <p class="text-sm opacity-70">No {$mdnsScan.result.type} services answered.</p>
+  {:else if $mdnsScan.state === 'done'}
+    <div class="w-full overflow-x-auto">
+      <table class="table table-sm">
+        <thead>
+          <tr>
+            <th></th>
+            <th>Host</th>
+            <th>IP address</th>
+            <th>Port</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each $mdnsScan.result.results as service, index (index)}
             <tr>
-              <th></th>
-              <th>Host</th>
-              <th>IP address</th>
-              <th>Port</th>
+              <td><Devices class="h-5 w-5" /></td>
+              <td>{service.name ? localName(service.name) : '-'}</td>
+              <td class="font-mono">{service.ip || '-'}</td>
+              <td class="font-mono">{service.port}</td>
             </tr>
-          </thead>
-          <tbody>
-            {#each $mdnsScan.result.results as service, index (index)}
-              <tr>
-                <td><Devices class="h-5 w-5" /></td>
-                <td>{service.name ? localName(service.name) : '-'}</td>
-                <td class="font-mono">{service.ip || '-'}</td>
-                <td class="font-mono">{service.port}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-    {/if}
+          {/each}
+        </tbody>
+      </table>
+    </div>
   {/if}
 </SettingsCard>
