@@ -22,6 +22,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 #include <feature_flags.h>
@@ -44,8 +45,8 @@
 #include <www_mount.hpp>
 #include <hexapod.h>
 #include <peripherals/i2c_bus.h>
-#include <peripherals/status_led.h>
 #include <peripherals/i2c_scan.h>
+#include <peripherals/status_led.h>
 #include <cpu_stats.h>
 #include <task_stats.h>
 #include <filesystem_service.h>
@@ -73,6 +74,8 @@ static void logHeap(const char *stage) {
 WiFiService wifiService;
 APService apService;
 MDNSService mdnsService;
+EspMdnsBrowser mdnsBrowser;
+MdnsScan mdnsScan {mdnsBrowser};
 ServoSettingsService servoSettingsService;
 PeripheralSettingsService peripheralSettingsService;
 ImuCalibrationService imuCalibrationService;
@@ -87,10 +90,10 @@ BLE bleAdapter;
 SerialAdapter serialAdapter;
 #endif
 Hexapod robot;
+I2CScan i2cScan;
 #if FT_ENABLED(USE_ESPNOW)
 EspNowAdapter espNow;
 #endif
-I2CScan i2cScan;
 CpuMonitor cpuMonitor;
 TaskStats taskStats;
 EspCoreDumpStore coreDumpStore;
@@ -219,9 +222,6 @@ static void fillStaticInfo(socket_message_StaticSystemInformation &s) {
 
 static constexpr size_t WIFI_SCAN_RESULT_CAPACITY = 20;
 
-// Settings are persisted as binary protobuf under FS_CONFIG_DIRECTORY (the files keep their legacy
-// .json names), so erasing NVS alone leaves WiFi credentials and servo calibration in place after a
-// factory reset.
 // The sweep takes 14 control ticks, some 70 ms; the requesting transport task waits for it at most half a second.
 static constexpr TickType_t I2C_SCAN_POLL = pdMS_TO_TICKS(5);
 static constexpr int I2C_SCAN_POLLS = 100;
@@ -237,6 +237,9 @@ static const char *i2cScanRefusal(I2CScan::Outcome outcome) {
     }
 }
 
+// Settings are persisted as binary protobuf under FS_CONFIG_DIRECTORY (the files keep their legacy
+// .json names), so erasing NVS alone leaves WiFi credentials and servo calibration in place after a
+// factory reset.
 static void eraseConfigDirectory() {
     DIR *dir = opendir(FS_CONFIG_DIRECTORY);
     if (!dir) return;
@@ -395,11 +398,11 @@ static void registerHandlers(CommAdapterBase &c) {
                     res.status_code = 503;
                     strncpy(res.error_message, i2cScanRefusal(outcome), sizeof(res.error_message) - 1);
                 }
+                for (size_t i = 0; i < found.count; i++)
+                    scan.devices[scan.devices_count++].address = found.addresses[i];
                 break;
             }
             case socket_message_CorrelationRequest_wifi_settings_get_tag: {
-                for (size_t i = 0; i < found.count; i++)
-                    scan.devices[scan.devices_count++].address = found.addresses[i];
                 res.which_response = socket_message_CorrelationResponse_wifi_settings_tag;
                 redactedWifiSettings(res.response.wifi_settings);
                 break;
@@ -459,8 +462,13 @@ static void registerHandlers(CommAdapterBase &c) {
                 break;
             }
             case socket_message_CorrelationRequest_mdns_query_tag: {
-                res.which_response = socket_message_CorrelationResponse_mdns_query_response_tag;
-                mdnsService.queryProto(req.request.mdns_query, res.response.mdns_query_response);
+                const MdnsScan::Reply reply =
+                    mdnsScan.start(req.request.mdns_query, {adapter, clientId}, req.correlation_id);
+                // The answers follow from the service task once the query has collected them (answerMdnsScan).
+                if (reply.status == 202) return;
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                res.status_code = reply.status;
+                strncpy(res.error_message, reply.reason, sizeof(res.error_message) - 1);
                 break;
             }
             case socket_message_CorrelationRequest_servo_settings_get_tag: {
@@ -668,6 +676,34 @@ static void registerHandlers(CommAdapterBase &c) {
     });
 }
 
+// The transport a deferred reply goes out on, found by identity: a client holds its adapter as a plain handle.
+static CommAdapterBase *transportOf(const void *adapter) {
+    CommAdapterBase *const transports[] = {
+        &wsSocket,
+        &bleAdapter,
+#if FT_ENABLED(USE_SERIAL_LINK)
+        &serialAdapter,
+#endif
+    };
+    for (CommAdapterBase *transport : transports)
+        if (transport == adapter) return transport;
+    return nullptr;
+}
+
+// Sends the mDNS scan's reply once its query has ended, from the service task (include/mdns_scan.h).
+static void answerMdnsScan() {
+    if (!mdnsScan.due()) return;
+    // Some 2 KB, held only while it is sent: in PSRAM rather than on the service task's stack in internal RAM. Zeroed,
+    // as socket_message_CorrelationResponse_init_zero is; without the memory the reply stays due for the next pass.
+    void *memory = heap_caps_calloc(1, sizeof(socket_message_CorrelationResponse), MALLOC_CAP_SPIRAM);
+    if (!memory) return;
+    auto &res = *static_cast<socket_message_CorrelationResponse *>(memory);
+    const std::optional<MdnsScan::Client> client = mdnsScan.answer(res);
+    CommAdapterBase *transport = client ? transportOf(client->adapter) : nullptr;
+    if (transport) transport->emit(res, client->id);
+    heap_caps_free(memory);
+}
+
 template <typename T>
 static void emitAll(const T &msg) {
     wsSocket.emit(msg);
@@ -848,6 +884,7 @@ static void setupComm() {
     // so nothing walks or plays unattended.
     const auto onClientGone = [](const CommAdapterBase *adapter, int clientId) {
         robot.goalClientGone({adapter, clientId});
+        mdnsScan.clientGone({adapter, clientId});
         if (!anyClientConnected()) robot.animationControlLost();
     };
     // Any frame keeps a goal's owner alive; one that falls silent loses its goal (MotionService::ownerHeard).
@@ -937,6 +974,7 @@ static void controlLoop(void *) {
         robot.readSensors();
         robot.planMotion();
         robot.updateActuators();
+        i2cScan.step();
         if (telemetry->recording()) {
             socket_message_TickSample tick = socket_message_TickSample_init_zero;
             tick.seq = seq;
@@ -974,7 +1012,6 @@ static void serviceLoop(void *) {
     logHeap("softap");
 
     setupServer();
-        i2cScan.step();
     setupComm();
 
 #if FT_ENABLED(USE_ESPNOW)
@@ -1004,6 +1041,7 @@ static void serviceLoop(void *) {
         // A client that left mid-update stops sending; its claim on the update slot ends here.
         EXECUTE_EVERY_N_MS(1000, otaSession.expire(esp_timer_get_time() / 1000));
         sendTelemetry();
+        answerMdnsScan();
         EXECUTE_EVERY_N_MS(2000, {
             // sample() keeps running regardless: its uint32 idle-counter deltas only stay valid
             // over short windows. fillAnalytics() stats the filesystem, so that waits for a client.

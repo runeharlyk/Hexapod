@@ -110,19 +110,20 @@ void MDNSService::statusProto(api_MDNSStatus &status) {
     }
 }
 
-void MDNSService::queryProto(const api_MDNSQueryRequest &req, api_MDNSQueryResponse &resp) {
-    ESP_LOGI(TAG, "Querying for service: %s, protocol: %s", req.service, req.protocol);
+bool EspMdnsBrowser::begin(const char *service, const char *protocol, uint32_t timeoutMs) {
+    ESP_LOGI(TAG, "Querying for service: %s, protocol: %s", service, protocol);
+    constexpr size_t capacity = sizeof(api_MDNSQueryResponse::services) / sizeof(api_MDNSQueryResult);
+    _search = mdns_query_async_new(nullptr, service, protocol, MDNS_TYPE_PTR, timeoutMs, capacity, nullptr);
+    if (!_search) ESP_LOGW(TAG, "MDNS query could not start");
+    return _search != nullptr;
+}
 
-    mdns_result_t *results = nullptr;
-    esp_err_t err = mdns_query_ptr(req.service, req.protocol, 3000, 20, &results);
-    resp.services_count = 0;
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "MDNS query failed: %s", esp_err_to_name(err));
-        return;
-    }
+bool EspMdnsBrowser::ended() { return mdns_query_async_get_results(_search, 0, &_results, nullptr); }
 
+void EspMdnsBrowser::take(api_MDNSQueryResponse &resp) {
+    constexpr size_t capacity = sizeof(resp.services) / sizeof(resp.services[0]);
     size_t i = 0;
-    for (mdns_result_t *r = results; r && i < 16; r = r->next, i++) {
+    for (mdns_result_t *r = _results; r && i < capacity; r = r->next, i++) {
         if (r->hostname) {
             strncpy(resp.services[i].name, r->hostname, sizeof(resp.services[i].name) - 1);
         }
@@ -138,5 +139,8 @@ void MDNSService::queryProto(const api_MDNSQueryRequest &req, api_MDNSQueryRespo
     resp.services_count = i;
 
     ESP_LOGI(TAG, "Found %d services", (int)i);
-    mdns_query_results_free(results);
+    mdns_query_results_free(_results);
+    mdns_query_async_delete(_search);
+    _results = nullptr;
+    _search = nullptr;
 }
