@@ -1,13 +1,12 @@
 import { expect, test } from '@playwright/test'
-import { fakeRobot, tooOld } from './fake-robot'
+import { fakeRobot, tooOld, tooOldUpToV011 } from './fake-robot'
 import { PeripheralSettings, WifiSettings } from '../../src/lib/platform_shared/api'
 
 const base = process.env.BASE_PATH ?? ''
 
 const outdated = (feature: string) => `the robot's firmware does not support ${feature}; update it`
 
-// A robot whose firmware knows none of the requests answers each with a bare 400. Those without fields can only be
-// unknown to it, and the page says the firmware lacks them; the mDNS query has fields, so its 400 is a refusal.
+// A robot whose firmware knows none of the requests answers each with a 501, and every page says the firmware lacks it.
 const loads = [
   {
     path: '/peripherals/servo',
@@ -32,7 +31,7 @@ const loads = [
     path: '/wifi/mdns',
     shown: [
       `The robot did not report its mDNS status: ${outdated('the mDNS status')}.`,
-      'Scan failed: the robot refused the mDNS scan (status 400)'
+      `Scan failed: ${outdated('the mDNS scan')}`
     ]
   },
   {
@@ -47,6 +46,20 @@ for (const { path, shown } of loads)
     await page.goto(`${base}${path}`)
     for (const text of shown) await expect(page.getByText(text, { exact: true })).toBeVisible()
   })
+
+// Firmware up to v0.1.1 answers a request it does not know with a bare 400, which it also answers to a malformed one:
+// only a request without fields, which cannot be malformed, reads as one the firmware lacks.
+test('a firmware up to v0.1.1 is named as too old only for a request without fields', async ({
+  page
+}) => {
+  await fakeRobot(page, tooOldUpToV011)
+  await page.goto(`${base}/wifi/mdns`)
+  for (const text of [
+    `The robot did not report its mDNS status: ${outdated('the mDNS status')}.`,
+    'Scan failed: the robot refused the mDNS scan'
+  ])
+    await expect(page.getByText(text, { exact: true })).toBeVisible()
+})
 
 // A refusal answers the same on every poll, so the scan stops at once and says why.
 test('a Wi-Fi scan names the firmware it needs from a robot that does not know the request', async ({
@@ -73,10 +86,7 @@ test('a Wi-Fi settings update the robot refuses is reported, not confirmed', asy
   await page.getByRole('button', { name: 'Apply Settings' }).click()
 
   await expect(
-    page.getByText(
-      'Failed to update the Wi-Fi settings: the robot refused the Wi-Fi settings (status 400)',
-      { exact: true }
-    )
+    page.getByText('Not saved: the robot refused the Wi-Fi settings', { exact: true })
   ).toBeVisible()
   await expect(page.getByText('Wi-Fi settings updated.')).toHaveCount(0)
 })
@@ -106,33 +116,27 @@ test('an access point settings update the robot refuses is reported, not confirm
   await page.getByRole('button', { name: 'Apply Settings' }).click()
 
   await expect(
-    page.getByText(
-      'Failed to update the access point settings: the robot refused the access point settings (status 400)',
-      { exact: true }
-    )
+    page.getByText('Not saved: the robot refused the access point settings', { exact: true })
   ).toBeVisible()
   await expect(page.getByText('Access Point settings updated.')).toHaveCount(0)
 })
 
 test('a servo calibration the robot refuses is reported, not confirmed', async ({ page }) => {
   await fakeRobot(page, request =>
-    request.servoSettingsGet ? { servoSettings: { servos: [] } } : tooOld()
+    request.servoSettingsGet ? { servoSettings: { servos: [] } } : { statusCode: 400 }
   )
   await page.goto(`${base}/peripherals/servo`)
   await page.getByRole('button', { name: 'Save calibration' }).click()
 
   await expect(
-    page.getByText(
-      'Failed to save the servo calibration: the robot refused the servo calibration (status 400)',
-      { exact: true }
-    )
+    page.getByText('Not saved: the robot refused the servo calibration', { exact: true })
   ).toBeVisible()
 })
 
 test('an I2C configuration the robot refuses is reported, not confirmed', async ({ page }) => {
   const settings = PeripheralSettings.create({ sda: 1, scl: 2, frequency: 400000 })
   await fakeRobot(page, request =>
-    request.peripheralSettingsGet ? { peripheralSettings: settings } : tooOld()
+    request.peripheralSettingsGet ? { peripheralSettings: settings } : { statusCode: 400 }
   )
   await page.goto(`${base}/peripherals/i2c`)
   await page.locator('.collapse').filter({ hasText: 'Configuration' }).getByRole('checkbox').check()
@@ -141,9 +145,6 @@ test('an I2C configuration the robot refuses is reported, not confirmed', async 
   await page.getByRole('button', { name: 'Confirm' }).click()
 
   await expect(
-    page.getByText(
-      'The I2C configuration was not saved: the robot refused the I2C configuration (status 400)',
-      { exact: true }
-    )
+    page.getByText('Not saved: the robot refused the I2C configuration', { exact: true })
   ).toBeVisible()
 })

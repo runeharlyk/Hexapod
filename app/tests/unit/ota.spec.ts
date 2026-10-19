@@ -53,7 +53,7 @@ describe('sendFirmware', () => {
   it('names the step when the robot gives no reason', async () => {
     const robot = fakeRobot(p => (p.otaStart ? reply(409) : undefined))
     await expect(sendFirmware(image, robot.request)).rejects.toThrow(
-      'the robot refused starting the update (status 409)'
+      'the robot refused starting the update'
     )
   })
 })

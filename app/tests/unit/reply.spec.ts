@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { readdirSync, readFileSync } from 'node:fs'
+import { join, relative, resolve } from 'node:path'
 import {
   ask,
   describeFailure,
@@ -26,6 +26,17 @@ describe('interpret', () => {
     expect(interpret({ wifiNetworksGet: {} }, reply(202)).kind).toBe('ok')
   })
 
+  it('reads a 501 as firmware that does not know the request, whatever the request', () => {
+    expect(interpret({ taskStatsRequest: {} }, reply(501))).toEqual({ kind: 'too-old' })
+    expect(interpret({ mdnsQuery: { service: 'http', protocol: 'tcp' } }, reply(501))).toEqual({
+      kind: 'too-old'
+    })
+    expect(interpret({ otaStart: { size: 1 } }, reply(501, 'Not here'))).toEqual({
+      kind: 'too-old'
+    })
+  })
+
+  // Firmware up to v0.1.1 answers a request it does not know with a bare 400 rather than the 501.
   it('reads a bare 400 to a request without fields as firmware that does not know it', () => {
     expect(interpret({ taskStatsRequest: {} }, reply(400))).toEqual({ kind: 'too-old' })
     expect(interpret({ coreDumpGet: {} }, reply(400))).toEqual({ kind: 'too-old' })
@@ -62,7 +73,7 @@ describe('interpret', () => {
     })
   })
 
-  it('reads only a 400 as firmware too old', () => {
+  it('reads only a 501, or a bare 400, as firmware too old', () => {
     expect(interpret({ taskStatsRequest: {} }, reply(503)).kind).toBe('refused')
     expect(interpret({ taskStatsRequest: {} }, reply(404)).kind).toBe('refused')
   })
@@ -74,23 +85,89 @@ describe('interpret', () => {
 })
 
 describe('isFieldless', () => {
-  // Every request the firmware answers with a bare 400 for a reason of its own must have fields, or that 400 would read
-  // as firmware too old. The handler's cases are read from main.cpp, so a new one that does fails here.
-  it('holds no request whose handler answers a bare 400 of its own (firmware/src/main.cpp)', () => {
-    const main = readFileSync(resolve(__dirname, '../../../firmware/src/main.cpp'), 'utf-8')
-    const handler = main.slice(main.indexOf('c.on<socket_message_CorrelationRequest>'))
-    const cases = handler
-      .slice(0, handler.indexOf('default:'))
-      .split(/case socket_message_CorrelationRequest_/)
-    const bare400 = cases
-      .slice(1)
-      .filter(body => /status_code =[^;]*\b400\b/.test(body) || /\breturn 400\b/.test(body))
-      .map(body => body.slice(0, body.indexOf('_tag')))
-    expect(bare400).toContain('file_delete')
-    const camel = (snake: string) =>
-      snake.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase())
-    for (const request of bare400)
-      expect(isFieldless({ [camel(request)]: {} }), request).toBe(false)
+  it('holds the requests whose message declares no field, and only those', () => {
+    expect(isFieldless({ taskStatsRequest: {} })).toBe(true)
+    expect(isFieldless({ otaFinish: {} })).toBe(true)
+    expect(isFieldless({ fileDelete: { path: '' } })).toBe(false)
+    expect(isFieldless({ servoSettingsUpdate: { servos: [] } })).toBe(false)
+  })
+})
+
+// The 501 is what makes "firmware too old" exact, so it must mean nothing else: the `default:` of the correlation
+// handler in firmware/src/main.cpp answers it, without a message, and no other firmware code answers a 501. The handler
+// is part of setup() and does not build on the host, so its source is read; a structure the reading does not find
+// fails the test rather than passing it.
+const firmware = resolve(__dirname, '../../../firmware')
+
+const withoutCommentsAndStrings = (source: string) =>
+  source
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/[^\n]*/g, ' ')
+    .replace(/"(?:\\.|[^"\\\n])*"/g, '""')
+    .replace(/'(?:\\.|[^'\\\n])*'/g, "''")
+
+const mustFind = (index: number, what: string) => {
+  if (index < 0) throw new Error(`firmware/src/main.cpp: ${what} not found`)
+  return index
+}
+
+// The text inside the braces of the block whose `{` is at `open`.
+const block = (source: string, open: number) => {
+  let depth = 0
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === '{') depth++
+    else if (source[i] === '}' && --depth === 0) return source.slice(open + 1, i)
+  }
+  throw new Error(`firmware/src/main.cpp: the block at ${open} is not closed`)
+}
+
+// The `default:` arm of the switch over the request, at the switch's own depth: a nested switch's is not it.
+const unknownRequestArm = () => {
+  const main = withoutCommentsAndStrings(readFileSync(join(firmware, 'src/main.cpp'), 'utf-8'))
+  const handler = mustFind(
+    main.indexOf('c.on<socket_message_CorrelationRequest>'),
+    'the correlation handler'
+  )
+  const switchAt = mustFind(
+    main.indexOf('switch (req.which_request)', handler),
+    "the handler's switch over the request"
+  )
+  const body = block(main, mustFind(main.indexOf('{', switchAt), "the switch's body"))
+  let depth = 0
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] === '{') depth++
+    else if (body[i] === '}') depth--
+    else if (depth === 0 && /^default\s*:/.test(body.slice(i))) return body.slice(i)
+  }
+  throw new Error("firmware/src/main.cpp: the switch's default: arm not found")
+}
+
+const firmwareSources = (dir: string): string[] =>
+  readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+    const path = join(dir, entry.name)
+    // The generated protobuf sources answer nothing.
+    if (entry.isDirectory()) return entry.name === 'platform_shared' ? [] : firmwareSources(path)
+    return /\.(h|hpp|cpp)$/.test(entry.name) ? [path] : []
+  })
+
+describe("the firmware's answer to a request it does not know", () => {
+  it('is a 501 without a message', () => {
+    expect(unknownRequestArm()).toMatch(
+      /^default\s*:\s*res\.status_code\s*=\s*501\s*;\s*break\s*;\s*$/
+    )
+  })
+
+  it('is the only 501 in the firmware', () => {
+    const found = [join(firmware, 'src'), join(firmware, 'include')]
+      .flatMap(firmwareSources)
+      .flatMap(path =>
+        [
+          ...withoutCommentsAndStrings(readFileSync(path, 'utf-8')).matchAll(
+            /(?<![\w.])501(?![\w.])/g
+          )
+        ].map(() => relative(firmware, path).replaceAll('\\', '/'))
+      )
+    expect(found).toEqual(['src/main.cpp'])
   })
 })
 
@@ -101,12 +178,12 @@ describe('describeFailure', () => {
     )
   })
 
-  it("shows the robot's reason, and the status when it gave none", () => {
+  it("shows the robot's reason, and without one names what was refused but not the status", () => {
     expect(
       describeFailure({ kind: 'refused', status: 409, message: 'Busy' }, 'the core-dump erase')
     ).toBe('Busy')
     expect(describeFailure({ kind: 'refused', status: 503, message: '' }, 'the I2C scan')).toBe(
-      'the robot refused the I2C scan (status 503)'
+      'the robot refused the I2C scan'
     )
   })
 })

@@ -18,10 +18,15 @@ export type Failure =
 
 export type Outcome<R extends Reply> = { kind: 'ok'; reply: R } | Failure
 
-// The requests whose message declares no field. The firmware answers a request oneof it does not know with a bare 400
-// (the `default:` of firmware/src/main.cpp's correlation handler), and a request with no field has nothing it could
-// reject as malformed, so for these alone a bare 400 means firmware older than the request. Read from the schema
-// rather than listed by hand, so a request that gains a field leaves the set by itself.
+// The firmware answers a request it does not know with a 501 (the `default:` of firmware/src/main.cpp's correlation
+// handler), which it answers to nothing else, so a 501 always means firmware older than the request.
+const UNKNOWN_REQUEST = 501
+
+// Firmware up to v0.1.1, the current release, answers a request it does not know with a bare 400 instead, which it also
+// answers to a malformed one. A request whose message declares no field has nothing to be malformed, so for these
+// requests alone a bare 400 is read as firmware too old; for any other it stays a refusal. The set is read from the
+// schema rather than listed by hand, so a request that gains a field leaves it by itself. This fallback serves robots
+// that run those releases and can go once none does.
 const FIELDLESS_REQUESTS: ReadonlySet<string> = (() => {
   const fieldCounts = new Map<string, number>()
   for (const file of [protoMetadata.fileDescriptor, apiProtoMetadata.fileDescriptor])
@@ -40,7 +45,7 @@ const FIELDLESS_REQUESTS: ReadonlySet<string> = (() => {
 const requestKey = (payload: object) =>
   Object.entries(payload).find(([, value]) => value !== undefined)?.[0]
 
-/** Whether a bare 400 to this request can only mean that the firmware does not know it. */
+/** Whether a bare 400 to this request, from firmware up to v0.1.1, can only mean that the firmware does not know it. */
 export const isFieldless = (payload: object) => FIELDLESS_REQUESTS.has(requestKey(payload) ?? '')
 
 const isSuccess = (status: number) => status >= 200 && status < 300
@@ -55,18 +60,23 @@ export const interpret = <R extends Reply>(
   accept: readonly number[] = []
 ): Outcome<R> => {
   if (isSuccess(reply.statusCode) || accept.includes(reply.statusCode)) return { kind: 'ok', reply }
+  if (reply.statusCode === UNKNOWN_REQUEST) return { kind: 'too-old' }
   if (reply.statusCode === 400 && !reply.errorMessage && isFieldless(payload))
     return { kind: 'too-old' }
   return { kind: 'refused', status: reply.statusCode, message: reply.errorMessage }
 }
 
-/** The sentence a page shows for a failure; `feature` names what the request was for, such as "the task table". */
+/**
+ * The sentence a page shows for a failure; `feature` names what the request was for, such as "the task table", or the
+ * step that failed, such as a chunk at an offset. A refusal without a reason leaves out the HTTP status, which says
+ * nothing to the person reading it.
+ */
 export const describeFailure = (failure: Failure, feature: string): string => {
   switch (failure.kind) {
     case 'too-old':
       return `the robot's firmware does not support ${feature}; update it`
     case 'refused':
-      return failure.message || `the robot refused ${feature} (status ${failure.status})`
+      return failure.message || `the robot refused ${feature}`
     case 'timeout':
       return `the robot did not answer in time for ${feature}`
     case 'disconnected':

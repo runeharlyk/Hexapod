@@ -30,5 +30,8 @@ export const fakeRobot = (
     })
   })
 
-/** What a firmware from before every request answers: the bare 400 of main.cpp's `default:`. */
-export const tooOld = (): Answer => ({ statusCode: 400 })
+/** What a firmware that does not know the request answers: the 501 of main.cpp's `default:`. */
+export const tooOld = (): Answer => ({ statusCode: 501 })
+
+/** What firmware up to v0.1.1 answers to a request it does not know: a bare 400, as to a malformed one. */
+export const tooOldUpToV011 = (): Answer => ({ statusCode: 400 })

@@ -50,7 +50,7 @@ class OtaSession {
         std::lock_guard<std::mutex> lock(mutex_);
         if (busy_.exchange(true)) return {409, "An update is already running"};
         const uint32_t capacity = flash_.capacity();
-        if (capacity == 0) return release({501, "This partition table has no slot for updates"});
+        if (capacity == 0) return release({507, "This partition table has no slot for updates"});
         if (size == 0 || size > capacity) return release({413, "The image does not fit the update slot"});
         if (!flash_.begin()) return release({500, "Could not open the update slot"});
         running_ = true;

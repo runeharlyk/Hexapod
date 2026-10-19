@@ -132,10 +132,7 @@
       )
       notifications.success('Access Point settings updated.', 3000)
     } catch (e) {
-      notifications.error(
-        `Failed to update the access point settings: ${(e as Error).message}`,
-        5000
-      )
+      notifications.error(`Not saved: ${(e as Error).message}`, 5000)
     }
   }
 

@@ -167,6 +167,19 @@ void test_an_image_larger_than_the_slot_is_refused_up_front() {
     TEST_ASSERT_FALSE(busy);
 }
 
+// The app reads a 501 as firmware too old for the request (main.cpp answers an unknown request with it), so a robot
+// without an update slot must answer something else, or the app would tell the user to update by the update.
+void test_a_partition_table_without_an_update_slot_is_not_a_501() {
+    FakeFlash flash;
+    flash.slot = 0;
+    std::atomic<bool> busy{false};
+    OtaSession session(flash, busy);
+    const OtaReply reply = session.start(512, ALICE, 0);
+    TEST_ASSERT_EQUAL(507, reply.status);
+    TEST_ASSERT_EQUAL_STRING("This partition table has no slot for updates", reply.reason);
+    TEST_ASSERT_FALSE(busy);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_an_update_in_order_activates_the_image);
@@ -178,5 +191,6 @@ int main() {
     RUN_TEST(test_an_update_over_http_blocks_one_over_the_link);
     RUN_TEST(test_a_silent_update_expires_and_frees_the_slot);
     RUN_TEST(test_an_image_larger_than_the_slot_is_refused_up_front);
+    RUN_TEST(test_a_partition_table_without_an_update_slot_is_not_a_501);
     return UNITY_END();
 }

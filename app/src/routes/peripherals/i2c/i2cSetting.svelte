@@ -38,7 +38,7 @@
       },
       'the I2C configuration'
     ).catch((error: Error) => {
-      notifications.error(`The I2C configuration was not saved: ${error.message}`, 5000)
+      notifications.error(`Not saved: ${error.message}`, 5000)
       return null
     })
     if (!res) return

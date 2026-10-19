@@ -198,7 +198,7 @@ describe('the telemetry recorder', () => {
     expect(get(refused)).toMatchObject({
       recording: false,
       starting: false,
-      error: 'Recording not started: the robot refused the feature list (status 500)'
+      error: 'Recording not started: the robot refused the feature list'
     })
   })
 

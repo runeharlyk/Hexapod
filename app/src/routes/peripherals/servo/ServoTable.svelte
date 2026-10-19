@@ -27,7 +27,7 @@
       await ask(dataBroker, { servoSettingsUpdate: { servos } }, 'the servo calibration')
       notifications.success('Servo calibration saved.', 3000)
     } catch (error) {
-      notifications.error(`Failed to save the servo calibration: ${(error as Error).message}`, 5000)
+      notifications.error(`Not saved: ${(error as Error).message}`, 5000)
     }
   }
 

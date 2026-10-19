@@ -269,13 +269,13 @@ describe('watchTaskStats', () => {
     expect(last()).toEqual({ stats: table, error: 'No room for the task snapshot', loading: false })
   })
 
-  it('names the status when the robot refuses without a message', async () => {
+  it('says what the robot refused when it gives no reason', async () => {
     const fake = fakeBroker()
     start(fake.broker)
     feed.refresh()
     fake.replies[0]({ statusCode: 503, errorMessage: '' })
     await vi.advanceTimersByTimeAsync(0)
-    expect(last().error).toBe('the robot refused the task table (status 503)')
+    expect(last().error).toBe('the robot refused the task table')
     expect(last().stats).toBeNull()
   })
 

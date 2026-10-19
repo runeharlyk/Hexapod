@@ -160,14 +160,14 @@ describe('downloadCoreDump', () => {
         : reply({ statusCode: 404 })
     }
     await expect(downloadCoreDump(link)).rejects.toThrow(
-      'the robot refused the core-dump read at offset 512 (status 404)'
+      'the robot refused the core-dump read at offset 512'
     )
   })
 
   // CoreDumpRead has fields, so a bare 400 is a read the robot refused, not a firmware without the readout.
   it('reports a bare 400 to a read as a refusal', async () => {
     await expect(downloadCoreDump(answering(reply({ statusCode: 400 })))).rejects.toThrow(
-      'the robot refused the core-dump read at offset 0 (status 400)'
+      'the robot refused the core-dump read at offset 0'
     )
   })
 

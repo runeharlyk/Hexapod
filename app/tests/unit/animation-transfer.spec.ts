@@ -148,7 +148,6 @@ describe('uploadAnimation', () => {
 
     expect(result.ok).toBe(false)
     expect(result.ok === false && result.error).toContain('offset 512')
-    expect(result.ok === false && result.error).toContain('400')
     expect(writes().map(w => w.offset)).toEqual([0, 512, 0, 512])
     expect(validates()).toHaveLength(0)
   })
@@ -165,12 +164,12 @@ describe('uploadAnimation', () => {
     expect(writes()).toHaveLength(3)
   })
 
-  it('throws with the status when validate answers without a report', async () => {
+  it('throws when validate answers without a report', async () => {
     responder = m =>
       m.correlationRequest?.animationValidate ? { statusCode: 500, empty: {} } : { empty: {} }
 
     await expect(uploadAnimation(animationLargerThan(10))).rejects.toThrow(
-      'the robot refused the validation of pad (status 500)'
+      'the robot refused the validation of pad'
     )
   })
 })
@@ -192,11 +191,9 @@ describe('listAnimations', () => {
 
 describe('deleteAnimation', () => {
   // A path the robot cannot resolve or unlink is a bare 400 to a request with fields: a refusal.
-  it('reports a refused delete with its name and status', async () => {
+  it('reports a refused delete with its name', async () => {
     responder = () => ({ statusCode: 400 })
-    await expect(deleteAnimation('wave')).rejects.toThrow(
-      'the robot refused deleting wave (status 400)'
-    )
+    await expect(deleteAnimation('wave')).rejects.toThrow('the robot refused deleting wave')
   })
 })
 
@@ -222,9 +219,9 @@ describe('downloadAnimation', () => {
     expect(a).toEqual(source)
   })
 
-  it('throws with the offset and status on a failed read', async () => {
+  it('throws with the offset on a failed read', async () => {
     responder = () => ({ statusCode: 404 })
-    await expect(downloadAnimation('gone')).rejects.toThrow(/offset 0.*404/)
+    await expect(downloadAnimation('gone')).rejects.toThrow(/offset 0/)
   })
 })
 
