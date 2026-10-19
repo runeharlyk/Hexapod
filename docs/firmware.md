@@ -377,7 +377,7 @@ An owner never pushes while it holds a lock that its snapshot reads under: owner
 A snapshot never waits on an EventBus worker, since that worker may itself be waiting for the adapter's `encodeMutex_`.
 A state push that a client cannot take now (`ready()` false, a full WebSocket) is dropped as every frame is, but it marks that client's subscription dirty; the service task's 100 ms pass calls `resendDirty()` on each adapter, which sends each dirty client that can take a frame the topic's current value from its snapshot, once, and clears the mark.
 A dropped stream frame is not resent: the next frame supersedes it.
-BLE never reports a failed notify, so a push lost there stays lost until the next change or the client's next subscribe.
+A push whose send fails on a client that looked ready is marked the same way: `send()` reports whether the frame went out, a BLE notify fails when NimBLE has no mbuf for it, a serial write when the host does not take it within 20 ms, and a WebSocket send on a socket error.
 When the last client on every transport has gone, a playing animation stops, so nothing runs unattended.
 
 Per-tick telemetry (`include/telemetry/telemetry.h`) is recorded by the control task into a lock-free single-producer ring, only while someone subscribes, and shipped in whole batches by the service task; a full ring drops samples and counts them rather than blocking the control loop.

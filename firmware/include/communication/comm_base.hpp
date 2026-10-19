@@ -29,6 +29,7 @@ class SnapshotSink {
 
     CommAdapterBase& adapter_;
     int cid_;
+    bool delivered_ = false;
 };
 
 class CommAdapterBase {
@@ -107,6 +108,7 @@ class CommAdapterBase {
             if (!ready(cid) || !clearDirty(tag, cid)) continue;
             SnapshotSink sink(*this, cid);
             topicOf(tag)->snapshot(sink);
+            if (!sink.delivered_) markDirty(tag, cid, true);
         }
     }
 
@@ -120,7 +122,9 @@ class CommAdapterBase {
     }
 
   protected:
-    virtual void send(const uint8_t* data, size_t len, int cid = -1) = 0;
+    // Whether the frame went out whole: false when the transport dropped it, as a BLE notify without an mbuf or a
+    // serial write cut short does, which a state push then marks for resendDirty.
+    virtual bool send(const uint8_t* data, size_t len, int cid = -1) = 0;
 
     // Whether a client can take a frame now without blocking. Subscriptions stream the latest value,
     // so a frame a client cannot take is dropped rather than queued or waited on.
@@ -200,9 +204,9 @@ class CommAdapterBase {
   private:
     friend class SnapshotSink;
 
-    // Under encodeMutex_: the shared message and encode buffer.
+    // Under encodeMutex_: the shared message and encode buffer. Whether a directed message went out.
     template <typename T>
-    void encodeAndSend(const T& data, int clientId) {
+    bool encodeAndSend(const T& data, int clientId) {
         constexpr pb_size_t tag = MessageTraits<T>::tag;
         msg_.which_message = tag;
         MessageTraits<T>::assign(msg_, data);
@@ -210,26 +214,24 @@ class CommAdapterBase {
         size_t out_size = 0;
         if (!pb_get_encoded_size(&out_size, socket_message_Message_fields, &msg_)) {
             ESP_LOGE("ProtoComm", "Failed to size message (tag %d)", (int)tag);
-            return;
+            return false;
         }
 
         EncodeBuffer buffer(enc_buf_, sizeof(enc_buf_), out_size);
         if (!buffer.data()) {
             ESP_LOGE("ProtoComm", "Out of memory for %u byte message (tag %d)", (unsigned)out_size, (int)tag);
-            return;
+            return false;
         }
 
         pb_ostream_t stream = pb_ostream_from_buffer(buffer.data(), out_size);
         if (!pb_encode(&stream, socket_message_Message_fields, &msg_)) {
             ESP_LOGE("ProtoComm", "Failed to encode message (tag %d): %s", (int)tag, PB_GET_ERROR(&stream));
-            return;
+            return false;
         }
 
-        if (clientId >= 0) {
-            send(buffer.data(), stream.bytes_written, clientId);
-        } else {
-            sendToSubscribers(tag, buffer.data(), stream.bytes_written);
-        }
+        if (clientId >= 0) return send(buffer.data(), stream.bytes_written, clientId);
+        sendToSubscribers(tag, buffer.data(), stream.bytes_written);
+        return true;
     }
 
     // Under encodeMutex_: msg_ as set, a pong or an ack, which fits a few bytes on the stack.
@@ -291,7 +293,8 @@ class CommAdapterBase {
     }
 
     // Sends to a copy of the list, so a slow client never holds up subscribing or closing a session. A state push a
-    // client cannot take marks it dirty for resendDirty, and one it takes clears the mark; a stream frame is just lost.
+    // client cannot take, or whose send fails, marks it dirty for resendDirty, and one it takes clears the mark; a
+    // stream frame is just lost.
     void sendToSubscribers(int32_t tag, const uint8_t* data, size_t len) {
         std::vector<Subscriber> clients;
         {
@@ -303,8 +306,7 @@ class CommAdapterBase {
         const Topic* topic = topicOf(tag);
         const bool state = topic && topic->kind == TopicKind::STATE;
         for (const Subscriber& client : clients) {
-            const bool delivered = ready(client.cid);
-            if (delivered) send(data, len, client.cid);
+            const bool delivered = ready(client.cid) && send(data, len, client.cid);
             if (state && delivered == client.dirty) markDirty(tag, client.cid, !delivered);
         }
     }
@@ -345,5 +347,5 @@ class CommAdapterBase {
 
 template <typename T>
 void SnapshotSink::put(const T& value) {
-    adapter_.encodeAndSend(value, cid_);
+    delivered_ = adapter_.encodeAndSend(value, cid_);
 }

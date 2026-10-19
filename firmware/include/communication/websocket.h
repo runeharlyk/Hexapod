@@ -29,5 +29,5 @@ class Websocket : public CommAdapterBase {
     esp_err_t onFrame(httpd_req_t* req, httpd_ws_frame_t* frame);
 
     bool ready(int cid) override;
-    void send(const uint8_t* data, size_t len, int cid = -1) override;
+    bool send(const uint8_t* data, size_t len, int cid = -1) override;
 };

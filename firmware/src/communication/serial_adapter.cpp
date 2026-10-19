@@ -48,18 +48,19 @@ void SerialAdapter::readLoop() {
     }
 }
 
-void SerialAdapter::send(const uint8_t* data, size_t len, int cid) {
+bool SerialAdapter::send(const uint8_t* data, size_t len, int cid) {
     (void)cid;
-    if (!hostPresent_ || len == 0) return;
+    if (!hostPresent_ || len == 0) return false;
 
     const std::vector<uint8_t> frame = serial_frame::encode(data, len);
-    if (frame.empty()) return;
+    if (frame.empty()) return false;
     // Short timeout: a host that stops reading must not stall the event-bus worker behind it. A frame
     // cut short is dropped by the app's CRC, and the delimiters let it find the next one.
     for (size_t off = 0; off < frame.size(); off += TX_CHUNK) {
         const size_t take = frame.size() - off < TX_CHUNK ? frame.size() - off : TX_CHUNK;
-        if (usb_serial_jtag_write_bytes(frame.data() + off, take, pdMS_TO_TICKS(20)) != (int)take) return;
+        if (usb_serial_jtag_write_bytes(frame.data() + off, take, pdMS_TO_TICKS(20)) != (int)take) return false;
     }
+    return true;
 }
 
 #endif  // FT_ENABLED(USE_SERIAL_LINK)

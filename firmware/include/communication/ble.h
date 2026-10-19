@@ -70,7 +70,7 @@ class BLE : public CommAdapterBase {
     };
 
     void setup();
-    void send(const uint8_t *data, size_t len, int cid = -1) override;
+    bool send(const uint8_t *data, size_t len, int cid = -1) override;
     void reassemble(const uint8_t *data, size_t len);
     static void messageProcessingTask(void *parameter);
 };

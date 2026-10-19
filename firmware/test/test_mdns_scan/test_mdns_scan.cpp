@@ -51,7 +51,10 @@ class FakeAdapter : public CommAdapterBase {
 
   protected:
     bool ready(int) override { return writable; }
-    void send(const uint8_t*, size_t, int) override { sent++; }
+    bool send(const uint8_t*, size_t, int) override {
+        sent++;
+        return true;
+    }
 };
 
 api_MDNSQueryRequest query(const char* service, const char* protocol) {

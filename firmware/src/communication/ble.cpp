@@ -127,22 +127,25 @@ void BLE::reassemble(const uint8_t *data, size_t len) {
     if (pos > 0) _rxBuffer.erase(_rxBuffer.begin(), _rxBuffer.begin() + pos);
 }
 
-void BLE::send(const uint8_t *data, size_t len, int cid) {
-    if (!_deviceConnected || !_txCharacteristic) return;
+// notify() fails when NimBLE has no mbuf for a chunk (BLE_HS_ENOMEM, after its own 10 ms of retries): the frame is lost
+// then, and its later chunks are not sent.
+bool BLE::send(const uint8_t *data, size_t len, int cid) {
+    if (!_deviceConnected || !_txCharacteristic) return false;
 
     static constexpr size_t CHUNK = 180;
     const uint8_t header[2] = {(uint8_t)(len & 0xFF), (uint8_t)((len >> 8) & 0xFF)};
     uint8_t buf[CHUNK];
     size_t bufLen = 0;
+    bool sent = true;
 
     auto flush = [&]() {
-        if (bufLen == 0) return;
+        if (bufLen == 0 || !sent) return;
         _txCharacteristic->setValue(buf, bufLen);
-        _txCharacteristic->notify();
+        sent = _txCharacteristic->notify();
         bufLen = 0;
     };
     auto append = [&](const uint8_t *src, size_t n) {
-        for (size_t i = 0; i < n;) {
+        for (size_t i = 0; i < n && sent;) {
             size_t take = CHUNK - bufLen < n - i ? CHUNK - bufLen : n - i;
             memcpy(buf + bufLen, src + i, take);
             bufLen += take;
@@ -156,4 +159,5 @@ void BLE::send(const uint8_t *data, size_t len, int cid) {
     append(data, len);
     flush();
     if (_txMutex) xSemaphoreGive(_txMutex);
+    return sent;
 }

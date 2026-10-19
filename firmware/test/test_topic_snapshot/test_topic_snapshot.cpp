@@ -65,11 +65,13 @@ constexpr Topic TOPICS[] = {
 };
 
 // A transport whose clients can take a frame while `writable`; it keeps every frame it sent, decoded, with its client.
+// While `sendsFail`, a client looks ready but every send fails, as a BLE notify does without an mbuf.
 class FakeAdapter : public CommAdapterBase {
   public:
     FakeAdapter() { setTopics(TOPICS); }
 
     std::atomic<bool> writable {true};
+    std::atomic<bool> sendsFail {false};
     bool hasClient() const override { return true; }
 
     void receive(const socket_message_Message& message, int cid) {
@@ -106,12 +108,14 @@ class FakeAdapter : public CommAdapterBase {
 
   protected:
     bool ready(int) override { return writable; }
-    void send(const uint8_t* data, size_t len, int cid) override {
+    bool send(const uint8_t* data, size_t len, int cid) override {
+        if (sendsFail) return false;
         Frame frame {cid, socket_message_Message_init_zero};
         pb_istream_t stream = pb_istream_from_buffer(data, len);
         TEST_ASSERT_TRUE(pb_decode(&stream, socket_message_Message_fields, &frame.message));
         std::lock_guard<std::mutex> lock(sentMutex_);
         sent_.push_back(frame);
+        return true;
     }
 
   private:
@@ -308,6 +312,25 @@ void test_a_dropped_state_push_is_resent_once_as_the_current_value() {
     assertFrames({WALK}, adapter.to(3));
 }
 
+// A send can fail on a client that looked ready: a BLE notify without an mbuf, a serial write cut short. The push is
+// then lost as a dropped one is, and resent the same way; a resend that fails too keeps the mark for the next pass.
+void test_a_state_push_whose_send_fails_is_resent_once_it_goes_out() {
+    FakeAdapter adapter;
+    adapter.subscribeTo(MODE_TAG, 3);
+    adapter.forget();
+    adapter.sendsFail = true;
+    ownerMode = socket_message_ModesEnum_STAND;
+    adapter.emit(modeData(socket_message_ModesEnum_STAND));
+    adapter.resendDirty();
+    TEST_ASSERT_EQUAL(0, adapter.sentCount());
+
+    adapter.sendsFail = false;
+    adapter.resendDirty();
+    adapter.resendDirty();
+
+    assertFrames({STAND}, adapter.to(3));
+}
+
 // A stream's next frame supersedes the one dropped, and a client that took every push has nothing to catch up on.
 void test_a_dropped_stream_frame_and_a_delivered_push_are_not_resent() {
     FakeAdapter adapter;
@@ -374,6 +397,7 @@ int main(int, char**) {
     RUN_TEST(test_the_bridge_attaches_before_the_owner_is_read);
     RUN_TEST(test_a_change_made_while_the_snapshot_is_sent_is_pushed_after_it);
     RUN_TEST(test_a_dropped_state_push_is_resent_once_as_the_current_value);
+    RUN_TEST(test_a_state_push_whose_send_fails_is_resent_once_it_goes_out);
     RUN_TEST(test_a_dropped_stream_frame_and_a_delivered_push_are_not_resent);
     RUN_TEST(test_the_topic_table_matches_the_shared_one);
     RUN_TEST(test_a_table_serves_every_topic_only_with_each_topic_and_a_snapshot_for_each_state);
