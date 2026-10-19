@@ -5,6 +5,7 @@ import { ble } from '$lib/transport/ble-adapter'
 import { websocket } from '$lib/transport/websocket-adapter'
 import { serial, serialSupported } from '$lib/transport/serial-adapter'
 import { dataBroker } from '$lib/transport/databroker'
+import { location } from './location-store'
 
 export const latencyMs = dataBroker.latencyMs
 
@@ -65,6 +66,18 @@ export const link: Readable<LinkState> = derived(
 )
 
 export const isLinked = derived(link, $link => $link.status === 'connected')
+
+/**
+ * Which robot the link reaches, null while no link is up: the transport, and for WiFi the address it was reached at. A
+ * change means the robot may be another one.
+ */
+export const reachedRobot: Readable<string | null> = derived(
+  [link, location],
+  ([$link, $location]) => {
+    if ($link.status !== 'connected') return null
+    return $link.transport === 'websocket' ? `websocket ${$location}` : $link.transport
+  }
+)
 
 export const connectWebsocket = () => {
   websocket.connect().catch(error => notifications.error(`WiFi connect failed: ${error}`))
