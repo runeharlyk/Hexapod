@@ -1,6 +1,7 @@
 """The real robot's backend against a fake robot, over both of its links: a local WebSocket and a fake serial port
 in place of pyserial's, with the firmware's COBS framing on it."""
 import asyncio
+import io
 import math
 import threading
 import time
@@ -800,6 +801,18 @@ def test_robot_animate_follows_what_comes_after_the_command_not_the_snapshots(fa
     assert robot_animate.main(["--port", SERIAL_PORT, "stop"]) == 0
     printed = capsys.readouterr().out
     assert "ANIM_IDLE" not in printed and "mode DEACTIVATED" not in printed
+
+
+# In the interactive shell every command follows on the one link: the tool subscribes once per tag, so a later follow
+# hears no ack and must not wait for one.
+def test_robot_animate_follows_each_command_of_a_shell_without_waiting_for_acks_it_cannot_get(fake, monkeypatch):
+    _target(fake, "serial", monkeypatch)
+    monkeypatch.setattr(robot_animate, "QUIET_S", 0.3)
+    monkeypatch.setattr(robot_animate, "ACK_WAIT_S", 5.0)
+    monkeypatch.setattr("sys.stdin", io.StringIO("stop\nstop\nquit\n"))
+    started = time.monotonic()
+    assert robot_animate.main(["--port", SERIAL_PORT, "shell"]) == 0
+    assert time.monotonic() - started < robot_animate.ACK_WAIT_S
 
 
 # --- goal moves ----------------------------------------------------------------------------------------------------

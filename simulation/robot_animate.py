@@ -85,7 +85,8 @@ def follow(link: SerialLink, send) -> None:
     following ends there with the reason; Ctrl-C ends it too."""
     events = queue.Queue()
     # The robot answers each subscribe with the topic's current value and then the ack: the state before the command,
-    # no answer to it, so what comes before both acks is not followed.
+    # no answer to it, so what comes before the acks is not followed. A tag the link already subscribes to is not
+    # subscribed again, so it brings neither.
     unacked = {ANIMATION_STATUS_TAG, MODE_TAG}
     acked = threading.Event()
 
@@ -99,8 +100,11 @@ def follow(link: SerialLink, send) -> None:
             events.put((kind, getattr(msg, kind)))
 
     link.on_message = route
-    link.subscribe(ANIMATION_STATUS_TAG)
-    link.subscribe(MODE_TAG)
+    for tag in (ANIMATION_STATUS_TAG, MODE_TAG):
+        if not link.subscribe(tag):
+            unacked.discard(tag)
+    if not unacked:
+        acked.set()
     acked.wait(ACK_WAIT_S)
     acked.set()
     send()
