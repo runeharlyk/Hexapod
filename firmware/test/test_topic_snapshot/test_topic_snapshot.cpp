@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <fstream>
 #include <functional>
 #include <future>
@@ -65,13 +66,25 @@ constexpr Topic TOPICS[] = {
 };
 
 // A transport whose clients can take a frame while `writable`; it keeps every frame it sent, decoded, with its client.
-// While `sendsFail`, a client looks ready but every send fails, as a BLE notify does without an mbuf.
+// While `sendsFail`, a client looks ready but every send fails, as a BLE notify does without an mbuf. The `slowClient`
+// cannot take a frame, and a send to it blocks until `releaseSlow()`, as httpd's send to a full socket does for up to
+// its 5 s send timeout.
 class FakeAdapter : public CommAdapterBase {
   public:
     FakeAdapter() { setTopics(TOPICS); }
 
     std::atomic<bool> writable {true};
     std::atomic<bool> sendsFail {false};
+    std::atomic<int> slowClient {-1};
+    std::atomic<bool> blockedOnSlow {false};
+
+    void releaseSlow() {
+        {
+            std::lock_guard<std::mutex> lock(slowMutex_);
+            slowReleased_ = true;
+        }
+        slowReleasedCv_.notify_all();
+    }
     bool hasClient() const override { return true; }
 
     void receive(const socket_message_Message& message, int cid) {
@@ -107,8 +120,13 @@ class FakeAdapter : public CommAdapterBase {
     }
 
   protected:
-    bool ready(int) override { return writable; }
+    bool ready(int cid) override { return writable && cid != slowClient; }
     bool send(const uint8_t* data, size_t len, int cid) override {
+        if (cid == slowClient) {
+            blockedOnSlow = true;
+            std::unique_lock<std::mutex> lock(slowMutex_);
+            slowReleasedCv_.wait(lock, [this] { return slowReleased_; });
+        }
         if (sendsFail) return false;
         Frame frame {cid, socket_message_Message_init_zero};
         pb_istream_t stream = pb_istream_from_buffer(data, len);
@@ -121,6 +139,9 @@ class FakeAdapter : public CommAdapterBase {
   private:
     std::mutex sentMutex_;
     std::vector<Frame> sent_;
+    std::mutex slowMutex_;
+    std::condition_variable slowReleasedCv_;
+    bool slowReleased_ = false;
 };
 
 // A frame as a line: "mode 2", "ack 130".
@@ -331,6 +352,37 @@ void test_a_state_push_whose_send_fails_is_resent_once_it_goes_out() {
     assertFrames({STAND}, adapter.to(3));
 }
 
+// A client whose socket is full subscribes. Its snapshot and ack go out on the transport's task under the adapter's
+// encode lock, so a send that blocked on it would hold every push to the adapter's other clients for as long as the
+// send waits, a mode or a stop among them. A client that cannot take a frame now gets neither: its subscription is
+// marked for resendDirty, which sends the current value once it can, and the app, without the ack, asks again.
+void test_a_subscribe_from_a_client_that_cannot_take_a_frame_holds_up_no_push() {
+    using namespace std::chrono_literals;
+    FakeAdapter adapter;
+    adapter.subscribeTo(MODE_TAG, 4);
+    adapter.forget();
+    adapter.slowClient = 3;
+
+    std::future<void> subscribing = std::async(std::launch::async, [&] { adapter.subscribeTo(MODE_TAG, 3); });
+    while (subscribing.wait_for(1ms) != std::future_status::ready && !adapter.blockedOnSlow) {
+    }
+    ownerMode = socket_message_ModesEnum_STAND;
+    std::future<void> pushing =
+        std::async(std::launch::async, [&] { adapter.emit(modeData(socket_message_ModesEnum_STAND)); });
+    const bool pushedInTime = pushing.wait_for(500ms) == std::future_status::ready;
+    adapter.releaseSlow();
+    subscribing.wait();
+    pushing.wait();
+
+    TEST_ASSERT_TRUE_MESSAGE(pushedInTime, "a push to another client waited for the slow one");
+    assertFrames({STAND}, adapter.to(4));
+    TEST_ASSERT_EQUAL_MESSAGE(0, adapter.to(3).size(), "a frame was sent to a client that could not take it");
+
+    adapter.slowClient = -1;
+    adapter.resendDirty();
+    assertFrames({STAND}, adapter.to(3));
+}
+
 // A stream's next frame supersedes the one dropped, and a client that took every push has nothing to catch up on.
 void test_a_dropped_stream_frame_and_a_delivered_push_are_not_resent() {
     FakeAdapter adapter;
@@ -398,6 +450,7 @@ int main(int, char**) {
     RUN_TEST(test_a_change_made_while_the_snapshot_is_sent_is_pushed_after_it);
     RUN_TEST(test_a_dropped_state_push_is_resent_once_as_the_current_value);
     RUN_TEST(test_a_state_push_whose_send_fails_is_resent_once_it_goes_out);
+    RUN_TEST(test_a_subscribe_from_a_client_that_cannot_take_a_frame_holds_up_no_push);
     RUN_TEST(test_a_dropped_stream_frame_and_a_delivered_push_are_not_resent);
     RUN_TEST(test_the_topic_table_matches_the_shared_one);
     RUN_TEST(test_a_table_serves_every_topic_only_with_each_topic_and_a_snapshot_for_each_state);

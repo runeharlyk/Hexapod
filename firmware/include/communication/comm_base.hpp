@@ -139,6 +139,9 @@ class CommAdapterBase {
     // change made after the read follows the snapshot rather than overtaking it; a change made before the read may be
     // pushed after it too, which only repeats the value. A snapshot must therefore never wait on an EventBus worker,
     // and an owner never pushes while it holds a lock its snapshot takes (docs/firmware.md, Transports).
+    // A client that cannot take a frame now gets neither the snapshot nor the ack, since a send that waited on it would
+    // hold every push to this adapter: its state topic is marked for resendDirty, as a dropped push is, and the client,
+    // without its ack, subscribes again. A snapshot whose send fails is marked, and unacked, the same way.
     void subscribe(int32_t tag, int cid = 0) {
         bool first;
         {
@@ -152,9 +155,15 @@ class CommAdapterBase {
 
         ScopedLock lock(encodeMutex_);
         const Topic* topic = topicOf(tag);
-        if (topic && topic->kind == TopicKind::STATE) {
+        const bool state = topic && topic->kind == TopicKind::STATE;
+        if (!ready(cid)) {
+            if (state) markDirty(tag, cid, true);
+            return;
+        }
+        if (state) {
             SnapshotSink sink(*this, cid);
             topic->snapshot(sink);
+            if (!sink.delivered_) return markDirty(tag, cid, true);
         }
         msg_.which_message = socket_message_Message_sub_notif_tag;
         msg_.message.sub_notif.tag = tag;

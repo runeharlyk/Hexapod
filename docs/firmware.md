@@ -378,6 +378,8 @@ A snapshot never waits on an EventBus worker, since that worker may itself be wa
 A state push that a client cannot take now (`ready()` false, a full WebSocket) is dropped as every frame is, but it marks that client's subscription dirty; the service task's 100 ms pass calls `resendDirty()` on each adapter, which sends each dirty client that can take a frame the topic's current value from its snapshot, once, and clears the mark.
 A dropped stream frame is not resent: the next frame supersedes it.
 A push whose send fails on a client that looked ready is marked the same way: `send()` reports whether the frame went out, a BLE notify fails when NimBLE has no mbuf for it, a serial write when the host does not take it within 20 ms, and a WebSocket send on a socket error.
+A subscribe from a client that cannot take a frame now (`ready()` false) is answered with nothing: a send that waited on that client would hold the encode lock, and with it every push to the adapter's other clients, a mode or a stop among them, for up to httpd's 5 s send timeout.
+Its state topic is marked dirty instead, so `resendDirty()` sends the current value once the client can take it, and the client, without its ack, subscribes again; a snapshot whose send fails is left unacked and marked the same way.
 When the last client on every transport has gone, a playing animation stops, so nothing runs unattended.
 
 Per-tick telemetry (`include/telemetry/telemetry.h`) is recorded by the control task into a lock-free single-producer ring, only while someone subscribes, and shipped in whole batches by the service task; a full ring drops samples and counts them rather than blocking the control loop.
