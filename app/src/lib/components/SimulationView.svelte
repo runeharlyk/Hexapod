@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
   import { get } from 'svelte/store'
-  import { Box3, Group, Mesh, Object3D, Vector3 } from 'three'
+  import { Box3, Group, Mesh, Object3D, Quaternion, Vector3 } from 'three'
   import type { URDFRobot } from 'urdf-loader'
   import SceneBuilder from '$lib/sceneBuilder'
   import { driveSimulation, simulation } from '$lib/stores/drive'
@@ -75,16 +75,26 @@
     // Box3 reads world matrices but refreshes none of the parents', so the scene's are brought up to date first.
     sceneManager.scene.updateMatrixWorld(true)
     urdf.position.z = -new Box3().setFromObject(urdf).min.y / SCENE_UNITS_PER_METRE
+    sceneManager.invalidate()
   }
+
+  const lastPosition = new Vector3()
+  const lastQuaternion = new Quaternion()
 
   function update() {
     if (!sim || !model) return
     const [x, y, z] = sim.basePosition()
     const [w, qx, qy, qz] = sim.baseQuaternion()
+    lastPosition.copy(pose.position)
+    lastQuaternion.copy(pose.quaternion)
     pose.position.set(x, y, z)
     pose.quaternion.set(qx, qy, qz, w)
+    let moved = !pose.position.equals(lastPosition) || !pose.quaternion.equals(lastQuaternion)
     const angles = urdfJointOrder(sim.jointAngles())
-    jointNames.forEach((name, i) => model!.joints[name]?.setJointValue(angles[i]))
+    jointNames.forEach((name, i) => {
+      moved = model!.joints[name]?.setJointValue(angles[i]) || moved
+    })
+    if (moved) sceneManager.invalidate()
   }
 
   function frame() {

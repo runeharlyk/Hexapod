@@ -45,6 +45,8 @@ interface light {
 
 type directionalLight = position & light
 
+const handlePosition = new Vector3()
+
 export default class SceneBuilder {
   public scene: Scene
   public camera!: PerspectiveCamera
@@ -53,8 +55,9 @@ export default class SceneBuilder {
   public orbit!: OrbitControls
   public callback: (() => void) | undefined
   public model!: URDFRobot
-  private isLoaded: boolean = false
-  private shadowTimers: ReturnType<typeof setTimeout>[] = []
+  // A software-rendered frame can hold the main thread for hundreds of milliseconds, so the scene is drawn only once
+  // something in it has changed.
+  private changed = true
   sky!: Sky
   public modelGroup!: Group
   public handles: Mesh<SphereGeometry, MeshBasicMaterial>[] = []
@@ -213,7 +216,13 @@ export default class SceneBuilder {
     this.renderer.setPixelRatio(window.devicePixelRatio)
     this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
+    this.invalidate()
     return this
+  }
+
+  /** Marks the scene as changed, so the next animation frame draws it. */
+  public invalidate = () => {
+    this.changed = true
   }
 
   public addRenderCb = (callback: () => void) => {
@@ -221,12 +230,15 @@ export default class SceneBuilder {
     return this
   }
 
+  // The callback reports its changes through invalidate(), and the orbit controls report a camera move as 'change'.
   public startRenderLoop = () => {
+    this.orbit.addEventListener('change', this.invalidate)
     this.renderer.setAnimationLoop(() => {
-      this.renderer.render(this.scene, this.camera)
-      this.orbit.update()
-      this.handleRobotShadow()
       this.callback?.()
+      this.orbit.update()
+      if (!this.changed) return
+      this.changed = false
+      this.renderer.render(this.scene, this.camera)
     })
     return this
   }
@@ -250,6 +262,7 @@ export default class SceneBuilder {
 
     this.transform = new TransformControls(this.camera, this.renderer.domElement)
     this.transform.setMode('translate')
+    this.transform.addEventListener('change', this.invalidate)
     this.transform.addEventListener('dragging-changed', event => {
       this.orbit.enabled = !event.value
     })
@@ -265,7 +278,17 @@ export default class SceneBuilder {
   }
 
   public setHandlePosition = (leg: number, position: Vec3) => {
-    this.handles[leg]?.position.set(...position)
+    const handle = this.handles[leg]
+    if (!handle || handle.position.equals(handlePosition.set(...position))) return
+    handle.position.copy(handlePosition)
+    this.invalidate()
+  }
+
+  public setHandleColor = (leg: number, color: number) => {
+    const handle = this.handles[leg]
+    if (!handle || handle.material.color.getHex() === color) return
+    handle.material.color.setHex(color)
+    this.invalidate()
   }
 
   private pickHandle = (event: PointerEvent) => {
@@ -281,9 +304,9 @@ export default class SceneBuilder {
   }
 
   public dispose = () => {
-    this.shadowTimers.forEach(clearTimeout)
-    this.shadowTimers = []
     this.callback = undefined
+    this.orbit?.removeEventListener('change', this.invalidate)
+    this.transform?.removeEventListener('change', this.invalidate)
     this.renderer?.setAnimationLoop(null)
     this.renderer?.domElement.removeEventListener('pointerdown', this.pickHandle)
     this.transform?.dispose()
@@ -291,15 +314,5 @@ export default class SceneBuilder {
     this.handles[0]?.geometry.dispose()
     this.orbit?.dispose()
     this.renderer?.dispose()
-  }
-
-  private handleRobotShadow = () => {
-    if (this.isLoaded) return
-    const intervalId = setInterval(() => this.model?.traverse(c => (c.castShadow = true)), 10)
-    this.shadowTimers.push(
-      intervalId,
-      setTimeout(() => clearInterval(intervalId), 1000)
-    )
-    this.isLoaded = true
   }
 }
