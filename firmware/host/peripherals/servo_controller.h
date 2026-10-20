@@ -27,8 +27,10 @@ class ServoController {
     void begin() {}
     void activate() { state().awake = true; }
     void deactivate() { state().awake = false; }
-    // The centre PWMs are the calibration's, which this stand-in does not hold; the joints keep their angles.
+    // At the factory calibration, which this stand-in holds alone: every coxa and femur at 0, every tibia at -90.
+    float centreAngle(int servo) const { return servo % 3 == 2 ? -90.0f : 0.0f; }
     void setCenterPwm() {
+        for (int i = 0; i < NUM_SERVO; ++i) state().angles[i] = centreAngle(i);
         state().centrings++;
         _right = _left = socket_message_ServoWrite_SERVO_WRITE_OK;
     }

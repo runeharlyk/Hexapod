@@ -329,9 +329,11 @@ class MotionService {
             else
                 _animation.reset();
         }
+        const bool enteringIdle = state == MOTION_STATE::IDLE && !_idling;
+        _idling = state == MOTION_STATE::IDLE;
         switch (state) {
             case MOTION_STATE::DEACTIVATED: return false;
-            case MOTION_STATE::IDLE: driveIdleServos(mail); return false;
+            case MOTION_STATE::IDLE: driveIdleServos(mail, enteringIdle); return false;
             case MOTION_STATE::STAND: {
                 body_state.xm = lerpf(body_state.xm, target_body_state.xm, smoothing_factor);
                 body_state.ym = lerpf(body_state.ym, target_body_state.ym, smoothing_factor);
@@ -498,6 +500,7 @@ class MotionService {
     bool _borrowedMode = false;
     bool _handbackSent = false;              // a hand-back is queued; cleared by any mode taken
     bool _animating = false;                 // control task only: whether the last tick ran ANIMATE
+    bool _idling = false;                    // control task only: whether the last tick ran IDLE
     bool _handheldReported = false;          // control task only: whether the handheld drove, as last reported
 
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
@@ -667,11 +670,23 @@ class MotionService {
 
     // Control task, IDLE, after the tick's modes: the centring and the joints asked for while the robot idled. A joint
     // writes its own servo alone, so every other servo holds the pulse it had when the motion stopped; a joint posted
-    // before a mode leaving IDLE was applied never gets here.
-    void driveIdleServos(const MotionInbox::Mail &mail) {
-        if (mail.centreServos) _servoController->setCenterPwm();
-        for (int servo = 0; servo < NUM_SERVO; ++servo)
-            if (mail.joints.servos & (1u << servo)) _servoController->setJointAngle(servo, mail.joints.degrees[servo]);
+    // before a mode leaving IDLE was applied never gets here. The angles the servos hold are published on entering IDLE
+    // and after each tick that writes, as the app's 3D view draws them, and never on a timer.
+    void driveIdleServos(const MotionInbox::Mail &mail, bool entering) {
+        bool written = false;
+        if (mail.centreServos) {
+            _servoController->setCenterPwm();
+            for (int servo = 0; servo < NUM_SERVO; ++servo)
+                msgAngles.angles[servo] = _servoController->centreAngle(servo);
+            written = true;
+        }
+        for (int servo = 0; servo < NUM_SERVO; ++servo) {
+            if (!(mail.joints.servos & (1u << servo))) continue;
+            _servoController->setJointAngle(servo, mail.joints.degrees[servo]);
+            msgAngles.angles[servo] = withinTravel(mail.joints.degrees[servo], servo % 3);
+            written = true;
+        }
+        if (entering || written) publishState();
     }
 
     // Control task, WALK. A stride change is a change of the walk, not of its posture, so it never pauses the walk; but

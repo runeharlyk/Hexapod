@@ -42,6 +42,11 @@ export class JointDrag {
     element.addEventListener('pointercancel', this.release)
   }
 
+  /** The joint the pointer is turning now, if any. */
+  get turning(): URDFJoint | undefined {
+    return this.grab?.joint
+  }
+
   dispose() {
     this.element.removeEventListener('pointerdown', this.press, { capture: true })
     this.element.removeEventListener('pointermove', this.move)

@@ -222,6 +222,78 @@ void test_the_servos_are_centred_only_in_idle() {
     TEST_ASSERT_EQUAL_UINT(1, robot.centrings());
 }
 
+// The angles the robot publishes for the app (main.cpp bridges them to AnglesData), each publication in order.
+using Published = std::vector<std::array<float, 18>>;
+
+EventBus<ServoAnglesMsg>::Handle recordAngles(Published &heard) {
+    return EventBus<ServoAnglesMsg>::subscribe([&heard](const ServoAnglesMsg &a) {
+        std::array<float, 18> angles;
+        std::copy_n(a.angles, 18, angles.begin());
+        heard.push_back(angles);
+    });
+}
+
+std::array<float, 18> servoAnglesOf(const VirtualRobot &robot) {
+    std::array<float, 18> angles;
+    std::copy_n(robot.servoAngles(), 18, angles.begin());
+    return angles;
+}
+
+// IDLE publishes the angles its servos hold as it is entered, so the app draws the robot as it stands, and nothing
+// more while nothing moves them: no publication on a timer. The telemetry reports the same angles.
+void test_entering_idle_publishes_the_held_angles_once() {
+    VirtualRobot robot;
+    standUp(robot);
+    const std::array<float, 18> stood = servoAnglesOf(robot);
+    Published heard;
+    auto listener = recordAngles(heard);
+    robot.setMode(MOTION_STATE::IDLE);
+    robot.tick();
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(stood.data(), heard[0].data(), 18);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(stood.data(), robot.angles(), 18);
+    for (int t = 0; t < ticksFor(2.0f); ++t) robot.tick();
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+}
+
+// Each tick that writes joints publishes the angles once, with the joints as written, within their travel, and every
+// other joint as held.
+void test_a_joint_write_in_idle_publishes_the_angles() {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    std::array<float, 18> expected = servoAnglesOf(robot);
+    Published heard;
+    auto listener = recordAngles(heard);
+    robot.setJoint(4, 20.0f);
+    robot.setJoint(13, -120.0f);
+    robot.tick();
+    expected[4] = 20.0f;
+    expected[13] = -JOINT_LIMIT_DEG[1];
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected.data(), heard[0].data(), 18);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected.data(), robot.angles(), 18);
+    for (int t = 0; t < ticksFor(1.0f); ++t) robot.tick();
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+}
+
+// Centring publishes the centre pose in joint angles: the stand-in's factory calibration centres every coxa and femur
+// at 0 and every tibia at -90, the servo's centre under the square knee.
+void test_centring_in_idle_publishes_the_centre_pose() {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    Published heard;
+    auto listener = recordAngles(heard);
+    TEST_ASSERT_EQUAL_INT(200, robot.centreServos());
+    robot.tick();
+    std::array<float, 18> centre {};
+    for (int leg = 0; leg < 6; ++leg) centre[leg * 3 + 2] = -90.0f;
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(centre.data(), heard[0].data(), 18);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(centre.data(), robot.servoAngles(), 18);
+    for (int t = 0; t < ticksFor(1.0f); ++t) robot.tick();
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+}
+
 void test_a_standing_robot_holds_still() {
     VirtualRobot robot;
     standUp(robot);
@@ -1930,6 +2002,9 @@ int main(int, char **) {
     RUN_TEST(test_a_joint_outside_idle_is_ignored);
     RUN_TEST(test_a_joint_sent_behind_a_mode_out_of_idle_is_ignored);
     RUN_TEST(test_the_servos_are_centred_only_in_idle);
+    RUN_TEST(test_entering_idle_publishes_the_held_angles_once);
+    RUN_TEST(test_a_joint_write_in_idle_publishes_the_angles);
+    RUN_TEST(test_centring_in_idle_publishes_the_centre_pose);
     RUN_TEST(test_a_standing_robot_holds_still);
     RUN_TEST(test_a_stick_held_in_walk_steps_the_legs);
     RUN_TEST(test_a_walk_obeys_its_last_command_for_600_ms_and_no_longer);

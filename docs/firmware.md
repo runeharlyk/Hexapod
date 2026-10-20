@@ -130,11 +130,13 @@ A value the robot has no mode for, 2 among them, is ignored by the mode handler 
 A robot on older firmware reports 2 when it is in `POSE`: the app shows that as a mode it does not know, with the firmware-too-old hint, and shows none of the modes it knows as the robot's, and the Python facade's mode reads as unknown (`None`), in which no heartbeat keeps a walk alive.
 
 - `DEACTIVATED` puts both PCA9685 boards to sleep.
-- `IDLE` keeps them powered and produces no angles, so every servo holds the pulse it had when the motion stopped and the first write after it moves nothing else.
+- `IDLE` keeps them powered and computes no pose, so every servo holds the pulse it had when the motion stopped and the first write after it moves nothing else.
   Two writes are taken in IDLE alone, through `MotionInbox` and by the control task: a joint dragged on the app's 3D model (`JointAngleData`, `Message` 212) and the calibration page's "Centre all servos" (`ServoCentreRequest`, request 82).
   A joint is the kinematics' angle in degrees, as the robot reports its angles; `ServoController::setJointAngle` holds it within the joint's travel (`withinTravel`), turns it into a pulse with the servo's calibration and direction as the motion's angles are, and writes that one channel through its board's backoff (`ServoBoard::writeChannel`).
   The inbox drops a joint on arrival unless the mode applied last is `IDLE` and keeps the newest per servo until the take; the control task writes the joints only if the modes taken before them leave the robot in `IDLE`, so a joint sent behind a mode leaving it moves nothing.
   The centring is answered at once, 200 when the mode applied last is `IDLE` and 409 otherwise, and sends every servo to its calibrated centre pulse at the next tick (`setCenterPwm`).
+  IDLE publishes the angles its servos hold (`ServoAnglesMsg`, bridged to the `angles` topic) on change alone: as it is entered, after each tick that writes a joint, with the joint held within its travel, and after the centring, as the centre pose in joint angles (`ServoController::centreAngle`, the calibration's centre angle negated, less the tibia's 90); never on a timer.
+  The app's 3D view draws those angles, so a drag starts from where the servos are.
   A joint is a position, not a rate, so a link that drops leaves the servo where the last joint put it.
 - `STAND` eases the body toward the commanded offset, height and tilt; the gait stays idle, except that a new stance width is reached by stepping the feet there rather than sliding them.
   A posture change is clamped to what the legs can stand in (`clampStandPosture`) and taken only once the feet are at rest.
@@ -376,7 +378,8 @@ A bridge holds its EventBus subscription only while some client on some transpor
 `emitAll` sends a message on every transport.
 
 `platform_shared/topics.json` names each topic's kind, state or stream, and `include/communication/topics.h` and the app's `src/lib/transport/topics.ts` are checked against it (`test/test_topic_snapshot/`, `app/tests/unit/topics.spec.ts`).
-`main.cpp`'s `TOPICS` gives each state topic a snapshot function that reads its owner, as the replies do: `MotionInbox` for the mode and the goal, `EventBus::peek` for the gait, the OTA and the animation status, and the WiFi and AP services for theirs.
+`main.cpp`'s `TOPICS` gives each state topic a snapshot function that reads its owner, as the replies do: `MotionInbox` for the mode and the goal, `EventBus::peek` for the gait, the joint angles, the OTA and the animation status, and the WiFi and AP services for theirs.
+The joint angles are a state topic so that a client subscribing while the robot idles gets the angles its servos hold, which IDLE publishes only on change; before the motion first publishes any, the snapshot is an empty `AnglesData`, which the app reads as no pose.
 A status nobody has published yet is its idle value, so every state topic has a value from boot; a `static_assert` holds `TOPICS` to `TOPIC_KINDS` in `topics.h`, which `test/test_topic_snapshot/` holds to the shared table.
 `CommAdapterBase::subscribe` adds the client unless it already subscribes, attaches the bridge on the tag's first subscriber, and then, under the adapter's `encodeMutex_`, sends a state topic's snapshot and then the `sub_notif` echoed to that client as the ack; a stream, and a tag that is no topic, get the ack alone.
 Every push to the adapter encodes and sends under the same lock, so a change made after the snapshot's read is pushed after the snapshot, never before it, and the bridge attaching first means no such change goes unpushed; a change made before the read may arrive twice, which only repeats the value.

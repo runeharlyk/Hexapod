@@ -6,9 +6,9 @@
   import SceneBuilder from '$lib/sceneBuilder'
   import { GUI } from 'three/addons/libs/lil-gui.module.min.js'
   import type { URDFRobot } from 'urdf-loader'
-  import { degToRad, lerp } from 'three/src/math/MathUtils'
+  import { degToRad, lerp, radToDeg } from 'three/src/math/MathUtils'
   import { GaitType } from '$lib/gait'
-  import { MotionModes, modeToWire, urdfJointOrder } from '$lib/motion'
+  import { MotionModes, modeToWire, reportedPose, urdfJointOrder } from '$lib/motion'
   import { dataBroker } from '$lib/transport/databroker'
   import { AnglesData, IMUData } from '$lib/platform_shared/message'
   import { Quaternion, Vector3 } from 'three'
@@ -26,7 +26,7 @@
   import type { Vec3 } from '$lib/animation/model'
   import { DEFAULT_FEET } from '$lib/animation/model'
   import { handleColor, legMask, sceneToOffset, stanceToScene } from '$lib/animation/handles'
-  import { JointDrive, drivingJoints, withinTravel } from '$lib/joint-drive'
+  import { JointDrive, drivingJoints, servoOfUrdfJoint, withinTravel } from '$lib/joint-drive'
   import { JointDrag } from '$lib/joint-drag'
   import type { URDFJoint } from 'urdf-loader'
 
@@ -106,9 +106,12 @@
 
     unsubscribers.push(
       outControllerData.subscribe(data => (sticks = data)),
+      // The robot's angles, as it reports them on subscribing and on every change: in IDLE the angles its servos hold.
       dataBroker.on(AnglesData, data => {
+        const pose = reportedPose(data.angles, dragged())
+        if (!pose) return
         settings['Internal kinematic'] = false
-        show(data.angles)
+        show(pose)
       }),
       dataBroker.on(IMUData, data => shown.measure(data)),
       // Without a link no angles arrive, so the local model has to animate the robot again.
@@ -125,8 +128,9 @@
       loadVirtualRobot()
         .then(robot => {
           if (destroyed) return
-          // Until the firmware sends a pose, the model rests in its stand rather than with its legs out straight.
-          show(robot.standPose())
+          // Until the firmware sends a pose, the model rests in its stand rather than with its legs out straight; a pose
+          // the robot reported, or one set by hand, while this loaded stays.
+          if (settings['Internal kinematic']) show(robot.standPose())
           const shownMode = previewMode ?? $mode
           if (shownMode) robot.setMode(modeToWire(shownMode))
           robot.setGait(gaitIndex($gait))
@@ -211,6 +215,15 @@
     jointAngles[joint.urdfName] = joint.angle
     sceneManager.invalidate()
     jointDrive?.drag(index, joint.angle)
+  }
+
+  // The servo the pointer is turning, at the angle the drag gave it.
+  const dragged = () => {
+    const joint = jointDrag?.turning
+    const index = joint ? $jointNames.indexOf(joint.urdfName) : -1
+    return joint && index >= 0 ?
+        { servo: servoOfUrdfJoint(index), degrees: radToDeg(joint.angle as number) }
+      : undefined
   }
 
   // Joint angles in degrees in the firmware's order, as the robot reports them and the virtual robot drives them.

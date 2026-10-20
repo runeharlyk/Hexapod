@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { ModeData, ModesEnum } from '../../src/lib/platform_shared/message'
+import { AnglesData, ModeData, ModesEnum } from '../../src/lib/platform_shared/message'
 import { FakeRobot, serveRobot } from '../fake-robot/playwright'
 
 const base = process.env.BASE_PATH ?? ''
@@ -77,6 +77,32 @@ test("in IDLE a drag of the controller's 3D model sends its joint, and in STAND 
   await drag(page, point!)
   await page.waitForTimeout(500)
   expect(jointFrames(robot)).toHaveLength(sent)
+})
+
+// The angles an idle robot reports holding, far from the stand the model rests in before any report, on every joint.
+const HELD = Array.from({ length: 18 }, (_, servo) => [-25, 70, -10][servo % 3])
+
+// In IDLE the robot reports the angles its servos hold, and the model shows them, so a drag turns a joint from where
+// the servo is: the first angle sent is the reported one moved by the first pointer step only.
+test('in IDLE a drag starts from the pose the robot reports', async ({ page }) => {
+  const robot = await idleRobot(page)
+  robot.set(AnglesData, AnglesData.create({ angles: HELD }))
+  await page.addInitScript(() =>
+    localStorage.setItem('selected_view', JSON.stringify('3D representation'))
+  )
+  await page.goto(`${base}/controller`)
+  await expect(page.getByText(DRIVING)).toBeVisible()
+  const canvas = page.locator('canvas').first()
+
+  const point = await findJoint(page, canvas)
+  expect(point, 'a leg of the model under the pointer').toBeDefined()
+  await page.mouse.move(point!.x, point!.y)
+  await page.mouse.down()
+  await page.mouse.move(point!.x + 1, point!.y)
+  await expect.poll(() => jointFrames(robot).length).toBeGreaterThan(0)
+  await page.mouse.up()
+  const { servo, degrees } = jointFrames(robot)[0].jointAngle!
+  expect(Math.abs(degrees - HELD[servo]), `servo ${servo} sent ${degrees}`).toBeLessThan(8)
 })
 
 // The landing page's view of the same idle robot is a pure view: no leg can be taken, and a drag only turns the camera.

@@ -194,6 +194,10 @@ class ServoController {
         (right ? _rightWrite : _leftWrite) = report(board, wasAnswering, write);
     }
 
+    // The joint angle whose pulse is the servo's calibrated centre (toPwm's inverse at centerPwm): the calibration's
+    // centre angle negated, less the tibia's square knee.
+    float centreAngle(int servo) const { return -cfg[servo].centerAngle - (servo % 3 == 2 ? 90.0f : 0.0f); }
+
     // Control task, IDLE: every servo to its calibrated centre pulse, the pose the calibration page lines joints up in.
     void setCenterPwm() {
         for (int i = 0; i < 9; i++) {

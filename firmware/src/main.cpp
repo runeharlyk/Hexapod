@@ -841,6 +841,14 @@ static ProtoT latestOr(ProtoT idle) {
     return Bus::peek(latest) ? latest : idle;
 }
 
+// The joint angles as the app draws them: whole degrees, in servo order.
+static socket_message_AnglesData anglesData(const ServoAnglesMsg &a) {
+    socket_message_AnglesData out = socket_message_AnglesData_init_zero;
+    out.angles_count = NUM_SERVO;
+    for (int i = 0; i < NUM_SERVO; i++) out.angles[i] = static_cast<int32_t>(lroundf(a.angles[i]));
+    return out;
+}
+
 // What a subscribe to each topic is answered with (communication/topics.h). The snapshots read the owners the bridges
 // above push from, as the replies do; none waits on an EventBus worker, and no owner pushes while holding a lock its
 // snapshot takes: MotionInbox and the services publish to the EventBus, never to an adapter.
@@ -861,7 +869,15 @@ static constexpr Topic TOPICS[] = {
          gait.gait = static_cast<socket_message_GaitEnum>(latestOr<GaitMsg>({GaitType::TRI_GATE}).gait);
          sink.put(gait);
      }},
-    {MessageTraits<socket_message_AnglesData>::tag, TopicKind::STREAM, nullptr},
+    {MessageTraits<socket_message_AnglesData>::tag, TopicKind::STATE,
+     [](SnapshotSink &sink) {
+         // The angles the motion published last, which IDLE publishes as it is entered and after each write; none, an
+         // empty list, before the motion first drives the servos or enters IDLE.
+         ServoAnglesMsg latest;
+         sink.put(EventBus<ServoAnglesMsg>::peek(latest)
+                      ? anglesData(latest)
+                      : socket_message_AnglesData(socket_message_AnglesData_init_zero));
+     }},
     {MessageTraits<api_WifiStatus>::tag, TopicKind::STATE,
      [](SnapshotSink &sink) {
          api_WifiStatus status = api_WifiStatus_init_zero;
@@ -954,12 +970,8 @@ static void setupComm() {
     wsSocket.onSubscriptionChange(refreshBridge);
     bleAdapter.onSubscriptionChange(refreshBridge);
 
-    addBridge<ServoAnglesMsg>(MessageTraits<socket_message_AnglesData>::tag, [](const ServoAnglesMsg &a) {
-        socket_message_AnglesData out = socket_message_AnglesData_init_zero;
-        out.angles_count = NUM_SERVO;
-        for (int i = 0; i < NUM_SERVO; i++) out.angles[i] = static_cast<int32_t>(lroundf(a.angles[i]));
-        emitAll(out);
-    });
+    addBridge<ServoAnglesMsg>(MessageTraits<socket_message_AnglesData>::tag,
+                              [](const ServoAnglesMsg &a) { emitAll(anglesData(a)); });
 
     addBridge<IMUAnglesMsg>(MessageTraits<socket_message_IMUData>::tag, [](const IMUAnglesMsg &m) {
         socket_message_IMUData out = socket_message_IMUData_init_zero;

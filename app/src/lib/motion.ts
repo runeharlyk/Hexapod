@@ -37,6 +37,21 @@ export const UNKNOWN_MODE_HINT = `The robot reports a mode this app does not kno
   "this app's modes"
 )}`
 
+/**
+ * The pose the 3D view draws from the angles the robot reports (AnglesData), in degrees in the firmware's order: none
+ * for an empty report, the snapshot of a robot that has driven no pose yet. A servo being dragged keeps the drag's angle,
+ * since the robot's echo of it trails the pointer.
+ */
+export const reportedPose = (
+  anglesDeg: readonly number[],
+  dragged?: { servo: number; degrees: number }
+): number[] | null => {
+  if (anglesDeg.length !== 18) return null
+  const pose = [...anglesDeg]
+  if (dragged) pose[dragged.servo] = dragged.degrees
+  return pose
+}
+
 /** The firmware's 18 joint angles, three per leg in leg order, in the order of the URDF model's joint names. */
 export const urdfJointOrder = <T>(a: T[]) =>
   [3, 0, 4, 1, 5, 2].flatMap(i => a.slice(i * 3, i * 3 + 3))

@@ -125,6 +125,28 @@ void test_the_calibrated_centres_reach_their_own_servos() {
     controller.applyCalibration(ServoSettings_defaults());
 }
 
+// The centre pose in joint angles: each servo's angle whose pulse is its calibrated centre, through the calibration's
+// centre angle and the tibia's square knee, whichever way the servo turns.
+void test_the_centre_angle_is_the_angle_of_the_centre_pulse() {
+    ServoController& controller = started();
+    api_ServoSettings settings = ServoSettings_defaults();
+    settings.servos[0].center_angle = 5.0f;
+    settings.servos[11].center_angle = -7.0f;
+    controller.applyCalibration(settings);
+    controller.activate();
+    TEST_ASSERT_EQUAL_FLOAT(-5.0f, controller.centreAngle(0));
+    TEST_ASSERT_EQUAL_FLOAT(7.0f - 90.0f, controller.centreAngle(11));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, controller.centreAngle(10));
+    TEST_ASSERT_EQUAL_FLOAT(-90.0f, controller.centreAngle(2));
+    const int channel[] = {8, 9, 10};
+    for (int servo : {0, 2, 10, 11}) {
+        controller.setJointAngle(servo, controller.centreAngle(servo));
+        const uint8_t board = servo < 9 ? RIGHT_BOARD : LEFT_BOARD;
+        TEST_ASSERT_EQUAL_INT_MESSAGE(CENTRE, offCount(board, channel[servo % 3]), "centre pulse");
+    }
+    controller.applyCalibration(ServoSettings_defaults());
+}
+
 // Both boards' channel registers, to tell which a write touched.
 std::array<int, 32> channels() {
     std::array<int, 32> pulses {};
@@ -189,6 +211,7 @@ int main() {
     RUN_TEST(test_each_side_runs_front_to_rear_on_channels_8_2_and_5);
     RUN_TEST(test_a_raw_pulse_reaches_the_servo_the_gait_drives);
     RUN_TEST(test_the_calibrated_centres_reach_their_own_servos);
+    RUN_TEST(test_the_centre_angle_is_the_angle_of_the_centre_pulse);
     RUN_TEST(test_a_joint_angle_moves_only_its_own_servo);
     RUN_TEST(test_a_joint_angle_takes_the_tibia_offset_and_the_sides_direction);
     RUN_TEST(test_a_joint_angle_is_held_within_its_travel);
