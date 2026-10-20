@@ -536,13 +536,16 @@ A board that does not answer at boot is not started then; in `DEACTIVATED` no ti
 ### Checking it on the robot
 
 `DEBUG_HANG_CONTROL_S` in `features.ini` (0 by default) builds a control task that suspends itself that many seconds after boot: blocked for good while the idle task runs, as in a deadlock.
+The `esp32-wroom-camera-hang` env in `platformio.ini` builds the robot's firmware with it set to 20, so no file is edited; it is built only by name, and CI builds `esp32-wroom-camera` alone.
+`docs/hardware-acceptance.md` (Session checklist, section 4) has these steps as commands that run on the owner's machine.
 
-1. Set `-D DEBUG_HANG_CONTROL_S=20`, build and flash the firmware over the UART port (`pio run -t upload`), and open the console (`pio device monitor`).
+1. Flash it over the UART port (`pio run -e esp32-wroom-camera-hang -t upload --upload-port <COMx>`) and open the console (`pio device monitor -e esp32-wroom-camera-hang -p <COMx>`).
 2. The boot logs `debug build: the control task hangs 20 s after boot`.
    About 25 s after boot the console shows `Task watchdog got triggered. The following tasks/users did not reset the watchdog in time:` with `control (CPU 1)` under it, then the core dump being written, and the board restarts.
 3. The status page reports the reset reason `task watchdog`.
-4. Read the core dump straight from flash with `esp-coredump --chip esp32s3 --port <COMx> info_corefile .pio/build/esp32-wroom-camera/firmware.elf`, before rebuilding; `Panic reason:` repeats the watchdog's message, and the task list shows `control` suspended in `controlLoop`.
-5. Set the flag back to 0 and flash again; until then the board restarts every 25 s or so.
+4. Close the console, which holds the port, and read the core dump straight from flash with `esp-coredump --chip esp32s3 --port <COMx> info_corefile --gdb <xtensa-esp32s3-elf-gdb> .pio/build/esp32-wroom-camera-hang/firmware.elf`, against the hang env's ELF, which the board runs; the gdb is PlatformIO's `tool-xtensa-esp-elf-gdb` package, which is not on the PATH.
+   `Panic reason:` repeats the watchdog's message, and the task list shows `control` suspended in `controlLoop`.
+5. Flash the robot's env back (`pio run -e esp32-wroom-camera -t upload --upload-port <COMx>`); until then the board restarts every 25 s or so.
 
 ## RAM budget
 

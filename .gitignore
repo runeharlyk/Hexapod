@@ -1,6 +1,7 @@
 .pio
 managed_components/
 sdkconfig.esp32-wroom-camera
+sdkconfig.esp32-wroom-camera-hang
 # nanopb output, regenerated from platform_shared/*.proto by pre_build.py
 firmware/src/platform_shared/
 .vscode/.browse.c_cpp.db*
