@@ -70,6 +70,18 @@ describe('the robot state', () => {
     expect([get(state.mode), get(state.handheldDriving)]).toEqual([MotionModes.STAND, false])
   })
 
+  it("shows a mode this app does not know, as an older firmware's POSE, as unknown and not as DEACTIVATED", async () => {
+    robot.set(ModeData, { mode: 2 as ModesEnum, handheld: false })
+    follow(state.mode)
+    await link.connect()
+    await settle()
+    expect(get(state.mode)).toBeNull()
+
+    robot.set(ModeData, { mode: ModesEnum.STAND, handheld: false })
+    await settle()
+    expect(get(state.mode)).toBe(MotionModes.STAND)
+  })
+
   it('reads a mode frame from a firmware without the flag as no handheld', async () => {
     robot.set(ModeData, ModeData.decode(Uint8Array.of(0x08, ModesEnum.STAND)))
     follow(state.mode, state.handheldDriving)

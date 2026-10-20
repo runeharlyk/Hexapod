@@ -81,10 +81,9 @@ export const robotState = (broker: DataBroker) => {
     gaitState,
     goalState,
     animationState,
-    mode: derived(modeState, ({ value }): MotionModes =>
-      value === undefined ?
-        MotionModes.DEACTIVATED
-      : (modeFromWire(value.mode) ?? MotionModes.DEACTIVATED)
+    /** The robot's mode, DEACTIVATED until it reports one, and null for one this app does not know (UNKNOWN_MODE_HINT). */
+    mode: derived(modeState, ({ value }): MotionModes | null =>
+      value === undefined ? MotionModes.DEACTIVATED : (modeFromWire(value.mode) ?? null)
     ),
     /** Whether the ESP-NOW handheld drives the robot, which then drops this app's sticks and refuses its goals. */
     handheldDriving: derived(modeState, ({ value, stale }) => !stale && (value?.handheld ?? false)),

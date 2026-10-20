@@ -16,7 +16,7 @@
   import { goalLine } from '$lib/stores/goal'
   import type { ControllerInput, vector } from '$lib/types/models'
   import { VerticalSlider } from '$lib/components/input'
-  import { MotionModes } from '$lib/motion'
+  import { MotionModes, UNKNOWN_MODE_HINT } from '$lib/motion'
   import { GaitType, strideApplies } from '$lib/gait'
   import { notifications } from '$lib/components/toasts/notifications'
   import { gamepadAxes, gamepadButtons, hasGamepad } from '$lib/stores/gamepad'
@@ -261,6 +261,10 @@
           </select>
         {/if}
       </div>
+
+      {#if $drivenMode === null}
+        <span class="text-warning max-w-sm text-xs" role="status">{UNKNOWN_MODE_HINT}</span>
+      {/if}
 
       {#if controls.walk}
         <div class="flex gap-4">

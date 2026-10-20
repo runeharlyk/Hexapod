@@ -1,4 +1,5 @@
 import { ModesEnum } from '$lib/platform_shared/message'
+import { describeFailure } from '$lib/transport/reply'
 
 export enum MotionModes {
   DEACTIVATED = 'deactivated',
@@ -26,6 +27,15 @@ export const modeToWire = (mode: MotionModes): ModesEnum => WIRE[mode]
 /** The mode a reported value is, or undefined for one this app knows no mode for, such as POSE's reserved 2. */
 export const modeFromWire = (value: number): MotionModes | undefined =>
   Object.values(MotionModes).find(mode => WIRE[mode] === value)
+
+/**
+ * What a page says of a mode the robot reports and modeFromWire knows nothing of, such as an older firmware's POSE: the
+ * robot is in no mode this app can show or drive.
+ */
+export const UNKNOWN_MODE_HINT = `The robot reports a mode this app does not know: ${describeFailure(
+  { kind: 'too-old' },
+  "this app's modes"
+)}`
 
 /** The firmware's 18 joint angles, three per leg in leg order, in the order of the URDF model's joint names. */
 export const urdfJointOrder = <T>(a: T[]) =>

@@ -26,14 +26,14 @@ export const followSticks = ({
   send
 }: {
   commands: Readable<Command>
-  mode: Readable<MotionModes>
+  mode: Readable<MotionModes | null>
   linked: Readable<boolean>
   send: (input: ControllerInputData) => void
 }) => {
   const throttle = new throttler()
   let last: Command | undefined
   let wasCentred = true
-  let currentMode: MotionModes | undefined
+  let currentMode: MotionModes | null = null
   let isLinked = false
 
   const stops = [

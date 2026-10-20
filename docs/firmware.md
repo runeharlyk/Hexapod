@@ -127,6 +127,7 @@ The log lines of what a tick took come after its servo write (`Hexapod::updateAc
 The mode is a `MOTION_STATE`: `DEACTIVATED`, `IDLE`, `STAND`, `WALK`, `WALK_NN` and `ANIMATE`.
 Each crosses the wire as its `ModesEnum` value (`include/motion_state_wire.h`), so the enum's values are explicit: 2 was `POSE`, which the proto reserves, and the modes after it keep 3 to 6.
 A value the robot has no mode for, 2 among them, is ignored by the mode handler and the virtual robot's interface rather than cast.
+A robot on older firmware reports 2 when it is in `POSE`: the app shows that as a mode it does not know, with the firmware-too-old hint, and shows none of the modes it knows as the robot's, and the Python facade's mode reads as unknown (`None`), in which no heartbeat keeps a walk alive.
 
 - `DEACTIVATED` puts both PCA9685 boards to sleep.
 - `IDLE` keeps them powered and produces no angles, so every servo holds the pulse it had when the motion stopped and the first write after it moves nothing else.

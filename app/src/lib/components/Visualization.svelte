@@ -118,7 +118,8 @@
       }),
       gait.subscribe(g => virtualRobot?.setGait(gaitIndex(g))),
       animationPreview.subscribe(value => (preview = value)),
-      ...(previewMode ? [] : [mode.subscribe(m => virtualRobot?.setMode(modeToWire(m)))])
+      // A mode this app does not know is none the local model can animate; it keeps the last one.
+      ...(previewMode ? [] : [mode.subscribe(m => m && virtualRobot?.setMode(modeToWire(m)))])
     )
     if (import.meta.env.VITE_USE_HOST_NAME !== 'true') {
       loadVirtualRobot()
@@ -126,7 +127,8 @@
           if (destroyed) return
           // Until the firmware sends a pose, the model rests in its stand rather than with its legs out straight.
           show(robot.standPose())
-          robot.setMode(modeToWire(previewMode ?? $mode))
+          const shownMode = previewMode ?? $mode
+          if (shownMode) robot.setMode(modeToWire(shownMode))
           robot.setGait(gaitIndex($gait))
           virtualRobot = robot
           lastFrame = performance.now()

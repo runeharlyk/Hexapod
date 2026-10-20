@@ -137,6 +137,15 @@ class SerialTransport:
             self._link.close()
 
 
+def _known_mode(value: int) -> Mode | None:
+    """The mode a reported value is, or None for one this facade has none of, such as POSE's 2 from older firmware:
+    unknown, so no heartbeat keeps a walk alive in it."""
+    try:
+        return Mode(value)
+    except ValueError:
+        return None
+
+
 class RealBackend:
     def __init__(self, target: str):
         self._transport = SerialTransport(target) if is_serial_port(target) else WebSocketTransport(target)
@@ -264,7 +273,7 @@ class RealBackend:
             if kind == "goal_status":
                 self._hear_goal(message.goal_status, arrived)
             elif kind == "mode":
-                self._mode = Mode(message.mode.mode)
+                self._mode = _known_mode(message.mode.mode)
                 self._hear_handheld(message.mode.handheld)
             elif kind == "gait":
                 self._gait = Gait(message.gait.gait)

@@ -22,7 +22,7 @@ export const drivesJoints = ({
   simulation
 }: {
   controllerView: boolean
-  mode: MotionModes
+  mode: MotionModes | null
   linked: boolean
   simulation: boolean
 }) => controllerView && mode === MotionModes.IDLE && linked && !simulation

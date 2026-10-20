@@ -43,4 +43,7 @@ describe('controlsFor', () => {
     const { height, gait, walk } = controlsFor(MotionModes.WALK_NN)
     expect({ height, gait, walk }).toEqual({ height: false, gait: false, walk: false })
   })
+
+  it('shows nothing beside the mode buttons in a mode this app does not know', () =>
+    expect(controlsFor(null)).toEqual(none))
 })

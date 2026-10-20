@@ -43,4 +43,6 @@ const CONTROLS: Record<MotionModes, ModeControls> = {
   [MotionModes.ANIMATE]: { ...NONE, animation: true }
 }
 
-export const controlsFor = (mode: MotionModes): ModeControls => CONTROLS[mode]
+/** A mode this app does not know (null) shows nothing beside the mode buttons, since what it reads is unknown. */
+export const controlsFor = (mode: MotionModes | null): ModeControls =>
+  mode ? CONTROLS[mode] : NONE

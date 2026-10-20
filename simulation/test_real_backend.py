@@ -438,6 +438,20 @@ def test_a_firmware_without_snapshots_leaves_the_mode_unknown_and_takes_no_goals
         fake.stop()
 
 
+# A robot on older firmware reports modes this one does not have, such as POSE's 2: the mode is unknown, not an error,
+# and a walk under way is no longer kept alive, since the robot walks in no such mode; a known mode is heard after it.
+def test_a_mode_this_facade_does_not_know_is_unknown_and_walks_nothing(robot, fake):
+    robot.stand()
+    robot.set_velocity(0.1, 0.0, 0.0)
+    fake.push_mode(2)
+    _eventually(lambda: robot.state().mode is None)
+    sent = len(fake.inputs())
+    robot.sleep(3 * real.KEEPALIVE_S)
+    assert len(fake.inputs()) == sent
+    fake.push_mode(pb.STAND)
+    _eventually(lambda: robot.state().mode is Mode.STAND)
+
+
 def test_a_robot_without_an_imu_has_no_yaw(transport, monkeypatch):
     fake = FakeRobot(imu=False)
     try:
