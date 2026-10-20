@@ -323,6 +323,17 @@ void test_an_activation_whose_all_off_is_lost_leaves_its_board_asleep_and_report
     TEST_ASSERT_TRUE(pulsing(RIGHT_BOARD)[CHANNEL[4]]);
 }
 
+// The servo page's switch is the control task's to apply (MotionService), as a mode is: delivered on the bus, it
+// leaves the boards and the servos written as they were, so no bus worker writes them beside the control task.
+void test_the_servo_pages_switch_on_the_bus_leaves_the_controller_alone() {
+    ServoController& c = started();
+    angleTick(c);
+    EventBus<ServoStateMsg>::publish({false});
+    host_bus::drainAll();
+    TEST_ASSERT_EQUAL_HEX32((1u << NUM_SERVO) - 1, c.driven());
+    TEST_ASSERT_EQUAL_INT(9, pulsingChannels(RIGHT_BOARD));
+}
+
 // A servo is driven only by a pulse an awake board outputs: a pose written while the boards sleep, as the servo page's
 // switch can leave them in any mode, drives none, and every servo stays limp until written after they wake.
 void test_a_pose_written_to_sleeping_boards_drives_no_servo() {
@@ -344,6 +355,7 @@ int main() {
     UNITY_BEGIN();
     RUN_TEST(test_an_activation_after_a_drive_leaves_every_servo_limp_until_written);
     RUN_TEST(test_a_pose_written_to_sleeping_boards_drives_no_servo);
+    RUN_TEST(test_the_servo_pages_switch_on_the_bus_leaves_the_controller_alone);
     RUN_TEST(test_an_activation_whose_all_off_is_lost_leaves_its_board_asleep_and_reports_it);
     RUN_TEST(test_a_written_tick_reports_both_boards_and_the_pulse_each_servo_got);
     RUN_TEST(test_the_centre_pose_reports_its_write);

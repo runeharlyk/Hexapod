@@ -394,6 +394,51 @@ void test_idle_reports_its_limp_servos_as_limp() {
     TEST_ASSERT_EQUAL_HEX32(0, heard[0].limp);
 }
 
+// The servo page's switch is applied by the control task at its next tick, as a mode is, never by the bus worker that
+// delivers it, and published as the limp servos it leaves. Off in a stand, every servo is limp and stays so while the
+// stand writes its pose to the sleeping boards; on again, every servo is limp until written. In IDLE it leaves every
+// servo limp either way. It is taken before the modes that arrive with it, so a DEACTIVATED taken in the same tick has
+// the last word.
+void test_the_servo_pages_switch_is_applied_by_the_control_task() {
+    VirtualRobot robot;
+    standUp(robot);
+    std::vector<socket_message_AnglesData> heard;
+    auto listener = recordWire(heard);
+    robot.servoSwitch(false);
+    host_bus::drainAll();
+    TEST_ASSERT_TRUE(robot.servosAwake());
+    robot.tick();
+    TEST_ASSERT_FALSE(robot.servosAwake());
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+    TEST_ASSERT_EQUAL_size_t(0, heard[0].angles_count);
+    for (int t = 0; t < ticksFor(0.5f); ++t) robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, robot.mode());
+    TEST_ASSERT_EQUAL_HEX32(0, robot.drivenServos());
+    robot.servoSwitch(true);
+    robot.tick();
+    TEST_ASSERT_TRUE(robot.servosDriven());
+
+    robot.setMode(MOTION_STATE::IDLE);
+    robot.tick();
+    robot.setJoint(4, 20.0f);
+    robot.tick();
+    heard.clear();
+    robot.servoSwitch(false);
+    robot.tick();
+    robot.servoSwitch(true);
+    robot.tick();
+    TEST_ASSERT_TRUE(robot.servosAwake());
+    TEST_ASSERT_EQUAL_HEX32(0, robot.drivenServos());
+    TEST_ASSERT_EQUAL_size_t(2, heard.size());
+    TEST_ASSERT_EQUAL_size_t(0, heard[1].angles_count);
+
+    robot.setMode(MOTION_STATE::DEACTIVATED);
+    robot.servoSwitch(true);
+    robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, robot.mode());
+    TEST_ASSERT_FALSE(robot.servosAwake());
+}
+
 // Deactivated, every servo is limp, so the angles a client subscribing then is answered with are none, rather than the
 // pose the robot held before it sagged.
 void test_deactivating_publishes_every_servo_limp() {
@@ -2355,6 +2400,7 @@ int main(int, char **) {
     RUN_TEST(test_centring_in_idle_publishes_the_centre_pose);
     RUN_TEST(test_idle_reports_its_limp_servos_as_limp);
     RUN_TEST(test_deactivating_publishes_every_servo_limp);
+    RUN_TEST(test_the_servo_pages_switch_is_applied_by_the_control_task);
     RUN_TEST(test_a_standing_robot_holds_still);
     RUN_TEST(test_a_stick_held_in_walk_steps_the_legs);
     RUN_TEST(test_a_walk_obeys_its_last_command_for_600_ms_and_no_longer);

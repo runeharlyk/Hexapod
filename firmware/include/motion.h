@@ -39,6 +39,8 @@ class MotionService {
         _cmdSubHandle = EventBus<CommandMsg>::subscribe([&](CommandMsg const &c) { _inbox.postCommand(c, millis()); });
         _modeSubHandle = EventBus<ModeMsg>::subscribe([&](ModeMsg const &m) { _inbox.postMode(m, _animation.busy()); });
         _gaitSubHandle = EventBus<GaitMsg>::subscribe([&](GaitMsg const &g) { _inbox.postGait(g.gait); });
+        _servoSwitchSubHandle =
+            EventBus<ServoStateMsg>::subscribe([&](ServoStateMsg const &s) { _inbox.postServoSwitch(s.active); });
         ESP_LOGI("MotionService", "Event bus subscriptions completed");
         body_state.updateFeet(default_feet_pos);
         EventBus<ModeMsg>::publish({motionState});
@@ -321,6 +323,7 @@ class MotionService {
     // imuFresh: the IMU was read on this tick, so its DMP packet and gyro rate are this tick's.
     bool updateMotion(bool imuFresh) {
         const MotionInbox::Mail mail = _inbox.take(millis());
+        if (mail.servoSwitch) switchServos(*mail.servoSwitch);
         // Accepted in IDLE with no mode queued (MotionInbox::postCentreServos): before every mode taken with it.
         if (mail.centreServos) centreServos();
         _modesTaken = mail.modes;
@@ -517,6 +520,7 @@ class MotionService {
     EventBus<CommandMsg>::Handle _cmdSubHandle;
     EventBus<ModeMsg>::Handle _modeSubHandle;
     EventBus<GaitMsg>::Handle _gaitSubHandle;
+    EventBus<ServoStateMsg>::Handle _servoSwitchSubHandle;
     Kinematics kinematics;
     GaitController gait;
 #if FT_ENABLED(USE_POLICY)
@@ -722,6 +726,13 @@ class MotionService {
         _servoController->setCenterPwm();
         for (int servo = 0; servo < NUM_SERVO; ++servo) msgAngles.angles[servo] = _servoController->centreAngle(servo);
         holdIdle();
+        publishState();
+    }
+
+    // Control task, before the tick's modes: the servo page's switch, in any mode. The boards sleep, or wake with every
+    // channel off, and the angles are published with the servos that leaves limp.
+    void switchServos(bool on) {
+        on ? _servoController->activate() : _servoController->deactivate();
         publishState();
     }
 

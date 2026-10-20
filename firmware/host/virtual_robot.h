@@ -50,6 +50,8 @@ class VirtualRobot {
     // As main.cpp's handlers: a joint dragged in the app, and the calibration page's centring with its reply's status.
     void setJoint(int servo, float degrees) { _robot.setJoint(servo, degrees); }
     int centreServos() { return _robot.centreServos(); }
+    // As main.cpp's handler of the servo page's switch: the boards woken or put to sleep, whatever the mode.
+    void servoSwitch(bool on) { EventBus<ServoStateMsg>::publish({on}); }
 
     void tick() {
         host_clock::advance(TICK_US);
@@ -80,6 +82,8 @@ class VirtualRobot {
     bool servosDriven() const {
         return ServoController::output().awake && ServoController::output().driven == ServoController::ALL_SERVOS;
     }
+    // Whether the boards are awake, so the servos they drive hold their pulses.
+    bool servosAwake() const { return ServoController::output().awake; }
     // A bit per servo written since the boards woke; the others are limp.
     uint32_t drivenServos() const { return ServoController::output().driven; }
     const float *servoAngles() const { return ServoController::output().angles; }

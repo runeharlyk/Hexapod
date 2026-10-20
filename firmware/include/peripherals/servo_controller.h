@@ -65,17 +65,16 @@ class ServoController {
         if (!_right.begin(now)) ESP_LOGW(TAG, "servo board 0x%02X does not answer", _right.address());
 
         _signalSub = EventBus<ServoSignalMsg>::subscribe([this](ServoSignalMsg const &m) { servoEvent(m); });
-        _stateSub = EventBus<ServoStateMsg>::subscribe([this](ServoStateMsg const &m) {
-            m.active ? activate() : deactivate();
-        });
         _calibrationSub = ServoSettingsBus::subscribe([this](api_ServoSettings const &s) { applyCalibration(s); });
         api_ServoSettings pending;
         if (ServoSettingsBus::peek(pending)) applyCalibration(pending);  // if the service published first
     }
 
-    // Every servo limp until it is written: the boards wake with every channel off, and no pulse from before is kept
-    // for a board started again after losing power to restore. The wake is the tick's write of each board, reported as
-    // one, so a board left asleep because its all-off failed shows as a failed write.
+    // Control task, as every call below that writes the cached pulses or the driven servos is; the servo page's switch
+    // reaches it through the motion inbox. Every servo limp until it is written: the boards wake with every channel
+    // off, and no pulse from before is kept for a board started again after losing power to restore. The wake is the
+    // tick's write of each board, reported as one, so a board left asleep because its all-off failed shows as a failed
+    // write.
     void activate() {
         if (is_active) return;
         control_state = SERVO_CONTROL_STATE::ANGLE;
@@ -336,7 +335,6 @@ class ServoController {
     uint32_t _writeUs = 0;
 
     EventBus<ServoSignalMsg>::Handle _signalSub;
-    EventBus<ServoStateMsg>::Handle _stateSub;
     ServoSettingsBus::Handle _calibrationSub;
 };
 

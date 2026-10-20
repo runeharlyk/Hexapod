@@ -1,8 +1,8 @@
 #pragma once
 
 // What the other tasks hand MotionService's control task, under one mutex: the modes in arrival order, the newest
-// command and gait, a goal asked for and its end, an odometry reset, and in IDLE the joints dragged and a centring of
-// the servos; and back from the control task, the goal
+// command and gait, a goal asked for and its end, an odometry reset, the servo page's switch, and in IDLE the joints
+// dragged and a centring of the servos; and back from the control task, the goal
 // status, the mode and the pose the replies carry. The decisions a reply or a goal depends on are made as each arrives,
 // in arrival order, against the mode the control task applied last; the control task takes what arrived at the start
 // of its next tick, so nothing changes the motion in the middle of one, and no task ever waits for the control task.
@@ -100,6 +100,8 @@ class MotionInbox {
         bool handheldDriving = false; // the handheld has moved a stick within HANDHELD_PRIORITY_MS
         Joints joints;                // dragged in IDLE
         bool centreServos = false;    // every servo to its centre pulse, asked for in IDLE
+        // The servo page's switch, the newest since the last take.
+        std::optional<bool> servoSwitch;
     };
 
     // The facade and the app send every 0.2 s; an owner silent ten times as long has gone, whether or not its transport
@@ -234,6 +236,14 @@ class MotionInbox {
         return true;
     }
 
+    // Adapter task: the servo page's switch, which wakes the boards or puts them to sleep whatever the mode. The
+    // control task alone writes the pulses and the driven servos those change, so it applies the switch at its next
+    // take, before the modes taken with it: a mode taken in the same tick, a DEACTIVATED above all, has the last word.
+    void postServoSwitch(bool on) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _servoSwitch = on;
+    }
+
     // Any task: the mode the control task applied last, which is the mode the robot reports; a mode still queued is not
     // the robot's yet.
     MOTION_STATE appliedMode() const {
@@ -328,6 +338,7 @@ class MotionInbox {
         mail.odometryReset = std::exchange(_odometryReset, false);
         mail.joints = std::exchange(_joints, Joints {});
         mail.centreServos = std::exchange(_centreServos, false);
+        mail.servoSwitch = std::exchange(_servoSwitch, std::nullopt);
         mail.handheldDriving = _handheldDriving = handheldDrivingLocked(nowMs);
         // A lapsed window is forgotten, or the signed difference would reopen it half the clock's range later.
         if (!_handheldDriving) _handheldMoved = false;
@@ -378,6 +389,7 @@ class MotionInbox {
     bool _odometryReset = false;
     Joints _joints;
     bool _centreServos = false;
+    std::optional<bool> _servoSwitch;
     OdometryEstimate _odometry {};
     // The arrival of the handheld's last frame with a stick off centre, until the first take past its window.
     unsigned long _handheldMovedMs = 0;
