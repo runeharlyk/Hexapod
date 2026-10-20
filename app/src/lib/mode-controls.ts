@@ -2,7 +2,8 @@ import { MotionModes } from '$lib/motion'
 
 /**
  * The controls the controller page shows beside the mode buttons, which every mode shows:
- * - posture: body height and feet distance;
+ * - height: the body height;
+ * - feetDistance: the feet distance;
  * - sticks: the two sticks and their keys, a body shift and tilt in STAND and the walk in the walking modes;
  * - gait: the gait choice;
  * - walk: speed, step height and stride;
@@ -10,7 +11,8 @@ import { MotionModes } from '$lib/motion'
  * - animation: playing and stopping the robot's animations.
  */
 export interface ModeControls {
-  posture: boolean
+  height: boolean
+  feetDistance: boolean
   sticks: boolean
   gait: boolean
   walk: boolean
@@ -19,7 +21,8 @@ export interface ModeControls {
 }
 
 const NONE: ModeControls = {
-  posture: false,
+  height: false,
+  feetDistance: false,
   sticks: false,
   gait: false,
   walk: false,
@@ -27,15 +30,16 @@ const NONE: ModeControls = {
   animation: false
 }
 
-const STANDING: ModeControls = { ...NONE, posture: true, sticks: true }
+const STANDING: ModeControls = { ...NONE, height: true, feetDistance: true, sticks: true }
 
-// Each mode shows only what it reads. WALK_NN's policy chooses its own gait.
+// Each mode shows only what it reads. WALK_NN's policy rides at its own height, lift, stride and cadence, and chooses
+// its own gait: it reads the sticks and steps around the stance the feet distance sets.
 const CONTROLS: Record<MotionModes, ModeControls> = {
   [MotionModes.DEACTIVATED]: NONE,
   [MotionModes.IDLE]: { ...NONE, joints: true },
   [MotionModes.STAND]: STANDING,
   [MotionModes.WALK]: { ...STANDING, gait: true, walk: true },
-  [MotionModes.WALK_NN]: { ...STANDING, walk: true },
+  [MotionModes.WALK_NN]: { ...NONE, feetDistance: true, sticks: true },
   [MotionModes.ANIMATE]: { ...NONE, animation: true }
 }
 

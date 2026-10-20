@@ -1242,6 +1242,30 @@ void test_a_walk_after_walk_nn_takes_its_posture_again() {
     }
 }
 
+// What WALK_NN reads of a command, which the app's controls in that mode follow (app/src/lib/mode-controls.ts): the
+// policy walks the sticks' lx, ly and rx, and the gait steps around the stance the feet distance sets; it rides at its
+// own height, lift, stride and cadence, so the height, speed, step height, stride and the right stick's ry change
+// nothing.
+void test_walk_nn_reads_the_sticks_and_the_feet_distance_alone() {
+    const CommandMsg walking {0.3f, 0.6f, 0.2f, 0, 0, 0, 0, 0, 0};
+    const auto base = traceHeld(MOTION_STATE::WALK_NN, walking, ticksFor(2.0f));
+    struct Field {
+        const char *name;
+        float CommandMsg::*field;
+        bool read;
+    };
+    const Field fields[] = {
+        {"lx", &CommandMsg::lx, true},  {"ly", &CommandMsg::ly, true}, {"rx", &CommandMsg::rx, true},
+        {"ry", &CommandMsg::ry, false}, {"h", &CommandMsg::h, false},  {"s", &CommandMsg::s, false},
+        {"s1", &CommandMsg::s1, false}, {"fd", &CommandMsg::fd, true}, {"stride", &CommandMsg::stride, false}};
+    for (const Field &f : fields) {
+        CommandMsg changed = walking;
+        changed.*f.field = -0.8f;
+        const bool differs = traceHeld(MOTION_STATE::WALK_NN, changed, ticksFor(2.0f)) != base;
+        TEST_ASSERT_EQUAL_MESSAGE(f.read, differs, f.name);
+    }
+}
+
 // A settle cut short by WALK_NN starts over on the way back. Cut in its last stage, raising the lift, which checks
 // nothing else, a stale settle would release the walk as soon as the lift arrived, over whatever height and stance the
 // policy left; a fresh one first takes the stand's lift and the posture again.
@@ -1943,6 +1967,7 @@ int main(int, char **) {
     RUN_TEST(test_a_gait_change_during_a_settle_waits_for_it);
     RUN_TEST(test_leaving_a_walk_for_stand_mid_stride_stays_in_travel);
     RUN_TEST(test_a_walk_after_walk_nn_takes_its_posture_again);
+    RUN_TEST(test_walk_nn_reads_the_sticks_and_the_feet_distance_alone);
     RUN_TEST(test_an_interrupted_settle_starts_over);
     RUN_TEST(test_a_walk_from_a_stand_at_rest_steps_at_once);
     RUN_TEST(test_a_walk_from_a_stand_at_rest_settles_a_new_posture_first);

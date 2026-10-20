@@ -202,7 +202,7 @@
   {/if}
 
   <div class="absolute bottom-0 left-0 z-10 flex max-w-full items-end overflow-x-auto">
-    {#if controls.posture}
+    {#if controls.height}
       <div class="bg-base-300/70 flex shrink-0 flex-col items-center gap-1 p-3 pb-2">
         <VerticalSlider
           id="height"
@@ -215,7 +215,9 @@
         <span class="font-mono text-xs tabular-nums">{$input.height.toFixed(2)}</span>
         <label for="height" class="text-xs">Ht</label>
       </div>
+    {/if}
 
+    {#if controls.feetDistance}
       <div class="bg-base-300/70 flex shrink-0 flex-col items-center gap-1 rounded-tr-xl p-3 pb-2">
         <VerticalSlider
           id="feetDistance"
