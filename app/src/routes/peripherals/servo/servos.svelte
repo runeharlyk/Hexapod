@@ -1,6 +1,7 @@
 <script lang="ts">
-  import SettingsCard from '$lib/components/SettingsCard.svelte'
   import { MotorOutline } from '$lib/components/icons'
+  import Field from '$lib/components/layout/Field.svelte'
+  import Section from '$lib/components/layout/Section.svelte'
   import { throttler as Throttler } from '$lib/utilities'
   import { dataBroker } from '$lib/transport/databroker'
   import { ServoPWMData, ServoStateData } from '$lib/platform_shared/message'
@@ -33,42 +34,53 @@
     throttler.throttle(() => dataBroker.emit(ServoPWMData, { servoId, servoPwm: pwm }), 10)
 </script>
 
-<SettingsCard collapsible={false}>
-  {#snippet icon()}
-    <MotorOutline class="lex-shrink-0 mr-2 h-6 w-6 self-end" />
+<Section
+  title="Drive a servo"
+  description="Moves one servo to a pulse while it is powered, to find its centre."
+  icon={MotorOutline}
+>
+  {#snippet footer()}
+    <span class="text-base-content/70 self-center text-xs">
+      In IDLE: every servo to its calibrated centre pulse
+    </span>
+    <button class="btn" disabled={centring} onclick={centreAll}>Centre all servos</button>
   {/snippet}
-  {#snippet title()}
-    <span>Servo</span>
-  {/snippet}
-  {pwm}
-  <input
-    type="range"
-    min="80"
-    max="600"
-    bind:value={pwm}
-    oninput={updatePWM}
-    class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
-  />
-
-  <div class="flex flex-col">
-    <h2 class="text-lg">General servo configuration</h2>
-    <span class="flex items-center gap-2">
-      <label for="servoId"
-        >Servo {servoId}: {LEG_NAMES[selected.leg]}
-        {JOINT_NAMES[selected.joint].toLowerCase()}</label
-      >
-      <input id="servoId" type="range" min="0" max="17" step="1" bind:value={servoId} />
+  <div class="grid gap-4 text-sm">
+    <Field label="Servo" for="servo-id">
       <input
+        id="servo-id"
+        class="range range-sm w-full"
+        type="range"
+        min="0"
+        max="17"
+        step="1"
+        bind:value={servoId}
+      />
+      <p class="mt-1 text-xs">
+        {servoId}: {LEG_NAMES[selected.leg]}
+        {JOINT_NAMES[selected.joint].toLowerCase()}
+      </p>
+    </Field>
+    <Field label="Pulse" for="servo-pwm">
+      <input
+        id="servo-pwm"
+        class="range range-sm w-full"
+        type="range"
+        min="80"
+        max="600"
+        bind:value={pwm}
+        oninput={updatePWM}
+      />
+      <p class="mt-1 font-mono text-xs">{pwm}</p>
+    </Field>
+    <Field label="Powered" for="servo-active">
+      <input
+        id="servo-active"
         type="checkbox"
         class="toggle"
         bind:checked={active}
         onchange={e => (e.currentTarget.checked ? activateServo() : deactivateServo())}
       />
-    </span>
+    </Field>
   </div>
-
-  <div class="flex flex-wrap items-center gap-2">
-    <button class="btn btn-sm" disabled={centring} onclick={centreAll}>Centre all servos</button>
-    <span class="text-xs opacity-70">In IDLE: every servo to its calibrated centre pulse</span>
-  </div>
-</SettingsCard>
+</Section>

@@ -1,11 +1,10 @@
 <script lang="ts">
   import { page } from '$app/state'
   import { modals } from 'svelte-modals'
-  import { slide } from 'svelte/transition'
-  import { cubicOut } from 'svelte/easing'
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte'
-  import Spinner from '$lib/components/Spinner.svelte'
-  import SettingsCard from '$lib/components/SettingsCard.svelte'
+  import LoadFailure from '$lib/components/layout/LoadFailure.svelte'
+  import Loading from '$lib/components/layout/Loading.svelte'
+  import Section from '$lib/components/layout/Section.svelte'
 
   import { compareVersions } from 'compare-versions'
   import GithubUpdateDialog from '$lib/components/GithubUpdateDialog.svelte'
@@ -17,7 +16,7 @@
   } from '$lib/services/firmware-update'
   import type { GithubAsset } from '$lib/types/models'
   import { useFeatureFlags } from '$lib/stores'
-  import { Error, Cancel, Check, CloudDown, Github, Prerelease } from '$lib/components/icons'
+  import { Cancel, Check, CloudDown, Github } from '$lib/components/icons'
 
   const features = useFeatureFlags()
 
@@ -26,6 +25,11 @@
     if (result.isErr()) throw result.inner
     return result.inner
   }
+
+  let releases = $state(getGithubReleases())
+
+  const released = (date: string) =>
+    new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium' }).format(new Date(date))
 
   // compareVersions throws on a non-semver string, which the version is until the flags load.
   const isInstalled = (tag: string) =>
@@ -61,76 +65,45 @@
   }
 </script>
 
-<SettingsCard collapsible={false}>
-  {#snippet icon()}
-    <Github class="lex-shrink-0 mr-2 h-6 w-6 self-end rounded-full" />
-  {/snippet}
-  {#snippet title()}
-    <span>Github Firmware Manager</span>
-  {/snippet}
-  {#await getGithubReleases()}
-    <Spinner />
+<Section title="Releases" description="Firmware published on GitHub." icon={Github}>
+  {#await releases}
+    <Loading label="Reading the releases" />
   {:then githubReleases}
-    <div class="relative w-full overflow-visible">
-      <div class="overflow-x-auto" transition:slide|local={{ duration: 300, easing: cubicOut }}>
-        <table class="table w-full table-auto">
-          <thead>
-            <tr class="font-bold">
-              <th align="left">Release</th>
-              <th align="center" class="hidden sm:block">Release Date</th>
-              <th align="center">Experimental</th>
-              <th align="center">Install</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each githubReleases as release}
-              <tr
-                class={isInstalled(release.tag_name) ?
-                  'bg-primary text-primary-content'
-                : 'bg-base-100 h-14'}
+    <ul class="list">
+      {#each githubReleases as release (release.tag_name)}
+        <li class="list-row items-center">
+          <div class="list-col-grow min-w-0">
+            <a
+              href={release.html_url}
+              class="link link-hover font-semibold"
+              target="_blank"
+              rel="noopener noreferrer">{release.name}</a
+            >
+            <div class="text-base-content/70 text-sm">{released(release.published_at)}</div>
+          </div>
+          <div class="flex items-center gap-2">
+            {#if release.prerelease}
+              <span class="badge badge-accent badge-soft badge-sm">Pre-release</span>
+            {/if}
+            {#if isInstalled(release.tag_name)}
+              <span class="badge badge-primary badge-sm">Installed</span>
+            {:else}
+              <button
+                class="btn btn-sm"
+                aria-label="Install {release.name}"
+                onclick={() => confirmGithubUpdate(release.assets)}
               >
-                <td align="left" class="text-base font-semibold">
-                  <a
-                    href={release.html_url}
-                    class="link link-hover"
-                    target="_blank"
-                    rel="noopener noreferrer">{release.name}</a
-                  ></td
-                >
-                <td align="center" class="hidden min-h-full align-middle sm:block">
-                  <div class="my-2">
-                    {new Intl.DateTimeFormat('en-GB', {
-                      dateStyle: 'medium'
-                    }).format(new Date(release.published_at))}
-                  </div>
-                </td>
-                <td align="center">
-                  {#if release.prerelease}
-                    <Prerelease class="text-accent h-5 w-5" />
-                  {/if}
-                </td>
-                <td align="center">
-                  {#if !isInstalled(release.tag_name)}
-                    <button
-                      class="btn btn-ghost btn-circle btn-sm"
-                      onclick={() => {
-                        confirmGithubUpdate(release.assets)
-                      }}
-                    >
-                      <CloudDown class="text-secondary h-6 w-6" />
-                    </button>
-                  {/if}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-    </div>
+                <CloudDown class="size-4" />Install
+              </button>
+            {/if}
+          </div>
+        </li>
+      {/each}
+    </ul>
   {:catch}
-    <div class="alert alert-error shadow-lg">
-      <Error class="h-6 w-6 shrink-0" />
-      <span>Please connect to a network with internet access to perform a firmware update.</span>
-    </div>
+    <LoadFailure
+      message="Please connect to a network with internet access to perform a firmware update."
+      retry={() => (releases = getGithubReleases())}
+    />
   {/await}
-</SettingsCard>
+</Section>

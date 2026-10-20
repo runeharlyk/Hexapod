@@ -22,7 +22,7 @@
   const togglePassword = () => (show = !show)
 </script>
 
-<label class="input input-bordered flex items-center gap-2">
+<label class="input flex w-full items-center gap-2">
   <input {type} class="grow" {value} oninput={handleInput} {id} {placeholder} />
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div onclick={togglePassword} role="button" tabindex="0">

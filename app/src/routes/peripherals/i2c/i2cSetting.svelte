@@ -1,54 +1,44 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
   import { modals } from 'svelte-modals'
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte'
-  import { Cancel, Edit, EditOff, Power } from '$lib/components/icons'
-  import { notifications } from '$lib/components/toasts/notifications'
+  import { Cancel, Power, Settings as SettingsIcon } from '$lib/components/icons'
+  import Advanced from '$lib/components/layout/Advanced.svelte'
+  import Field from '$lib/components/layout/Field.svelte'
+  import SettingsForm from '$lib/components/layout/SettingsForm.svelte'
+  import { Settings } from '$lib/components/layout/settings.svelte'
   import { dataBroker } from '$lib/transport/databroker'
   import { ask } from '$lib/transport/reply'
   import type { PeripheralSettings } from '$lib/platform_shared/api'
 
-  let settings: PeripheralSettings | null = $state(null)
-  let isEditing = $state(false)
-
-  const load = async () => {
-    const res = await ask(dataBroker, { peripheralSettingsGet: {} }, 'the I2C settings').catch(
-      (error: Error) => {
-        notifications.error(`Could not read the I2C settings: ${error.message}`, 5000)
-        return null
-      }
-    )
-    if (res?.peripheralSettings) settings = res.peripheralSettings
-  }
-  onMount(load)
-
-  const save = async () => {
-    if (!settings) return
+  const settings = new Settings<PeripheralSettings>({
+    what: 'the I2C settings',
+    read: async () => {
+      const res = await ask(dataBroker, { peripheralSettingsGet: {} }, 'the I2C settings')
+      if (!res.peripheralSettings) throw new Error('the reply carried no settings')
+      return res.peripheralSettings
+    },
     // The firmware rejects out-of-range pins or frequencies with 400 and keeps the stored config.
-    const res = await ask(
-      dataBroker,
-      {
-        peripheralSettingsUpdate: {
-          ...settings,
-          sda: Number(settings.sda),
-          scl: Number(settings.scl),
-          frequency: Number(settings.frequency),
-          pins: []
-        }
-      },
-      'the I2C configuration'
-    ).catch((error: Error) => {
-      notifications.error(`Not saved: ${error.message}`, 5000)
-      return null
-    })
-    if (!res) return
-    if (res.peripheralSettings) settings = res.peripheralSettings
+    write: async value => {
+      const res = await ask(
+        dataBroker,
+        {
+          peripheralSettingsUpdate: {
+            ...value,
+            sda: Number(value.sda),
+            scl: Number(value.scl),
+            frequency: Number(value.frequency),
+            pins: []
+          }
+        },
+        'the I2C configuration'
+      )
+      return res.peripheralSettings
+    },
     // The bus is opened once at boot, so new pins take effect on the next restart.
-    notifications.success('I2C configuration saved - restart the robot to apply it.', 5000)
-    isEditing = false
-  }
+    saved: 'I2C configuration saved - restart the robot to apply it.'
+  })
 
-  const handleSave = () => {
+  const confirm = (save: () => void) =>
     modals.open(ConfirmDialog, {
       title: 'Confirm configuration',
       message:
@@ -62,76 +52,56 @@
         save()
       }
     })
-  }
-
-  const Icon = $derived(isEditing ? EditOff : Edit)
 </script>
 
-{#if settings}
-  <div class="collapse-arrow bg-base-200 border-base-300 rounded-box collapse border">
-    <input type="checkbox" />
-    <div class="collapse-title font-semibold">Configuration</div>
-    <div class="collapse-content text-sm">
-      <div class="flex flex-col gap-2">
-        <label for="sda" class="input validator">
-          SDA
-
-          <input
-            id="sda"
-            type="number"
-            required
-            placeholder="Type a number between 0 to 48"
-            min="0"
-            max="48"
-            title="SDA pin number (0-48)"
-            disabled={!isEditing}
-            bind:value={settings.sda}
-          />
-        </label>
-        <label for="scl" class="input validator">
-          SCL
-
-          <input
-            id="scl"
-            type="number"
-            required
-            placeholder="Type a number between 0 to 48"
-            min="0"
-            max="48"
-            title="SCL pin number (0-48)"
-            disabled={!isEditing}
-            bind:value={settings.scl}
-          />
-        </label>
-        <label class="input validator" for="frequency">
-          Frequency
-          <input
-            id="frequency"
-            type="number"
-            required
-            placeholder="Type a number between 100000 to 400000"
-            min="100000"
-            max="400000"
-            title="I2C frequency in Hz"
-            disabled={!isEditing}
-            bind:value={settings.frequency}
-          />
-        </label>
-        <div>
-          <button
-            class="btn btn-outline btn-primary"
-            aria-label={isEditing ?
-              'Stop editing the I2C configuration'
-            : 'Edit the I2C configuration'}
-            onclick={() => (isEditing = !isEditing)}
-          >
-            <Icon class="h-6 w-6" />
-          </button>
-          {#if isEditing}
-            <button class="btn btn-outline btn-primary" onclick={handleSave}>Save</button>
-          {/if}
-        </div>
-      </div>
-    </div>
-  </div>
-{/if}
+<SettingsForm
+  title="Bus configuration"
+  description="The robot opens the bus at boot, so a change takes effect after a restart."
+  icon={SettingsIcon}
+  {settings}
+  rows={1}
+  {confirm}
+>
+  {#snippet children(form)}
+    <Field label="Frequency" for="frequency" hint="100000 to 400000 Hz">
+      <label class="input validator w-full">
+        <input
+          id="frequency"
+          type="number"
+          required
+          min="100000"
+          max="400000"
+          bind:value={form.frequency}
+        />
+        <span class="label">Hz</span>
+      </label>
+    </Field>
+    <Advanced
+      title="Pins"
+      description="Wrong pins leave the robot without servos or IMU until you correct them over serial."
+    >
+      <Field label="SDA" for="sda" hint="GPIO 0 to 48">
+        <input
+          id="sda"
+          class="input validator w-full"
+          type="number"
+          required
+          min="0"
+          max="48"
+          bind:value={form.sda}
+        />
+      </Field>
+      <Field label="SCL" for="scl" hint="GPIO 0 to 48">
+        <input
+          id="scl"
+          class="input validator w-full"
+          type="number"
+          required
+          min="0"
+          max="48"
+          bind:value={form.scl}
+        />
+      </Field>
+    </Advanced>
+  {/snippet}
+</SettingsForm>

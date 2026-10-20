@@ -113,15 +113,12 @@
   const degrees = (angle: number) => `${(Math.abs(angle) < 0.05 ? 0 : angle).toFixed(1)}°`
 </script>
 
-<div class="bg-base-200 rounded-box flex w-full max-w-2xl flex-col gap-3 self-center p-4">
-  <div class="flex flex-wrap items-baseline justify-between gap-2">
-    <h2 class="text-lg font-semibold">Reference pose</h2>
-    <span class="text-sm">
-      Servo {servoId}:
-      <span class="font-semibold">{LEG_NAMES[selected.leg]} {JOINT_NAMES[selected.joint]}</span>
-    </span>
-  </div>
-  <p class="text-xs opacity-70">
+<div class="flex flex-col gap-3">
+  <p class="text-sm">
+    Servo {servoId}:
+    <span class="font-semibold">{LEG_NAMES[selected.leg]} {JOINT_NAMES[selected.joint]}</span>
+  </p>
+  <p class="text-base-content/70 text-xs">
     Green dashes: the leg at every servo's centre PWM. Solid: the selected joint at the slider's
     PWM, the rest of the leg drawn at its centre. Faint: {PWM_STEP} PWM higher, the way the joint must
     turn as the slider rises. Line the real joint up with the green leg, then set the centre. A joint

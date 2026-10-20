@@ -1,20 +1,20 @@
 <script lang="ts">
-  import SettingsCard from '$lib/components/SettingsCard.svelte'
+  import { onDestroy } from 'svelte'
   import { imu } from '$lib/stores/imu'
-  import { Chart, registerables } from 'chart.js'
-  import { cubicOut } from 'svelte/easing'
-  import { slide } from 'svelte/transition'
-  import { onDestroy, onMount } from 'svelte'
-  import { daisyColor } from '$lib/utilities'
   import { dataBroker } from '$lib/transport/databroker'
   import { IMUData } from '$lib/platform_shared/message'
   import { useFeatureFlags } from '$lib/stores/featureFlags'
-  import { Rotate3d } from '$lib/components/icons'
+  import { Compass as CompassIcon, Rotate3d, Temperature } from '$lib/components/icons'
   import Compass from '$lib/components/Compass.svelte'
+  import LineChart from '$lib/components/LineChart.svelte'
+  import Section from '$lib/components/layout/Section.svelte'
   import { notifications } from '$lib/components/toasts/notifications'
   import { calibrateImu } from '$lib/imu-calibration'
 
   const features = useFeatureFlags()
+
+  // The IMU streams faster than a chart is worth redrawing.
+  const REDRAW_MS = 200
 
   let calibrating = $state(false)
 
@@ -26,315 +26,57 @@
     else notifications.error(`IMU calibration failed: ${result.error}`, 6000)
   }
 
-  Chart.register(...registerables)
-
-  // bind:this fills these before onMount runs.
-  let angleChartElement: HTMLCanvasElement = $state()!
-  let tempChartElement: HTMLCanvasElement = $state()!
-  let altitudeChartElement: HTMLCanvasElement = $state()!
-
-  let angleChart: Chart
-  let tempChart: Chart
-  let altitudeChart: Chart
-
-  const handleImu = (data: IMUData) =>
-    imu.addData({ ...data, altitude: 0, bmp_temp: 0, pressure: 0 })
-
-  let unsubscribeImu: () => void
-  let updateIntervalId: ReturnType<typeof setInterval> | undefined
-
-  onMount(() => {
-    unsubscribeImu = dataBroker.on(IMUData, handleImu)
-    angleChart = new Chart(angleChartElement, {
-      type: 'line',
-      data: {
-        datasets: [
-          {
-            label: 'x',
-            borderColor: daisyColor('primary'),
-            backgroundColor: daisyColor('primary', 50),
-            borderWidth: 2,
-            data: $imu.x,
-            yAxisID: 'y'
-          },
-          {
-            label: 'y',
-            borderColor: daisyColor('secondary'),
-            backgroundColor: daisyColor('secondary', 50),
-            borderWidth: 2,
-            data: $imu.y,
-            yAxisID: 'y'
-          },
-          {
-            label: 'z',
-            borderColor: daisyColor('accent'),
-            backgroundColor: daisyColor('accent', 50),
-            borderWidth: 2,
-            data: $imu.z,
-            yAxisID: 'y'
-          }
-        ]
-      },
-      options: {
-        maintainAspectRatio: false,
-        responsive: true,
-        plugins: {
-          legend: {
-            display: true
-          },
-          tooltip: {
-            mode: 'index',
-            intersect: false
-          }
-        },
-        elements: {
-          point: {
-            radius: 1
-          }
-        },
-        scales: {
-          x: {
-            grid: {
-              color: daisyColor('base-content', 10)
-            },
-            ticks: {
-              color: daisyColor('base-content')
-            },
-            display: false
-          },
-          y: {
-            type: 'linear',
-            title: {
-              display: true,
-              text: 'Angle [°]',
-              color: daisyColor('base-content'),
-              font: {
-                size: 16,
-                weight: 'bold'
-              }
-            },
-            position: 'left',
-            min: 0,
-            max: 10,
-            grid: { color: daisyColor('base-content', 10) },
-            ticks: { color: daisyColor('base-content') },
-            border: { color: daisyColor('base-content', 10) }
-          }
-        }
-      }
-    })
-    tempChart = new Chart(tempChartElement, {
-      type: 'line',
-      data: {
-        datasets: [
-          {
-            label: 'Barometer temperature',
-            borderColor: daisyColor('secondary'),
-            backgroundColor: daisyColor('secondary', 50),
-            borderWidth: 2,
-            data: $imu.bmp_temp,
-            yAxisID: 'y'
-          }
-        ]
-      },
-      options: {
-        maintainAspectRatio: false,
-        responsive: true,
-        plugins: {
-          legend: {
-            display: true
-          },
-          tooltip: {
-            mode: 'index',
-            intersect: false
-          }
-        },
-        elements: {
-          point: {
-            radius: 1
-          }
-        },
-        scales: {
-          x: {
-            grid: {
-              color: daisyColor('base-content', 10)
-            },
-            ticks: {
-              color: daisyColor('base-content')
-            },
-            display: false
-          },
-          y: {
-            type: 'linear',
-            title: {
-              display: true,
-              text: 'Temperature [C°]',
-              color: daisyColor('base-content'),
-              font: {
-                size: 16,
-                weight: 'bold'
-              }
-            },
-            position: 'left',
-            min: 0,
-            max: 10,
-            grid: { color: daisyColor('base-content', 10) },
-            ticks: { color: daisyColor('base-content') },
-            border: { color: daisyColor('base-content', 10) }
-          }
-        }
-      }
-    })
-    altitudeChart = new Chart(altitudeChartElement, {
-      type: 'line',
-      data: {
-        datasets: [
-          {
-            label: 'Altitude',
-            borderColor: daisyColor('primary'),
-            backgroundColor: daisyColor('primary', 50),
-            borderWidth: 2,
-            data: $imu.altitude,
-            yAxisID: 'y'
-          }
-        ]
-      },
-      options: {
-        maintainAspectRatio: false,
-        responsive: true,
-        plugins: {
-          legend: {
-            display: true
-          },
-          tooltip: {
-            mode: 'index',
-            intersect: false
-          }
-        },
-        elements: {
-          point: {
-            radius: 1
-          }
-        },
-        scales: {
-          x: {
-            grid: {
-              color: daisyColor('base-content', 10)
-            },
-            ticks: {
-              color: daisyColor('base-content')
-            },
-            display: false
-          },
-          y: {
-            type: 'linear',
-            title: {
-              display: true,
-              text: 'Altitude [M]',
-              color: daisyColor('base-content'),
-              font: {
-                size: 16,
-                weight: 'bold'
-              }
-            },
-            position: 'left',
-            min: 0,
-            max: 10,
-            grid: { color: daisyColor('base-content', 10) },
-            ticks: { color: daisyColor('base-content') },
-            border: { color: daisyColor('base-content', 10) }
-          }
-        }
-      }
-    })
-    updateIntervalId = setInterval(updateData, 200)
-  })
-
-  onDestroy(() => {
-    unsubscribeImu?.()
-    clearInterval(updateIntervalId)
-  })
-
-  const updateData = () => {
-    if ($features.imu) {
-      angleChart.data.labels = $imu.x
-      angleChart.data.datasets[0].data = $imu.x
-      angleChart.data.datasets[1].data = $imu.y
-      angleChart.data.datasets[2].data = $imu.z
-      angleChart.options.scales!.y!.min =
-        Math.min(Math.min(...$imu.x), Math.min(...$imu.y), Math.min(...$imu.z)) - 1
-      angleChart.options.scales!.y!.max =
-        Math.max(Math.max(...$imu.x), Math.max(...$imu.y), Math.max(...$imu.z)) + 1
-      angleChart.update('none')
-    }
-
-    if ($features.bmp) {
-      tempChart.data.labels = $imu.bmp_temp
-      tempChart.data.datasets[0].data = $imu.bmp_temp
-      tempChart.options.scales!.y!.min = Math.min(...$imu.bmp_temp) - 1
-      tempChart.options.scales!.y!.max = Math.max(...$imu.bmp_temp) + 1
-      tempChart.update('none')
-
-      altitudeChart.data.labels = $imu.altitude
-      altitudeChart.data.datasets[0].data = $imu.altitude
-      altitudeChart.options.scales!.y!.min = Math.min(Math.min(...$imu.altitude)) - 1
-      altitudeChart.options.scales!.y!.max = Math.max(Math.max(...$imu.altitude)) + 1
-      altitudeChart.update('none')
-    }
-  }
+  onDestroy(
+    dataBroker.on(IMUData, data => imu.addData({ ...data, altitude: 0, bmp_temp: 0, pressure: 0 }))
+  )
 </script>
 
-<SettingsCard collapsible={false}>
-  {#snippet icon()}
-    <Rotate3d class="lex-shrink-0 mr-2 h-6 w-6 self-end" />
-  {/snippet}
-  {#snippet title()}
-    <span>IMU</span>
-  {/snippet}
-  {#if $features.imu}
-    <div class="w-full overflow-x-auto">
-      <div
-        class="flex w-full flex-col space-y-1 h-60"
-        transition:slide|local={{ duration: 300, easing: cubicOut }}
-      >
-        <canvas bind:this={angleChartElement}></canvas>
-      </div>
-    </div>
-    <div class="flex flex-wrap items-center justify-between gap-2">
-      <span class="text-sm opacity-70">
-        With the robot deactivated, lying still on a level floor: zeroes the gyro bias and levels
-        the tilt, and keeps the result across restarts.
-      </span>
+{#if $features.imu}
+  <Section
+    title="Orientation"
+    description="With the robot deactivated, lying still on a level floor, calibrating zeroes the gyro bias and levels the tilt, and keeps the result across restarts."
+    icon={Rotate3d}
+  >
+    {#snippet actions()}
       <button class="btn btn-primary btn-sm" onclick={calibrate} disabled={calibrating}>
         {#if calibrating}<span class="loading loading-spinner loading-xs"></span>{/if}
         Calibrate
       </button>
-    </div>
-  {/if}
-  {#if $features.mag}
+    {/snippet}
+    <LineChart
+      unit="Angle [°]"
+      series={[
+        { label: 'x', colour: 'primary', data: $imu.x },
+        { label: 'y', colour: 'secondary', data: $imu.y },
+        { label: 'z', colour: 'accent', data: $imu.z }
+      ]}
+      range="fit"
+      every={REDRAW_MS}
+    />
+  </Section>
+{/if}
+{#if $features.mag}
+  <Section title="Compass" icon={CompassIcon}>
     {#if $imu.heading.length}
       <Compass heading={$imu.heading.at(-1)} />
     {:else}
-      <span class="text-sm opacity-70">No compass reading yet.</span>
+      <p class="text-base-content/70 text-sm">No compass reading yet.</p>
     {/if}
-  {/if}
-  {#if $features.bmp}
-    <div class="w-full overflow-x-auto">
-      <div
-        class="flex w-full flex-col space-y-1 h-60"
-        transition:slide|local={{ duration: 300, easing: cubicOut }}
-      >
-        <canvas bind:this={tempChartElement}></canvas>
-      </div>
-    </div>
-    <div class="w-full overflow-x-auto">
-      <div
-        class="flex w-full flex-col space-y-1 h-60"
-        transition:slide|local={{ duration: 300, easing: cubicOut }}
-      >
-        <canvas bind:this={altitudeChartElement}></canvas>
-      </div>
-    </div>
-  {/if}
-  <!-- <IMUSetting /> -->
-</SettingsCard>
+  </Section>
+{/if}
+{#if $features.bmp}
+  <Section title="Barometer" icon={Temperature}>
+    <LineChart
+      unit="Temperature [°C]"
+      series={[{ label: 'Barometer temperature', colour: 'secondary', data: $imu.bmp_temp }]}
+      range="fit"
+      every={REDRAW_MS}
+    />
+    <LineChart
+      unit="Altitude [m]"
+      series={[{ label: 'Altitude', colour: 'primary', data: $imu.altitude }]}
+      range="fit"
+      every={REDRAW_MS}
+    />
+  </Section>
+{/if}

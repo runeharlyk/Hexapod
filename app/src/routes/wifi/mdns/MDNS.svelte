@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import SettingsCard from '$lib/components/SettingsCard.svelte'
-  import Spinner from '$lib/components/Spinner.svelte'
   import StatusItem from '$lib/components/StatusItem.svelte'
+  import LoadFailure from '$lib/components/layout/LoadFailure.svelte'
+  import Loading from '$lib/components/layout/Loading.svelte'
+  import Section from '$lib/components/layout/Section.svelte'
   import { AP, DNS, Devices, Remote, Server, info as Info } from '$lib/components/icons'
   import { dataBroker } from '$lib/transport/databroker'
   import type { MDNSStatus } from '$lib/platform_shared/api'
@@ -33,8 +34,8 @@
     })
   }
 
-  onMount(async () => {
-    runScan()
+  const readStatus = async () => {
+    mdnsStatus = undefined
     const res = await ask(dataBroker, { mdnsStatusGet: {} }, 'the mDNS status').catch(
       (error: Error) => {
         statusFailure = error.message
@@ -42,25 +43,24 @@
       }
     )
     mdnsStatus = res?.mdnsStatus ?? null
+  }
+
+  onMount(() => {
+    runScan()
+    readStatus()
   })
 </script>
 
-<SettingsCard collapsible={false}>
-  {#snippet icon()}
-    <AP class="lex-shrink-0 mr-2 h-6 w-6 self-end" />
-  {/snippet}
-  {#snippet title()}
-    <span>mDNS</span>
-  {/snippet}
-
+<Section title="Status" icon={AP}>
   {#if mdnsStatus === undefined}
-    <Spinner />
+    <Loading label="Reading the mDNS status" rows={4} />
   {:else if mdnsStatus === null}
-    <div role="alert" class="alert alert-error">
-      The robot did not report its mDNS status{statusFailure ? `: ${statusFailure}` : ''}.
-    </div>
+    <LoadFailure
+      message="The robot did not report its mDNS status{statusFailure ? `: ${statusFailure}` : ''}."
+      retry={readStatus}
+    />
   {:else}
-    <div class="flex flex-col gap-1">
+    <ul class="list">
       <StatusItem
         icon={AP}
         title="Status"
@@ -81,52 +81,49 @@
           description={mdnsStatus.globalTxtRecords.map(txtLabel).join(', ')}
         />
       {/if}
-    </div>
+    </ul>
   {/if}
+</Section>
 
-  <div class="divider my-0"></div>
+<Section
+  title="Devices on the robot's network"
+  description="The robot asks its network for this service type, which takes about 3 seconds."
+  icon={Devices}
+>
+  {#snippet actions()}
+    <select
+      class="select select-sm w-36"
+      aria-label="Service type"
+      bind:value={selectedType}
+      disabled={$mdnsScan.state === 'scanning'}
+    >
+      {#each types as type (serviceTypeLabel(type))}
+        <option value={serviceTypeLabel(type)}>{serviceTypeLabel(type)}</option>
+      {/each}
+    </select>
+    <button
+      class="btn btn-primary btn-sm"
+      onclick={runScan}
+      disabled={$mdnsScan.state === 'scanning'}
+    >
+      {#if $mdnsScan.state === 'scanning'}
+        <span class="loading loading-spinner loading-xs"></span>
+      {/if}
+      Scan
+    </button>
+  {/snippet}
 
-  <div class="flex flex-wrap items-end justify-between gap-2">
-    <div>
-      <h3 class="font-medium">Devices on the robot's network</h3>
-      <p class="text-sm opacity-70">
-        The robot asks its network for this service type, which takes about 3 seconds.
-      </p>
-    </div>
-    <div class="flex gap-2">
-      <select
-        class="select select-sm w-36"
-        aria-label="Service type"
-        bind:value={selectedType}
-        disabled={$mdnsScan.state === 'scanning'}
-      >
-        {#each types as type (serviceTypeLabel(type))}
-          <option value={serviceTypeLabel(type)}>{serviceTypeLabel(type)}</option>
-        {/each}
-      </select>
-      <button
-        class="btn btn-primary btn-sm"
-        onclick={runScan}
-        disabled={$mdnsScan.state === 'scanning'}
-      >
-        {#if $mdnsScan.state === 'scanning'}
-          <span class="loading loading-ring loading-xs"></span>
-        {/if}
-        Scan
-      </button>
-    </div>
-  </div>
-
-  {#if $mdnsScan.state === 'failed'}
-    <div role="alert" class="alert alert-error">Scan failed: {$mdnsScan.message}</div>
+  {#if $mdnsScan.state === 'scanning'}
+    <Loading label="Scanning the network" rows={2} />
+  {:else if $mdnsScan.state === 'failed'}
+    <LoadFailure message="Scan failed: {$mdnsScan.message}" />
   {:else if $mdnsScan.state === 'done' && $mdnsScan.result.results.length === 0}
-    <p class="text-sm opacity-70">No {$mdnsScan.result.type} services answered.</p>
+    <p class="text-base-content/70 text-sm">No {$mdnsScan.result.type} services answered.</p>
   {:else if $mdnsScan.state === 'done'}
-    <div class="w-full overflow-x-auto">
+    <div class="overflow-x-auto">
       <table class="table table-sm">
         <thead>
           <tr>
-            <th></th>
             <th>Host</th>
             <th>IP address</th>
             <th>Port</th>
@@ -135,8 +132,7 @@
         <tbody>
           {#each $mdnsScan.result.results as service, index (index)}
             <tr>
-              <td><Devices class="h-5 w-5" /></td>
-              <td>{service.name ? localName(service.name) : '-'}</td>
+              <td class="break-all">{service.name ? localName(service.name) : '-'}</td>
               <td class="font-mono">{service.ip || '-'}</td>
               <td class="font-mono">{service.port}</td>
             </tr>
@@ -145,4 +141,4 @@
       </table>
     </div>
   {/if}
-</SettingsCard>
+</Section>
