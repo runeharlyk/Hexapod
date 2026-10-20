@@ -17,6 +17,7 @@ constexpr uint8_t LEFT_BOARD = 0x40;
 constexpr uint8_t LED0_ON_L = 0x06;
 constexpr uint8_t PRE_SCALE = 0xFE;
 constexpr uint8_t MODE1 = 0x00;
+constexpr uint8_t ALL_LED_OFF_H = 0xFD;
 constexpr int64_t TICK_US = 5000;
 // The PCA9685 channel each servo drives, in servo order (servo_controller.h's cfg).
 constexpr uint8_t CHANNEL[NUM_SERVO] = {8, 9, 10, 2, 3, 4, 5, 6, 7, 8, 9, 10, 2, 3, 4, 5, 6, 7};
@@ -235,7 +236,7 @@ void test_the_write_time_is_the_bus_time_of_the_tick() {
 // that powered on as setUp powers it: a write to ALL_LED_OFF_H loads every channel's LEDn_OFF_H, as the PCA9685 does,
 // and a sleeping chip outputs nothing.
 std::array<bool, 16> pulsing(uint8_t addr) {
-    constexpr uint8_t ALL_LED_ON_L = 0xFA, ALL_LED_OFF_H = 0xFD, SLEEP = 0x10, FULL = 0x10;
+    constexpr uint8_t ALL_LED_ON_L = 0xFA, SLEEP = 0x10, FULL = 0x10;
     std::array<uint8_t, 256> chip {};
     chip[MODE1] = 0x11;
     for (int ch = 0; ch < 16; ch++) chip[LED0_ON_L + 4 * ch + 3] = FULL;
@@ -293,6 +294,35 @@ void test_an_activation_after_a_drive_leaves_every_servo_limp_until_written() {
     TEST_ASSERT_TRUE(pulsing(LEFT_BOARD)[CHANNEL[13]]);
 }
 
+// An activation whose all-off write a glitch on the bus loses must not wake that board, whose channels still hold the
+// pose from before the deactivation: it stays asleep, reported as a failed write is, and the next write that reaches it
+// wakes it with every channel off before its own pulse.
+void test_an_activation_whose_all_off_is_lost_leaves_its_board_asleep_and_reports_it() {
+    ServoController& c = started();
+    angleTick(c);
+    c.deactivate();
+    bool lost = false;
+    bus().writeOverride = [&](uint8_t addr, uint8_t reg, const uint8_t*, size_t) -> std::optional<esp_err_t> {
+        if (addr != RIGHT_BOARD || reg != ALL_LED_OFF_H || lost) return std::nullopt;
+        lost = true;
+        return ESP_FAIL;
+    };
+    host_clock::advance(TICK_US);
+    c.startTick();
+    c.activate();
+    socket_message_TickSample tick = socket_message_TickSample_init_zero;
+    c.fillTelemetry(tick);
+    TEST_ASSERT_TRUE(lost);
+    TEST_ASSERT_EQUAL_INT(0, pulsingChannels(RIGHT_BOARD));
+    TEST_ASSERT_EQUAL_INT(0, pulsingChannels(LEFT_BOARD));
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_FAILED, tick.servo_write_right);
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_OK, tick.servo_write_left);
+
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_OK, jointTick(c, 4, 20.0f).servo_write_right);
+    TEST_ASSERT_EQUAL_INT(1, pulsingChannels(RIGHT_BOARD));
+    TEST_ASSERT_TRUE(pulsing(RIGHT_BOARD)[CHANNEL[4]]);
+}
+
 // A servo is driven only by a pulse an awake board outputs: a pose written while the boards sleep, as the servo page's
 // switch can leave them in any mode, drives none, and every servo stays limp until written after they wake.
 void test_a_pose_written_to_sleeping_boards_drives_no_servo() {
@@ -314,6 +344,7 @@ int main() {
     UNITY_BEGIN();
     RUN_TEST(test_an_activation_after_a_drive_leaves_every_servo_limp_until_written);
     RUN_TEST(test_a_pose_written_to_sleeping_boards_drives_no_servo);
+    RUN_TEST(test_an_activation_whose_all_off_is_lost_leaves_its_board_asleep_and_reports_it);
     RUN_TEST(test_a_written_tick_reports_both_boards_and_the_pulse_each_servo_got);
     RUN_TEST(test_the_centre_pose_reports_its_write);
     RUN_TEST(test_a_joint_write_reports_its_boards_write);

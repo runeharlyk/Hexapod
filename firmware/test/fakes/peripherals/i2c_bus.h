@@ -5,7 +5,8 @@
 // which a driver touched the chip, not only where it left it. A device answers while it has registers
 // and is not marked absent, so a test can unplug a chip and plug it back with its registers intact. Each transfer,
 // answered or not, takes transferUs of the host clock, so a test can time what a driver spends on the bus. A read
-// override answers a read in place of the register file, so a test can script a chip's replies, failures included.
+// override answers a read in place of the register file, so a test can script a chip's replies, failures included; a
+// write override refuses a write the chip would take, which then neither lands nor is recorded, as a glitch on the bus.
 // A scan's probes are recorded in order; a busy bus refuses them, as the real one does when another task holds it, and
 // a faulty one fails them, as the real one does when it is down or a probe times out.
 
@@ -47,6 +48,7 @@ class I2CBus {
         absent.clear();
         attempts.clear();
         readOverride = nullptr;
+        writeOverride = nullptr;
         transferUs = 0;
         probed.clear();
         busy = false;
@@ -68,6 +70,9 @@ class I2CBus {
 
     esp_err_t writeReg(uint8_t addr, uint8_t reg, const uint8_t* data, size_t len) {
         transfer(addr);
+        if (writeOverride) {
+            if (const std::optional<esp_err_t> answer = writeOverride(addr, reg, data, len)) return *answer;
+        }
         if (!probe(addr)) return ESP_FAIL;
         writes.push_back({addr, reg, std::vector<uint8_t>(data, data + len)});
         // Auto-increment, as on the PCA9685 with MODE1.AI set.
@@ -92,6 +97,8 @@ class I2CBus {
     std::map<uint8_t, int> attempts;
     // Answers a read, filling `data` as the chip would, or declines it to the register file.
     std::function<std::optional<esp_err_t>(uint8_t addr, uint8_t reg, uint8_t* data, size_t len)> readOverride;
+    // Refuses a write with the error it returns, or declines it to the register file.
+    std::function<std::optional<esp_err_t>(uint8_t addr, uint8_t reg, const uint8_t* data, size_t len)> writeOverride;
     int64_t transferUs = 0;
     // The addresses tryProbe() put on the bus, in order; a refused or failed probe is not listed.
     std::vector<uint8_t> probed;

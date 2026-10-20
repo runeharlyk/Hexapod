@@ -74,7 +74,8 @@ class ServoController {
     }
 
     // Every servo limp until it is written: the boards wake with every channel off, and no pulse from before is kept
-    // for a board started again after losing power to restore.
+    // for a board started again after losing power to restore. The wake is the tick's write of each board, reported as
+    // one, so a board left asleep because its all-off failed shows as a failed write.
     void activate() {
         if (is_active) return;
         control_state = SERVO_CONTROL_STATE::ANGLE;
@@ -82,8 +83,13 @@ class ServoController {
         std::fill(std::begin(left_pwm), std::end(left_pwm), 0);
         std::fill(std::begin(right_pwm), std::end(right_pwm), 0);
         _driven = 0;
-        _left.wakeup();
-        _right.wakeup();
+        const int64_t now = esp_timer_get_time();
+        const bool leftWasAnswering = _left.answering();
+        const bool rightWasAnswering = _right.answering();
+        const ServoBoard::Write left = _left.wakeup(now);
+        const ServoBoard::Write right = _right.wakeup(now);
+        _leftWrite = report(_left, leftWasAnswering, left);
+        _rightWrite = report(_right, rightWasAnswering, right);
     }
 
     // A bit per servo written since the boards were activated, in servo order; the others are limp, and all are while

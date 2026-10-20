@@ -66,7 +66,7 @@ int lastWrite(uint8_t reg, Match match) {
 // A board started and woken, as the control loop has it when the robot is active, with one write made.
 void startAwake(ServoBoard& board) {
     TEST_ASSERT_TRUE(board.begin(now));
-    board.wakeup();
+    TEST_ASSERT_EQUAL(Write::OK, board.wakeup(now));
     TEST_ASSERT_EQUAL(Write::OK, tick(board));
 }
 
@@ -187,7 +187,7 @@ void test_a_board_missing_at_start_is_started_when_it_first_answers() {
     ServoBoard board(ADDR, OSCILLATOR_HZ, PWM_HZ);
     bus().absent.insert(ADDR);
     TEST_ASSERT_FALSE(board.begin(now));
-    board.wakeup();
+    TEST_ASSERT_EQUAL(Write::FAILED, board.wakeup(now));
     bus().absent.clear();
 
     TEST_ASSERT_EQUAL(Write::RESTARTED, tick(board));

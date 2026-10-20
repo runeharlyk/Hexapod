@@ -131,6 +131,7 @@ A robot on older firmware reports 2 when it is in `POSE`: the app shows that as 
 
 - `DEACTIVATED` puts both PCA9685 boards to sleep, and publishes every servo limp, so a client that subscribes to the angles then gets none rather than the pose the robot held before it sagged.
   A chip keeps its channel registers asleep and restarts them as it wakes, so every mode that activates the servos wakes the boards with every channel off (`ServoBoard::wakeup`) and forgets the pulses written before (`ServoController::activate`): no servo jumps back to the pose it had before the deactivation, and each is limp until written.
+  A board the all-off does not reach is left asleep and counts as a failed write, in the backoff and the tick's telemetry, until a later write reaches it and wakes it so before its own pulses.
   `STAND`, `WALK`, `WALK_NN` and `ANIMATE` write all 18 on their first tick, as a stand-up from `DEACTIVATED` always did.
 - `IDLE` keeps the boards powered and computes no pose.
   Entered from a mode that drives the servos, every servo holds the pulse it had when the motion stopped and the first write after it moves nothing else; activated from `DEACTIVATED`, every servo stays limp until a joint or the centring writes it.
