@@ -242,7 +242,8 @@ message TickSample {
   float odom_distance = 20;      // m travelled along the path
 
   // The servo write of this tick. pwm holds the 18 pulses, in PCA9685 counts of 4096 and in angles' order, that the
-  // tick wrote or meant to write (a failed or skipped board's too), and 0 for a board it did not write.
+  // tick wrote or meant to write (a failed or skipped board's too), and 0 for a servo it did not write: every servo of a
+  // board it did not write, and every other servo of a board a joint dragged in IDLE wrote one channel of.
   repeated uint32 pwm = 21;
   uint32 servo_write_us = 22;         // time spent writing both boards; part of compute_us
   ServoWrite servo_write_right = 23;  // board 0x41, servos 0-8

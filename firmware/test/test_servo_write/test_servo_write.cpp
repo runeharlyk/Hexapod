@@ -138,6 +138,17 @@ void test_a_joint_write_reports_its_boards_write() {
     TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_OK, left.servo_write_left);
 }
 
+// A joint write reports the one pulse it wrote: the other servos of its board hold pulses from an earlier tick, which
+// this tick did not write, and report none, as the servos of a board a tick does not write report none.
+void test_a_joint_write_reports_only_its_servos_pulse() {
+    ServoController& c = started();
+    angleTick(c);
+    const socket_message_TickSample tick = jointTick(c, 4, 20.0f);
+    TEST_ASSERT_EQUAL_UINT16(306 + 20 * 2, tick.pwm[4]);
+    for (int i = 0; i < NUM_SERVO; i++)
+        if (i != 4) TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, tick.pwm[i], "a servo the tick did not write");
+}
+
 // A joint dragged onto a board that stopped answering waits out its backoff as the motion's writes do: skipped, never
 // sent to the bus, and reported so.
 void test_a_joint_write_to_a_board_in_backoff_is_skipped() {
@@ -288,6 +299,7 @@ int main() {
     RUN_TEST(test_a_written_tick_reports_both_boards_and_the_pulse_each_servo_got);
     RUN_TEST(test_the_centre_pose_reports_its_write);
     RUN_TEST(test_a_joint_write_reports_its_boards_write);
+    RUN_TEST(test_a_joint_write_reports_only_its_servos_pulse);
     RUN_TEST(test_a_joint_write_to_a_board_in_backoff_is_skipped);
     RUN_TEST(test_a_tick_that_writes_nothing_reports_no_write);
     RUN_TEST(test_a_board_that_stops_answering_reports_its_failures_apart_from_its_skips);

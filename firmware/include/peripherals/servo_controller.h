@@ -196,6 +196,7 @@ class ServoController {
         uint16_t *pwm = right ? right_pwm : left_pwm;
         pwm[c.pin] = toPwm(target_angles[servo], c);
         _driven |= 1u << servo;
+        _writtenThisTick |= 1u << servo;
         ServoBoard &board = right ? _right : _left;
         const int64_t start = esp_timer_get_time();
         const bool wasAnswering = board.answering();
@@ -224,24 +225,25 @@ class ServoController {
     // Control task, before the tick's writes: a tick that writes nothing reports no write.
     void startTick() {
         _rightWrite = _leftWrite = socket_message_ServoWrite_SERVO_WRITE_NONE;
+        _writtenThisTick = 0;
         _writeUs = 0;
     }
 
-    // Control task, after the tick's writes: what they did, and the pulses they wrote or meant to write in servo order.
+    // Control task, after the tick's writes: what they did, and the pulses they wrote or meant to write in servo order, of
+    // the servos written alone.
     void fillTelemetry(socket_message_TickSample &tick) const {
         tick.servo_write_right = _rightWrite;
         tick.servo_write_left = _leftWrite;
         tick.servo_write_us = _writeUs;
         for (int i = 0; i < NUM_SERVO; i++) {
-            const bool right = i < 9;
-            if ((right ? _rightWrite : _leftWrite) == socket_message_ServoWrite_SERVO_WRITE_NONE) continue;
-            tick.pwm[i] = (right ? right_pwm : left_pwm)[cfg[i].pin];
+            if (!(_writtenThisTick & (1u << i))) continue;
+            tick.pwm[i] = (i < 9 ? right_pwm : left_pwm)[cfg[i].pin];
         }
     }
 
   private:
     void writeBoards() {
-        _driven = ALL_SERVOS;
+        _driven = _writtenThisTick = ALL_SERVOS;
         const int64_t start = esp_timer_get_time();
         const bool leftWasAnswering = _left.answering();
         const bool rightWasAnswering = _right.answering();
@@ -308,6 +310,7 @@ class ServoController {
     uint8_t channel_count = 0;
     static constexpr uint32_t ALL_SERVOS = (1u << NUM_SERVO) - 1;
     uint32_t _driven = 0;
+    uint32_t _writtenThisTick = 0; // a bit per servo this tick wrote, for its telemetry
 
     SERVO_CONTROL_STATE control_state = SERVO_CONTROL_STATE::DEACTIVATED;
     bool is_active{false};
