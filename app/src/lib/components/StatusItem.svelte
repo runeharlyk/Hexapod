@@ -4,23 +4,16 @@
 
   type Variant = 'success' | 'error' | 'primary' | 'info' | 'warning'
 
-  const {
-    icon,
-    title,
-    description = '',
-    variant = 'primary',
-    class: klass = '',
-    children = null
-  } = $props<{
+  // One reading as a row of a daisyUI `list`: inside a Card the list is a base-100 box, inside a Section it is bare.
+  interface Props {
     icon?: IconComponent
     title: string
     description?: string | number
     variant?: Variant
-    class?: string
-    children?: Snippet | null
-  }>()
+    children?: Snippet
+  }
 
-  const Icon = $derived(icon)
+  const { icon: Icon, title, description = '', variant = 'primary', children }: Props = $props()
 
   const variants: Record<Variant, [string, string]> = {
     success: ['bg-success', 'text-success-content'],
@@ -30,20 +23,20 @@
     warning: ['bg-warning', 'text-warning-content']
   }
 
-  const [bgColor, textColor] = $derived(
-    variants[variant in variants ? (variant as Variant) : 'primary']
-  )
+  const [bgColor, textColor] = $derived(variants[variant])
 </script>
 
-<div class="rounded-box bg-base-100 flex items-center space-x-3 px-4 py-2 {klass}">
-  {#if icon}
-    <div class="mask mask-hexagon {bgColor} h-auto w-10 flex-none">
+<li class="list-row items-center py-2">
+  {#if Icon}
+    <div class="mask mask-hexagon {bgColor} w-10">
       <Icon class="{textColor} h-auto w-full scale-75" />
     </div>
   {/if}
-  <div class="grow">
-    <div class="font-bold">{title}</div>
-    <div class="text-sm opacity-75 grow">{description}</div>
+  <div class="min-w-0">
+    <div class="font-semibold">{title}</div>
+    <div class="text-base-content/70 text-sm break-words">{description}</div>
   </div>
-  {@render children?.()}
-</div>
+  {#if children}
+    <div class="flex items-center gap-1">{@render children()}</div>
+  {/if}
+</li>

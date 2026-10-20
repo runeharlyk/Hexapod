@@ -8,7 +8,7 @@
 </script>
 
 <script lang="ts">
-  import SettingsCard from '$lib/components/SettingsCard.svelte'
+  import Card from '$lib/components/layout/Card.svelte'
   import { DownloadIcon, Record } from '$lib/components/icons'
   import { CONTROL_PERIOD_US } from '$lib/recording'
   import { humanFileSize } from '$lib/utilities/string-utilities'
@@ -17,14 +17,7 @@
   const ms = (us: number) => (Number.isNaN(us) ? '-' : (us / 1000).toFixed(2))
 </script>
 
-<SettingsCard collapsible={false}>
-  {#snippet icon()}
-    <Record class="mr-2 h-6 w-6 shrink-0 self-end" />
-  {/snippet}
-  {#snippet title()}
-    <span>Telemetry recording</span>
-  {/snippet}
-
+<Card title="Telemetry recording" icon={Record}>
   <div class="flex flex-wrap items-center gap-2">
     {#if $recorder.recording}
       <button class="btn btn-error btn-sm" onclick={recorder.stop}>Stop</button>
@@ -44,18 +37,18 @@
     {/if}
     {#if $recorder.finished && !$recorder.recording}
       <button class="btn btn-sm" onclick={recorder.download} aria-label="Download recording">
-        <DownloadIcon class="h-4 w-4" />
+        <DownloadIcon class="size-4" />
         {$recorder.finished.filename} ({humanFileSize($recorder.finished.blob.size)})
       </button>
     {/if}
   </div>
 
   {#if $recorder.error}
-    <div role="alert" class="alert alert-error alert-soft text-sm">{$recorder.error}</div>
+    <div role="alert" class="alert alert-error alert-soft">{$recorder.error}</div>
   {/if}
 
   {#if timing && !$recorder.recording}
-    <table class="table-sm table w-full tabular-nums">
+    <table class="table-sm bg-base-100 rounded-box table w-full tabular-nums">
       <tbody>
         <tr><td>Ticks</td><td class="text-right">{timing.ticks}</td></tr>
         <tr>
@@ -71,4 +64,4 @@
       </tbody>
     </table>
   {/if}
-</SettingsCard>
+</Card>

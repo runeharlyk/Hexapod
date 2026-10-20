@@ -1,8 +1,9 @@
 <script lang="ts">
   import { modals } from 'svelte-modals'
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte'
-  import SettingsCard from '$lib/components/SettingsCard.svelte'
-  import Spinner from '$lib/components/Spinner.svelte'
+  import Card from '$lib/components/layout/Card.svelte'
+  import LoadFailure from '$lib/components/layout/LoadFailure.svelte'
+  import Loading from '$lib/components/layout/Loading.svelte'
   import { Cancel, Delete, DownloadIcon, Warning } from '$lib/components/icons'
   import type { CoreDumpReport } from '$lib/platform_shared/message'
   import { dataBroker } from '$lib/transport/databroker'
@@ -23,10 +24,14 @@
   const crash = $derived(report ? lastCrash(report) : null)
   const busy = $derived(downloaded !== null || erasing)
 
-  readCoreDump(dataBroker).then(
-    read => (report = read),
-    error => (loadError = (error as Error).message)
-  )
+  const read = () => {
+    loadError = ''
+    readCoreDump(dataBroker).then(
+      read => (report = read),
+      error => (loadError = (error as Error).message)
+    )
+  }
+  read()
 
   async function download() {
     if (!report) return
@@ -71,56 +76,58 @@
   }
 </script>
 
-<SettingsCard collapsible={false}>
-  {#snippet icon()}
-    <Warning class="mr-2 h-6 w-6 shrink-0 self-end" />
-  {/snippet}
-  {#snippet title()}
-    <span>Last Crash</span>
-  {/snippet}
+{#snippet dumpActions()}
+  <button class="btn btn-primary" disabled={busy} onclick={download}>
+    <DownloadIcon class="size-5" />Download
+  </button>
+  <button class="btn" disabled={busy} onclick={confirmErase}>
+    <Delete class="size-5" />Erase
+  </button>
+{/snippet}
 
+<Card title="Last crash" icon={Warning} footer={report?.stored ? dumpActions : undefined}>
   {#if loadError}
-    <div class="alert alert-error" role="alert">The core dump could not be read: {loadError}</div>
+    <LoadFailure message="The core dump could not be read: {loadError}" retry={read} />
   {:else if !crash}
-    <Spinner />
+    <Loading label="Reading the core dump" rows={1} />
   {:else if crash.kind === 'none'}
-    <p>No crash stored.</p>
+    <p class="text-sm">No crash stored.</p>
   {:else if crash.kind === 'unreadable'}
-    <div class="alert alert-warning" role="alert">
+    <div class="alert alert-warning alert-soft" role="alert">
       A dump of {crash.size} bytes is stored, but the robot could not read a summary from it: it fails
       its checksum, as a dump cut short does, or is not an ELF core dump.
     </div>
   {:else}
     <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
-      <dt class="font-bold">Reason</dt>
+      <dt class="font-semibold">Reason</dt>
       {#if crash.panicReason}
         <dd class="whitespace-pre-line">{crash.panicReason}</dd>
       {:else}
-        <dd class="opacity-75">
+        <dd class="text-base-content/70">
           Not in the dump, which keeps only a task watchdog's; an exception's, assert's or abort's
           is on the serial log.
         </dd>
       {/if}
-      <dt class="font-bold">Task</dt>
+      <dt class="font-semibold">Task</dt>
       <dd>{crash.task}</dd>
-      <dt class="font-bold">PC</dt>
+      <dt class="font-semibold">PC</dt>
       <dd class="font-mono">{crash.pc}</dd>
       {#if crash.backtrace}
-        <dt class="font-bold">Backtrace</dt>
+        <dt class="font-semibold">Backtrace</dt>
         <dd class="font-mono break-all">{crash.backtrace}</dd>
       {/if}
       {#if crash.elf}
-        <dt class="font-bold">Firmware ELF</dt>
+        <dt class="font-semibold">Firmware ELF</dt>
         <dd class="font-mono break-all">{crash.elf}</dd>
       {/if}
     </dl>
     {#if crash.build === 'other'}
-      <div class="alert alert-warning mt-2" role="alert">
+      <div class="alert alert-warning alert-soft" role="alert">
         The crash came from another build than the one running now: decode it with the ELF of the
         build whose SHA-256 begins as above.
       </div>
     {:else if crash.build === 'unnamed'}
-      <div class="alert alert-warning mt-2" role="alert">
+      <div class="alert alert-warning alert-soft" role="alert">
         The dump does not name the build that crashed: decode it with the ELF of the build that was
         running then.
       </div>
@@ -128,33 +135,16 @@
   {/if}
 
   {#if crash && crash.kind !== 'none'}
-    <p class="mt-2 text-sm opacity-75">
+    <p class="text-base-content/70 text-sm">
       Decode the downloaded dump with <code>esp-coredump info_corefile -t raw -c</code> and the
       build's ELF, which each release attaches as <code>esp32-wroom-camera.elf</code>.
     </p>
   {/if}
 
   {#if downloaded !== null}
-    <progress class="progress progress-primary mt-2 w-full" value={downloaded} max="1"></progress>
+    <progress class="progress progress-primary w-full" value={downloaded} max="1"></progress>
   {/if}
   {#if actionError}
-    <div class="alert alert-error mt-2" role="alert">{actionError}</div>
+    <div class="alert alert-error alert-soft" role="alert">{actionError}</div>
   {/if}
-
-  {#if report?.stored}
-    <div class="mt-4 flex flex-wrap justify-end gap-2">
-      <button class="btn btn-primary inline-flex items-center" disabled={busy} onclick={download}>
-        <DownloadIcon class="mr-2 h-5 w-5" />
-        <span>Download</span>
-      </button>
-      <button
-        class="btn btn-secondary inline-flex items-center"
-        disabled={busy}
-        onclick={confirmErase}
-      >
-        <Delete class="mr-2 h-5 w-5" />
-        <span>Erase</span>
-      </button>
-    </div>
-  {/if}
-</SettingsCard>
+</Card>

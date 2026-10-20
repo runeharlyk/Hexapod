@@ -1,13 +1,7 @@
 <script lang="ts">
   import { resolve } from '$app/paths'
-  import SettingsCard from '$lib/components/SettingsCard.svelte'
-  import {
-    Bluetooth,
-    Check,
-    Connection as Usb,
-    WiFi,
-    type IconComponent
-  } from '$lib/components/icons'
+  import Card from '$lib/components/layout/Card.svelte'
+  import { Bluetooth, Check, Connection as Usb, WiFi } from '$lib/components/icons'
   import { location } from '$lib/stores'
   import {
     chooseSerialPort,
@@ -55,63 +49,50 @@
   }
 </script>
 
-{#snippet header(Icon: IconComponent, kind: TransportKind, status: LinkStatus)}
-  <div class="flex items-center gap-2">
-    <Icon class="h-5 w-5 shrink-0" />
-    <h3 class="font-medium">{transportLabels[kind]}</h3>
-    {#if $link.transport === kind}
-      <span class="badge badge-primary badge-sm">In use</span>
+{#snippet badges(kind: TransportKind, status: LinkStatus)}
+  {#if $link.transport === kind}
+    <span class="badge badge-primary badge-sm">In use</span>
+  {/if}
+  <span class="badge badge-sm {badgeClass[status]}">
+    {#if status === 'connecting'}
+      <span class="loading loading-spinner loading-xs"></span>
     {/if}
-    <span class="badge badge-sm ml-auto {badgeClass[status]}">
-      {#if status === 'connecting'}
-        <span class="loading loading-spinner loading-xs"></span>
-      {/if}
-      {linkStatusLabels[status]}
-    </span>
-  </div>
+    {linkStatusLabels[status]}
+  </span>
 {/snippet}
 
-<SettingsCard collapsible={false}>
-  {#snippet icon()}
-    <WiFi class="lex-shrink-0 mr-2 h-6 w-6 self-end" />
-  {/snippet}
-  {#snippet title()}
-    <span>Connection</span>
-  {/snippet}
-
-  {#if $link.status === 'connected' && $link.transport}
-    <div class="bg-base-100 rounded-box flex flex-wrap items-center gap-3 p-3">
-      <span class="bg-success flex size-6 shrink-0 items-center justify-center rounded-full">
-        <Check class="text-base-100 h-4 w-4" />
-      </span>
-      <div class="min-w-0 flex-1">
-        <div class="font-medium">Connected over {transportLabels[$link.transport]}</div>
-        <div class="truncate text-xs opacity-60">{connectedTo}</div>
-      </div>
-      <a class="btn btn-primary btn-sm" href={resolve('/controller')}>Open controller</a>
+{#if $link.status === 'connected' && $link.transport}
+  <div role="status" class="alert alert-success alert-soft">
+    <Check class="size-5 shrink-0" />
+    <div class="min-w-0">
+      <div class="font-medium">Connected over {transportLabels[$link.transport]}</div>
+      <div class="truncate text-xs">{connectedTo}</div>
     </div>
-  {:else}
-    <p class="text-sm opacity-70">
-      Not connected. Connect over WiFi, Bluetooth or USB; with several up, USB is used first, then
-      WiFi.
-    </p>
-  {/if}
+    <a class="btn btn-primary btn-sm" href={resolve('/controller')}>Open controller</a>
+  </div>
+{:else}
+  <p class="text-base-content/70 text-sm">
+    Not connected. Connect over WiFi, Bluetooth or USB; with several up, USB is used first, then
+    WiFi.
+  </p>
+{/if}
 
-  <div class="divider my-0"></div>
-
-  <section class="flex flex-col gap-2">
-    {@render header(WiFi, 'websocket', $wsStatus)}
-    <label class="text-sm opacity-70" for="robot-address">Robot address</label>
+<Card title={transportLabels.websocket} icon={WiFi}>
+  {#snippet actions()}
+    {@render badges('websocket', $wsStatus)}
+  {/snippet}
+  <div class="flex flex-col gap-2">
+    <label class="text-sm font-medium" for="robot-address">Robot address</label>
     <div class="flex gap-2">
       <input
         id="robot-address"
-        class="input input-sm min-w-0 flex-1"
+        class="input min-w-0 flex-1"
         placeholder={pageHost}
         bind:value={address}
         onkeydown={e => e.key === 'Enter' && action === 'connect' && connectWifi()}
       />
       <button
-        class="btn btn-sm {action === 'connect' ? 'btn-primary' : 'btn-outline'}"
+        class="btn {action === 'connect' ? 'btn-primary' : 'btn-outline'}"
         onclick={onWifiAction}
       >
         {action === 'connect' ? 'Connect'
@@ -119,62 +100,65 @@
         : 'Disconnect'}
       </button>
     </div>
-    <p class="font-mono text-xs opacity-60">{socketUrl(address.trim() || pageHost)}</p>
-  </section>
+    <p class="text-base-content/70 font-mono text-xs break-all">
+      {socketUrl(address.trim() || pageHost)}
+    </p>
+  </div>
+</Card>
 
-  <div class="divider my-0"></div>
+<Card title={transportLabels.bluetooth} icon={Bluetooth}>
+  {#snippet actions()}
+    {@render badges('bluetooth', $bleStatus)}
+  {/snippet}
+  {#if !navigator.bluetooth}
+    <p class="text-base-content/70 text-sm">
+      Bluetooth needs Chrome or Edge on an https or localhost page, so it is unavailable here.
+    </p>
+  {:else}
+    <div class="flex flex-wrap items-center justify-end gap-2">
+      <span class="text-base-content/70 min-w-0 flex-1 basis-48 text-sm break-words">
+        {$bleDevice ?? "The browser's chooser lists only hexapods."}
+      </span>
+      {#if $bleStatus === 'connected'}
+        <button class="btn btn-outline" onclick={() => ble.disconnect()}>Disconnect</button>
+      {:else}
+        <button
+          class="btn btn-primary"
+          onclick={connectBluetooth}
+          disabled={$bleStatus === 'connecting'}
+        >
+          Connect
+        </button>
+      {/if}
+    </div>
+  {/if}
+</Card>
 
-  <section class="flex flex-col gap-2">
-    {@render header(Bluetooth, 'bluetooth', $bleStatus)}
-    {#if !navigator.bluetooth}
-      <p class="text-sm opacity-70">
-        Bluetooth needs Chrome or Edge on an https or localhost page, so it is unavailable here.
-      </p>
-    {:else}
-      <div class="flex items-center gap-2">
-        <span class="min-w-0 flex-1 truncate text-sm opacity-70">
-          {$bleDevice ?? "The browser's chooser lists only hexapods."}
-        </span>
-        {#if $bleStatus === 'connected'}
-          <button class="btn btn-sm btn-outline" onclick={() => ble.disconnect()}>Disconnect</button
-          >
-        {:else}
+<Card title={transportLabels.serial} icon={Usb}>
+  {#snippet actions()}
+    {@render badges('serial', $serialStatus)}
+  {/snippet}
+  {#if !serialAvailable()}
+    <p class="text-base-content/70 text-sm">This browser has no Web Serial: use Chrome or Edge.</p>
+  {:else}
+    <div class="flex flex-wrap items-center justify-end gap-2">
+      <span class="text-base-content/70 min-w-0 flex-1 basis-48 text-sm"
+        >The robot's native USB port.</span
+      >
+      {#if $serialStatus === 'connected'}
+        <button class="btn btn-outline" onclick={() => serial.disconnect()}>Disconnect</button>
+      {:else}
+        <div class="flex gap-2">
+          <button class="btn" onclick={chooseSerialPort}>Choose port</button>
           <button
-            class="btn btn-sm btn-primary"
-            onclick={connectBluetooth}
-            disabled={$bleStatus === 'connecting'}
-          >
-            Connect
-          </button>
-        {/if}
-      </div>
-    {/if}
-  </section>
-
-  <div class="divider my-0"></div>
-
-  <section class="flex flex-col gap-2">
-    {@render header(Usb, 'serial', $serialStatus)}
-    {#if !serialAvailable()}
-      <p class="text-sm opacity-70">This browser has no Web Serial: use Chrome or Edge.</p>
-    {:else}
-      <div class="flex items-center gap-2">
-        <span class="min-w-0 flex-1 text-sm opacity-70">The robot's native USB port.</span>
-        {#if $serialStatus === 'connected'}
-          <button class="btn btn-sm btn-outline" onclick={() => serial.disconnect()}>
-            Disconnect
-          </button>
-        {:else}
-          <button class="btn btn-sm btn-ghost" onclick={chooseSerialPort}>Choose port</button>
-          <button
-            class="btn btn-sm btn-primary"
+            class="btn btn-primary"
             onclick={connectSerial}
             disabled={$serialStatus === 'connecting'}
           >
             Connect
           </button>
-        {/if}
-      </div>
-    {/if}
-  </section>
-</SettingsCard>
+        </div>
+      {/if}
+    </div>
+  {/if}
+</Card>
