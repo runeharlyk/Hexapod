@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from '@playwright/test'
+import { expect, test, type ElementHandle, type Locator, type Page } from '@playwright/test'
 import { AnglesData, ModeData, ModesEnum } from '../../src/lib/platform_shared/message'
 import { ALL_SERVOS } from '../../src/lib/motion'
 import { FakeRobot, serveRobot } from '../fake-robot/playwright'
@@ -15,6 +15,11 @@ type Point = { x: number; y: number }
 const jointFrames = (robot: FakeRobot) => robot.received.filter(m => m.jointAngle)
 
 const cursorOf = (canvas: Locator) => canvas.evaluate(c => (c as HTMLCanvasElement).style.cursor)
+
+// A locator re-resolves its element on every call, which costs a software-rendered page some 300 ms each; a scan reads
+// the cursor once per point, so it reads it through a handle.
+const cursorOfHandle = (canvas: ElementHandle<Element>) =>
+  canvas.evaluate(c => (c as HTMLCanvasElement).style.cursor)
 
 // Points over the 3D view, row by row, `step` of its size apart: wherever the model's legs are drawn, some lie on one.
 const grid = async (canvas: Locator, step: number): Promise<Point[]> => {
@@ -33,11 +38,17 @@ const scanForJoint = async (
   canvas: Locator,
   step: number
 ): Promise<Point | undefined> => {
-  for (const point of await grid(canvas, step)) {
-    await page.mouse.move(point.x, point.y)
-    if ((await cursorOf(canvas)) === 'grab') return point
+  const handle = await canvas.elementHandle()
+  if (!handle) throw new Error('the 3D view is not drawn')
+  try {
+    for (const point of await grid(canvas, step)) {
+      await page.mouse.move(point.x, point.y)
+      if ((await cursorOfHandle(handle)) === 'grab') return point
+    }
+    return undefined
+  } finally {
+    await handle.dispose()
   }
-  return undefined
 }
 
 // The model and its meshes load after the page, later still under the load of a parallel run, so a view that drives
