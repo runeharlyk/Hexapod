@@ -143,6 +143,27 @@ def test_odometry_in_the_recording_is_scored_beside_the_commanded_motion(tmp_pat
     assert commanded.position_rms > 10 * exact.position_rms
 
 
+def test_a_run_of_goals_whose_command_never_moves_is_aligned_on_its_odometry(tmp_path):
+    modes, sticks = course_ticks()
+    floor = walk(modes, sticks, 1.0, 1.0, START)
+    # A goal walks on sticks the firmware writes itself: the ticks' command stays centred while the odometry moves.
+    write_recording(tmp_path / "run.hexrec", modes, np.zeros_like(sticks),
+                    odometry=walk(modes, sticks, 1.0, 1.0, (0.0, 0.0, 0.0)))
+    write_track(tmp_path / "track.csv", floor, 12.5, np.random.default_rng(3))
+    telemetry = Telemetry.from_recording(recording.load(tmp_path / "run.hexrec"))
+    assert score_track.sync_estimate(telemetry) == "odometry"
+    result = score_track.score(Track.load(tmp_path / "track.csv"), telemetry)
+    assert result.aligned_on == "odometry" and result.offset == pytest.approx(12.5, abs=0.008)
+    odometry = result.stretches["odometry"]
+    assert odometry.position_rms < 0.003 and odometry.track_made_good == pytest.approx(made_good(floor), abs=0.003)
+
+
+def test_a_recording_whose_sticks_move_is_aligned_on_them_beside_its_odometry(tmp_path):
+    modes, sticks = course_ticks()
+    result, _, _ = scored(tmp_path, 0.9, 1.05, 12.5, walk(modes, sticks, 0.9, 1.05, (0.0, 0.0, 0.0)))
+    assert result.aligned_on == "commanded"
+
+
 def _stride_recording(tmp_path, mode):
     modes, sticks = course_ticks()
     strides = np.where(modes == mode, 0.5, 0.0)

@@ -15,6 +15,8 @@ the host's monotonic time or a video's own, the ticks the robot's. The offset be
 body's velocity and yaw rate, from the commanded motion and from the track, are correlated over the start motion, from
 SYNC_LEAD_S before the commanded motion's first move to SYNC_S after it, at every offset that keeps it inside the
 track. A course should therefore open with a distinct start motion from standing, such as a quarter turn in place.
+A run of goal moves commands no motion this way, since the firmware writes a goal's sticks itself and the telemetry's
+command does not carry them; where the commanded motion never moves, the odometry's motion stands in for it.
 
 Then each estimate is laid on the floor at the recording's start (the track's and the estimate's poses averaged over
 its first ALIGN_S, while the robot stands) and compared with the track at every tick the track covers: the position
@@ -157,18 +159,32 @@ def motion_signals(x, y, yaw) -> np.ndarray:
     return np.vstack([right, forward, yaw_rate])
 
 
+def moved(poses: np.ndarray) -> np.ndarray:
+    """Per pose, whether it is MOVE_M or MOVE_RAD from the first."""
+    return (np.hypot(*(poses[:, :2] - poses[0, :2]).T) > MOVE_M) | (np.abs(poses[:, 2] - poses[0, 2]) > MOVE_RAD)
+
+
 def first_move(t: np.ndarray, poses: np.ndarray) -> float:
-    moved = (np.hypot(*(poses[:, :2] - poses[0, :2]).T) > MOVE_M) | (np.abs(poses[:, 2] - poses[0, 2]) > MOVE_RAD)
-    if not moved.any():
+    moved_at = moved(poses)
+    if not moved_at.any():
         raise ValueError("the commanded motion never moves: there is no start motion to align the clocks on")
-    return float(t[np.argmax(moved)])
+    return float(t[np.argmax(moved_at)])
+
+
+def sync_estimate(telemetry: Telemetry) -> str:
+    """The estimate the clocks are aligned on: the commanded motion, or the odometry where the commanded motion never
+    moves, as in a run of goal moves."""
+    if "odometry" in telemetry.estimates and not moved(telemetry.estimates["commanded"]).any():
+        return "odometry"
+    return "commanded"
 
 
 def clock_offset(track: Track, telemetry: Telemetry, sync_s: float = SYNC_S) -> tuple[float, float]:
     """The offset to add to robot time for track time, and the correlation it reaches (1 at best)."""
-    start = first_move(telemetry.t, telemetry.estimates["commanded"]) - SYNC_LEAD_S
+    name = sync_estimate(telemetry)
+    start = first_move(telemetry.t, telemetry.estimates[name]) - SYNC_LEAD_S
     window_t = start + np.arange(round((SYNC_LEAD_S + sync_s) / GRID_S)) * GRID_S
-    window = motion_signals(*telemetry.at("commanded", window_t).T)
+    window = motion_signals(*telemetry.at(name, window_t).T)
     track_t = np.arange(track.t[0], track.t[-1], GRID_S)
     n = len(window_t)
     if len(track_t) < n:
@@ -248,16 +264,19 @@ class Score:
     offset: float  # track time less robot time
     correlation: float
     stretches: dict[str, Stretch]  # per estimate the track saw the start of
+    aligned_on: str  # the estimate whose start motion the clocks were aligned on
 
 
 def score(track: Track, telemetry: Telemetry, sync_s: float = SYNC_S) -> Score:
     offset, correlation = clock_offset(track, telemetry, sync_s)
     stretches = {name: score_estimate(track, telemetry, name, offset) for name in telemetry.estimates}
-    return Score(offset, correlation, {name: s for name, s in stretches.items() if s is not None})
+    return Score(offset, correlation, {name: s for name, s in stretches.items() if s is not None},
+                 sync_estimate(telemetry))
 
 
 def report(result: Score) -> None:
-    print(f"clock offset {result.offset:+.3f} s (track less robot), correlation {result.correlation:.2f}")
+    print(f"clock offset {result.offset:+.3f} s (track less robot), correlation {result.correlation:.2f} on the "
+          f"{result.aligned_on} motion")
     for name, s in result.stretches.items():
         print(f"{name} over {s.seconds:.1f} s: made good {s.estimate_made_good:.3f} m for {s.track_made_good:.3f} m "
               f"on the floor; position {100 * s.position_rms:.1f} cm RMS, {100 * s.position_end:.1f} cm at the end; "
