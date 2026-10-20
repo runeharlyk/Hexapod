@@ -131,7 +131,7 @@ A value the robot has no mode for, 2 among them, is ignored by the mode handler 
 - `DEACTIVATED` puts both PCA9685 boards to sleep.
 - `IDLE` keeps them powered and produces no angles, so every servo holds the pulse it had when the motion stopped and the first write after it moves nothing else.
   Two writes are taken in IDLE alone, through `MotionInbox` and by the control task: a joint dragged on the app's 3D model (`JointAngleData`, `Message` 212) and the calibration page's "Centre all servos" (`ServoCentreRequest`, request 82).
-  A joint is the kinematics' angle in degrees, as the robot reports its angles; `ServoController::setJointAngle` holds it within the joint's travel (`withinTravel`), turns it into a pulse with the servo's calibration and direction as the motion's angles are, and writes that one channel.
+  A joint is the kinematics' angle in degrees, as the robot reports its angles; `ServoController::setJointAngle` holds it within the joint's travel (`withinTravel`), turns it into a pulse with the servo's calibration and direction as the motion's angles are, and writes that one channel through its board's backoff (`ServoBoard::writeChannel`).
   The inbox drops a joint on arrival unless the mode applied last is `IDLE` and keeps the newest per servo until the take; the control task writes the joints only if the modes taken before them leave the robot in `IDLE`, so a joint sent behind a mode leaving it moves nothing.
   The centring is answered at once, 200 when the mode applied last is `IDLE` and 409 otherwise, and sends every servo to its calibrated centre pulse at the next tick (`setCenterPwm`).
   A joint is a position, not a rate, so a link that drops leaves the servo where the last joint put it.
@@ -398,7 +398,8 @@ When the last client on every transport has gone, a playing animation stops, so 
 Per-tick telemetry (`include/telemetry/telemetry.h`) is recorded by the control task into a lock-free single-producer ring, only while someone subscribes, and shipped in whole batches by the service task; a full ring drops samples and counts them rather than blocking the control loop.
 Each `TickSample` also carries the tick's servo write: the 18 pulses written or meant to be written (`pwm`, in PCA9685 counts), the time the write took (`servo_write_us`) and each board's result (`servo_write_right`, `servo_write_left`).
 A board's result is `OK`, `FAILED` for a write it did not acknowledge, `SKIPPED` for one left out while the board backs off, which never reached the bus, `RESTARTED` for one it took after being started again, and `NONE` for a tick that wrote nothing: a mode that drives no servo, a `WALK_NN` tick on which the policy produced no angles, or a tick on which a servo calibration signal took over the pulses.
-A joint dragged in `IDLE` is written to its one channel, as the calibration page's pulse is, and its tick reports `NONE` too; the centring writes both boards and is reported.
+A joint dragged in `IDLE` is its board's write of the tick: written to its one channel, backed off and started again as the motion's writes are, and reported for that board, the other board reporting `NONE`.
+The centring writes both boards and is reported too.
 `link_lost` is set from the tick the dead-man stop zeroed the command until a command arrives or a goal takes the walk, so the tick it rises on is the tick the stop fired.
 `simulation/report_recording.py` lists the failed writes and the dead-man stops of a recording.
 

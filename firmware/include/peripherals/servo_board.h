@@ -65,13 +65,13 @@ class ServoBoard {
 
     // One tick's write of the first `count` channels.
     Write write(const uint16_t* pwm, uint8_t count, int64_t nowUs) {
-        if (!_backoff.due(nowUs)) return Write::SKIPPED;
-        bool ok = _pca.setMultiplePWM(pwm, count) == 0;
-        const bool restarted = ok && _backoff.failing() && _pca.lostConfiguration();
-        if (restarted) ok = restart(pwm, count);
-        _backoff.record(ok, nowUs);
-        if (!ok) return Write::FAILED;
-        return restarted ? Write::RESTARTED : Write::OK;
+        return attempt(pwm, count, nowUs, [&] { return _pca.setMultiplePWM(pwm, count) == 0; });
+    }
+
+    // One channel of the first `count`, the rest left as they are, under the same backoff; a board started again takes
+    // all `count`, since it lost every channel.
+    Write writeChannel(const uint16_t* pwm, uint8_t count, uint8_t channel, int64_t nowUs) {
+        return attempt(pwm, count, nowUs, [&] { return _pca.setPWM(channel, 0, pwm[channel]) == 0; });
     }
 
     // A single channel, as the calibration page sets it; not backed off, since a person drives it.
@@ -81,6 +81,17 @@ class ServoBoard {
     bool answering() const { return !_backoff.backingOff(); }
 
   private:
+    template <typename Send>
+    Write attempt(const uint16_t* pwm, uint8_t count, int64_t nowUs, Send send) {
+        if (!_backoff.due(nowUs)) return Write::SKIPPED;
+        bool ok = send();
+        const bool restarted = ok && _backoff.failing() && _pca.lostConfiguration();
+        if (restarted) ok = restart(pwm, count);
+        _backoff.record(ok, nowUs);
+        if (!ok) return Write::FAILED;
+        return restarted ? Write::RESTARTED : Write::OK;
+    }
+
     // The pose goes into the channel registers before the chip wakes, so its outputs restart with it
     // rather than with the power-on full-off.
     bool restart(const uint16_t* pwm, uint8_t count) {

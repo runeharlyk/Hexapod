@@ -150,7 +150,8 @@ void test_entering_idle_holds_the_servos_angles() {
     TEST_ASSERT_EQUAL_FLOAT_ARRAY(stood, robot.servoAngles(), 18);
 }
 
-// A joint dragged in IDLE moves that servo alone, from the next tick, and every other joint holds its angle.
+// A joint dragged in IDLE moves that servo alone, from the next tick, and every other joint holds its angle. The tick
+// reports the write of the joint's board, the right one for servo 4, and the tick after it none.
 void test_a_joint_in_idle_moves_only_its_servo() {
     VirtualRobot robot;
     idleFromStand(robot);
@@ -162,6 +163,9 @@ void test_a_joint_in_idle_moves_only_its_servo() {
     held[4] = 20.0f;
     TEST_ASSERT_EQUAL_FLOAT_ARRAY(held, robot.servoAngles(), 18);
     TEST_ASSERT_EQUAL_UINT(1, robot.jointWrites());
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_OK, robot.servoWrite());
+    robot.tick();
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_NONE, robot.servoWrite());
 }
 
 void test_a_joint_in_idle_is_held_within_its_travel() {

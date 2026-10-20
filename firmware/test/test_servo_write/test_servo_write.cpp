@@ -110,6 +110,46 @@ void test_the_centre_pose_reports_its_write() {
     for (int i = 0; i < NUM_SERVO; i++) TEST_ASSERT_EQUAL_UINT16(306, tick.pwm[i]);
 }
 
+// A tick in IDLE that writes the joints dragged in the app.
+socket_message_TickSample jointTick(ServoController& controller, int servo, float degrees) {
+    host_clock::advance(TICK_US);
+    controller.startTick();
+    controller.setJointAngle(servo, degrees);
+    socket_message_TickSample tick = socket_message_TickSample_init_zero;
+    controller.fillTelemetry(tick);
+    return tick;
+}
+
+// A joint dragged in IDLE is a write of its own board, reported as the motion's are, with the pulse it got; the other
+// board is not written.
+void test_a_joint_write_reports_its_boards_write() {
+    ServoController& c = started();
+    bus().transferUs = 120;
+    const socket_message_TickSample right = jointTick(c, 4, 20.0f);
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_OK, right.servo_write_right);
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_NONE, right.servo_write_left);
+    TEST_ASSERT_EQUAL_UINT16(offCount(RIGHT_BOARD, CHANNEL[4]), right.pwm[4]);
+    TEST_ASSERT_EQUAL_UINT16(306 + 20 * 2, right.pwm[4]);
+    TEST_ASSERT_EQUAL_UINT32(120, right.servo_write_us);
+    const socket_message_TickSample left = jointTick(c, 13, 10.0f);
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_NONE, left.servo_write_right);
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_OK, left.servo_write_left);
+}
+
+// A joint dragged onto a board that stopped answering waits out its backoff as the motion's writes do: skipped, never
+// sent to the bus, and reported so.
+void test_a_joint_write_to_a_board_in_backoff_is_skipped() {
+    ServoController& c = started();
+    angleTick(c);
+    bus().absent.insert(RIGHT_BOARD);
+    for (int t = 0; t < 3; t++) angleTick(c);
+    bus().attempts.clear();
+    const socket_message_TickSample tick = jointTick(c, 4, 20.0f);
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_SKIPPED, tick.servo_write_right);
+    TEST_ASSERT_EQUAL_INT(0, bus().attempts[RIGHT_BOARD]);
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_OK, jointTick(c, 13, 10.0f).servo_write_left);
+}
+
 // A tick after a written one, in a mode that drives no servo, reports no write rather than the last one.
 void test_a_tick_that_writes_nothing_reports_no_write() {
     ServoController& c = started();
@@ -182,6 +222,8 @@ int main() {
     UNITY_BEGIN();
     RUN_TEST(test_a_written_tick_reports_both_boards_and_the_pulse_each_servo_got);
     RUN_TEST(test_the_centre_pose_reports_its_write);
+    RUN_TEST(test_a_joint_write_reports_its_boards_write);
+    RUN_TEST(test_a_joint_write_to_a_board_in_backoff_is_skipped);
     RUN_TEST(test_a_tick_that_writes_nothing_reports_no_write);
     RUN_TEST(test_a_board_that_stops_answering_reports_its_failures_apart_from_its_skips);
     RUN_TEST(test_a_board_that_lost_power_reports_its_restart_once);
