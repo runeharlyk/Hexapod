@@ -49,6 +49,7 @@ class RecordingWriter:
         self._file = open(path, "wb")
         header = json.dumps(features).encode()
         self._file.write(MAGIC + _LENGTH.pack(len(header)) + header)
+        self._file.flush()
 
     def write(self, frame: bytes, host_rx_us: int) -> None:
         self._file.write(_RECORD.pack(host_rx_us, len(frame)) + frame)

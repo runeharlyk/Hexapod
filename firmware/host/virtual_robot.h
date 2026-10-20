@@ -15,8 +15,10 @@ class VirtualRobot {
   public:
     static constexpr int64_t TICK_US = 5000;
 
+    // Starts over from a level, still IMU as well, which the stand-in otherwise keeps from the robot before.
     VirtualRobot() {
         ServoController::reset();
+        Peripherals::setImu({});
         _robot.initialize();
         host_bus::drainAll();
     }
