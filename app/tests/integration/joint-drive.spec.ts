@@ -1,10 +1,14 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { AnglesData, ModeData, ModesEnum } from '../../src/lib/platform_shared/message'
+import { ALL_SERVOS } from '../../src/lib/motion'
 import { FakeRobot, serveRobot } from '../fake-robot/playwright'
 
 const base = process.env.BASE_PATH ?? ''
 
 const DRIVING = "Driving the robot's joints"
+
+// A drag waits for the model to load (findJoint), which a parallel run's software rendering can stretch.
+test.describe.configure({ timeout: 90_000 })
 
 type Point = { x: number; y: number }
 
@@ -24,11 +28,30 @@ const grid = async (canvas: Locator, step: number): Promise<Point[]> => {
 }
 
 // A point over a leg: while the view drives the joints it shows the grab cursor there.
-const findJoint = async (page: Page, canvas: Locator, step = 0.04): Promise<Point | undefined> => {
+const scanForJoint = async (
+  page: Page,
+  canvas: Locator,
+  step: number
+): Promise<Point | undefined> => {
   for (const point of await grid(canvas, step)) {
     await page.mouse.move(point.x, point.y)
     if ((await cursorOf(canvas)) === 'grab') return point
   }
+  return undefined
+}
+
+// The model and its meshes load after the page, later still under the load of a parallel run, so a view that drives
+// the joints is scanned until a leg shows under the pointer, within `timeout`.
+const findJoint = async (
+  page: Page,
+  canvas: Locator,
+  timeout = 30_000
+): Promise<Point | undefined> => {
+  const deadline = Date.now() + timeout
+  do {
+    const point = await scanForJoint(page, canvas, 0.04)
+    if (point) return point
+  } while (Date.now() < deadline)
   return undefined
 }
 
@@ -105,6 +128,38 @@ test('in IDLE a drag starts from the pose the robot reports', async ({ page }) =
   expect(Math.abs(degrees - HELD[servo]), `servo ${servo} sent ${degrees}`).toBeLessThan(8)
 })
 
+// A robot that wakes its servos limp, as after a deactivation, reports no angles until one is written: the model keeps
+// the pose it draws, which the controls mark limp, and a drag turns a joint from there rather than from the report's 0.
+test('in IDLE a limp servo is dragged from the pose the model draws', async ({ page }) => {
+  const robot = await idleRobot(page)
+  robot.set(AnglesData, AnglesData.create({ angles: HELD }))
+  await page.addInitScript(() =>
+    localStorage.setItem('selected_view', JSON.stringify('3D representation'))
+  )
+  await page.goto(`${base}/controller`)
+  await expect(page.getByText(DRIVING)).toBeVisible()
+  await expect(page.getByText(/servos limp/)).toHaveCount(0)
+  const canvas = page.locator('canvas').first()
+  const point = await findJoint(page, canvas)
+  expect(point, 'a leg of the model under the pointer').toBeDefined()
+
+  robot.set(AnglesData, AnglesData.create())
+  await expect(page.getByText('18 of 18 servos limp')).toBeVisible()
+  // One servo written, every other limp: its angle is the report's, theirs the model's.
+  const angles = Array.from({ length: 18 }, (_, servo) => (servo === 0 ? -20 : 0))
+  robot.set(AnglesData, AnglesData.create({ angles, limp: ALL_SERVOS & ~1 }))
+  await expect(page.getByText('17 of 18 servos limp')).toBeVisible()
+
+  await page.mouse.move(point!.x, point!.y)
+  await page.mouse.down()
+  await page.mouse.move(point!.x + 1, point!.y)
+  await expect.poll(() => jointFrames(robot).length).toBeGreaterThan(0)
+  await page.mouse.up()
+  const { servo, degrees } = jointFrames(robot)[0].jointAngle!
+  const drawn = servo === 0 ? -20 : HELD[servo]
+  expect(Math.abs(degrees - drawn), `servo ${servo} sent ${degrees}`).toBeLessThan(8)
+})
+
 // The landing page's view of the same idle robot is a pure view: no leg can be taken, and a drag only turns the camera.
 test('no other 3D view drives the joints, even of an idle robot', async ({ page }) => {
   // The landing page's view turns on its own, and each software-rendered turn holds the page.
@@ -114,7 +169,7 @@ test('no other 3D view drives the joints, even of an idle robot', async ({ page 
   await expect(page.getByText('Connected', { exact: true })).toBeVisible()
   const canvas = page.locator('canvas').first()
 
-  expect(await findJoint(page, canvas, 0.1)).toBeUndefined()
+  expect(await scanForJoint(page, canvas, 0.1)).toBeUndefined()
   for (const point of await grid(canvas, 0.25)) await drag(page, point)
   await page.waitForTimeout(500)
   expect(jointFrames(robot)).toHaveLength(0)

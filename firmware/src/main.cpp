@@ -44,6 +44,7 @@
 #include <communication/serial_adapter.h>
 #include <www_mount.hpp>
 #include <hexapod.h>
+#include <servo_angles_wire.h>
 #include <peripherals/i2c_bus.h>
 #include <peripherals/i2c_scan.h>
 #include <peripherals/status_led.h>
@@ -841,14 +842,6 @@ static ProtoT latestOr(ProtoT idle) {
     return Bus::peek(latest) ? latest : idle;
 }
 
-// The joint angles as the app draws them: whole degrees, in servo order.
-static socket_message_AnglesData anglesData(const ServoAnglesMsg &a) {
-    socket_message_AnglesData out = socket_message_AnglesData_init_zero;
-    out.angles_count = NUM_SERVO;
-    for (int i = 0; i < NUM_SERVO; i++) out.angles[i] = static_cast<int32_t>(lroundf(a.angles[i]));
-    return out;
-}
-
 // What a subscribe to each topic is answered with (communication/topics.h). The snapshots read the owners the bridges
 // above push from, as the replies do; none waits on an EventBus worker, and no owner pushes while holding a lock its
 // snapshot takes: MotionInbox and the services publish to the EventBus, never to an adapter.
@@ -872,7 +865,7 @@ static constexpr Topic TOPICS[] = {
     {MessageTraits<socket_message_AnglesData>::tag, TopicKind::STATE,
      [](SnapshotSink &sink) {
          // The angles the motion published last, which IDLE publishes as it is entered and after each write; none, an
-         // empty list, before the motion first drives the servos or enters IDLE.
+         // empty list, before the motion first drives the servos or enters IDLE, and while every servo is limp.
          ServoAnglesMsg latest;
          sink.put(EventBus<ServoAnglesMsg>::peek(latest)
                       ? anglesData(latest)

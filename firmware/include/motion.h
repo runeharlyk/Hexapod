@@ -482,7 +482,11 @@ class MotionService {
         tick.odom_distance = odometry.distance;
     }
 
-    void publishState() { EventBus<ServoAnglesMsg>::publish(msgAngles); }
+    // The angles with the servos the controller has driven by no pulse since the boards woke marked limp.
+    void publishState() {
+        msgAngles.limp = ~_servoController->driven() & ((1u << NUM_SERVO) - 1);
+        EventBus<ServoAnglesMsg>::publish(msgAngles);
+    }
 
   private:
     ServoController *_servoController;
@@ -607,7 +611,7 @@ class MotionService {
     // The last command taken, for the telemetry.
     CommandMsg lastCommand{};
 
-    ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+    ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, .limp = 0};
 
   public:
     // Any task: the mode the control task applied last, the one the robot reports.
@@ -669,10 +673,14 @@ class MotionService {
     }
 
     // Control task, IDLE, after the tick's modes: the centring and the joints asked for while the robot idled. A joint
-    // writes its own servo alone, so every other servo holds the pulse it had when the motion stopped; a joint posted
-    // before a mode leaving IDLE was applied never gets here. The angles the servos hold are published on entering IDLE
-    // and after each tick that writes, as the app's 3D view draws them, and never on a timer.
+    // writes its own servo alone, so every other servo holds the pulse it had when the motion stopped, or stays limp; a
+    // joint posted before a mode leaving IDLE was applied never gets here. The angles the servos hold, within travel as
+    // the controller held the motion's last pose, are published on entering IDLE and after each tick that writes, as the
+    // app's 3D view draws them, and never on a timer.
     void driveIdleServos(const MotionInbox::Mail &mail, bool entering) {
+        if (entering)
+            for (int servo = 0; servo < NUM_SERVO; ++servo)
+                msgAngles.angles[servo] = withinTravel(msgAngles.angles[servo], servo % 3);
         bool written = false;
         if (mail.centreServos) {
             _servoController->setCenterPwm();

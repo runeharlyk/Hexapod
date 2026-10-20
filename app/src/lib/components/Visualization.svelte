@@ -8,7 +8,7 @@
   import type { URDFRobot } from 'urdf-loader'
   import { degToRad, lerp, radToDeg } from 'three/src/math/MathUtils'
   import { GaitType } from '$lib/gait'
-  import { MotionModes, modeToWire, reportedPose, urdfJointOrder } from '$lib/motion'
+  import { MotionModes, limpOf, modeToWire, reportedPose, urdfJointOrder } from '$lib/motion'
   import { dataBroker } from '$lib/transport/databroker'
   import { AnglesData, IMUData } from '$lib/platform_shared/message'
   import { Quaternion, Vector3 } from 'three'
@@ -26,7 +26,13 @@
   import type { Vec3 } from '$lib/animation/model'
   import { DEFAULT_FEET } from '$lib/animation/model'
   import { handleColor, legMask, sceneToOffset, stanceToScene } from '$lib/animation/handles'
-  import { JointDrive, drivingJoints, servoOfUrdfJoint, withinTravel } from '$lib/joint-drive'
+  import {
+    JointDrive,
+    drivingJoints,
+    limpServos,
+    servoOfUrdfJoint,
+    withinTravel
+  } from '$lib/joint-drive'
   import { JointDrag } from '$lib/joint-drag'
   import type { URDFJoint } from 'urdf-loader'
 
@@ -106,9 +112,11 @@
 
     unsubscribers.push(
       outControllerData.subscribe(data => (sticks = data)),
-      // The robot's angles, as it reports them on subscribing and on every change: in IDLE the angles its servos hold.
+      // The robot's angles, as it reports them on subscribing and on every change: in IDLE the angles its servos hold,
+      // and which of them are limp, which the model keeps where it draws them.
       dataBroker.on(AnglesData, data => {
-        const pose = reportedPose(data.angles, dragged())
+        if (driveJoints) limpServos.set(limpOf(data))
+        const pose = reportedPose(data, drawnPose(), dragged())
         if (!pose) return
         settings['Internal kinematic'] = false
         show(pose)
@@ -143,6 +151,7 @@
 
   onDestroy(() => {
     destroyed = true
+    if (driveJoints) limpServos.set(0)
     unsubscribers.forEach(unsubscribe => unsubscribe())
     jointDrag?.dispose()
     jointDrive?.dispose()
@@ -224,6 +233,13 @@
     return joint && index >= 0 ?
         { servo: servoOfUrdfJoint(index), degrees: radToDeg(joint.angle as number) }
       : undefined
+  }
+
+  // The angles the model is drawn at, in degrees in the firmware's order.
+  const drawnPose = () => {
+    const deg = new Array<number>(18).fill(0)
+    targetAngles.forEach((rad, joint) => (deg[servoOfUrdfJoint(joint)] = radToDeg(rad)))
+    return deg
   }
 
   // Joint angles in degrees in the firmware's order, as the robot reports them and the virtual robot drives them.

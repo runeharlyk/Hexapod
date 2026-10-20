@@ -16,6 +16,7 @@
 #include <gait_speed.h>
 #include <pb_decode.h>
 #include <pb_encode.h>
+#include <servo_angles_wire.h>
 #include <virtual_robot.h>
 
 namespace {
@@ -309,6 +310,56 @@ void test_centring_in_idle_publishes_the_centre_pose() {
     TEST_ASSERT_EQUAL_FLOAT_ARRAY(centre.data(), robot.servoAngles(), 18);
     for (int t = 0; t < ticksFor(1.0f); ++t) robot.tick();
     TEST_ASSERT_EQUAL_size_t(1, heard.size());
+}
+
+// The angles as the app receives them (servo_angles_wire.h), each publication in order.
+EventBus<ServoAnglesMsg>::Handle recordWire(std::vector<socket_message_AnglesData> &heard) {
+    return EventBus<ServoAnglesMsg>::subscribe([&heard](const ServoAnglesMsg &a) { heard.push_back(anglesData(a)); });
+}
+
+// A servo no pulse has driven since the boards woke holds no angle anyone knows. IDLE entered from boot or after a
+// deactivation publishes every servo limp, which reaches the app as no angles at all rather than zeros; a joint written
+// is reported at its angle from then on, the servos still limp marked so and given none, and the centring drives all.
+// Entered from a stand, IDLE has no limp servo.
+void test_idle_reports_its_limp_servos_as_limp() {
+    for (const bool stoodFirst : {false, true}) {
+        VirtualRobot robot;
+        if (stoodFirst) {
+            standUp(robot);
+            robot.setMode(MOTION_STATE::DEACTIVATED);
+            robot.tick();
+        }
+        std::vector<socket_message_AnglesData> heard;
+        auto listener = recordWire(heard);
+        robot.setMode(MOTION_STATE::IDLE);
+        robot.tick();
+        TEST_ASSERT_EQUAL_size_t(1, heard.size());
+        TEST_ASSERT_EQUAL_size_t(0, heard[0].angles_count);
+
+        robot.setJoint(4, 20.4f);
+        robot.tick();
+        TEST_ASSERT_EQUAL_size_t(2, heard.size());
+        TEST_ASSERT_EQUAL_size_t(18, heard[1].angles_count);
+        TEST_ASSERT_EQUAL_HEX32(ALL_SERVOS_LIMP & ~(1u << 4), heard[1].limp);
+        TEST_ASSERT_EQUAL_INT32(20, heard[1].angles[4]);
+        for (int servo = 0; servo < 18; ++servo)
+            if (servo != 4) TEST_ASSERT_EQUAL_INT32(0, heard[1].angles[servo]);
+
+        TEST_ASSERT_EQUAL_INT(200, robot.centreServos());
+        robot.tick();
+        TEST_ASSERT_EQUAL_size_t(3, heard.size());
+        TEST_ASSERT_EQUAL_HEX32(0, heard[2].limp);
+        TEST_ASSERT_EQUAL_INT32(-90, heard[2].angles[2]);
+    }
+    VirtualRobot robot;
+    standUp(robot);
+    std::vector<socket_message_AnglesData> heard;
+    auto listener = recordWire(heard);
+    robot.setMode(MOTION_STATE::IDLE);
+    robot.tick();
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+    TEST_ASSERT_EQUAL_size_t(18, heard[0].angles_count);
+    TEST_ASSERT_EQUAL_HEX32(0, heard[0].limp);
 }
 
 void test_a_standing_robot_holds_still() {
@@ -949,6 +1000,28 @@ CommandMsg fullStick(float lx, float ly, float rx, float stride = 0) { return {l
 
 const CommandMsg FULL_STICKS[] = {fullStick(0, 1, 0), fullStick(0, -1, 0), fullStick(1, 0, 0), fullStick(-1, 0, 0),
                                   fullStick(0, 0, 1), fullStick(0, 0, -1), fullStick(1, 1, 1), fullStick(-1, -1, -1)};
+
+// A pose beyond a joint's travel, which the searched gait asks for, is held within it by the controller, so IDLE
+// entered from it publishes the angles within travel, as the servos hold them, not the motion's command.
+void test_idle_entered_from_a_pose_beyond_travel_publishes_the_held_angles() {
+    VirtualRobot robot;
+    walkIn(robot, GaitType::TUNED);
+    const CommandMsg stick = fullStick(1, 1, 1);
+    bool beyond = false;
+    for (int t = 0; t < ticksFor(5.0f) && !beyond; ++t) {
+        if (t % COMMAND_PERIOD_TICKS == 0) robot.command(stick);
+        robot.tick();
+        for (int j = 0; j < 18; ++j) beyond |= withinTravel(robot.angles()[j], j % 3) != robot.angles()[j];
+    }
+    TEST_ASSERT_TRUE_MESSAGE(beyond, "the walk never asked for a joint beyond its travel");
+    const std::array<float, 18> held = servoAnglesOf(robot);
+    Published heard;
+    auto listener = recordAngles(heard);
+    robot.setMode(MOTION_STATE::IDLE);
+    robot.tick();
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(held.data(), heard[0].data(), 18);
+}
 
 void describe(char *msg, size_t size, GaitType gait, const CommandMsg &c, const HeldRun &run) {
     std::snprintf(msg, size, "gait %d stick (%.0f %.0f %.0f) h %.2f fd %.2f: %d clamped, largest step %.2f deg",
@@ -2021,8 +2094,10 @@ int main(int, char **) {
     RUN_TEST(test_a_joint_sent_behind_a_mode_out_of_idle_is_ignored);
     RUN_TEST(test_the_servos_are_centred_only_in_idle);
     RUN_TEST(test_entering_idle_publishes_the_held_angles_once);
+    RUN_TEST(test_idle_entered_from_a_pose_beyond_travel_publishes_the_held_angles);
     RUN_TEST(test_a_joint_write_in_idle_publishes_the_angles);
     RUN_TEST(test_centring_in_idle_publishes_the_centre_pose);
+    RUN_TEST(test_idle_reports_its_limp_servos_as_limp);
     RUN_TEST(test_a_standing_robot_holds_still);
     RUN_TEST(test_a_stick_held_in_walk_steps_the_legs);
     RUN_TEST(test_a_walk_obeys_its_last_command_for_600_ms_and_no_longer);

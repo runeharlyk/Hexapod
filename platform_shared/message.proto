@@ -56,7 +56,13 @@ message ModeData {
   bool handheld = 2;
 }
 message GaitData { GaitEnum gait = 1; }
-message AnglesData { repeated int32 angles = 1; } // 18 servos
+// The angles the servos hold, in whole degrees in servo order, three per leg (coxa, femur, tibia). A servo whose bit is
+// set in limp has been driven by no pulse since the boards woke, so no angle is known for it and its entry is 0. A
+// robot whose every servo is limp reports no angles at all, as one that has driven no pose yet.
+message AnglesData {
+  repeated int32 angles = 1;
+  uint32 limp = 2;
+}
 message IMUData {
   float x = 1;
   float y = 2;

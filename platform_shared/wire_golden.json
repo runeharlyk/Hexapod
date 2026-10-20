@@ -401,7 +401,8 @@
    "i2c_bus_recoveries": "15 uint32"
   },
   "socket_message.AnglesData": {
-   "angles": "1 repeated int32"
+   "angles": "1 repeated int32",
+   "limp": "2 uint32"
   },
   "socket_message.AnimationEntry": {
    "name": "1 string",

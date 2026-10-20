@@ -16,14 +16,14 @@
   import { goalLine } from '$lib/stores/goal'
   import type { ControllerInput, vector } from '$lib/types/models'
   import { VerticalSlider } from '$lib/components/input'
-  import { MotionModes, UNKNOWN_MODE_HINT } from '$lib/motion'
+  import { MotionModes, UNKNOWN_MODE_HINT, servoCount } from '$lib/motion'
   import { GaitType, strideApplies } from '$lib/gait'
   import { notifications } from '$lib/components/toasts/notifications'
   import { gamepadAxes, gamepadButtons, hasGamepad } from '$lib/stores/gamepad'
   import { shapeStick } from '$lib/utilities/stick'
   import { commandOf } from '$lib/controller-input'
   import { controlsFor } from '$lib/mode-controls'
-  import { drivingJoints } from '$lib/joint-drive'
+  import { drivingJoints, limpServos } from '$lib/joint-drive'
   import { resolve } from '$app/paths'
   import AnimationControls from './AnimationControls.svelte'
 
@@ -329,6 +329,11 @@
             <span class="badge badge-warning badge-sm shrink-0" aria-live="polite"
               >Driving the robot's joints</span
             >
+            {#if $limpServos}
+              <span class="badge badge-ghost badge-sm shrink-0" aria-live="polite"
+                >{servoCount($limpServos)} of 18 servos limp</span
+              >
+            {/if}
             <span class="text-xs">Drag a leg of the 3D model to move its servo</span>
           {:else if !$drivesSimulation}
             <span class="text-xs">Connect to the robot to drive its joints from the 3D model</span>

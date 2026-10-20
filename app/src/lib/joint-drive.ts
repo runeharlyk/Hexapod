@@ -1,4 +1,4 @@
-import { derived, type Readable } from 'svelte/store'
+import { derived, writable, type Readable } from 'svelte/store'
 import { MotionModes, urdfJointOrder } from '$lib/motion'
 import { JointAngleData } from '$lib/platform_shared/message'
 import { mode } from '$lib/robot/state'
@@ -45,6 +45,12 @@ export const drivingJoints: Readable<boolean> = derived(
   ([current, linked, simulation]) =>
     drivesJoints({ controllerView: true, mode: current, linked, simulation })
 )
+
+/**
+ * The servos the robot reports limp (limpOf), as the controller page's 3D view last heard them: a drag of one starts from
+ * the angle the model draws, since the robot knows none.
+ */
+export const limpServos = writable(0)
 
 /**
  * A joint as the robot takes it: the newest angle of each servo goes out, and while a write is under way only that

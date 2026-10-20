@@ -35,6 +35,7 @@ struct GaitMsg {
 
 struct ServoAnglesMsg {
     float angles[NUM_SERVO];
+    uint32_t limp; // a bit per servo driven by no pulse since the boards woke, whose angle is unknown
 };
 
 struct ServoSignalMsg {
