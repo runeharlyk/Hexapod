@@ -333,6 +333,20 @@ void test_a_borrow_ends_a_goal_only_from_a_mode_it_would_animate() {
     TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
 }
 
+// A walk asked for from an IDLE that holds servos it wrote borrows ANIMATE for the ease out of it, as the control task
+// will decide it, so it is judged a mode other than WALK and ends the goal; from an IDLE that wrote none it is WALK.
+void test_a_walk_from_an_idle_holding_written_servos_is_judged_the_ease_it_borrows() {
+    MotionInbox inbox;
+    inbox.noteMode({MOTION_STATE::IDLE, false, MOTION_STATE::STAND, true});
+    driving(inbox);
+    inbox.postMode({MOTION_STATE::WALK}, false);
+    TEST_ASSERT_TRUE(inbox.take(0).goalCancelled);
+    inbox.noteMode({MOTION_STATE::IDLE, false, MOTION_STATE::STAND, false});
+    driving(inbox);
+    inbox.postMode({MOTION_STATE::WALK}, false);
+    TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
+}
+
 // A goal walks in WALK: a mode that leaves it ends a goal accepted before it, and not one accepted after it.
 void test_a_mode_leaving_walk_ends_only_a_goal_posted_before_it() {
     {
@@ -693,6 +707,7 @@ int main(int, char **) {
     RUN_TEST(test_a_full_mode_queue_drops_the_oldest_and_keeps_a_newest_deactivation);
     RUN_TEST(test_the_replies_judge_the_mode_the_control_task_noted_last);
     RUN_TEST(test_a_borrow_ends_a_goal_only_from_a_mode_it_would_animate);
+    RUN_TEST(test_a_walk_from_an_idle_holding_written_servos_is_judged_the_ease_it_borrows);
     RUN_TEST(test_a_mode_leaving_walk_ends_only_a_goal_posted_before_it);
     RUN_TEST(test_the_replies_carry_the_pose_the_control_task_noted_last);
     RUN_TEST(test_a_clients_command_within_the_handheld_window_is_dropped);

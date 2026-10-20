@@ -67,17 +67,18 @@ class MotionService {
     // (animation/mode_arbiter.h); this executes them. The goal a mode ends was ended on arrival
     // (MotionInbox::postMode). Every mode applied, and the mode a refused borrow keeps, is published as APPLIED: the
     // robot reports a mode only once it is in it, and the observers that show the mode forward APPLIED alone. The mode
-    // is noted for the replies before it is reported, so a client that heard the report finds it in force.
+    // is noted for the replies before it is reported, so a client that heard the report finds it in force. The ease out
+    // of IDLE a mode of this tick borrowed has not begun yet, and is busy already: a mode after it waits for it.
     void handleInputMode(ModeMsg const &m) {
         _handbackSent = false;
-        const ModeArbiterDecision d = decideMode(
-            {motionState, _borrowedMode, _previousMode, m.mode, m.kind, _animation.busy(), _idleHeld});
+        const ModeArbiterDecision d = decideMode({motionState, _borrowedMode, _previousMode, m.mode, m.kind,
+                                                  _animation.busy() || _enterFromHeld, _idleHeld});
         _borrowedMode = d.borrowed;
         _previousMode = d.previous;
         if (d.cancelPending) _animation.cancelPendingPlay();
         if (d.requestLeave) _animation.requestLeave();
         if (d.action == ModeArbiterDecision::APPLY) applyMode(d.mode);
-        _inbox.noteMode({motionState, _borrowedMode, _previousMode});
+        noteModeState();
         if (d.action == ModeArbiterDecision::APPLY || d.action == ModeArbiterDecision::RESTATE)
             EventBus<ModeMsg>::publish({motionState, ModeMsgKind::APPLIED});
     }
@@ -100,7 +101,11 @@ class MotionService {
             _enterFromHeld = false;
         else if (motionState == MOTION_STATE::IDLE && _idleHeld)
             _enterFromHeld = true;
-        if (mode != MOTION_STATE::IDLE) _idleHeld = false;
+        // ANIMATE's pose, a play's or the ease's half done, is no motion's: IDLE holds it as one it wrote.
+        if (mode != MOTION_STATE::IDLE)
+            _idleHeld = false;
+        else if (motionState == MOTION_STATE::ANIMATE)
+            _idleHeld = true;
         motionState = mode;
 #if FT_ENABLED(USE_POLICY)
         // The policy was trained on the stance of fd 0 alone, so WALK_NN walks it whatever the feet distance, which
@@ -523,7 +528,7 @@ class MotionService {
     bool _handbackSent = false;              // a hand-back is queued; cleared by any mode taken
     bool _animating = false;                 // control task only: whether the last tick ran ANIMATE
     bool _idling = false;                    // control task only: whether the last tick ran IDLE
-    bool _idleHeld = false;      // control task only: IDLE has written servos, which hold a pose the motion did not set
+    bool _idleHeld = false; // control task only: IDLE holds servos at a pose no motion set, written there or ANIMATE's
     bool _enterFromHeld = false; // control task only: ANIMATE is entered from such an IDLE
     bool _handheldReported = false;          // control task only: whether the handheld drove, as last reported
 
@@ -708,7 +713,7 @@ class MotionService {
             msgAngles.angles[servo] = withinTravel(mail.joints.degrees[servo], servo % 3);
             written = true;
         }
-        if (written) _idleHeld = true;
+        if (written) holdIdle();
         if (entering || written) publishState();
     }
 
@@ -716,9 +721,18 @@ class MotionService {
     void centreServos() {
         _servoController->setCenterPwm();
         for (int servo = 0; servo < NUM_SERVO; ++servo) msgAngles.angles[servo] = _servoController->centreAngle(servo);
-        _idleHeld = true;
+        holdIdle();
         publishState();
     }
+
+    // Control task, IDLE: the servos hold a pose IDLE wrote, so a mode leaving it eases out of it.
+    void holdIdle() {
+        _idleHeld = true;
+        noteModeState();
+    }
+
+    // Control task: the arbiter's state, for the decisions taken on arrival (MotionInbox::postMode).
+    void noteModeState() { _inbox.noteMode({motionState, _borrowedMode, _previousMode, _idleHeld}); }
 
     // Control task, WALK. A stride change is a change of the walk, not of its posture, so it never pauses the walk; but
     // the command ramp alone eases a stroke change fast enough to move a joint up to 5.5 deg in a tick, past the

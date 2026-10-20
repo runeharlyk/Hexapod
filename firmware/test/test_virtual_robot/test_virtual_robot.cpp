@@ -1856,6 +1856,48 @@ void test_leaving_limp_idle_stands_up_as_from_deactivated() {
         if (j / 3 != 0) TEST_ASSERT_FLOAT_WITHIN(0.5f, dragged.servoAngles()[j], first[j]);
 }
 
+// IDLE taken during the ease out of IDLE, as the handheld's next press or the app's IDLE does, holds the joints where
+// the ease left them, a pose no motion set, so a STAND after it eases them again from there instead of snapping them to
+// the stand: the tibia it left folded would otherwise swing up to 240 deg in a tick.
+void test_idle_taken_during_the_ease_out_of_idle_holds_the_pose_the_ease_left() {
+    for (const int eased : {3, 10, 30}) {
+        VirtualRobot robot;
+        idleFromStand(robot);
+        dragAway(robot);
+        TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, takeOver(robot, MOTION_STATE::STAND, eased).modes.back());
+        Takeover run = takeOver(robot, MOTION_STATE::IDLE, 2);
+        TEST_ASSERT_EQUAL(MOTION_STATE::IDLE, run.modes.back());
+        TEST_ASSERT_EQUAL_FLOAT(0.0f, run.largestStep);
+        run = takeOver(robot, MOTION_STATE::STAND, ticksFor(2.0f));
+        char msg[80];
+        std::snprintf(msg, sizeof(msg), "IDLE after %d ticks of the ease: largest step %.2f deg", eased,
+                      run.largestStep);
+        TEST_MESSAGE(msg);
+        TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(IDLE_EASE_STEP_DEG + CAP_TOLERANCE_DEG, run.largestStep, msg);
+        TEST_ASSERT_EQUAL_MESSAGE(MOTION_STATE::ANIMATE, run.modes.front(), msg);
+        TEST_ASSERT_EQUAL_MESSAGE(MOTION_STATE::STAND, run.modes.back(), msg);
+    }
+}
+
+// Two modes out of an IDLE whose joints were dragged, taken in one tick, as a double press or two clients send them:
+// the first borrows ANIMATE for the ease, and the second, finding the ease begun, becomes the mode it hands back to
+// rather than applying at once.
+void test_a_second_mode_in_the_tick_of_the_ease_out_of_idle_waits_for_it() {
+    for (const MOTION_STATE second : {MOTION_STATE::STAND, MOTION_STATE::WALK}) {
+        VirtualRobot robot;
+        idleFromStand(robot);
+        dragAway(robot);
+        robot.setMode(MOTION_STATE::STAND);
+        const Takeover run = takeOver(robot, second, ticksFor(2.0f));
+        char msg[80];
+        std::snprintf(msg, sizeof(msg), "STAND then mode %d: largest step %.2f deg", (int)second, run.largestStep);
+        TEST_MESSAGE(msg);
+        TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(IDLE_EASE_STEP_DEG + CAP_TOLERANCE_DEG, run.largestStep, msg);
+        TEST_ASSERT_EQUAL_MESSAGE(MOTION_STATE::ANIMATE, run.modes.front(), msg);
+        TEST_ASSERT_EQUAL_MESSAGE(second, run.modes.back(), msg);
+    }
+}
+
 // Puppeteering keeps the servo's top speed whatever ANIMATE was entered for: a pose sent during the ease out of IDLE,
 // and after it in an ANIMATE asked for, is approached at 3.75 deg a tick, and so is the stand a graceful leave of that
 // pose eases home to.
@@ -2363,6 +2405,8 @@ int main(int, char **) {
     RUN_TEST(test_every_stop_eases_the_stroke_out_with_the_cadence);
     RUN_TEST(test_leaving_idle_after_drags_eases_the_joints_to_the_stand);
     RUN_TEST(test_leaving_limp_idle_stands_up_as_from_deactivated);
+    RUN_TEST(test_idle_taken_during_the_ease_out_of_idle_holds_the_pose_the_ease_left);
+    RUN_TEST(test_a_second_mode_in_the_tick_of_the_ease_out_of_idle_waits_for_it);
     RUN_TEST(test_puppeteering_and_its_leave_keep_the_servos_top_speed_beside_the_ease_out_of_idle);
     RUN_TEST(test_full_stick_walk_stays_in_travel_at_every_stride);
     RUN_TEST(test_a_gait_at_rest_takes_a_new_stride_at_once);

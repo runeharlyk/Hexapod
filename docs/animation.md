@@ -83,7 +83,8 @@ Every mode decision is made by the control task, at the start of the tick after 
   Leaving at once would snap joint-angle legs to stance at full servo speed.
   A mode observer sees the requested mode when the robot switches, about one exit time after the request.
 - DEACTIVATED and IDLE apply at the next tick even mid-play, because cutting the servos or stopping their drive immediately is the safety property.
-- An explicit STAND, WALK or WALK_NN from an IDLE that wrote a servo (a joint dragged, or the centring) borrows ANIMATE with the requested mode as the hand-back target.
+- An explicit STAND, WALK or WALK_NN from an IDLE that wrote a servo (a joint dragged, or the centring), or that was entered from ANIMATE (a play's pose, or this ease half done), borrows ANIMATE with the requested mode as the hand-back target.
+  A second explicit mode taken in the same tick finds the ease busy, though it has not begun, and becomes the hand-back target as a graceful leave does.
   The runner starts from the angles the servos hold, every leg in joint angles (`AnimationRunner::enterFromJoints`), and the puppet path eases them to stance, so the mode reported is ANIMATE until every leg is home.
   A servo still limp has no angle to ease from and is written at its stance angle at once, as a stand from DEACTIVATED writes it.
 - Any other explicit mode ends a borrow, so an explicit ANIMATE mid-play makes the robot stay in ANIMATE afterwards.

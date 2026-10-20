@@ -62,12 +62,13 @@ class MotionInbox {
         uint32_t id;
     };
 
-    // The arbiter's state (animation/mode_arbiter.h): the mode, whether ANIMATE is borrowed and the mode a hand-back
-    // returns to. It starts as MotionService does.
+    // The arbiter's state (animation/mode_arbiter.h): the mode, whether ANIMATE is borrowed, the mode a hand-back
+    // returns to and whether IDLE holds servos at a pose no motion set. It starts as MotionService does.
     struct ModeState {
         MOTION_STATE mode = MOTION_STATE::DEACTIVATED;
         bool borrowed = false;
         MOTION_STATE previous = MOTION_STATE::STAND;
+        bool idleHeld = false;
     };
 
     // Eight modes within one tick, or within an overrun of 20 ms per timed-out I2C transfer, against the ModeMsg bus
@@ -206,7 +207,7 @@ class MotionInbox {
         }
         _modes.items[_modes.count++] = m;
         const ModeArbiterDecision d =
-            decideMode({_applied.mode, _applied.borrowed, _applied.previous, m.mode, m.kind, busy});
+            decideMode({_applied.mode, _applied.borrowed, _applied.previous, m.mode, m.kind, busy, _applied.idleHeld});
         if (d.action == ModeArbiterDecision::APPLY && d.mode != MOTION_STATE::WALK) cancelGoalLocked();
     }
 
@@ -250,7 +251,7 @@ class MotionInbox {
                std::any_of(_modes.items, end, [](const ModeMsg &m) { return m.kind == ModeMsgKind::BORROW; });
     }
 
-    // Control task, as it applies or keeps each mode it took, before it reports it.
+    // Control task, as it applies or keeps each mode it took, before it reports it, and as IDLE writes a servo.
     void noteMode(const ModeState &applied) {
         std::lock_guard<std::mutex> lock(_mutex);
         _applied = applied;

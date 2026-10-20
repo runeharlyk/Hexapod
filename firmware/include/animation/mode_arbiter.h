@@ -24,11 +24,13 @@
 //   servo speed.
 // - DEACTIVATED and IDLE apply at once, even mid-play: they cut the servos or stop driving them, and that
 //   immediacy is the safety property.
-// - An explicit STAND or walking mode from an IDLE whose servos were written there (a joint dragged, or the centring)
-//   borrows ANIMATE with the requested mode as the hand-back target, so the puppet path eases every joint from the
-//   angle it holds to the stance before the new mode drives it, as a graceful leave does. Applying it at once would
-//   snap every dragged joint to the stand at full servo speed. From an IDLE that wrote nothing the servos hold the
-//   motion's last pose, or are limp, and the mode applies at once.
+// - An explicit STAND or walking mode from an IDLE whose servos hold a pose no motion set (a joint dragged, the
+//   centring, or the pose ANIMATE left as IDLE was entered from it, a play's or the ease's half done) borrows ANIMATE
+//   with the requested mode as the hand-back target, so the puppet path eases every joint from the angle it holds to
+//   the stance before the new mode drives it, as a graceful leave does. Applying it at once would snap those joints to
+//   the stand at full servo speed. From an IDLE entered from another mode and written nothing since, the mode applies
+//   at once. The control task counts the ease busy from the borrow on, so a second mode taken in the same tick is a
+//   graceful leave.
 // - Any other explicit mode applies and ends a borrow, so an explicit ANIMATE is sticky; an explicit
 //   mode other than ANIMATE also drops a play that was loaded but not started.
 
@@ -45,8 +47,8 @@ struct ModeArbiterInput {
     MOTION_STATE previous;
     MOTION_STATE requested;
     ModeMsgKind kind;
-    bool busy; // AnimationRunner::busy(): playing, a play pending, or a pose away from stance
-    bool idleHeld = false; // IDLE has written servos, which hold a pose the motion did not set
+    bool busy; // AnimationRunner::busy(): playing, a play pending, or a pose away from stance; or an ease out of IDLE
+    bool idleHeld = false; // IDLE holds servos at a pose no motion set: written there, or ANIMATE's
 };
 
 struct ModeArbiterDecision {
