@@ -233,17 +233,19 @@ export class DataBroker {
   }
 
   /**
-   * Motion (sticks, heartbeats, animation preview poses): sent at once when the link is idle; while a write is under
-   * way only the newest frame of its kind waits, and goes out when the write completes (transport/latest-frames.ts).
-   * The last frame, a released stick's stop or a drag's final pose, therefore always arrives while the link is up.
-   * Never queued for a link that is down nor sent after a reconnect, since a frame that waited would move the robot
-   * with the past. False when no link is up.
+   * Motion (sticks, heartbeats, animation preview poses, dragged joints): sent at once when the link is idle; while a
+   * write is under way only the newest frame of its kind waits, and goes out when the write completes
+   * (transport/latest-frames.ts). A frame's kind is its message, or with `slot` one part of what that message moves,
+   * such as a dragged joint's servo, so each part keeps its own newest frame. The last frame, a released stick's stop
+   * or a drag's final pose, therefore always arrives while the link is up. Never queued for a link that is down nor
+   * sent after a reconnect, since a frame that waited would move the robot with the past. False when no link is up.
    */
-  emitVolatile<T>(fns: MessageFns<T>, data: T): boolean {
+  emitVolatile<T>(fns: MessageFns<T>, data: T, slot?: number): boolean {
     const transport = this.activeTransport()
+    const kind = slot === undefined ? `${tagOf(fns)}` : `${tagOf(fns)}/${slot}`
     return (
       transport !== undefined &&
-      transport.sendLatest(tagOf(fns), encodeMessage(Message.create({ [keyOf(fns)]: data })))
+      transport.sendLatest(kind, encodeMessage(Message.create({ [keyOf(fns)]: data })))
     )
   }
 

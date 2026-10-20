@@ -28,6 +28,7 @@ export const REQUEST_KINDS: Record<RequestKey, RequestKind> = {
   mdnsQuery: 'read',
   servoSettingsGet: 'read',
   servoSettingsUpdate: 'setting',
+  servoCentre: 'action',
   peripheralSettingsGet: 'read',
   peripheralSettingsUpdate: 'setting',
   imuCalibrate: 'action',

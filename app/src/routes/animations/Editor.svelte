@@ -7,7 +7,7 @@
   import Visualization from '$lib/components/Visualization.svelte'
   import { notifications } from '$lib/components/toasts/notifications'
   import { Animation } from '$lib/platform_shared/animation'
-  import { MotionModes } from '$lib/motion'
+  import { MotionModes, modeFromWire } from '$lib/motion'
   import { outControllerData } from '$lib/stores'
   import { isLinked } from '$lib/stores/link'
   import { animationPreview } from '$lib/stores/animation'
@@ -76,8 +76,7 @@
       modeState.subscribe(({ value }) => {
         if (value === modeSeen) return
         modeSeen = value
-        if (value && Object.values(MotionModes)[value.mode] === MotionModes.ANIMATE)
-          sender?.resend()
+        if (value && modeFromWire(value.mode) === MotionModes.ANIMATE) sender?.resend()
       }),
       animationStatus.subscribe(status => {
         const state = status?.state ?? AnimationState.ANIM_IDLE

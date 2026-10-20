@@ -38,7 +38,7 @@ export const jointAngleFromPwm = (servo: Servo, joint: number, pwm: number) =>
 export const referenceAngle = (servo: Servo, joint: number) =>
   -servo.centerAngle - SERVO_ANGLE_OFFSET[joint]
 
-/** Every joint of a leg at its centre PWM, as the firmware's POSE mode (setCenterPwm) holds them. */
+/** Every joint of a leg at its centre PWM, as the servo page's "Centre all servos" (setCenterPwm) holds them. */
 export const referenceLeg = (servos: Servo[], leg: number): LegAngles => [
   referenceAngle(servos[leg * 3], 0),
   referenceAngle(servos[leg * 3 + 1], 1),

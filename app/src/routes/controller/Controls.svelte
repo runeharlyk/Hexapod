@@ -22,6 +22,10 @@
   import { gamepadAxes, gamepadButtons, hasGamepad } from '$lib/stores/gamepad'
   import { shapeStick } from '$lib/utilities/stick'
   import { commandOf } from '$lib/controller-input'
+  import { controlsFor } from '$lib/mode-controls'
+  import { drivingJoints } from '$lib/joint-drive'
+  import { resolve } from '$app/paths'
+  import AnimationControls from './AnimationControls.svelte'
 
   type SliderKey = 'height' | 'feetDistance' | 'speed' | 's1' | 'stride'
 
@@ -123,7 +127,7 @@
   }
 
   const handleKeyDown = (event: KeyboardEvent) => {
-    if (!(event.code in DRIVE_KEYS) || event.repeat) return
+    if (!controls.sticks || !(event.code in DRIVE_KEYS) || event.repeat) return
     if (event.ctrlKey || event.altKey || event.metaKey || isTypingTarget(event.target)) return
     heldKeys.add(event.code)
     syncHeldKeys()
@@ -162,59 +166,69 @@
   }
 
   const goalText = $derived($drivenGoal ? goalLine($drivenGoal) : null)
+
+  // Each mode shows only the controls it reads, beside the mode buttons (lib/mode-controls.ts).
+  const controls = $derived(controlsFor($drivenMode))
 </script>
 
 <div class="absolute top-0 left-0 h-screen w-screen">
   <!-- pb keeps the sticks clear of the control cluster on short screens; lg has room to spare -->
   <div class="absolute top-0 left-0 flex h-full w-full pb-40 lg:pb-0">
+    <!-- The sticks are created once and hidden, not removed, in the modes that read none. -->
     <div
       id="left"
       class="flex w-40 shrink-0 items-center justify-center lg:w-60 lg:justify-end"
+      class:invisible={!controls.sticks}
     ></div>
     <div class="flex-1"></div>
     <div
       id="right"
       class="flex w-40 shrink-0 items-center justify-center lg:w-60 lg:justify-start"
+      class:invisible={!controls.sticks}
     ></div>
   </div>
 
-  <div class="absolute right-0 bottom-0 z-10 hidden flex-col gap-2 p-4 lg:flex">
-    <div class="flex w-full justify-center">
-      <kbd class="kbd">W</kbd>
+  {#if controls.sticks}
+    <div class="absolute right-0 bottom-0 z-10 hidden flex-col gap-2 p-4 lg:flex">
+      <div class="flex w-full justify-center">
+        <kbd class="kbd">W</kbd>
+      </div>
+      <div class="flex w-full justify-center gap-2">
+        <kbd class="kbd">A</kbd>
+        <kbd class="kbd">S</kbd>
+        <kbd class="kbd">D</kbd>
+      </div>
     </div>
-    <div class="flex w-full justify-center gap-2">
-      <kbd class="kbd">A</kbd>
-      <kbd class="kbd">S</kbd>
-      <kbd class="kbd">D</kbd>
-    </div>
-  </div>
+  {/if}
 
   <div class="absolute bottom-0 left-0 z-10 flex max-w-full items-end overflow-x-auto">
-    <div class="bg-base-300/70 flex shrink-0 flex-col items-center gap-1 p-3 pb-2">
-      <VerticalSlider
-        id="height"
-        min={-1}
-        step={0.01}
-        max={1}
-        value={$input.height}
-        oninput={(e: Event) => handleRange(e, 'height')}
-      />
-      <span class="font-mono text-xs tabular-nums">{$input.height.toFixed(2)}</span>
-      <label for="height" class="text-xs">Ht</label>
-    </div>
+    {#if controls.posture}
+      <div class="bg-base-300/70 flex shrink-0 flex-col items-center gap-1 p-3 pb-2">
+        <VerticalSlider
+          id="height"
+          min={-1}
+          step={0.01}
+          max={1}
+          value={$input.height}
+          oninput={(e: Event) => handleRange(e, 'height')}
+        />
+        <span class="font-mono text-xs tabular-nums">{$input.height.toFixed(2)}</span>
+        <label for="height" class="text-xs">Ht</label>
+      </div>
 
-    <div class="bg-base-300/70 flex shrink-0 flex-col items-center gap-1 rounded-tr-xl p-3 pb-2">
-      <VerticalSlider
-        id="feetDistance"
-        min={-1}
-        step={0.01}
-        max={1}
-        value={$input.feetDistance}
-        oninput={(e: Event) => handleRange(e, 'feetDistance')}
-      />
-      <span class="font-mono text-xs tabular-nums">{$input.feetDistance.toFixed(2)}</span>
-      <label for="feetDistance" class="text-xs">Dist</label>
-    </div>
+      <div class="bg-base-300/70 flex shrink-0 flex-col items-center gap-1 rounded-tr-xl p-3 pb-2">
+        <VerticalSlider
+          id="feetDistance"
+          min={-1}
+          step={0.01}
+          max={1}
+          value={$input.feetDistance}
+          oninput={(e: Event) => handleRange(e, 'feetDistance')}
+        />
+        <span class="font-mono text-xs tabular-nums">{$input.feetDistance.toFixed(2)}</span>
+        <label for="feetDistance" class="text-xs">Dist</label>
+      </div>
+    {/if}
 
     <div
       class="bg-base-300/70 flex h-min shrink-0 flex-wrap items-end gap-4 rounded-tr-xl p-3 pl-0"
@@ -230,7 +244,7 @@
             {capitalize(modeValue)}
           </button>
         {/each}
-        {#if $drivenMode === MotionModes.WALK}
+        {#if controls.gait}
           <select
             class="select select-primary select-sm lg:select-md w-auto"
             aria-label="Gait"
@@ -246,7 +260,7 @@
         {/if}
       </div>
 
-      {#if $drivenMode === MotionModes.WALK}
+      {#if controls.walk}
         <div class="flex gap-4">
           <div>
             <div class="flex items-baseline justify-between gap-2">
@@ -301,6 +315,24 @@
             />
           </div>
         </div>
+      {/if}
+
+      {#if controls.joints}
+        <div class="flex flex-wrap items-center gap-2">
+          {#if $drivingJoints}
+            <span class="badge badge-warning badge-sm shrink-0" aria-live="polite"
+              >Driving the robot's joints</span
+            >
+            <span class="text-xs">Drag a leg of the 3D model to move its servo</span>
+          {:else if !$drivesSimulation}
+            <span class="text-xs">Connect to the robot to drive its joints from the 3D model</span>
+          {/if}
+          <a class="link text-xs" href={resolve('/peripherals/servo')}>Servos</a>
+        </div>
+      {/if}
+
+      {#if controls.animation}
+        <AnimationControls />
       {/if}
     </div>
 

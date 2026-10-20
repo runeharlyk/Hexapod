@@ -210,7 +210,7 @@ export function createSerialAdapter(): SerialTransport {
     write(encodeSerialFrame(data))
   }
 
-  const sendLatest = (kind: number, data: Uint8Array) => {
+  const sendLatest = (kind: string, data: Uint8Array) => {
     if (!answering || !opened?.writable || data.length > SERIAL_MAX_MESSAGE) return false
     latest.offer(kind, data)
     return true

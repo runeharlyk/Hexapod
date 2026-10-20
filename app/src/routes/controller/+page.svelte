@@ -9,6 +9,6 @@
 <div class="absolute top-0 select-none w-screen h-screen">
   <Controls />
   <div class="absolute w-full h-screen top-0 overflow-hidden">
-    <WidgetContainer container={layout.content} />
+    <WidgetContainer container={layout.content} driveJoints />
   </div>
 </div>

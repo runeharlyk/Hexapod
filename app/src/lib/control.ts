@@ -1,5 +1,5 @@
 import { GaitType } from '$lib/gait'
-import { MotionModes } from '$lib/motion'
+import { MotionModes, modeToWire } from '$lib/motion'
 import { mode as modeStore } from '$lib/robot/state'
 import { dataBroker } from '$lib/transport/databroker'
 import { describeFailure } from '$lib/transport/reply'
@@ -28,7 +28,7 @@ const act = <T>(fns: MessageFns<T>, data: T, failed: string) => {
 // The mode and the gait shown are the robot's, from its pushes, never the request's: a mode it refuses pushes nothing.
 export const requestMode = (nextMode: MotionModes) => {
   // The robot reads the mode alone; whether the handheld drives is its own to report.
-  const mode = { mode: Object.values(MotionModes).indexOf(nextMode), handheld: false }
+  const mode = { mode: modeToWire(nextMode), handheld: false }
   act(ModeData, mode, 'Mode not changed')
 }
 

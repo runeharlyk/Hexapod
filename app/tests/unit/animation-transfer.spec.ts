@@ -18,7 +18,6 @@ import {
   uploadAnimation
 } from '$lib/animation/transfer'
 import { PoseSender, playAnimation, stopAnimation } from '$lib/control'
-import { MotionModes } from '$lib/motion'
 import { stancePose } from '$lib/animation/model'
 
 const robot = new FakeRobot()
@@ -266,13 +265,5 @@ describe('PoseSender', () => {
     sender.cancel()
     vi.advanceTimersByTime(200)
     expect(poses()).toHaveLength(0)
-  })
-})
-
-describe('MotionModes', () => {
-  it('lists ANIMATE last at wire index 6', () => {
-    const modes = Object.values(MotionModes)
-    expect(modes[modes.length - 1]).toBe(MotionModes.ANIMATE)
-    expect(modes.indexOf(MotionModes.ANIMATE)).toBe(6)
   })
 })

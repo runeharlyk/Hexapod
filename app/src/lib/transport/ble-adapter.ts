@@ -179,7 +179,7 @@ function createBLEAdapter(): BLEAdapter {
     }
   }
 
-  const sendLatest = (kind: number, data: Uint8Array) => {
+  const sendLatest = (kind: string, data: Uint8Array) => {
     if (!rx || !device?.gatt?.connected) return false
     latest.offer(kind, data)
     return true

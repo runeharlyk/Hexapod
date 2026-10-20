@@ -149,7 +149,7 @@ function createWebSocketAdapter(): ITransport {
     ws.send(data)
   }
 
-  const sendLatest = (kind: number, data: Uint8Array) => {
+  const sendLatest = (kind: string, data: Uint8Array) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return false
     latest.offer(kind, data)
     watchDrain()

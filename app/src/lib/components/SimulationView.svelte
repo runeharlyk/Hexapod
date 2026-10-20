@@ -6,7 +6,7 @@
   import SceneBuilder from '$lib/sceneBuilder'
   import { driveSimulation, simulation } from '$lib/stores/drive'
   import { loadModel } from '$lib/utilities/model-utilities'
-  import { MotionModes, urdfJointOrder } from '$lib/motion'
+  import { modeToWire, urdfJointOrder } from '$lib/motion'
   import { GaitType } from '$lib/gait'
   import { loadSimulation } from '$lib/simulation/load'
   import { HexapodSim } from '$lib/simulation/hexapod-sim'
@@ -48,7 +48,7 @@
       ;[model, jointNames] = urdf.inner
       placeModel(model)
       unsubscribers = [
-        simulation.mode.subscribe(m => robot?.setMode(Object.values(MotionModes).indexOf(m))),
+        simulation.mode.subscribe(m => robot?.setMode(modeToWire(m))),
         simulation.gait.subscribe(g => robot?.setGait(Object.values(GaitType).indexOf(g)))
       ]
       lastFrame = performance.now()
@@ -120,7 +120,7 @@
 
   const reset = () => {
     sim?.reset()
-    robot?.setMode(Object.values(MotionModes).indexOf(get(simulation.mode)))
+    robot?.setMode(modeToWire(get(simulation.mode)))
     lastFrame = performance.now()
   }
 

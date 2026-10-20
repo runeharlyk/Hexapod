@@ -23,12 +23,7 @@ describe('control link', () => {
   })
 
   it('leaves animations and the idle modes to the firmware', () => {
-    for (const mode of [
-      MotionModes.DEACTIVATED,
-      MotionModes.IDLE,
-      MotionModes.POSE,
-      MotionModes.ANIMATE
-    ]) {
+    for (const mode of [MotionModes.DEACTIVATED, MotionModes.IDLE, MotionModes.ANIMATE]) {
       expect(needsHeartbeat(mode)).toBe(false)
     }
   })

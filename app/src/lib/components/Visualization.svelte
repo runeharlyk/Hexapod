@@ -8,7 +8,7 @@
   import type { URDFRobot } from 'urdf-loader'
   import { degToRad, lerp } from 'three/src/math/MathUtils'
   import { GaitType } from '$lib/gait'
-  import { MotionModes, urdfJointOrder } from '$lib/motion'
+  import { MotionModes, modeToWire, urdfJointOrder } from '$lib/motion'
   import { dataBroker } from '$lib/transport/databroker'
   import { AnglesData, IMUData } from '$lib/platform_shared/message'
   import { Quaternion, Vector3 } from 'three'
@@ -26,9 +26,13 @@
   import type { Vec3 } from '$lib/animation/model'
   import { DEFAULT_FEET } from '$lib/animation/model'
   import { handleColor, legMask, sceneToOffset, stanceToScene } from '$lib/animation/handles'
+  import { JointDrive, drivingJoints } from '$lib/joint-drive'
+  import { JointDrag } from '$lib/joint-drag'
+  import type { URDFJoint } from 'urdf-loader'
 
-  // A view of the robot, never a control: it reads the robot's angles, mode and gait and sends the robot nothing, so
-  // only the controller changes the robot's mode. Its panel poses the drawn model alone.
+  // A view of the robot: it reads the robot's angles, mode and gait and never changes the robot's mode, which only the
+  // controller does, and its panel poses the drawn model alone. The controller page's view, given driveJoints, is the
+  // one that sends anything: while the robot idles, a joint dragged with the pointer drives that servo (joint-drive.ts).
   interface Props {
     sky?: boolean
     orbit?: boolean
@@ -38,6 +42,8 @@
     previewMode?: MotionModes
     // Draggable foot spheres; offsets are body-frame mm from DEFAULT_FEET.
     handles?: { onDrag: (leg: number, offsetMm: Vec3) => void; onDragEnd: () => void }
+    // The controller page's view: its joints drive the robot's servos while drivingJoints holds.
+    driveJoints?: boolean
   }
 
   let {
@@ -46,7 +52,8 @@
     panel = true,
     ground = true,
     previewMode,
-    handles
+    handles,
+    driveJoints = false
   }: Props = $props()
 
   let sceneManager = $state(new SceneBuilder())
@@ -65,7 +72,6 @@
   let pendingSeconds = 0
   let lastFrame = 0
   const MAX_FRAME_SECONDS = 0.05
-  const modeIndex = (m: MotionModes) => Object.values(MotionModes).indexOf(m)
   const gaitIndex = (g: GaitType) => Object.values(GaitType).indexOf(g)
 
   let gui_panel: GUI
@@ -82,6 +88,8 @@
   let unsubscribers: (() => void)[] = []
   let destroyed = false
   let preview: AnimationPreview | null = null
+  let jointDrive: JointDrive | undefined
+  let jointDrag: JointDrag | undefined
 
   onMount(async () => {
     await populateModelCache()
@@ -91,8 +99,12 @@
 
     createScene()
     if (panel) createPanel()
+    if (driveJoints) {
+      jointDrive = new JointDrive(drivingJoints)
+      unsubscribers.push(drivingJoints.subscribe(followDriving))
+    }
 
-    unsubscribers = [
+    unsubscribers.push(
       outControllerData.subscribe(data => (sticks = data)),
       dataBroker.on(AnglesData, data => {
         settings['Internal kinematic'] = false
@@ -106,15 +118,15 @@
       }),
       gait.subscribe(g => virtualRobot?.setGait(gaitIndex(g))),
       animationPreview.subscribe(value => (preview = value)),
-      ...(previewMode ? [] : [mode.subscribe(m => virtualRobot?.setMode(modeIndex(m)))])
-    ]
+      ...(previewMode ? [] : [mode.subscribe(m => virtualRobot?.setMode(modeToWire(m)))])
+    )
     if (import.meta.env.VITE_USE_HOST_NAME !== 'true') {
       loadVirtualRobot()
         .then(robot => {
           if (destroyed) return
           // Until the firmware sends a pose, the model rests in its stand rather than with its legs out straight.
           show(robot.standPose())
-          robot.setMode(modeIndex(previewMode ?? $mode))
+          robot.setMode(modeToWire(previewMode ?? $mode))
           robot.setGait(gaitIndex($gait))
           virtualRobot = robot
           lastFrame = performance.now()
@@ -126,6 +138,8 @@
   onDestroy(() => {
     destroyed = true
     unsubscribers.forEach(unsubscribe => unsubscribe())
+    jointDrag?.dispose()
+    jointDrive?.dispose()
     sceneManager.dispose()
     canvas?.remove()
     gui_panel?.destroy()
@@ -167,6 +181,34 @@
     for (let i = 0; i < $jointNames.length; i++) {
       targetAngles[i] = jointAngles[$jointNames[i]]
     }
+  }
+
+  // Dragging a joint takes effect only while the robot idles over a link; leaving IDLE or losing the link ends it.
+  const followDriving = (driving: boolean) => {
+    if (!driving) {
+      jointDrag?.dispose()
+      jointDrag = undefined
+    } else if (!jointDrag && sceneManager.model) {
+      jointDrag = new JointDrag(
+        sceneManager.model,
+        sceneManager.camera,
+        sceneManager.renderer.domElement,
+        turnJoint
+      )
+    }
+  }
+
+  // The model shows the joint where the drag put it, within its limits, as the panel's pose by hand does, and the
+  // robot is sent that angle.
+  const turnJoint = (joint: URDFJoint, angle: number) => {
+    const index = $jointNames.indexOf(joint.urdfName)
+    if (index < 0) return
+    joint.setJointValue(angle)
+    settings['Internal kinematic'] = false
+    targetAngles[index] = joint.angle
+    jointAngles[joint.urdfName] = joint.angle
+    sceneManager.invalidate()
+    jointDrive?.drag(index, joint.angle)
   }
 
   // Joint angles in degrees in the firmware's order, as the robot reports them and the virtual robot drives them.

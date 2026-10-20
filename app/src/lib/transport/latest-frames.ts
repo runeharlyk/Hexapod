@@ -6,7 +6,7 @@
  * a reconnect, it would move the robot with the past.
  */
 export class LatestFrames {
-  private readonly waiting = new Map<number, Uint8Array>()
+  private readonly waiting = new Map<string, Uint8Array>()
 
   constructor(
     private readonly link: {
@@ -16,7 +16,7 @@ export class LatestFrames {
     }
   ) {}
 
-  offer(kind: number, data: Uint8Array) {
+  offer(kind: string, data: Uint8Array) {
     this.waiting.set(kind, data)
     this.drained()
   }

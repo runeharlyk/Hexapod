@@ -6,7 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { get, writable } from 'svelte/store'
 import { DataBroker } from '$lib/transport/databroker'
 import type { ITransport } from '$lib/interfaces/transport.interface'
-import { ControllerInputData, Message, PoseData } from '$lib/platform_shared/message'
+import {
+  ControllerInputData,
+  JointAngleData,
+  Message,
+  PoseData
+} from '$lib/platform_shared/message'
 import { followSticks, STICK_INTERVAL_MS } from '$lib/stick-link'
 import { MotionModes } from '$lib/motion'
 import type { Command } from '$lib/simulation/virtual-robot'
@@ -202,6 +207,33 @@ describe.each(RIGS)('motion frames over %s', (_, makeRig) => {
       ).toEqual(['input', 'input', 'pose'])
     )
     expect(forward(rig.received())).toEqual([0.125, 0.25])
+  })
+
+  // A drag moves one joint after another, so each servo is a kind of its own: the newest angle of every joint dragged
+  // during a write goes out, and no joint's last angle replaces another's.
+  it('keeps the newest angle of each joint, not one for all the joints', async () => {
+    rig.hold()
+    const joint = (servo: number, degrees: number) =>
+      broker.emitVolatile(JointAngleData, { servo, degrees }, servo)
+    joint(4, 1)
+    joint(4, 2)
+    joint(4, 3)
+    joint(7, 10)
+    joint(7, 11)
+
+    rig.release()
+
+    await vi.waitFor(() =>
+      expect(
+        rig
+          .received()
+          .flatMap(m => (m.jointAngle ? [[m.jointAngle.servo, m.jointAngle.degrees]] : []))
+      ).toEqual([
+        [4, 1],
+        [4, 3],
+        [7, 11]
+      ])
+    )
   })
 
   it('sends nothing that waited for a link that went down, and takes nothing while it is down', async () => {
