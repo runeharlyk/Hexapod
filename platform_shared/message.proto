@@ -16,11 +16,13 @@ message PongMsg {}
 message SubscribeNotification { int32 tag = 1; }
 message UnsubscribeNotification { int32 tag = 1; }
 
-// Mirrors firmware MOTION_STATE. Serialized by enum value.
+// Mirrors firmware MOTION_STATE. Serialized by enum value. 2 was POSE, every servo at its centre pulse, which the
+// calibration page's ServoCentreRequest does from IDLE now; a deployed app may still send it, so it stays unused.
 enum ModesEnum {
+  reserved 2;
+  reserved "POSE";
   DEACTIVATED = 0;
   IDLE = 1;
-  POSE = 2;
   STAND = 3;
   WALK = 4;
   WALK_NN = 5;
@@ -67,6 +69,15 @@ message ServoPWMData {
   uint32 servo_pwm = 2;
 }
 message ServoStateData { bool active = 1; }
+// One joint's angle in degrees, as the robot reports its angles (AnglesData): taken in IDLE only and ignored in every
+// other mode, held within the joint's travel and written to that servo alone. Sent as a drag of the 3D model moves.
+message JointAngleData {
+  uint32 servo = 1;  // 0-17, three per leg (coxa, femur, tibia) in leg order
+  float degrees = 2;
+}
+// Every servo to its calibrated centre pulse, so the calibration page can line the joints up with their marks.
+// Answered with an empty response: 200 done at the next tick, 409 the robot is not idle.
+message ServoCentreRequest {}
 
 // --- Correlation RPC (request/response over the websocket) ---
 
@@ -352,6 +363,7 @@ message CorrelationRequest {
     api.MDNSQueryRequest mdns_query = 71;
     api.ServoSettingsRequest servo_settings_get = 80;
     api.ServoSettings servo_settings_update = 81;
+    ServoCentreRequest servo_centre = 82;
     api.PeripheralSettingsRequest peripheral_settings_get = 90;
     api.PeripheralSettings peripheral_settings_update = 91;
     ImuCalibrateRequest imu_calibrate = 92;
@@ -493,6 +505,7 @@ message Message {
     AnglesData angles = 170;
     ServoPWMData servo_pwm = 210;
     ServoStateData servo_state = 211;
+    JointAngleData joint_angle = 212;
     SystemCommandData system_command = 120;
     api.WifiStatus wifi_status = 250;  // observable status: pushed on change (connect/disconnect)
     api.APStatus ap_status = 251;      // observable status: pushed on AP up/down/station change

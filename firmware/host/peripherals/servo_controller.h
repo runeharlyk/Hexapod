@@ -16,6 +16,8 @@ class ServoController {
     struct Output {
         bool awake = false;    // activated, so the PCA9685s run
         unsigned writes = 0;   // poses sent since boot; until the first an awake board drives no pulse
+        unsigned jointWrites = 0; // single joints written, in IDLE
+        unsigned centrings = 0;   // every servo sent to its centre pulse, in IDLE
         float angles[NUM_SERVO] = {};
     };
 
@@ -26,7 +28,16 @@ class ServoController {
     void activate() { state().awake = true; }
     void deactivate() { state().awake = false; }
     // The centre PWMs are the calibration's, which this stand-in does not hold; the joints keep their angles.
-    void setCenterPwm() { _write = socket_message_ServoWrite_SERVO_WRITE_OK; }
+    void setCenterPwm() {
+        state().centrings++;
+        _write = socket_message_ServoWrite_SERVO_WRITE_OK;
+    }
+    // As the robot's controller does: that joint alone, held within its travel; a malformed one writes nothing.
+    void setJointAngle(int servo, float angleDeg) {
+        if (servo < 0 || servo >= NUM_SERVO || !std::isfinite(angleDeg)) return;
+        state().angles[servo] = withinTravel(angleDeg, servo % 3);
+        state().jointWrites++;
+    }
     // As the robot's controller does: each joint held within its travel, and a non-finite command ignored.
     void setAngles(float angles[NUM_SERVO]) {
         for (int i = 0; i < NUM_SERVO; ++i)

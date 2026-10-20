@@ -111,8 +111,8 @@ void test_a_mode_is_reported_applied_in_the_tick_that_applies_it() {
     auto listener = EventBus<ModeMsg>::subscribe([&applied](const ModeMsg &m) {
         if (m.kind == ModeMsgKind::APPLIED) applied.push_back(m.mode);
     });
-    for (const MOTION_STATE mode : {MOTION_STATE::STAND, MOTION_STATE::WALK, MOTION_STATE::IDLE, MOTION_STATE::POSE,
-                                    MOTION_STATE::STAND, MOTION_STATE::DEACTIVATED}) {
+    for (const MOTION_STATE mode : {MOTION_STATE::STAND, MOTION_STATE::WALK, MOTION_STATE::IDLE, MOTION_STATE::STAND,
+                                    MOTION_STATE::DEACTIVATED}) {
         applied.clear();
         robot.setMode(mode);
         host_bus::drainAll();
@@ -122,6 +122,100 @@ void test_a_mode_is_reported_applied_in_the_tick_that_applies_it() {
         TEST_ASSERT_EQUAL_size_t(1, applied.size());
         TEST_ASSERT_EQUAL(mode, applied[0]);
     }
+}
+
+// The modes a joint drag or a centring must never move the robot in.
+constexpr MOTION_STATE NOT_IDLE[] = {MOTION_STATE::DEACTIVATED, MOTION_STATE::STAND, MOTION_STATE::WALK,
+                                     MOTION_STATE::WALK_NN, MOTION_STATE::ANIMATE};
+
+void idleFromStand(VirtualRobot &robot) {
+    standUp(robot);
+    robot.setMode(MOTION_STATE::IDLE);
+    robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::IDLE, robot.mode());
+}
+
+// IDLE stops the motion where it is: the servos keep the stand's angles and no pose is written over them, so a joint
+// dragged first moves from where the robot stands.
+void test_entering_idle_holds_the_servos_angles() {
+    VirtualRobot robot;
+    standUp(robot);
+    float stood[18];
+    std::copy_n(robot.servoAngles(), 18, stood);
+    const unsigned writes = robot.servoWrites();
+    robot.setMode(MOTION_STATE::IDLE);
+    for (int t = 0; t < ticksFor(1.0f); ++t) robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::IDLE, robot.mode());
+    TEST_ASSERT_EQUAL_UINT(writes, robot.servoWrites());
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(stood, robot.servoAngles(), 18);
+}
+
+// A joint dragged in IDLE moves that servo alone, from the next tick, and every other joint holds its angle.
+void test_a_joint_in_idle_moves_only_its_servo() {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    float held[18];
+    std::copy_n(robot.servoAngles(), 18, held);
+    robot.setJoint(4, 20.0f);
+    TEST_ASSERT_EQUAL_FLOAT(held[4], robot.servoAngles()[4]);
+    robot.tick();
+    held[4] = 20.0f;
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(held, robot.servoAngles(), 18);
+    TEST_ASSERT_EQUAL_UINT(1, robot.jointWrites());
+}
+
+void test_a_joint_in_idle_is_held_within_its_travel() {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    robot.setJoint(0, 80.0f);
+    robot.setJoint(5, -170.0f);
+    robot.tick();
+    TEST_ASSERT_EQUAL_FLOAT(JOINT_LIMIT_DEG[0], robot.servoAngles()[0]);
+    TEST_ASSERT_EQUAL_FLOAT(-JOINT_LIMIT_DEG[2], robot.servoAngles()[5]);
+}
+
+// Outside IDLE a joint is ignored: the motion owns the servos, and deactivated they are limp.
+void test_a_joint_outside_idle_is_ignored() {
+    for (const MOTION_STATE mode : NOT_IDLE) {
+        VirtualRobot robot;
+        standUp(robot);
+        robot.setMode(mode);
+        for (int t = 0; t < ticksFor(0.2f); ++t) robot.tick();
+        TEST_ASSERT_EQUAL(mode, robot.mode());
+        robot.setJoint(4, 20.0f);
+        robot.tick();
+        TEST_ASSERT_EQUAL_UINT(0, robot.jointWrites());
+    }
+}
+
+// A joint dragged while a mode leaving IDLE is on its way finds that mode applied first, and moves nothing.
+void test_a_joint_sent_behind_a_mode_out_of_idle_is_ignored() {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    robot.setMode(MOTION_STATE::STAND);
+    robot.setJoint(4, 20.0f);
+    robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, robot.mode());
+    TEST_ASSERT_EQUAL_UINT(0, robot.jointWrites());
+}
+
+// The calibration page's "Centre all servos": accepted, and carried out at the next tick, in IDLE alone.
+void test_the_servos_are_centred_only_in_idle() {
+    for (const MOTION_STATE mode : NOT_IDLE) {
+        VirtualRobot robot;
+        standUp(robot);
+        robot.setMode(mode);
+        for (int t = 0; t < ticksFor(0.2f); ++t) robot.tick();
+        TEST_ASSERT_EQUAL_INT(409, robot.centreServos());
+        robot.tick();
+        TEST_ASSERT_EQUAL_UINT(0, robot.centrings());
+    }
+    VirtualRobot robot;
+    idleFromStand(robot);
+    TEST_ASSERT_EQUAL_INT(200, robot.centreServos());
+    TEST_ASSERT_EQUAL_UINT(0, robot.centrings());
+    robot.tick();
+    TEST_ASSERT_EQUAL_UINT(1, robot.centrings());
 }
 
 void test_a_standing_robot_holds_still() {
@@ -1802,6 +1896,12 @@ int main(int, char **) {
     RUN_TEST(test_a_standing_robot_drives_its_servos_to_the_motions_pose);
     RUN_TEST(test_a_mode_request_reaches_the_motion_through_the_bus);
     RUN_TEST(test_a_mode_is_reported_applied_in_the_tick_that_applies_it);
+    RUN_TEST(test_entering_idle_holds_the_servos_angles);
+    RUN_TEST(test_a_joint_in_idle_moves_only_its_servo);
+    RUN_TEST(test_a_joint_in_idle_is_held_within_its_travel);
+    RUN_TEST(test_a_joint_outside_idle_is_ignored);
+    RUN_TEST(test_a_joint_sent_behind_a_mode_out_of_idle_is_ignored);
+    RUN_TEST(test_the_servos_are_centred_only_in_idle);
     RUN_TEST(test_a_standing_robot_holds_still);
     RUN_TEST(test_a_stick_held_in_walk_steps_the_legs);
     RUN_TEST(test_a_walk_obeys_its_last_command_for_600_ms_and_no_longer);

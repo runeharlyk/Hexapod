@@ -175,6 +175,20 @@ class ServoController {
         }
     }
 
+    // Control task, IDLE: one joint dragged in the app, through the same travel, calibration and direction as the
+    // motion's angles, written to its own channel alone, so every other servo holds its pulse. Like the calibration
+    // page's single channel it is not backed off, since a person drives it, and no tick reports it.
+    void setJointAngle(int servo, float angleDeg) {
+        if (servo < 0 || servo >= NUM_SERVO || !std::isfinite(angleDeg)) return;
+        const int joint = servo % 3;
+        target_angles[servo] = withinTravel(angleDeg, joint) + (joint == 2 ? 90.0f : 0.0f);
+        const ServoCfg &c = cfg[servo];
+        const uint16_t pwm = toPwm(target_angles[servo], c);
+        (servo < 9 ? right_pwm : left_pwm)[c.pin] = pwm;
+        (servo < 9 ? _right : _left).setPWM(c.pin, pwm);
+    }
+
+    // Control task, IDLE: every servo to its calibrated centre pulse, the pose the calibration page lines joints up in.
     void setCenterPwm() {
         for (int i = 0; i < 9; i++) {
             right_pwm[cfg[i].pin] = cfg[i].centerPwm;

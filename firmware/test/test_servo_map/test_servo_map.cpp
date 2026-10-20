@@ -5,6 +5,9 @@
 
 #include <unity.h>
 
+#include <array>
+#include <cmath>
+
 #include "../../include/peripherals/servo_controller.h"
 
 namespace {
@@ -99,8 +102,8 @@ void test_each_side_runs_front_to_rear_on_channels_8_2_and_5() {
     }
 }
 
-// The calibration page writes one servo's raw pulse, and POSE sends every servo to its calibrated centre; both reach
-// the same physical servo as the gait does.
+// The calibration page writes one servo's raw pulse, and its "Centre all servos" sends every servo to its calibrated
+// centre; both reach the same physical servo as the gait does.
 void test_a_raw_pulse_reaches_the_servo_the_gait_drives() {
     ServoController& controller = started();
     controller.servoEvent({0, 400});
@@ -122,6 +125,62 @@ void test_the_calibrated_centres_reach_their_own_servos() {
     controller.applyCalibration(ServoSettings_defaults());
 }
 
+// Both boards' channel registers, to tell which a write touched.
+std::array<int, 32> channels() {
+    std::array<int, 32> pulses {};
+    for (int ch = 0; ch < 16; ch++) {
+        pulses[ch] = offCount(RIGHT_BOARD, ch);
+        pulses[16 + ch] = offCount(LEFT_BOARD, ch);
+    }
+    return pulses;
+}
+
+// A joint dragged in IDLE: its angle reaches its own servo through the calibration and direction the gait's angles
+// take, and no other channel on either board is written, so a servo nobody touched holds whatever pulse it had.
+void test_a_joint_angle_moves_only_its_own_servo() {
+    ServoController& controller = started();
+    controller.activate();
+    const std::array<int, 32> before = channels();
+    controller.setJointAngle(4, 20.0f); // right middle femur, the right board's channel 3
+    std::array<int, 32> after = channels();
+    TEST_ASSERT_EQUAL_INT(CENTRE + 20 * CONVERSION, after[3]);
+    after[3] = before[3];
+    TEST_ASSERT_EQUAL_INT_ARRAY(before.data(), after.data(), 32);
+}
+
+// The tibia's angle is the kinematics', so its servo takes the square knee's 90 degrees first, and the left femur
+// runs the other way, as for the gait.
+void test_a_joint_angle_takes_the_tibia_offset_and_the_sides_direction() {
+    ServoController& controller = started();
+    controller.activate();
+    controller.setJointAngle(2, -100.0f); // right front tibia, channel 10: -100 + 90 at direction -1
+    TEST_ASSERT_EQUAL_INT(CENTRE + 10 * CONVERSION, offCount(RIGHT_BOARD, 10));
+    controller.setJointAngle(10, 15.0f); // left front femur, channel 9, direction -1
+    TEST_ASSERT_EQUAL_INT(CENTRE - 15 * CONVERSION, offCount(LEFT_BOARD, 9));
+}
+
+void test_a_joint_angle_is_held_within_its_travel() {
+    ServoController& controller = started();
+    controller.activate();
+    controller.setJointAngle(0, 80.0f);
+    TEST_ASSERT_EQUAL_INT(CENTRE + static_cast<int>(JOINT_LIMIT_DEG[0] * CONVERSION), offCount(RIGHT_BOARD, 8));
+    controller.setJointAngle(9, -80.0f);
+    TEST_ASSERT_EQUAL_INT(CENTRE - static_cast<int>(JOINT_LIMIT_DEG[0] * CONVERSION), offCount(LEFT_BOARD, 8));
+}
+
+// Input from the network: a servo that does not exist or an angle that is no number writes nothing.
+void test_a_malformed_joint_angle_writes_nothing() {
+    ServoController& controller = started();
+    controller.activate();
+    const std::array<int, 32> before = channels();
+    controller.setJointAngle(-1, 10.0f);
+    controller.setJointAngle(NUM_SERVO, 10.0f);
+    controller.setJointAngle(4, std::nanf(""));
+    controller.setJointAngle(4, INFINITY);
+    const std::array<int, 32> after = channels();
+    TEST_ASSERT_EQUAL_INT_ARRAY(before.data(), after.data(), 32);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_leg_0_coxa_is_the_right_boards_channel_8_and_turns_counter_clockwise);
@@ -130,5 +189,9 @@ int main() {
     RUN_TEST(test_each_side_runs_front_to_rear_on_channels_8_2_and_5);
     RUN_TEST(test_a_raw_pulse_reaches_the_servo_the_gait_drives);
     RUN_TEST(test_the_calibrated_centres_reach_their_own_servos);
+    RUN_TEST(test_a_joint_angle_moves_only_its_own_servo);
+    RUN_TEST(test_a_joint_angle_takes_the_tibia_offset_and_the_sides_direction);
+    RUN_TEST(test_a_joint_angle_is_held_within_its_travel);
+    RUN_TEST(test_a_malformed_joint_angle_writes_nothing);
     return UNITY_END();
 }

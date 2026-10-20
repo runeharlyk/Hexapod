@@ -62,7 +62,6 @@
   "socket_message.ModesEnum": {
    "DEACTIVATED": 0,
    "IDLE": 1,
-   "POSE": 2,
    "STAND": 3,
    "WALK": 4,
    "WALK_NN": 5,
@@ -476,6 +475,7 @@
    "mdns_query": "71 api.MDNSQueryRequest",
    "servo_settings_get": "80 api.ServoSettingsRequest",
    "servo_settings_update": "81 api.ServoSettings",
+   "servo_centre": "82 socket_message.ServoCentreRequest",
    "peripheral_settings_get": "90 api.PeripheralSettingsRequest",
    "peripheral_settings_update": "91 api.PeripheralSettings",
    "imu_calibrate": "92 socket_message.ImuCalibrateRequest",
@@ -579,6 +579,10 @@
    "accel_offsets": "1 repeated sint32",
    "gyro_offsets": "2 repeated sint32"
   },
+  "socket_message.JointAngleData": {
+   "servo": "1 uint32",
+   "degrees": "2 float"
+  },
   "socket_message.Message": {
    "sub_notif": "20 socket_message.SubscribeNotification",
    "unsub_notif": "21 socket_message.UnsubscribeNotification",
@@ -594,6 +598,7 @@
    "angles": "170 socket_message.AnglesData",
    "servo_pwm": "210 socket_message.ServoPWMData",
    "servo_state": "211 socket_message.ServoStateData",
+   "joint_angle": "212 socket_message.JointAngleData",
    "system_command": "120 socket_message.SystemCommandData",
    "wifi_status": "250 api.WifiStatus",
    "ap_status": "251 api.APStatus",
@@ -638,6 +643,7 @@
    "body": "1 animation.BodyPose",
    "legs": "2 repeated animation.LegTarget"
   },
+  "socket_message.ServoCentreRequest": {},
   "socket_message.ServoPWMData": {
    "servo_id": "1 int32",
    "servo_pwm": "2 uint32"

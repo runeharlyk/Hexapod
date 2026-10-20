@@ -630,6 +630,46 @@ void test_the_take_says_whether_the_handheld_drives() {
     TEST_ASSERT_FALSE(inbox.handheldDriving());
 }
 
+// A joint is driven in IDLE only: one posted while the mode applied last is any other is dropped on arrival.
+void test_a_joint_is_dropped_unless_the_robot_idles() {
+    for (const MOTION_STATE mode : {MOTION_STATE::DEACTIVATED, MOTION_STATE::STAND, MOTION_STATE::WALK,
+                                    MOTION_STATE::WALK_NN, MOTION_STATE::ANIMATE}) {
+        MotionInbox inbox;
+        inbox.noteMode({mode, false, MOTION_STATE::STAND});
+        inbox.postJoint(4, 20.0f);
+        TEST_ASSERT_EQUAL_UINT32(0, inbox.take(0).joints.servos);
+    }
+}
+
+// A drag is a stream of positions: the newest per servo replaces one not yet taken, and each servo keeps its own.
+void test_the_newest_angle_of_each_joint_is_taken_once() {
+    MotionInbox inbox;
+    inbox.noteMode({MOTION_STATE::IDLE, false, MOTION_STATE::STAND});
+    inbox.postJoint(4, 10.0f);
+    inbox.postJoint(4, 20.0f);
+    inbox.postJoint(17, -30.0f);
+    const MotionInbox::Mail mail = inbox.take(0);
+    TEST_ASSERT_EQUAL_UINT32((1u << 4) | (1u << 17), mail.joints.servos);
+    TEST_ASSERT_EQUAL_FLOAT(20.0f, mail.joints.degrees[4]);
+    TEST_ASSERT_EQUAL_FLOAT(-30.0f, mail.joints.degrees[17]);
+    TEST_ASSERT_EQUAL_UINT32(0, inbox.take(0).joints.servos);
+}
+
+// The calibration page's "Centre all servos" is answered at once: accepted in IDLE and taken once, refused otherwise.
+void test_centring_the_servos_is_accepted_only_in_idle() {
+    MotionInbox inbox;
+    for (const MOTION_STATE mode : {MOTION_STATE::DEACTIVATED, MOTION_STATE::STAND, MOTION_STATE::WALK,
+                                    MOTION_STATE::WALK_NN, MOTION_STATE::ANIMATE}) {
+        inbox.noteMode({mode, false, MOTION_STATE::STAND});
+        TEST_ASSERT_FALSE(inbox.postCentreServos());
+        TEST_ASSERT_FALSE(inbox.take(0).centreServos);
+    }
+    inbox.noteMode({MOTION_STATE::IDLE, false, MOTION_STATE::STAND});
+    TEST_ASSERT_TRUE(inbox.postCentreServos());
+    TEST_ASSERT_TRUE(inbox.take(0).centreServos);
+    TEST_ASSERT_FALSE(inbox.take(0).centreServos);
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_goal_is_taken_once_and_reported_settling_until_then);
@@ -672,5 +712,8 @@ int main(int, char **) {
     RUN_TEST(test_after_the_handheld_window_a_clients_stick_waits_for_a_centred_command);
     RUN_TEST(test_only_a_clients_centred_command_after_the_window_ends_the_wait);
     RUN_TEST(test_the_take_says_whether_the_handheld_drives);
+    RUN_TEST(test_a_joint_is_dropped_unless_the_robot_idles);
+    RUN_TEST(test_the_newest_angle_of_each_joint_is_taken_once);
+    RUN_TEST(test_centring_the_servos_is_accepted_only_in_idle);
     return UNITY_END();
 }

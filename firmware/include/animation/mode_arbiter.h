@@ -22,7 +22,7 @@
 //   requested mode becomes the hand-back target, so Exit or the puppet path eases every leg home
 //   before the new mode drives it. Leaving at once would snap joint-angle legs to stance at full
 //   servo speed.
-// - DEACTIVATED, IDLE and POSE apply at once, even mid-play: they cut or centre the servos, and that
+// - DEACTIVATED and IDLE apply at once, even mid-play: they cut the servos or stop driving them, and that
 //   immediacy is the safety property.
 // - Any other explicit mode applies and ends a borrow, so an explicit ANIMATE is sticky; an explicit
 //   mode other than ANIMATE also drops a play that was loaded but not started.

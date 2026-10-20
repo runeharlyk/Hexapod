@@ -6,6 +6,7 @@
 #include <iterator>
 #include <gait_speed.h>
 #include <host_api.h>
+#include <motion_state_wire.h>
 #include <virtual_robot.h>
 
 namespace {
@@ -31,7 +32,10 @@ API void reset() {
     instance();
 }
 
-API void setMode(int mode) { instance().setMode(static_cast<MOTION_STATE>(mode)); }
+// A mode by its ModesEnum value; one the robot has no mode for, POSE's reserved 2 among them, is ignored.
+API void setMode(int mode) {
+    if (const std::optional<MOTION_STATE> m = motionStateFromWire(mode)) instance().setMode(*m);
+}
 
 API void setGait(int gait) { instance().setGait(static_cast<GaitType>(gait)); }
 

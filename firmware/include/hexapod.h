@@ -27,7 +27,7 @@ class Hexapod {
         });
     }
 
-    // The servo write of a tick happens here (POSE's centre pulses) or in updateActuators.
+    // The servo write of a tick happens here (IDLE's joints and centring) or in updateActuators.
     void planMotion() {
         _servoController.startTick();
         updatedMotion = _motionService.updateMotion(imuFresh);
@@ -45,6 +45,8 @@ class Hexapod {
     void animationStop() { _motionService.handleAnimationStop(); }
     void animationPose(const PoseMsg &p) { _motionService.handleAnimationPose(p); }
     void animationControlLost() { _motionService.animationControlLost(); }
+    void setJoint(int servo, float degrees) { _motionService.setJoint(servo, degrees); }
+    int centreServos() { return _motionService.centreServos(); }
     void validateAnimation(const char *name, socket_message_AnimationReport &r) {
         _motionService.validateAnimation(name, r);
     }

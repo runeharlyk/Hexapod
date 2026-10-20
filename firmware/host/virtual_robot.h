@@ -47,6 +47,9 @@ class VirtualRobot {
     void animationStop() { _robot.animationStop(); }
     void animationPose(const PoseMsg &pose) { _robot.animationPose(pose); }
     void animationControlLost() { _robot.animationControlLost(); }
+    // As main.cpp's handlers: a joint dragged in the app, and the calibration page's centring with its reply's status.
+    void setJoint(int servo, float degrees) { _robot.setJoint(servo, degrees); }
+    int centreServos() { return _robot.centreServos(); }
 
     void tick() {
         host_clock::advance(TICK_US);
@@ -76,6 +79,9 @@ class VirtualRobot {
     bool servosDriven() const { return ServoController::output().awake && ServoController::output().writes > 0; }
     const float *servoAngles() const { return ServoController::output().angles; }
     unsigned servoWrites() const { return ServoController::output().writes; }
+    // Single joints written in IDLE, and centrings of every servo.
+    unsigned jointWrites() const { return ServoController::output().jointWrites; }
+    unsigned centrings() const { return ServoController::output().centrings; }
     GaitType gait() const { return static_cast<GaitType>(_sample.gait); }
     // The stroke and cadence the gait is easing toward, as the motion holds them now.
     const gait_state_t &gaitCommand() const { return _robot.motion().gaitCommand(); }

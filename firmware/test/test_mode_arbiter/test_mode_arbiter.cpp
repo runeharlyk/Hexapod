@@ -145,7 +145,7 @@ void test_an_explicit_stand_mid_play_leaves_through_exit() {
 }
 
 void test_cutting_modes_mid_play_apply_at_once() {
-    for (M cut : {M::DEACTIVATED, M::IDLE, M::POSE}) {
+    for (M cut : {M::DEACTIVATED, M::IDLE}) {
         Robot r {M::STAND};
         borrow(r, true);
         const D d = explicitMode(r, cut, true);

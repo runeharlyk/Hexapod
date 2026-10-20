@@ -143,6 +143,18 @@ class MotionService {
 
     void validateAnimation(const char *name, socket_message_AnimationReport &r) { _animation.validate(name, r); }
 
+    // Adapter task: a joint dragged on the app's 3D model, in degrees as the robot reports its angles. It moves that
+    // servo alone, in IDLE alone (MotionInbox::postJoint), from the control task's next tick. A servo that does not
+    // exist or an angle that is no number is dropped here, as input from the network.
+    void setJoint(int servo, float degrees) {
+        if (servo < 0 || servo >= NUM_SERVO || !std::isfinite(degrees)) return;
+        _inbox.postJoint(servo, degrees);
+    }
+
+    // Adapter task: the reply to the calibration page's "Centre all servos", 200 when the control task centres every
+    // servo at its next tick, 409 when the robot is not idle.
+    int centreServos() { return _inbox.postCentreServos() ? 200 : 409; }
+
   private:
     // Control task, at the start of the tick after the command arrived; the dead-man's window runs from its arrival.
     void handleCommand(CommandMsg const &c, unsigned long arrivalMs) {
@@ -319,8 +331,7 @@ class MotionService {
         }
         switch (state) {
             case MOTION_STATE::DEACTIVATED: return false;
-            case MOTION_STATE::IDLE: return false;
-            case MOTION_STATE::POSE: _servoController->setCenterPwm(); return false;
+            case MOTION_STATE::IDLE: driveIdleServos(mail); return false;
             case MOTION_STATE::STAND: {
                 body_state.xm = lerpf(body_state.xm, target_body_state.xm, smoothing_factor);
                 body_state.ym = lerpf(body_state.ym, target_body_state.ym, smoothing_factor);
@@ -652,6 +663,15 @@ class MotionService {
         target_gait_state.step_y = held ? 0.f : w.stepY;
         target_gait_state.step_angle = held ? 0.f : w.stepAngle;
         target_gait_state.phase_rate = held ? 0.f : w.phaseRate;
+    }
+
+    // Control task, IDLE, after the tick's modes: the centring and the joints asked for while the robot idled. A joint
+    // writes its own servo alone, so every other servo holds the pulse it had when the motion stopped; a joint posted
+    // before a mode leaving IDLE was applied never gets here.
+    void driveIdleServos(const MotionInbox::Mail &mail) {
+        if (mail.centreServos) _servoController->setCenterPwm();
+        for (int servo = 0; servo < NUM_SERVO; ++servo)
+            if (mail.joints.servos & (1u << servo)) _servoController->setJointAngle(servo, mail.joints.degrees[servo]);
     }
 
     // Control task, WALK. A stride change is a change of the walk, not of its posture, so it never pauses the walk; but

@@ -743,11 +743,10 @@ void test_a_tuned_style_is_refused() {
     TEST_ASSERT_EQUAL(0, rig.pushes.size());
 }
 
-// Review focus 5: only a stand or a classic walk takes a goal: not deactivated, idle, posed, animating or walking the
-// policy.
+// Review focus 5: only a stand or a classic walk takes a goal: not deactivated, idle, animating or walking the policy.
 void test_a_goal_is_refused_unless_standing_or_walking() {
-    for (const MOTION_STATE mode : {MOTION_STATE::DEACTIVATED, MOTION_STATE::IDLE, MOTION_STATE::POSE,
-                                    MOTION_STATE::ANIMATE, MOTION_STATE::WALK_NN}) {
+    for (const MOTION_STATE mode :
+         {MOTION_STATE::DEACTIVATED, MOTION_STATE::IDLE, MOTION_STATE::ANIMATE, MOTION_STATE::WALK_NN}) {
         Rig &rig = newRig();
         standUp(rig);
         rig.robot.setMode(mode);

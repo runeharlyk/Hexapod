@@ -1,7 +1,8 @@
 #pragma once
 
 // What the other tasks hand MotionService's control task, under one mutex: the modes in arrival order, the newest
-// command and gait, a goal asked for and its end, and an odometry reset; and back from the control task, the goal
+// command and gait, a goal asked for and its end, an odometry reset, and in IDLE the joints dragged and a centring of
+// the servos; and back from the control task, the goal
 // status, the mode and the pose the replies carry. The decisions a reply or a goal depends on are made as each arrives,
 // in arrival order, against the mode the control task applied last; the control task takes what arrived at the start
 // of its next tick, so nothing changes the motion in the middle of one, and no task ever waits for the control task.
@@ -79,6 +80,13 @@ class MotionInbox {
         unsigned dropped = 0; // the oldest, when a full queue took a newer one
     };
 
+    // The newest angle of each joint dragged since the last take, in degrees; bit i of `servos` marks servo i's.
+    struct Joints {
+        float degrees[NUM_SERVO] = {};
+        uint32_t servos = 0;
+    };
+    static_assert(NUM_SERVO <= 32, "a servo's mark is one bit of Joints::servos");
+
     struct Mail {
         Modes modes;
         std::optional<CommandMsg> command; // the newest since the last take
@@ -89,6 +97,8 @@ class MotionInbox {
         bool goalDriveEnded = false; // so a goal no longer drives the walk, whose sticks are to be centred
         bool odometryReset = false;
         bool handheldDriving = false; // the handheld has moved a stick within HANDHELD_PRIORITY_MS
+        Joints joints;                // dragged in IDLE
+        bool centreServos = false;    // every servo to its centre pulse, asked for in IDLE
     };
 
     // The facade and the app send every 0.2 s; an owner silent ten times as long has gone, whether or not its transport
@@ -200,6 +210,26 @@ class MotionInbox {
         if (d.action == ModeArbiterDecision::APPLY && d.mode != MOTION_STATE::WALK) cancelGoalLocked();
     }
 
+    // Adapter task: a servo's joint angle, dragged on the app's 3D model. A joint moves the robot only in IDLE, so it
+    // is dropped on arrival unless the mode applied last is IDLE, and the control task drops it again unless the modes
+    // it takes before it leave the robot in IDLE. A drag is a stream of positions, so the newest per servo replaces one
+    // not yet taken.
+    void postJoint(int servo, float degrees) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (_applied.mode != MOTION_STATE::IDLE) return;
+        _joints.degrees[servo] = degrees;
+        _joints.servos |= 1u << servo;
+    }
+
+    // Adapter task: every servo to its centre pulse, as the calibration page asks, judged as a joint is. False, nothing
+    // asked, unless the mode applied last is IDLE.
+    bool postCentreServos() {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (_applied.mode != MOTION_STATE::IDLE) return false;
+        _centreServos = true;
+        return true;
+    }
+
     // Any task: the mode the control task applied last, which is the mode the robot reports; a mode still queued is not
     // the robot's yet.
     MOTION_STATE appliedMode() const {
@@ -292,6 +322,8 @@ class MotionInbox {
             (_goalDrives && _goalOwner.adapter && ownerSilenceMs > static_cast<long>(OWNER_SILENCE_MS));
         mail.goalDriveEnded = mail.goalCancelled && std::exchange(_goalDrives, false);
         mail.odometryReset = std::exchange(_odometryReset, false);
+        mail.joints = std::exchange(_joints, Joints {});
+        mail.centreServos = std::exchange(_centreServos, false);
         mail.handheldDriving = _handheldDriving = handheldDrivingLocked(nowMs);
         // A lapsed window is forgotten, or the signed difference would reopen it half the clock's range later.
         if (!_handheldDriving) _handheldMoved = false;
@@ -340,6 +372,8 @@ class MotionInbox {
     bool _goalCancelRequested = false;
     socket_message_GoalStatus _goalStatus = socket_message_GoalStatus_init_zero;
     bool _odometryReset = false;
+    Joints _joints;
+    bool _centreServos = false;
     OdometryEstimate _odometry {};
     // The arrival of the handheld's last frame with a stick off centre, until the first take past its window.
     unsigned long _handheldMovedMs = 0;
