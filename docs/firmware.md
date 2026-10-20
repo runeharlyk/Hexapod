@@ -416,6 +416,8 @@ The centring writes both boards and is reported too.
 `simulation/report_recording.py` lists the failed writes and the dead-man stops of a recording.
 
 The **ESP-NOW receiver** (`EspNowAdapter`) is input only: it turns the handheld controller's broadcasts into `CommandMsg`, `ModeMsg` and `GaitMsg` on the EventBus, so the controller drives `MotionService` as the app does, with priority over the other sources' sticks and goals while it moves a stick (Handheld priority).
+Its mode button steps from the mode the robot reports through `DEACTIVATED`, `IDLE`, `STAND` and `WALK`, back to `DEACTIVATED` (`nextHandheldMode`, `include/communication/handheld_input.h`); both buttons together are the emergency `DEACTIVATED`.
+A press in `ANIMATE`, which the cycle has no place for, asks for `STAND`: the robot is there for a play or the ease out of IDLE, so the stand is a graceful leave that eases every leg home, and the press never stops the legs half-eased in `IDLE` nor cuts the servos.
 ESP-NOW hears only the radio's current channel, so the robot pins its radio to `ESPNOW_WIFI_CHANNEL` unless a station connection holds it elsewhere, and it broadcasts a beacon on whatever channel it is on so the controller can find it.
 The packet format in `include/communication/controller_packet.h` is shared with the controller firmware and `simulation/controller_bridge.py`, so the three change together.
 
