@@ -1409,10 +1409,9 @@ void test_a_walk_after_walk_nn_takes_its_posture_again() {
 }
 
 // What WALK_NN reads of a command, which the app's controls in that mode follow (app/src/lib/mode-controls.ts): the
-// policy walks the sticks' lx, ly and rx, and the gait steps around the stance the feet distance sets; it rides at its
-// own height, lift, stride and cadence, so the height, speed, step height, stride and the right stick's ry change
-// nothing.
-void test_walk_nn_reads_the_sticks_and_the_feet_distance_alone() {
+// policy walks the sticks' lx, ly and rx alone. It walks the stance it was trained on and rides at its own height, lift,
+// stride and cadence, so the feet distance, height, speed, step height, stride and the right stick's ry change nothing.
+void test_walk_nn_reads_the_sticks_alone() {
     const CommandMsg walking {0.3f, 0.6f, 0.2f, 0, 0, 0, 0, 0, 0};
     const auto base = traceHeld(MOTION_STATE::WALK_NN, walking, ticksFor(2.0f));
     struct Field {
@@ -1423,13 +1422,52 @@ void test_walk_nn_reads_the_sticks_and_the_feet_distance_alone() {
     const Field fields[] = {
         {"lx", &CommandMsg::lx, true},  {"ly", &CommandMsg::ly, true}, {"rx", &CommandMsg::rx, true},
         {"ry", &CommandMsg::ry, false}, {"h", &CommandMsg::h, false},  {"s", &CommandMsg::s, false},
-        {"s1", &CommandMsg::s1, false}, {"fd", &CommandMsg::fd, true}, {"stride", &CommandMsg::stride, false}};
+        {"s1", &CommandMsg::s1, false}, {"fd", &CommandMsg::fd, false}, {"stride", &CommandMsg::stride, false}};
     for (const Field &f : fields) {
         CommandMsg changed = walking;
         changed.*f.field = -0.8f;
         const bool differs = traceHeld(MOTION_STATE::WALK_NN, changed, ticksFor(2.0f)) != base;
         TEST_ASSERT_EQUAL_MESSAGE(f.read, differs, f.name);
     }
+}
+
+// The middle right foot's mean distance out from the body over a WALK_NN walk of `ticks`, entered from a stand at
+// the feet distance `fd`, the walk's commands sending it too.
+float walkNnStanceMm(VirtualRobot &robot, float fd, int ticks) {
+    CommandMsg walking {0.3f, 0.6f, 0.2f, 0, 0, 0, 0, fd, 0};
+    standUp(robot);
+    hold(robot, {0, 0, 0, 0, 0, 0, 0, fd, 0}, ticksFor(3.0f));
+    TEST_ASSERT_FLOAT_WITHIN(0.5f, DEFAULT_STANCE[1][0] * feetScale(fd), robot.bodyState().feet[1][0]);
+    robot.setMode(MOTION_STATE::WALK_NN);
+    float sum = 0.0f;
+    for (int t = 0; t < ticks; ++t) {
+        if (t % COMMAND_PERIOD_TICKS == 0) robot.command(walking);
+        robot.tick();
+        sum += robot.bodyState().feet[1][0];
+    }
+    return sum / ticks;
+}
+
+// The policy was trained on the stance of fd 0 alone (firmware/host/policy_api.cpp), so WALK_NN entered from a stand
+// at a wider stance resets on that stance and walks it as from a stand at fd 0, a quarter narrower. Leaving it, the
+// stand steps the feet back to the stance the last feet distance set, with no command to ask for it.
+void test_walk_nn_walks_the_stance_it_was_trained_on() {
+    const float wideFd = 1.0f;
+    VirtualRobot trainedRobot;
+    const float trained = walkNnStanceMm(trainedRobot, 0.0f, ticksFor(2.0f));
+    VirtualRobot robot;
+    const float wide = walkNnStanceMm(robot, wideFd, ticksFor(2.0f));
+    char msg[80];
+    std::snprintf(msg, sizeof(msg), "middle foot out %.1f mm from fd 0, %.1f mm from fd 1", trained, wide);
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(2.0f, trained, wide, msg);
+
+    // The sticks centred, so the dead-man's 2 s, not its 600 ms while steering, runs from the last command.
+    robot.command({0, 0, 0, 0, 0, 0, 0, wideFd, 0});
+    robot.tick();
+    robot.setMode(MOTION_STATE::STAND);
+    for (int t = 0; t < ticksFor(1.8f); ++t) robot.tick();
+    TEST_ASSERT_FALSE(robot.linkLost());
+    TEST_ASSERT_FLOAT_WITHIN(0.5f, DEFAULT_STANCE[1][0] * feetScale(wideFd), robot.bodyState().feet[1][0]);
 }
 
 // A settle cut short by WALK_NN starts over on the way back. Cut in its last stage, raising the lift, which checks
@@ -2139,7 +2177,8 @@ int main(int, char **) {
     RUN_TEST(test_a_gait_change_during_a_settle_waits_for_it);
     RUN_TEST(test_leaving_a_walk_for_stand_mid_stride_stays_in_travel);
     RUN_TEST(test_a_walk_after_walk_nn_takes_its_posture_again);
-    RUN_TEST(test_walk_nn_reads_the_sticks_and_the_feet_distance_alone);
+    RUN_TEST(test_walk_nn_reads_the_sticks_alone);
+    RUN_TEST(test_walk_nn_walks_the_stance_it_was_trained_on);
     RUN_TEST(test_an_interrupted_settle_starts_over);
     RUN_TEST(test_a_walk_from_a_stand_at_rest_steps_at_once);
     RUN_TEST(test_a_walk_from_a_stand_at_rest_settles_a_new_posture_first);

@@ -32,14 +32,14 @@ const NONE: ModeControls = {
 
 const STANDING: ModeControls = { ...NONE, height: true, feetDistance: true, sticks: true }
 
-// Each mode shows only what it reads. WALK_NN's policy rides at its own height, lift, stride and cadence, and chooses
-// its own gait: it reads the sticks and steps around the stance the feet distance sets.
+// Each mode shows only what it reads. WALK_NN's policy rides at its own height, lift, stride and cadence, chooses its
+// own gait and walks the stance it was trained on: it reads the sticks alone.
 const CONTROLS: Record<MotionModes, ModeControls> = {
   [MotionModes.DEACTIVATED]: NONE,
   [MotionModes.IDLE]: { ...NONE, joints: true },
   [MotionModes.STAND]: STANDING,
   [MotionModes.WALK]: { ...STANDING, gait: true, walk: true },
-  [MotionModes.WALK_NN]: { ...NONE, feetDistance: true, sticks: true },
+  [MotionModes.WALK_NN]: { ...NONE, sticks: true },
   [MotionModes.ANIMATE]: { ...NONE, animation: true }
 }
 

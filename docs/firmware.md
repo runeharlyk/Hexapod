@@ -163,7 +163,8 @@ A robot on older firmware reports 2 when it is in `POSE`: the app shows that as 
   The dead-man's neutral posture is taken like any other, once the walk has stopped; in `STAND` it waits until the feet are still.
 - `WALK_NN` hands stride, lift, cadence and ride height to `PolicyRunner`, which runs the exported network every fourth tick on top of the analytic gait.
   Its observation and action decoding is `PolicyCore` (`include/policy/policy_core.h`), which the training environment runs through `host/policy_api.cpp`, so the network trains on the code that deploys it.
-  Its `h` and `fd` are clamped to the classic gaits' walkable region (`clampPosture`).
+  It walks the stance of fd 0 the policy was trained on (`DEFAULT_STANCE`), resets the policy on it and takes no `fd`; leaving `WALK_NN`, the stance steps back to the one the last feet distance set.
+  Its `h` is clamped to the classic gaits' walkable region (`clampPosture`) and held for the mode after it, since the policy sets the ride height itself.
   `PolicyRunner::setCommand` turns the sticks into the policy's trained command (forward, right, counter-clockwise) with the walk's signs, so the policy's own input is unchanged by the stick mapping.
 - `ANIMATE` plays a clip or a streamed puppeteer pose through `AnimationRunner`.
 

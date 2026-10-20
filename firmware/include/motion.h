@@ -96,8 +96,14 @@ class MotionService {
         const bool leavingPolicy = motionState == MOTION_STATE::WALK_NN;
         motionState = mode;
 #if FT_ENABLED(USE_POLICY)
-        if (mode == MOTION_STATE::WALK_NN) _policy.reset(gait, default_feet_pos);
+        // The policy was trained on the stance of fd 0 alone, so WALK_NN walks it whatever the feet distance, which
+        // the stance takes again, stepped, once WALK_NN is left.
+        if (mode == MOTION_STATE::WALK_NN) {
+            std::copy(&DEFAULT_STANCE[0][0], &DEFAULT_STANCE[0][0] + 6 * 4, &default_feet_pos[0][0]);
+            _policy.reset(gait, DEFAULT_STANCE);
+        }
 #endif
+        if (leavingPolicy && mode != MOTION_STATE::WALK_NN) updateFeetDistanceTarget(_feetDistance);
         // ANIMATE drives no gait, so a half-stride left in gait_state would resume after it.
         if (!isWalkingMode(mode)) stopLocomotionCommand(!actuated(mode) || mode == MOTION_STATE::ANIMATE);
         // WALK_NN keeps the command, and its policy moves the ride height and the feet; a stride or a posture left
@@ -172,7 +178,6 @@ class MotionService {
             float h = c.h, fd = c.fd;
             if (mode == MOTION_STATE::WALK_NN) {
                 h = clamped.h;
-                fd = clamped.fd;
             } else if (!tuned) {
                 clampStandPosture(kinematics, h, fd);
             }
@@ -185,7 +190,7 @@ class MotionService {
                 _standPosturePending = true;
             } else {
                 _standPosturePending = false;
-                updateFeetDistanceTarget(fd);
+                if (mode != MOTION_STATE::WALK_NN) updateFeetDistanceTarget(fd);
                 target_body_state.zm = bodyHeightMm(h);
             }
         }
