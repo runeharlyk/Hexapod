@@ -70,8 +70,8 @@ class MotionService {
     // is noted for the replies before it is reported, so a client that heard the report finds it in force.
     void handleInputMode(ModeMsg const &m) {
         _handbackSent = false;
-        const ModeArbiterDecision d =
-            decideMode({motionState, _borrowedMode, _previousMode, m.mode, m.kind, _animation.busy()});
+        const ModeArbiterDecision d = decideMode(
+            {motionState, _borrowedMode, _previousMode, m.mode, m.kind, _animation.busy(), _idleHeld});
         _borrowedMode = d.borrowed;
         _previousMode = d.previous;
         if (d.cancelPending) _animation.cancelPendingPlay();
@@ -94,6 +94,12 @@ class MotionService {
     void applyMode(MOTION_STATE mode) {
         const bool enteringWalk = mode == MOTION_STATE::WALK && motionState != MOTION_STATE::WALK;
         const bool leavingPolicy = motionState == MOTION_STATE::WALK_NN;
+        // ANIMATE entered from an IDLE whose servos were written eases from the angles they hold (decideMode).
+        if (mode != MOTION_STATE::ANIMATE)
+            _enterFromHeld = false;
+        else if (motionState == MOTION_STATE::IDLE && _idleHeld)
+            _enterFromHeld = true;
+        if (mode != MOTION_STATE::IDLE) _idleHeld = false;
         motionState = mode;
 #if FT_ENABLED(USE_POLICY)
         // The policy was trained on the stance of fd 0 alone, so WALK_NN walks it whatever the feet distance, which
@@ -329,7 +335,9 @@ class MotionService {
         // Entering and leaving ANIMATE are handled here, once every mode the tick took is applied.
         if ((state == MOTION_STATE::ANIMATE) != _animating) {
             _animating = state == MOTION_STATE::ANIMATE;
-            if (_animating)
+            if (_animating && std::exchange(_enterFromHeld, false))
+                _animation.enterFromJoints(msgAngles.angles, _servoController->driven(), target_body_state.zm);
+            else if (_animating)
                 _animation.enter(body_state, target_body_state.zm);
             else
                 _animation.reset();
@@ -510,6 +518,8 @@ class MotionService {
     bool _handbackSent = false;              // a hand-back is queued; cleared by any mode taken
     bool _animating = false;                 // control task only: whether the last tick ran ANIMATE
     bool _idling = false;                    // control task only: whether the last tick ran IDLE
+    bool _idleHeld = false;      // control task only: IDLE has written servos, which hold a pose the motion did not set
+    bool _enterFromHeld = false; // control task only: ANIMATE is entered from such an IDLE
     bool _handheldReported = false;          // control task only: whether the handheld drove, as last reported
 
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
@@ -699,6 +709,7 @@ class MotionService {
             msgAngles.angles[servo] = withinTravel(mail.joints.degrees[servo], servo % 3);
             written = true;
         }
+        if (written) _idleHeld = true;
         if (entering || written) publishState();
     }
 

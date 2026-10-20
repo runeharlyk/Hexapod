@@ -232,9 +232,34 @@ void test_an_applied_report_is_never_taken_as_a_request() {
     assertMode(M::DEACTIVATED, off.mode);
 }
 
+// An explicit STAND or walking mode from an IDLE whose servos were written borrows ANIMATE, whose puppet path eases
+// them home, with the mode asked for as the hand-back; from an IDLE that wrote nothing it applies at once, and
+// DEACTIVATED and an explicit, sticky ANIMATE apply at once whatever the servos hold.
+void test_a_mode_from_an_idle_with_written_servos_eases_through_animate() {
+    for (const M requested : {M::STAND, M::WALK, M::WALK_NN}) {
+        D d = decideMode({M::IDLE, false, M::STAND, requested, K::REQUEST, false, true});
+        TEST_ASSERT_EQUAL_INT(D::APPLY, d.action);
+        assertMode(M::ANIMATE, d.mode);
+        TEST_ASSERT_TRUE(d.borrowed);
+        assertMode(requested, d.previous);
+
+        d = decideMode({M::IDLE, false, M::STAND, requested, K::REQUEST, false, false});
+        TEST_ASSERT_EQUAL_INT(D::APPLY, d.action);
+        assertMode(requested, d.mode);
+        TEST_ASSERT_FALSE(d.borrowed);
+    }
+    for (const M requested : {M::DEACTIVATED, M::ANIMATE}) {
+        const D d = decideMode({M::IDLE, false, M::STAND, requested, K::REQUEST, false, true});
+        TEST_ASSERT_EQUAL_INT(D::APPLY, d.action);
+        assertMode(requested, d.mode);
+        TEST_ASSERT_FALSE(d.borrowed);
+    }
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_two_quick_plays_from_stand_keep_stand_as_the_hand_back);
+    RUN_TEST(test_a_mode_from_an_idle_with_written_servos_eases_through_animate);
     RUN_TEST(test_an_explicit_walk_queued_ahead_of_the_borrow_becomes_the_hand_back);
     RUN_TEST(test_deactivated_during_the_load_refuses_the_borrow_and_restates);
     RUN_TEST(test_a_hand_back_while_sticky_is_ignored);

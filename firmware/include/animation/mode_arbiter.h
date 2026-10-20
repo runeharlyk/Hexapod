@@ -24,6 +24,11 @@
 //   servo speed.
 // - DEACTIVATED and IDLE apply at once, even mid-play: they cut the servos or stop driving them, and that
 //   immediacy is the safety property.
+// - An explicit STAND or walking mode from an IDLE whose servos were written there (a joint dragged, or the centring)
+//   borrows ANIMATE with the requested mode as the hand-back target, so the puppet path eases every joint from the
+//   angle it holds to the stance before the new mode drives it, as a graceful leave does. Applying it at once would
+//   snap every dragged joint to the stand at full servo speed. From an IDLE that wrote nothing the servos hold the
+//   motion's last pose, or are limp, and the mode applies at once.
 // - Any other explicit mode applies and ends a borrow, so an explicit ANIMATE is sticky; an explicit
 //   mode other than ANIMATE also drops a play that was loaded but not started.
 
@@ -41,6 +46,7 @@ struct ModeArbiterInput {
     MOTION_STATE requested;
     ModeMsgKind kind;
     bool busy; // AnimationRunner::busy(): playing, a play pending, or a pose away from stance
+    bool idleHeld = false; // IDLE has written servos, which hold a pose the motion did not set
 };
 
 struct ModeArbiterDecision {
@@ -78,6 +84,15 @@ inline ModeArbiterDecision decideMode(const ModeArbiterInput &in) {
             d.mode = in.previous;
             d.borrowed = false;
         }
+        return d;
+    }
+    if (in.current == MOTION_STATE::IDLE && in.idleHeld && actuated(in.requested) &&
+        in.requested != MOTION_STATE::ANIMATE) {
+        d.action = D::APPLY;
+        d.mode = MOTION_STATE::ANIMATE;
+        d.borrowed = true;
+        d.previous = in.requested;
+        d.cancelPending = true;
         return d;
     }
     if (in.current == MOTION_STATE::ANIMATE && in.busy && actuated(in.requested) &&

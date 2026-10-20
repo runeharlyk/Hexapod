@@ -1715,6 +1715,87 @@ void test_every_stop_eases_the_stroke_out_with_the_cadence() {
 
 namespace {
 
+// What the servos receive while a mode asked for from IDLE takes over: the largest change of a servo's angle in a tick,
+// from the angles it held in IDLE, over `ticks`, and the mode reported each tick.
+struct Takeover {
+    float largestStep = 0.0f;
+    std::vector<MOTION_STATE> modes;
+};
+
+Takeover takeOver(VirtualRobot &robot, MOTION_STATE mode, int ticks) {
+    Takeover run;
+    std::array<float, 18> previous = servoAnglesOf(robot);
+    robot.setMode(mode);
+    for (int t = 0; t < ticks; ++t) {
+        robot.tick();
+        run.modes.push_back(robot.mode());
+        for (int j = 0; j < 18; ++j)
+            run.largestStep = std::max(run.largestStep, std::fabs(robot.servoAngles()[j] - previous[j]));
+        previous = servoAnglesOf(robot);
+    }
+    return run;
+}
+
+// The joints dragged far from the stand: a coxa at its travel, a femur raised square and a tibia folded back.
+void dragAway(VirtualRobot &robot) {
+    robot.setJoint(0, JOINT_LIMIT_DEG[0]);
+    robot.setJoint(1, JOINT_LIMIT_DEG[1]);
+    robot.setJoint(5, JOINT_LIMIT_DEG[2]);
+    robot.tick();
+}
+
+} // namespace
+
+// Leaving an IDLE whose joints were dragged for STAND or WALK eases every joint from the angle it holds to the stand,
+// through ANIMATE's puppet path as leaving an animation does, never faster than a steady walk's STEP_BOUND_DEG a tick,
+// and then hands back to the mode asked for, standing as a robot stood up from rest stands.
+void test_leaving_idle_after_drags_eases_the_joints_to_the_stand() {
+    VirtualRobot stood;
+    standUp(stood);
+    const std::array<float, 18> stand = servoAnglesOf(stood);
+    for (const MOTION_STATE next : {MOTION_STATE::STAND, MOTION_STATE::WALK}) {
+        VirtualRobot robot;
+        idleFromStand(robot);
+        dragAway(robot);
+        const Takeover run = takeOver(robot, next, ticksFor(2.0f));
+        char msg[64];
+        std::snprintf(msg, sizeof(msg), "to mode %d: largest step %.2f deg", (int)next, run.largestStep);
+        TEST_MESSAGE(msg);
+        TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(STEP_BOUND_DEG, run.largestStep, msg);
+        TEST_ASSERT_EQUAL_MESSAGE(MOTION_STATE::ANIMATE, run.modes.front(), msg);
+        TEST_ASSERT_EQUAL_MESSAGE(next, run.modes.back(), msg);
+        for (int j = 0; j < 18; ++j) TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, stand[j], robot.servoAngles()[j], msg);
+    }
+}
+
+// From limp servos, a mode stands the robot up as it does from DEACTIVATED: at once, with no ease, since a limp servo
+// holds no angle to ease from. Dragged ones among them still ease; the limp ones are written at the stand at once.
+void test_leaving_limp_idle_stands_up_as_from_deactivated() {
+    VirtualRobot robot;
+    robot.setMode(MOTION_STATE::IDLE);
+    robot.tick();
+    Takeover run = takeOver(robot, MOTION_STATE::STAND, 1);
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, run.modes.front());
+    TEST_ASSERT_TRUE(robot.servosDriven());
+
+    VirtualRobot dragged;
+    dragged.setMode(MOTION_STATE::IDLE);
+    dragged.tick();
+    dragged.setJoint(1, JOINT_LIMIT_DEG[1]);
+    dragged.tick();
+    run = takeOver(dragged, MOTION_STATE::STAND, 1);
+    TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, run.modes.front());
+    TEST_ASSERT_TRUE(dragged.servosDriven());
+    TEST_ASSERT_FLOAT_WITHIN(STEP_BOUND_DEG, JOINT_LIMIT_DEG[1], dragged.servoAngles()[1]);
+    const std::array<float, 18> first = servoAnglesOf(dragged);
+    for (int t = 0; t < ticksFor(2.0f); ++t) dragged.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, dragged.mode());
+    for (int j = 0; j < 18; ++j)
+        if (j / 3 != 0) TEST_ASSERT_FLOAT_WITHIN(0.5f, dragged.servoAngles()[j], first[j]);
+}
+
+namespace {
+
 // Neutral and the envelope's extreme corners, clamped as the walk clamps them.
 const Posture3 STRIDE_POSTURES[] = {{0, 0, 0}, {1, -1, -1}, {-1, -1, 0}, {1, 1, 1}};
 
@@ -2184,6 +2265,8 @@ int main(int, char **) {
     RUN_TEST(test_a_walk_from_a_stand_at_rest_settles_a_new_posture_first);
     RUN_TEST(test_a_tuned_walk_after_the_stand_spends_its_rest_posture);
     RUN_TEST(test_every_stop_eases_the_stroke_out_with_the_cadence);
+    RUN_TEST(test_leaving_idle_after_drags_eases_the_joints_to_the_stand);
+    RUN_TEST(test_leaving_limp_idle_stands_up_as_from_deactivated);
     RUN_TEST(test_full_stick_walk_stays_in_travel_at_every_stride);
     RUN_TEST(test_a_gait_at_rest_takes_a_new_stride_at_once);
     RUN_TEST(test_a_small_stick_at_the_longest_stride_steps_slowly_with_the_full_stroke);

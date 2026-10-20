@@ -83,6 +83,9 @@ Every mode decision is made by the control task, at the start of the tick after 
   Leaving at once would snap joint-angle legs to stance at full servo speed.
   A mode observer sees the requested mode when the robot switches, about one exit time after the request.
 - DEACTIVATED and IDLE apply at the next tick even mid-play, because cutting the servos or stopping their drive immediately is the safety property.
+- An explicit STAND, WALK or WALK_NN from an IDLE that wrote a servo (a joint dragged, or the centring) borrows ANIMATE with the requested mode as the hand-back target.
+  The runner starts from the angles the servos hold, every leg in joint angles (`AnimationRunner::enterFromJoints`), and the puppet path eases them to stance, so the mode reported is ANIMATE until every leg is home.
+  A servo still limp has no angle to ease from and is written at its stance angle at once, as a stand from DEACTIVATED writes it.
 - Any other explicit mode ends a borrow, so an explicit ANIMATE mid-play makes the robot stay in ANIMATE afterwards.
 
 A `ModeMsg` carries a `ModeMsgKind` (`firmware/include/message_types.h`):
@@ -124,6 +127,7 @@ The robot's validate request sweeps the same bases and reports the union of the 
 
 A `PoseData` message (a `BodyPose` plus 0 or 6 `LegTarget`s) is applied only in ANIMATE while the player is idle.
 The firmware lerps toward it with the STAND smoothing factor and holds it if the stream stops.
+A joint-angle leg turns at most 3.75 deg a tick, the servo's own speed (`PUPPET_JOINT_STEP_DEG`), so a joint far from its target is not left behind by its command.
 
 ### Messages
 

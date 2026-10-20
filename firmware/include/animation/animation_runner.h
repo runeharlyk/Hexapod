@@ -150,6 +150,29 @@ class AnimationRunner {
         if (havePuppet_) puppetTarget_ = anim::Pose {};
     }
 
+    // Control task, on the first ANIMATE tick after an IDLE whose servos were written: the pose is the angles they
+    // hold, every leg in joint angles, and it eases to stance as a puppet target would. A servo no pulse drives
+    // (`driven`, a bit per servo) holds no angle to ease from, so it starts at its stance angle and is stood up at once,
+    // as a stand from DEACTIVATED stands it.
+    void enterFromJoints(const float held[18], uint32_t driven, float sliderZm) {
+        baseZm_ = sliderZm;
+        current_ = anim::Pose {};
+        current_.body[anim::Z] = baseZm_;
+        float stance[18];
+        anim::poseToAngles(current_, *kin_, stance_, stance);
+        current_.body[anim::Z] = 0.0f;
+        for (int leg = 0; leg < 6; ++leg) {
+            current_.legs[leg].joints = true;
+            for (int k = 0; k < 3; ++k) {
+                const int servo = leg * 3 + k;
+                current_.legs[leg].v[k] = driven & (1u << servo) ? held[servo] : stance[servo];
+            }
+        }
+        busy_.store(true, std::memory_order_release);
+        havePuppet_ = !pendingPlay_.load(std::memory_order_acquire);
+        if (havePuppet_) puppetTarget_ = anim::Pose {};
+    }
+
     // Control task, on the first tick after ANIMATE: drop any play or pose and return the player to
     // idle at stance.
     void reset() {
@@ -217,6 +240,9 @@ class AnimationRunner {
     static constexpr const char *TAG = "AnimationRunner";
     static constexpr float STAND_SMOOTHING = 0.06f;
     static constexpr float PUPPET_SWITCH_DEG = 0.5f;
+    // A joint the puppet path turns moves at most the servo's own speed in a tick, 13.1 rad/s over the 5 ms tick, so a
+    // joint far from its target eases in at a pace the servo follows instead of being left behind by its command.
+    static constexpr float PUPPET_JOINT_STEP_DEG = 3.75f;
     static constexpr float SLIDER_RANGE_MM = 50.0f; // MotionService maps the height slider to zm = h * 50
     static constexpr int64_t TICK_COST_WINDOW_US = 5000000;
     Kinematics *kin_ = nullptr;
@@ -316,7 +342,7 @@ class AnimationRunner {
     // converted to joints once and lerps toward the puppet joints; a joint leg becoming a foot leg lerps
     // toward the IK of the target foot and switches to the foot offset once every joint is within
     // PUPPET_SWITCH_DEG of it. The joints are solved at the base a foot leg is output with, so the
-    // switch is continuous.
+    // switch is continuous. A joint never turns more than PUPPET_JOINT_STEP_DEG in a tick.
     void approachPuppet() {
         for (int a = 0; a < 6; ++a) current_.body[a] = lerpf(current_.body[a], puppetTarget_.body[a], STAND_SMOOTHING);
         for (int i = 0; i < 6; ++i) {
@@ -332,14 +358,21 @@ class AnimationRunner {
                 anim::legJointsDeg(*kin_, current_.body, target.v, i, stance_, j, baseZm_);
                 bool arrived = true;
                 for (int k = 0; k < 3; ++k) {
-                    leg.v[k] = lerpf(leg.v[k], j[k], STAND_SMOOTHING);
+                    leg.v[k] = approachJoint(leg.v[k], j[k]);
                     arrived = arrived && fabsf(leg.v[k] - j[k]) <= PUPPET_SWITCH_DEG;
                 }
                 if (arrived) leg = target;
                 continue;
             }
-            for (int k = 0; k < 3; ++k) leg.v[k] = lerpf(leg.v[k], target.v[k], STAND_SMOOTHING);
+            for (int k = 0; k < 3; ++k)
+                leg.v[k] = leg.joints ? approachJoint(leg.v[k], target.v[k])
+                                      : lerpf(leg.v[k], target.v[k], STAND_SMOOTHING);
         }
+    }
+
+    static float approachJoint(float from, float to) {
+        const float step = (to - from) * STAND_SMOOTHING;
+        return from + fmaxf(-PUPPET_JOINT_STEP_DEG, fminf(PUPPET_JOINT_STEP_DEG, step));
     }
 
     // The validator's clamp sweep: every keyframe plus 32 evenly spaced times per segment, on every
