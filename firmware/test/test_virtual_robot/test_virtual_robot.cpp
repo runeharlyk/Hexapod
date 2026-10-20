@@ -1772,10 +1772,10 @@ struct Takeover {
     std::vector<MOTION_STATE> modes;
 };
 
-Takeover takeOver(VirtualRobot &robot, MOTION_STATE mode, int ticks) {
+// What the servos receive over `ticks` from the angles they hold now.
+Takeover follow(VirtualRobot &robot, int ticks) {
     Takeover run;
     std::array<float, 18> previous = servoAnglesOf(robot);
-    robot.setMode(mode);
     for (int t = 0; t < ticks; ++t) {
         robot.tick();
         run.modes.push_back(robot.mode());
@@ -1785,6 +1785,18 @@ Takeover takeOver(VirtualRobot &robot, MOTION_STATE mode, int ticks) {
     }
     return run;
 }
+
+Takeover takeOver(VirtualRobot &robot, MOTION_STATE mode, int ticks) {
+    robot.setMode(mode);
+    return follow(robot, ticks);
+}
+
+// The ease out of IDLE turns a joint at most half the servo's top speed in a tick, 13.1 rad/s over the 5 ms tick
+// halved, so a leg folded far from the stand swings home at a pace the servo follows with torque to spare; the puppet
+// path otherwise turns one at the servo's top speed.
+constexpr float IDLE_EASE_STEP_DEG = 1.875f;
+constexpr float PUPPET_STEP_DEG = 3.75f;
+constexpr float CAP_TOLERANCE_DEG = 1e-3f;
 
 // The joints dragged far from the stand: a coxa at its travel, a femur raised square and a tibia folded back.
 void dragAway(VirtualRobot &robot) {
@@ -1797,8 +1809,8 @@ void dragAway(VirtualRobot &robot) {
 } // namespace
 
 // Leaving an IDLE whose joints were dragged for STAND or WALK eases every joint from the angle it holds to the stand,
-// through ANIMATE's puppet path as leaving an animation does, never faster than a steady walk's STEP_BOUND_DEG a tick,
-// and then hands back to the mode asked for, standing as a robot stood up from rest stands.
+// through ANIMATE's puppet path as leaving an animation does, at half the servo's top speed, and then hands back to the
+// mode asked for, standing as a robot stood up from rest stands.
 void test_leaving_idle_after_drags_eases_the_joints_to_the_stand() {
     VirtualRobot stood;
     standUp(stood);
@@ -1811,7 +1823,7 @@ void test_leaving_idle_after_drags_eases_the_joints_to_the_stand() {
         char msg[64];
         std::snprintf(msg, sizeof(msg), "to mode %d: largest step %.2f deg", (int)next, run.largestStep);
         TEST_MESSAGE(msg);
-        TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(STEP_BOUND_DEG, run.largestStep, msg);
+        TEST_ASSERT_FLOAT_WITHIN_MESSAGE(CAP_TOLERANCE_DEG, IDLE_EASE_STEP_DEG, run.largestStep, msg);
         TEST_ASSERT_EQUAL_MESSAGE(MOTION_STATE::ANIMATE, run.modes.front(), msg);
         TEST_ASSERT_EQUAL_MESSAGE(next, run.modes.back(), msg);
         for (int j = 0; j < 18; ++j) TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, stand[j], robot.servoAngles()[j], msg);
@@ -1842,6 +1854,37 @@ void test_leaving_limp_idle_stands_up_as_from_deactivated() {
     TEST_ASSERT_EQUAL(MOTION_STATE::STAND, dragged.mode());
     for (int j = 0; j < 18; ++j)
         if (j / 3 != 0) TEST_ASSERT_FLOAT_WITHIN(0.5f, dragged.servoAngles()[j], first[j]);
+}
+
+// Puppeteering keeps the servo's top speed whatever ANIMATE was entered for: a pose sent during the ease out of IDLE,
+// and after it in an ANIMATE asked for, is approached at 3.75 deg a tick, and so is the stand a graceful leave of that
+// pose eases home to.
+void test_puppeteering_and_its_leave_keep_the_servos_top_speed_beside_the_ease_out_of_idle() {
+    PoseMsg folded {};
+    folded.joints[0] = true;
+    std::copy_n(JOINT_LIMIT_DEG, 3, folded.legs[0]);
+
+    VirtualRobot during;
+    idleFromStand(during);
+    dragAway(during);
+    takeOver(during, MOTION_STATE::STAND, 1);
+    during.animationPose(folded);
+    Takeover run = follow(during, ticksFor(1.0f));
+    TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, run.modes.back());
+    TEST_ASSERT_FLOAT_WITHIN(CAP_TOLERANCE_DEG, PUPPET_STEP_DEG, run.largestStep);
+
+    VirtualRobot after;
+    idleFromStand(after);
+    dragAway(after);
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, takeOver(after, MOTION_STATE::STAND, ticksFor(2.0f)).modes.back());
+    takeOver(after, MOTION_STATE::ANIMATE, 1);
+    after.animationPose(folded);
+    run = follow(after, ticksFor(1.0f));
+    TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, run.modes.back());
+    TEST_ASSERT_FLOAT_WITHIN(CAP_TOLERANCE_DEG, PUPPET_STEP_DEG, run.largestStep);
+    run = takeOver(after, MOTION_STATE::STAND, ticksFor(2.0f));
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, run.modes.back());
+    TEST_ASSERT_FLOAT_WITHIN(CAP_TOLERANCE_DEG, PUPPET_STEP_DEG, run.largestStep);
 }
 
 namespace {
@@ -2320,6 +2363,7 @@ int main(int, char **) {
     RUN_TEST(test_every_stop_eases_the_stroke_out_with_the_cadence);
     RUN_TEST(test_leaving_idle_after_drags_eases_the_joints_to_the_stand);
     RUN_TEST(test_leaving_limp_idle_stands_up_as_from_deactivated);
+    RUN_TEST(test_puppeteering_and_its_leave_keep_the_servos_top_speed_beside_the_ease_out_of_idle);
     RUN_TEST(test_full_stick_walk_stays_in_travel_at_every_stride);
     RUN_TEST(test_a_gait_at_rest_takes_a_new_stride_at_once);
     RUN_TEST(test_a_small_stick_at_the_longest_stride_steps_slowly_with_the_full_stroke);

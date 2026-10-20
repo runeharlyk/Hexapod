@@ -128,6 +128,7 @@ The robot's validate request sweeps the same bases and reports the union of the 
 A `PoseData` message (a `BodyPose` plus 0 or 6 `LegTarget`s) is applied only in ANIMATE while the player is idle.
 The firmware lerps toward it with the STAND smoothing factor and holds it if the stream stops.
 A joint-angle leg turns at most 3.75 deg a tick, the servo's own speed (`PUPPET_JOINT_STEP_DEG`), so a joint far from its target is not left behind by its command.
+The ease out of IDLE turns one at half that, 1.875 deg a tick (`IDLE_EASE_JOINT_STEP_DEG`), until a puppeteer's pose takes over; a graceful leave keeps the pace the pose was approached at.
 
 ### Messages
 
