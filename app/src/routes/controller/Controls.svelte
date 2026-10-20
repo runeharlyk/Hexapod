@@ -20,7 +20,7 @@
   import { GaitType, strideApplies } from '$lib/gait'
   import { notifications } from '$lib/components/toasts/notifications'
   import { gamepadAxes, gamepadButtons, hasGamepad } from '$lib/stores/gamepad'
-  import { shapeStick } from '$lib/utilities/stick'
+  import { gamepadSticks, shapeStick } from '$lib/utilities/stick'
   import { commandOf } from '$lib/controller-input'
   import { controlsFor } from '$lib/mode-controls'
   import { drivingJoints, limpServos } from '$lib/joint-drive'
@@ -39,10 +39,6 @@
     if ($hasGamepad) notifications.success('🎮 Gamepad connected', 3000)
   })
 
-  // The standard gamepad mapping reports up as -1; the sticks and the firmware expect up as +1.
-  const gamepadStick = (axes: readonly number[], first: number) =>
-    shapeStick({ x: axes[first] ?? 0, y: -(axes[first + 1] ?? 0) })
-
   let gamepadWasConnected = false
   $effect(() => {
     if (!$hasGamepad) {
@@ -57,9 +53,11 @@
       return
     }
     gamepadWasConnected = true
+    const sticks = gamepadSticks($gamepadAxes, controls.sticks)
+    if (!sticks) return
     input.update(i => {
-      i.left = gamepadStick($gamepadAxes, 0)
-      i.right = gamepadStick($gamepadAxes, 2)
+      i.left = sticks.left
+      i.right = sticks.right
       syncCommand(i)
       return i
     })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { shapeStick } from '../../src/lib/utilities/stick'
+import { gamepadSticks, shapeStick } from '../../src/lib/utilities/stick'
 
 const polar = (radius: number, degrees: number) => ({
   x: radius * Math.cos((degrees * Math.PI) / 180),
@@ -60,4 +60,18 @@ describe('shapeStick', () => {
     }
     expect(angle(shapeStick(polar(1, 20)))).toBeCloseTo(20)
   })
+})
+
+describe('gamepadSticks', () => {
+  // The standard mapping reports a stick pushed up as -1 on its second axis.
+  const pushedUp = [0, -1, 0.6, 0]
+
+  it('shapes both sticks, up as +1 as the firmware takes it', () => {
+    const sticks = gamepadSticks(pushedUp, true)
+    expect(sticks?.left.y).toBeCloseTo(1)
+    expect(sticks?.right).toEqual(shapeStick({ x: 0.6, y: -0 }))
+  })
+
+  it('takes no sticks in a mode that shows none, as the keys take none there', () =>
+    expect(gamepadSticks(pushedUp, false)).toBeNull())
 })
