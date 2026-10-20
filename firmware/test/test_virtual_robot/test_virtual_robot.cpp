@@ -240,6 +240,38 @@ void test_the_servos_are_centred_only_in_idle() {
     TEST_ASSERT_EQUAL_UINT(1, robot.centrings());
 }
 
+// A centring answered 200 is carried out, in the order things arrived: before a mode that arrived after it, even one
+// leaving IDLE, and over every joint dragged before it, which a joint dragged after it then moves again.
+void test_a_centring_is_carried_out_in_arrival_order() {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    TEST_ASSERT_EQUAL_INT(200, robot.centreServos());
+    robot.setMode(MOTION_STATE::STAND);
+    robot.tick();
+    TEST_ASSERT_EQUAL_UINT(1, robot.centrings());
+
+    VirtualRobot joints;
+    idleFromStand(joints);
+    joints.setJoint(4, 20.0f);
+    TEST_ASSERT_EQUAL_INT(200, joints.centreServos());
+    joints.setJoint(7, 15.0f);
+    joints.tick();
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, joints.servoAngles()[4]);
+    TEST_ASSERT_EQUAL_FLOAT(15.0f, joints.servoAngles()[7]);
+}
+
+// A mode already on its way when the centring is asked for is applied first and may leave IDLE, so the centring is
+// refused rather than answered 200 and dropped.
+void test_a_centring_behind_a_queued_mode_is_refused() {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    robot.setMode(MOTION_STATE::STAND);
+    host_bus::drainAll();
+    TEST_ASSERT_EQUAL_INT(409, robot.centreServos());
+    robot.tick();
+    TEST_ASSERT_EQUAL_UINT(0, robot.centrings());
+}
+
 // The angles the robot publishes for the app (main.cpp bridges them to AnglesData), each publication in order.
 using Published = std::vector<std::array<float, 18>>;
 
@@ -2212,6 +2244,8 @@ int main(int, char **) {
     RUN_TEST(test_a_joint_outside_idle_is_ignored);
     RUN_TEST(test_a_joint_sent_behind_a_mode_out_of_idle_is_ignored);
     RUN_TEST(test_the_servos_are_centred_only_in_idle);
+    RUN_TEST(test_a_centring_is_carried_out_in_arrival_order);
+    RUN_TEST(test_a_centring_behind_a_queued_mode_is_refused);
     RUN_TEST(test_entering_idle_publishes_the_held_angles_once);
     RUN_TEST(test_idle_entered_from_a_pose_beyond_travel_publishes_the_held_angles);
     RUN_TEST(test_a_joint_write_in_idle_publishes_the_angles);

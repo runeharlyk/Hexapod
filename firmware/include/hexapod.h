@@ -46,7 +46,7 @@ class Hexapod {
     void animationPose(const PoseMsg &p) { _motionService.handleAnimationPose(p); }
     void animationControlLost() { _motionService.animationControlLost(); }
     void setJoint(int servo, float degrees) { _motionService.setJoint(servo, degrees); }
-    int centreServos() { return _motionService.centreServos(); }
+    int centreServos() { return _motionService.requestCentreServos(); }
     void validateAnimation(const char *name, socket_message_AnimationReport &r) {
         _motionService.validateAnimation(name, r);
     }

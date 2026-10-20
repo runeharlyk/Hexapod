@@ -164,8 +164,8 @@ class MotionService {
     }
 
     // Adapter task: the reply to the calibration page's "Centre all servos", 200 when the control task centres every
-    // servo at its next tick, 409 when the robot is not idle.
-    int centreServos() { return _inbox.postCentreServos() ? 200 : 409; }
+    // servo at its next tick, 409 when the robot is not idle or a mode is on its way.
+    int requestCentreServos() { return _inbox.postCentreServos() ? 200 : 409; }
 
   private:
     // Control task, at the start of the tick after the command arrived; the dead-man's window runs from its arrival.
@@ -313,6 +313,8 @@ class MotionService {
     // imuFresh: the IMU was read on this tick, so its DMP packet and gyro rate are this tick's.
     bool updateMotion(bool imuFresh) {
         const MotionInbox::Mail mail = _inbox.take(millis());
+        // Accepted in IDLE with no mode queued (MotionInbox::postCentreServos): before every mode taken with it.
+        if (mail.centreServos) centreServos();
         _modesTaken = mail.modes;
         _gaitTaken = mail.gait;
         for (int i = 0; i < mail.modes.count; ++i) handleInputMode(mail.modes.items[i]);
@@ -687,9 +689,9 @@ class MotionService {
         target_gait_state.phase_rate = held ? 0.f : w.phaseRate;
     }
 
-    // Control task, IDLE, after the tick's modes: the centring and the joints asked for while the robot idled. A joint
-    // writes its own servo alone, so every other servo holds the pulse it had when the motion stopped, or stays limp; a
-    // joint posted before a mode leaving IDLE was applied never gets here. The angles the servos hold, within travel as
+    // Control task, IDLE, after the tick's modes and the centring before them: the joints dragged while the robot
+    // idled. A joint writes its own servo alone, so every other servo holds the pulse it had when the motion stopped, or
+    // stays limp; a joint posted before a mode leaving IDLE was applied never gets here. The angles the servos hold, within travel as
     // the controller held the motion's last pose, are published on entering IDLE and after each tick that writes, as the
     // app's 3D view draws them, and never on a timer.
     void driveIdleServos(const MotionInbox::Mail &mail, bool entering) {
@@ -697,12 +699,6 @@ class MotionService {
             for (int servo = 0; servo < NUM_SERVO; ++servo)
                 msgAngles.angles[servo] = withinTravel(msgAngles.angles[servo], servo % 3);
         bool written = false;
-        if (mail.centreServos) {
-            _servoController->setCenterPwm();
-            for (int servo = 0; servo < NUM_SERVO; ++servo)
-                msgAngles.angles[servo] = _servoController->centreAngle(servo);
-            written = true;
-        }
         for (int servo = 0; servo < NUM_SERVO; ++servo) {
             if (!(mail.joints.servos & (1u << servo))) continue;
             _servoController->setJointAngle(servo, mail.joints.degrees[servo]);
@@ -711,6 +707,14 @@ class MotionService {
         }
         if (written) _idleHeld = true;
         if (entering || written) publishState();
+    }
+
+    // Control task, IDLE, before the tick's modes: every servo to its centre pulse, published as the centre pose.
+    void centreServos() {
+        _servoController->setCenterPwm();
+        for (int servo = 0; servo < NUM_SERVO; ++servo) msgAngles.angles[servo] = _servoController->centreAngle(servo);
+        _idleHeld = true;
+        publishState();
     }
 
     // Control task, WALK. A stride change is a change of the walk, not of its posture, so it never pauses the walk; but

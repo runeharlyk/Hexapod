@@ -527,7 +527,7 @@ static void registerHandlers(CommAdapterBase &c) {
                 res.which_response = socket_message_CorrelationResponse_empty_tag;
                 res.status_code = robot.centreServos();
                 if (res.status_code == 409)
-                    strncpy(res.error_message, "Only an idle robot centres its servos; pick IDLE first",
+                    strncpy(res.error_message, "Only an idle robot, with no mode on its way, centres its servos",
                             sizeof(res.error_message) - 1);
                 break;
             }

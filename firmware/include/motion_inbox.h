@@ -221,12 +221,15 @@ class MotionInbox {
         _joints.servos |= 1u << servo;
     }
 
-    // Adapter task: every servo to its centre pulse, as the calibration page asks, judged as a joint is. False, nothing
-    // asked, unless the mode applied last is IDLE.
+    // Adapter task: every servo to its centre pulse, as the calibration page asks. False, nothing asked, unless the mode
+    // applied last is IDLE and no mode is queued, since a queued mode is applied first and may leave IDLE; so a
+    // centring taken comes before every mode taken with it. It moves every servo, so it replaces the joints posted
+    // before it, and the joints posted after it are written after it.
     bool postCentreServos() {
         std::lock_guard<std::mutex> lock(_mutex);
-        if (_applied.mode != MOTION_STATE::IDLE) return false;
+        if (_applied.mode != MOTION_STATE::IDLE || _modes.count > 0) return false;
         _centreServos = true;
+        _joints = {};
         return true;
     }
 
