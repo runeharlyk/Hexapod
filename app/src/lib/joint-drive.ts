@@ -12,6 +12,18 @@ const URDF_SERVOS = urdfJointOrder(Array.from({ length: 18 }, (_, servo) => serv
 export const servoOfUrdfJoint = (index: number) => URDF_SERVOS[index]
 
 /**
+ * Each joint's travel in degrees, coxa, femur and tibia: a copy of the firmware's kinematics.h JOINT_LIMIT_DEG, which
+ * tests/unit/joint-drive.spec.ts keeps equal to it. The URDF model's own limits are wider, the femur's to -152.8.
+ */
+export const JOINT_LIMIT_DEG = [31.5, 90, 149] as const
+
+/** The URDF joint `index` at `radians`, held within the travel of the servo it drives, as the firmware holds it. */
+export const withinTravel = (index: number, radians: number) => {
+  const limit = (JOINT_LIMIT_DEG[servoOfUrdfJoint(index) % 3] * Math.PI) / 180
+  return Math.min(limit, Math.max(-limit, radians))
+}
+
+/**
  * Whether dragging a 3D view's joints drives the robot's servos: from the controller page's view alone, in IDLE, over
  * a link, and not while the controls drive the simulation view's robot. Every other 3D view poses the drawn model only.
  */

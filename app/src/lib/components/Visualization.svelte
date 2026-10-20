@@ -26,7 +26,7 @@
   import type { Vec3 } from '$lib/animation/model'
   import { DEFAULT_FEET } from '$lib/animation/model'
   import { handleColor, legMask, sceneToOffset, stanceToScene } from '$lib/animation/handles'
-  import { JointDrive, drivingJoints } from '$lib/joint-drive'
+  import { JointDrive, drivingJoints, withinTravel } from '$lib/joint-drive'
   import { JointDrag } from '$lib/joint-drag'
   import type { URDFJoint } from 'urdf-loader'
 
@@ -200,12 +200,12 @@
     }
   }
 
-  // The model shows the joint where the drag put it, within its limits, as the panel's pose by hand does, and the
-  // robot is sent that angle.
+  // The model shows the joint where the drag put it, within the servo's travel and the model's limits, as the panel's
+  // pose by hand does, and the robot is sent that angle.
   const turnJoint = (joint: URDFJoint, angle: number) => {
     const index = $jointNames.indexOf(joint.urdfName)
     if (index < 0) return
-    joint.setJointValue(angle)
+    joint.setJointValue(withinTravel(index, angle))
     settings['Internal kinematic'] = false
     targetAngles[index] = joint.angle
     jointAngles[joint.urdfName] = joint.angle

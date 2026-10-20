@@ -38,6 +38,7 @@ The gait's resting feet in `firmware/include/gait.h` (`defaultPosition`, e.g. `{
 The native test checks both the gait's resting feet and the mounts against the fixture's leg sides; the simulation test checks its resting feet and mounts, and the app test checks the resting stance its 3D view walks on.
 With +x to the right, positive `mountX` is the right side; the app's `LEG_NAMES` (`app/src/lib/calibration/leg-pose.ts`) name the legs the same way.
 The app's 3D model orders its joints otherwise (`urdfJointOrder`, `app/src/lib/motion.ts`), so a joint dragged on it is sent by its servo number, `3i + j` (`servoOfUrdfJoint`, `app/src/lib/joint-drive.ts`), with the angle in degrees as the robot reports it.
+The drag holds each joint within the servo's travel, the firmware's `JOINT_LIMIT_DEG` (`withinTravel` in `kinematics.h` and in `joint-drive.ts`, whose copy a unit test keeps equal), not within the URDF model's wider limits.
 
 ## Command signs
 
