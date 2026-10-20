@@ -1,11 +1,11 @@
 <script lang="ts">
   import { modals } from 'svelte-modals'
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte'
-  import SettingsCard from '$lib/components/SettingsCard.svelte'
+  import Section from '$lib/components/layout/Section.svelte'
 
   import { resolveUrl } from '$lib/proto-api'
   import { notifications } from '$lib/components/toasts/notifications'
-  import { Cancel, OTA, Warning } from '$lib/components/icons'
+  import { Cancel, OTA } from '$lib/components/icons'
   import { IMAGE_HEAD_BYTES, inspectImage, type AppImage } from '$lib/firmware/image'
   import { rememberUpdate } from '$lib/firmware/update-outcome'
   import { sendFirmware } from '$lib/firmware/ota'
@@ -89,25 +89,16 @@
   }
 </script>
 
-<SettingsCard collapsible={false}>
-  {#snippet icon()}
-    <OTA class="lex-shrink-0 mr-2 h-6 w-6 self-end rounded-full" />
-  {/snippet}
-  {#snippet title()}
-    <span>Upload Firmware</span>
-  {/snippet}
-  <div class="alert alert-warning shadow-lg">
-    <Warning class="h-6 w-6 shrink-0" />
-    <span
-      >Uploading a new firmware (.bin) file will replace the existing firmware. The bootloader
-      verifies the image, and a firmware that fails to boot rolls back to the running one.
-    </span>
-  </div>
-
+<Section
+  title="Upload firmware"
+  description="A firmware (.bin) file replaces the running one. The bootloader verifies the image, and a firmware that fails to boot rolls back to the running one."
+  icon={OTA}
+>
   <input
     type="file"
     id="binFile"
-    class="file-input file-input-bordered file-input-secondary mt-4 w-full"
+    aria-label="Firmware file"
+    class="file-input w-full"
     bind:files
     bind:this={input}
     accept=".bin"
@@ -115,8 +106,10 @@
     disabled={sending !== null}
   />
   {#if sending}
-    <progress class="progress progress-primary mt-2 w-full" value={sending.sent} max={sending.total}
+    <progress class="progress progress-primary w-full" value={sending.sent} max={sending.total}
     ></progress>
-    <span class="text-sm opacity-70">Sending the firmware over the link; keep this page open.</span>
+    <p class="text-base-content/70 text-sm">
+      Sending the firmware over the link; keep this page open.
+    </p>
   {/if}
-</SettingsCard>
+</Section>

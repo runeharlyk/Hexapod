@@ -24,20 +24,6 @@ export type GithubRelease = {
   assets: GithubAsset[]
 }
 
-export type WifiStatus = {
-  status: number
-  local_ip: string
-  mac_address: string
-  rssi: number
-  ssid: string
-  bssid: string
-  channel: number
-  subnet_mask: string
-  gateway_ip: string
-  dns_ip_1: string
-  dns_ip_2?: string
-}
-
 export type WifiSettings = {
   hostname: string
   priority_RSSI: boolean
@@ -65,25 +51,6 @@ export type NetworkItem = {
   bssid: string
   channel: number
   encryption_type: number
-}
-
-export type ApStatus = {
-  status: number
-  ip_address: string
-  mac_address: string
-  station_num: number
-}
-
-export type ApSettings = {
-  provision_mode: number
-  ssid: string
-  password: string
-  channel: number
-  ssid_hidden: boolean
-  max_clients: number
-  local_ip: string
-  gateway_ip: string
-  subnet_mask: string
 }
 
 export type DownloadOTA = {

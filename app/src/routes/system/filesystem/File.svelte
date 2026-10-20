@@ -11,14 +11,15 @@
   let { name, path, selected, onDelete }: Props = $props()
 </script>
 
-<div class="flex items-center pl-4 group hover:bg-gray-700 rounded py-1">
+<div class="group hover:bg-base-200 flex items-center rounded py-1 pl-4">
   <button class="flex items-center gap-2 flex-grow" onclick={() => selected(path)}>
     <FileIcon class="w-4 h-4" />
     <span class="text-sm">{name}</span>
   </button>
 
   <button
-    class="opacity-0 group-hover:opacity-100 p-1 hover:text-red-500"
+    class="hover:text-error p-1 opacity-0 group-hover:opacity-100 focus:opacity-100"
+    aria-label="Delete {name}"
     onclick={() => onDelete(path)}
   >
     <TrashIcon class="w-4 h-4" />

@@ -1,98 +1,69 @@
 <script lang="ts">
   import { api } from '$lib/api'
-  import Spinner from '$lib/components/Spinner.svelte'
+  import { Settings as SettingsIcon } from '$lib/components/icons'
+  import Field from '$lib/components/layout/Field.svelte'
+  import SettingsForm from '$lib/components/layout/SettingsForm.svelte'
+  import { Settings } from '$lib/components/layout/settings.svelte'
   import type { CameraSettings } from '$lib/types/models'
-  let settings: CameraSettings | undefined = $state()
 
-  const getCameraSettings = async () => {
-    const result = await api.get<CameraSettings>('/api/camera/settings')
-    if (result.isErr()) {
-      console.error('An error occurred', result.inner)
-      return
-    }
-    settings = result.inner
-  }
+  const SPECIAL_EFFECTS = [
+    'No effect',
+    'Negative',
+    'Grayscale',
+    'Red tint',
+    'Green tint',
+    'Blue tint',
+    'Sepia'
+  ]
 
-  const updateCameraSettings = async () => {
-    if (!settings) return
-    const result = await api.post<CameraSettings>('/api/camera/settings', settings)
-    if (result.isErr()) {
-      console.error('An error occurred', result.inner)
-      return
-    }
-    settings = result.inner
-  }
+  // The camera's settings are served over the robot's HTTP API, not the protobuf link.
+  const settings = new Settings<CameraSettings>({
+    what: 'the camera settings',
+    read: async () => {
+      const result = await api.get<CameraSettings | null>('/api/camera/settings')
+      if (result.isErr()) throw new Error(String(result.exception))
+      // A reply that is not JSON reads as null.
+      if (!result.inner) throw new Error('the reply carried no settings')
+      return result.inner
+    },
+    write: async value => {
+      const result = await api.post<CameraSettings>('/api/camera/settings', value)
+      if (result.isErr()) throw new Error(String(result.exception))
+      return result.inner ?? undefined
+    },
+    saved: 'Camera settings updated.'
+  })
 </script>
 
-{#await getCameraSettings()}
-  <Spinner />
-{:then}
-  {#if settings}
-    <div class="flex flex-col gap-1">
-      <button class="btn btn-primary" type="button" onclick={updateCameraSettings}
-        >Update camera settings</button
-      >
-
-      <label for="brightness">
-        Brightness {settings.brightness}
-        <input
-          type="range"
-          min="-2"
-          max="2"
-          class="range range-xs"
-          bind:value={settings.brightness}
-        />
-      </label>
-
-      <label for="contrast">
-        Contrast {settings.contrast}
-        <input
-          type="range"
-          min="-2"
-          max="2"
-          class="range range-xs"
-          bind:value={settings.contrast}
-        />
-      </label>
-
-      <label for="framesize">
-        FrameSize {settings.framesize}
-        <input
-          type="range"
-          min="0"
-          max="10"
-          class="range range-xs"
-          bind:value={settings.framesize}
-        />
-      </label>
-
-      <label class="cursor-pointer flex items-center justify-between">
-        Vertical flip
-        <input type="checkbox" class="toggle" bind:checked={settings.vflip} />
-      </label>
-
-      <label class="cursor-pointer flex items-center justify-between">
-        Horizontal flip
-        <input type="checkbox" class="toggle" bind:checked={settings.hmirror} />
-      </label>
-
-      <label for="special_effect" class="flex items-center">
-        <span class="basis-1/2">Special Effect</span>
-        <select
-          class="select select-bordered select-sm w-full max-w-xs"
-          bind:value={settings.special_effect}
-        >
-          <option value={0}>No effect</option>
-          <option value={1}>Negative</option>
-          <option value={2}>Grayscale</option>
-          <option value={3}>Red tint</option>
-          <option value={4}>Green tint</option>
-          <option value={5}>Blue tint</option>
-          <option value={6}>Sepia</option>
-        </select>
-      </label>
-    </div>
-  {:else}
-    <div>Camera settings are unavailable.</div>
-  {/if}
-{/await}
+<SettingsForm title="Camera settings" icon={SettingsIcon} {settings} rows={6}>
+  {#snippet children(form)}
+    {#snippet slider(
+      id: string,
+      label: string,
+      min: number,
+      max: number,
+      key: 'brightness' | 'contrast' | 'framesize'
+    )}
+      <Field {label} for={id}>
+        <input {id} class="range range-sm w-full" type="range" {min} {max} bind:value={form[key]} />
+        <p class="mt-1 font-mono text-xs">{form[key]}</p>
+      </Field>
+    {/snippet}
+    {@render slider('camera-brightness', 'Brightness', -2, 2, 'brightness')}
+    {@render slider('camera-contrast', 'Contrast', -2, 2, 'contrast')}
+    {@render slider('camera-framesize', 'Frame size', 0, 10, 'framesize')}
+    <Field label="Vertical flip" for="camera-vflip">
+      <input id="camera-vflip" type="checkbox" class="toggle" bind:checked={form.vflip} />
+    </Field>
+    <Field label="Horizontal flip" for="camera-hmirror">
+      <input id="camera-hmirror" type="checkbox" class="toggle" bind:checked={form.hmirror} />
+    </Field>
+    <Field label="Special effect" for="camera-effect">
+      <select id="camera-effect" class="select w-full" bind:value={form.special_effect}>
+        {#each SPECIAL_EFFECTS as effect, value (value)}
+          <option {value}>{effect}</option>
+        {/each}
+      </select>
+    </Field>
+  {/snippet}
+</SettingsForm>

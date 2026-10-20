@@ -15,6 +15,7 @@
     "lint": "prettier --check . && eslint .",
     "format": "prettier --write .",
     "test:integration": "playwright test",
+    "screenshots": "playwright test -c playwright.screenshots.config.ts",
     "test:unit": "node scripts/check_virtual_robot.js && vitest run"
   },
   "devDependencies": {

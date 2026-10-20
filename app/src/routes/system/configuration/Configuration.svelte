@@ -1,5 +1,5 @@
 <script lang="ts">
-  import SettingsCard from '$lib/components/SettingsCard.svelte'
+  import Section from '$lib/components/layout/Section.svelte'
   import { Save, DownloadIcon, UploadIcon } from '$lib/components/icons'
   import {
     applyConfig,
@@ -67,54 +67,41 @@
   }
 </script>
 
-<SettingsCard collapsible={false}>
-  {#snippet icon()}
-    <Save class="mr-2 h-6 w-6 shrink-0 self-end" />
-  {/snippet}
-  {#snippet title()}
-    <span>Configuration</span>
-  {/snippet}
-
-  <div class="flex flex-col gap-4">
-    <p>
-      Saves the servo calibration and the peripheral settings (I2C bus and pins) to a file, and
-      loads them back. A factory reset or a filesystem upload erases both, so keep a copy. WiFi
-      settings stay on the robot: it never sends its passwords.
-    </p>
-
-    <div class="flex flex-wrap gap-2">
-      <button class="btn btn-primary" disabled={working} onclick={save}>
-        <DownloadIcon class="mr-2 h-5 w-5" />Save to a file
-      </button>
-      <button class="btn" disabled={working} onclick={() => fileInput?.click()}>
-        <UploadIcon class="mr-2 h-5 w-5" />Load a file
-      </button>
-      <input
-        type="file"
-        accept=".json,application/json"
-        class="hidden"
-        bind:this={fileInput}
-        onchange={e => pickFile(e.currentTarget)}
-      />
-    </div>
-
-    {#if step.kind === 'busy'}
-      <p>{step.doing}...</p>
-    {:else if step.kind === 'chosen'}
-      {@const config = step.config}
-      <div class="flex flex-col gap-2">
-        <p>
-          Saved {config.exportedAt.slice(0, 10) || 'at an unknown date'}, with {config.servo.servos
-            .length} servos. Loading it overwrites the robot's servo calibration and peripheral settings.
-        </p>
-        <div>
-          <button class="btn btn-primary" onclick={() => load(config)}>Load</button>
-        </div>
-      </div>
-    {:else if step.kind === 'done'}
-      <div class="alert alert-success" role="alert">{step.message}</div>
-    {:else if step.kind === 'failed'}
-      <div class="alert alert-error" role="alert">{step.message}</div>
-    {/if}
+<Section
+  title="Configuration file"
+  description="Saves the servo calibration and the peripheral settings (I2C bus and pins) to a file, and loads them back. A factory reset or a filesystem upload erases both, so keep a copy. WiFi settings stay on the robot: it never sends its passwords."
+  icon={Save}
+>
+  <div class="flex flex-wrap gap-2">
+    <button class="btn btn-primary" disabled={working} onclick={save}>
+      <DownloadIcon class="size-5" />Save to a file
+    </button>
+    <button class="btn" disabled={working} onclick={() => fileInput?.click()}>
+      <UploadIcon class="size-5" />Load a file
+    </button>
+    <input
+      type="file"
+      accept=".json,application/json"
+      class="hidden"
+      bind:this={fileInput}
+      onchange={e => pickFile(e.currentTarget)}
+    />
   </div>
-</SettingsCard>
+
+  {#if step.kind === 'busy'}
+    <p class="text-sm">{step.doing}...</p>
+  {:else if step.kind === 'chosen'}
+    {@const config = step.config}
+    <p class="text-sm">
+      Saved {config.exportedAt.slice(0, 10) || 'at an unknown date'}, with {config.servo.servos
+        .length} servos. Loading it overwrites the robot's servo calibration and peripheral settings.
+    </p>
+    <div>
+      <button class="btn btn-primary" onclick={() => load(config)}>Load</button>
+    </div>
+  {:else if step.kind === 'done'}
+    <div class="alert alert-success alert-soft" role="alert">{step.message}</div>
+  {:else if step.kind === 'failed'}
+    <div class="alert alert-error alert-soft" role="alert">{step.message}</div>
+  {/if}
+</Section>

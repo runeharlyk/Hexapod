@@ -2,10 +2,9 @@
   import { onMount } from 'svelte'
   import { modals } from 'svelte-modals'
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte'
-  import SettingsCard from '$lib/components/SettingsCard.svelte'
-  import Spinner from '$lib/components/Spinner.svelte'
-  import { slide } from 'svelte/transition'
-  import { cubicOut } from 'svelte/easing'
+  import Card from '$lib/components/layout/Card.svelte'
+  import LoadFailure from '$lib/components/layout/LoadFailure.svelte'
+  import Loading from '$lib/components/layout/Loading.svelte'
   import {
     AnalyticsData,
     SystemCommandData,
@@ -33,9 +32,7 @@
     Temperature,
     Stopwatch
   } from '$lib/components/icons'
-  import type { IconComponent } from '$lib/components/icons'
   import StatusItem from '$lib/components/StatusItem.svelte'
-  import ActionButton from './ActionButton.svelte'
 
   const features = useFeatureFlags()
 
@@ -106,143 +103,99 @@
       }
     })
   }
-
-  interface ActionButtonDef {
-    icon: IconComponent
-    label: string
-    onClick: () => void
-    type?: string
-    condition?: () => boolean
-  }
-
-  const actionButtons: ActionButtonDef[] = [
-    {
-      icon: Sleep,
-      label: 'Sleep',
-      onClick: confirmSleep,
-      condition: () => Boolean($features.sleep)
-    },
-    {
-      icon: Power,
-      label: 'Restart',
-      onClick: confirmRestart
-    },
-    {
-      icon: FactoryReset,
-      label: 'Factory Reset',
-      onClick: confirmReset,
-      type: 'secondary'
-    }
-  ]
 </script>
 
-<SettingsCard collapsible={false}>
-  {#snippet icon()}
-    <Health class="lex-shrink-0 mr-2 h-6 w-6 self-end" />
+<Card title="System status" icon={Health}>
+  {#await statusRequest}
+    <Loading label="Reading the system status" rows={6} />
+  {:then}
+    <ul class="list bg-base-100 rounded-box">
+      <StatusItem
+        icon={CPU}
+        title="Chip"
+        description={`${staticInfo?.cpuType} (${staticInfo?.espPlatform})`}
+      />
+
+      <StatusItem
+        icon={SDK}
+        title="SDK version"
+        description={`ESP-IDF ${staticInfo?.sdkVersion}`}
+      />
+
+      <StatusItem
+        icon={CPP}
+        title="Firmware version"
+        description={staticInfo?.firmwareVersion ?? ''}
+      />
+
+      <StatusItem
+        icon={Speed}
+        title="CPU frequency"
+        description={`${staticInfo?.cpuFreqMhz} MHz ${
+          staticInfo?.cpuCores == 2 ? 'Dual Core' : 'Single Core'
+        }`}
+      />
+
+      <StatusItem
+        icon={Heap}
+        title="Heap (free / total)"
+        description={`${analytics?.freeHeap} / ${analytics?.totalHeap} bytes (max alloc ${analytics?.maxAllocHeap})`}
+      />
+
+      <StatusItem
+        icon={Pyramid}
+        title="PSRAM (free / size)"
+        description={`${analytics?.freePsram} / ${analytics?.psramSize} bytes`}
+      />
+
+      <StatusItem
+        icon={Flash}
+        title="Flash chip size"
+        description={`${(staticInfo?.flashChipSize ?? 0) / 1000000} MB`}
+      />
+
+      <StatusItem
+        icon={Folder}
+        title="File system (used / total)"
+        description={`${(((analytics?.fsUsed ?? 0) / (analytics?.fsTotal || 1)) * 100).toFixed(
+          1
+        )} % of ${(analytics?.fsTotal ?? 0) / 1000000} MB used (${
+          ((analytics?.fsTotal ?? 0) - (analytics?.fsUsed ?? 0)) / 1000000
+        } MB free)`}
+      />
+
+      <StatusItem
+        icon={Temperature}
+        title="Core temperature"
+        description={`${(analytics?.coreTemp ?? 0).toFixed(2)} °C`}
+      />
+
+      <StatusItem
+        icon={Stopwatch}
+        title="Uptime"
+        description={convertSeconds(analytics?.uptime ?? 0)}
+      />
+
+      <StatusItem
+        icon={Power}
+        title="Reset reason"
+        description={staticInfo?.cpuResetReason ?? ''}
+      />
+    </ul>
+  {:catch error}
+    <LoadFailure
+      message="System status could not be loaded: {error.message}"
+      retry={() => (statusRequest = getSystemStatus())}
+    />
+  {/await}
+
+  {#snippet footer()}
+    {#if $features.sleep}
+      <button class="btn" onclick={confirmSleep}><Sleep class="size-5" />Sleep</button>
+    {/if}
+    <button class="btn" onclick={confirmRestart}><Power class="size-5" />Restart</button>
+    <button class="btn btn-error btn-soft" onclick={confirmReset}>
+      <FactoryReset class="size-5" />Factory reset
+    </button>
   {/snippet}
-  {#snippet title()}
-    <span>System Status</span>
-  {/snippet}
-
-  <div class="w-full overflow-x-auto">
-    {#await statusRequest}
-      <Spinner />
-    {:then}
-      <div
-        class="flex w-full flex-col space-y-1"
-        transition:slide|local={{ duration: 300, easing: cubicOut }}
-      >
-        <StatusItem
-          icon={CPU}
-          title="Chip"
-          description={`${staticInfo?.cpuType} (${staticInfo?.espPlatform})`}
-        />
-
-        <StatusItem
-          icon={SDK}
-          title="SDK Version"
-          description={`ESP-IDF ${staticInfo?.sdkVersion}`}
-        />
-
-        <StatusItem
-          icon={CPP}
-          title="Firmware Version"
-          description={staticInfo?.firmwareVersion ?? ''}
-        />
-
-        <StatusItem
-          icon={Speed}
-          title="CPU Frequency"
-          description={`${staticInfo?.cpuFreqMhz} MHz ${
-            staticInfo?.cpuCores == 2 ? 'Dual Core' : 'Single Core'
-          }`}
-        />
-
-        <StatusItem
-          icon={Heap}
-          title="Heap (Free / Total)"
-          description={`${analytics?.freeHeap} / ${analytics?.totalHeap} bytes (max alloc ${analytics?.maxAllocHeap})`}
-        />
-
-        <StatusItem
-          icon={Pyramid}
-          title="PSRAM (Free / Size)"
-          description={`${analytics?.freePsram} / ${analytics?.psramSize} bytes`}
-        />
-
-        <StatusItem
-          icon={Flash}
-          title="Flash Chip Size"
-          description={`${(staticInfo?.flashChipSize ?? 0) / 1000000} MB`}
-        />
-
-        <StatusItem
-          icon={Folder}
-          title="File System (Used / Total)"
-          description={`${(((analytics?.fsUsed ?? 0) / (analytics?.fsTotal || 1)) * 100).toFixed(
-            1
-          )} % of ${(analytics?.fsTotal ?? 0) / 1000000} MB used (${
-            ((analytics?.fsTotal ?? 0) - (analytics?.fsUsed ?? 0)) / 1000000
-          } MB free)`}
-        />
-
-        <StatusItem
-          icon={Temperature}
-          title="Core Temperature"
-          description={`${(analytics?.coreTemp ?? 0).toFixed(2)} °C`}
-        />
-
-        <StatusItem
-          icon={Stopwatch}
-          title="Uptime"
-          description={convertSeconds(analytics?.uptime ?? 0)}
-        />
-
-        <StatusItem
-          icon={Power}
-          title="Reset Reason"
-          description={staticInfo?.cpuResetReason ?? ''}
-        />
-      </div>
-    {:catch error}
-      <div class="alert alert-error">
-        <span>System status could not be loaded: {error.message}</span>
-        <button class="btn btn-sm" onclick={() => (statusRequest = getSystemStatus())}>Retry</button
-        >
-      </div>
-    {/await}
-  </div>
-
-  <div class="mt-4 flex flex-wrap justify-end gap-2">
-    {#each actionButtons as button}
-      {#if button.condition === undefined || button.condition()}
-        <ActionButton
-          onclick={button.onClick}
-          icon={button.icon}
-          label={button.label}
-          type={button.type || 'primary'}
-        />
-      {/if}
-    {/each}
-  </div>
-</SettingsCard>
+</Card>

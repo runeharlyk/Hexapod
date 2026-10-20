@@ -1,7 +1,8 @@
 <script lang="ts">
+  import PageShell from '$lib/components/layout/PageShell.svelte'
   import Connection from './Connection.svelte'
 </script>
 
-<div class="mx-0 my-1 flex flex-col space-y-4 sm:mx-8 sm:my-8">
+<PageShell grouping="cards">
   <Connection />
-</div>
+</PageShell>

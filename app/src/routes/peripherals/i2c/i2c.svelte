@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import SettingsCard from '$lib/components/SettingsCard.svelte'
+  import Loading from '$lib/components/layout/Loading.svelte'
+  import LoadFailure from '$lib/components/layout/LoadFailure.svelte'
+  import Section from '$lib/components/layout/Section.svelte'
   import { dataBroker } from '$lib/transport/databroker'
   import { Connection } from '$lib/components/icons'
   import { describeI2C, hexAddress, i2cScan } from '$lib/i2c'
   import { ask } from '$lib/transport/reply'
-  import I2CSetting from './i2cSetting.svelte'
 
   const scan = () =>
     i2cScan.run(async () => {
@@ -18,50 +19,37 @@
   })
 </script>
 
-<SettingsCard collapsible={false}>
-  {#snippet icon()}
-    <Connection class="lex-shrink-0 mr-2 h-6 w-6 self-end" />
-  {/snippet}
-  {#snippet title()}
-    <span>I<sup>2</sup>C</span>
-  {/snippet}
-  {#snippet right()}
-    <button class="btn btn-primary" onclick={scan} disabled={$i2cScan.state === 'scanning'}>
+<Section
+  title="Devices on the bus"
+  description="The robot probes addresses 0x08 to 0x77 on its bus."
+  icon={Connection}
+>
+  {#snippet actions()}
+    <button class="btn btn-primary btn-sm" onclick={scan} disabled={$i2cScan.state === 'scanning'}>
       {#if $i2cScan.state === 'scanning'}
-        <span class="loading loading-ring loading-xs"></span>
+        <span class="loading loading-spinner loading-xs"></span>
       {/if}
       Scan
     </button>
   {/snippet}
 
   {#if $i2cScan.state === 'scanning'}
-    <p class="text-sm opacity-70">Probing addresses 0x08 to 0x77 on the robot's bus.</p>
+    <Loading label="Scanning the bus" />
   {:else if $i2cScan.state === 'failed'}
-    <div role="alert" class="alert alert-error">Scan failed: {$i2cScan.message}</div>
+    <LoadFailure message="Scan failed: {$i2cScan.message}" />
   {:else if $i2cScan.state === 'done' && $i2cScan.result.length === 0}
-    <p class="text-sm opacity-70">No device answered on the bus.</p>
+    <p class="text-base-content/70 text-sm">No device answered on the bus.</p>
   {:else if $i2cScan.state === 'done'}
-    <div class="w-full overflow-x-auto">
-      <table class="table table-sm">
-        <thead>
-          <tr>
-            <th>Address</th>
-            <th>Part</th>
-            <th>Description</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each $i2cScan.result as device (device.address)}
-            <tr>
-              <td class="font-mono">{hexAddress(device.address)}</td>
-              <td>{device.part ?? '-'}</td>
-              <td>{device.name}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+    <ul class="list">
+      {#each $i2cScan.result as device (device.address)}
+        <li class="list-row items-center">
+          <span class="badge badge-ghost font-mono">{hexAddress(device.address)}</span>
+          <div class="min-w-0">
+            <div class="font-medium">{device.part ?? 'Unknown part'}</div>
+            <div class="text-base-content/70 text-sm">{device.name}</div>
+          </div>
+        </li>
+      {/each}
+    </ul>
   {/if}
-
-  <I2CSetting />
-</SettingsCard>
+</Section>

@@ -1,12 +1,13 @@
 <script lang="ts">
   import RequiresRobot from '$lib/components/RequiresRobot.svelte'
+  import PageShell from '$lib/components/layout/PageShell.svelte'
   import SystemStatus from './SystemStatus.svelte'
   import LastCrash from './LastCrash.svelte'
 </script>
 
-<div class="mx-0 my-1 flex flex-col space-y-4 sm:mx-8 sm:my-8">
+<PageShell width="wide" grouping="cards">
   <RequiresRobot>
     <SystemStatus />
     <LastCrash />
   </RequiresRobot>
-</div>
+</PageShell>

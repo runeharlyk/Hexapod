@@ -1,11 +1,12 @@
 <script lang="ts">
   import RequiresRobot from '$lib/components/RequiresRobot.svelte'
   import RequiresFeatures from '$lib/components/RequiresFeatures.svelte'
+  import PageShell from '$lib/components/layout/PageShell.svelte'
   import SystemMetrics from './SystemMetrics.svelte'
   import TelemetryRecording from './TelemetryRecording.svelte'
 </script>
 
-<div class="mx-0 my-1 flex flex-col space-y-4 sm:mx-8 sm:my-8">
+<PageShell width="wide" grouping="cards">
   <RequiresRobot>
     <RequiresFeatures
       has={features => features.analytics}
@@ -15,4 +16,4 @@
       <TelemetryRecording />
     </RequiresFeatures>
   </RequiresRobot>
-</div>
+</PageShell>

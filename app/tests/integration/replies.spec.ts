@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { fakeRobot, tooOld, tooOldUpToV011 } from './fake-robot'
-import { PeripheralSettings, WifiSettings } from '../../src/lib/platform_shared/api'
+import { PeripheralSettings, Servo, WifiSettings } from '../../src/lib/platform_shared/api'
 
 const base = process.env.BASE_PATH ?? ''
 
@@ -61,11 +61,16 @@ test('a firmware up to v0.1.1 is named as too old only for a request without fie
     await expect(page.getByText(text, { exact: true })).toBeVisible()
 })
 
-// A refusal answers the same on every poll, so the scan stops at once and says why.
+// A refusal answers the same on every poll, so the scan stops at once and says why. The page offers the scan once it
+// has read the saved networks it adds to.
 test('a Wi-Fi scan names the firmware it needs from a robot that does not know the request', async ({
   page
 }) => {
-  await fakeRobot(page, tooOld)
+  await fakeRobot(page, request =>
+    request.wifiSettingsGet ?
+      { wifiSettings: WifiSettings.create({ hostname: 'hexapod' }) }
+    : tooOld()
+  )
   await page.goto(`${base}/wifi/sta`)
   await page.getByRole('button', { name: 'Scan for networks' }).click()
 
@@ -83,7 +88,8 @@ test('a Wi-Fi settings update the robot refuses is reported, not confirmed', asy
     return tooOld()
   })
   await page.goto(`${base}/wifi/sta`)
-  await page.getByRole('button', { name: 'Apply Settings' }).click()
+  await page.getByLabel('Host name').fill('hexapod-2')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
 
   await expect(
     page.getByText('Not saved: the robot refused the Wi-Fi settings', { exact: true })
@@ -113,7 +119,8 @@ test('an access point settings update the robot refuses is reported, not confirm
     return tooOld()
   })
   await page.goto(`${base}/wifi/ap`)
-  await page.getByRole('button', { name: 'Apply Settings' }).click()
+  await page.getByLabel('SSID', { exact: true }).fill('hexapod-2')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
 
   await expect(
     page.getByText('Not saved: the robot refused the access point settings', { exact: true })
@@ -123,10 +130,15 @@ test('an access point settings update the robot refuses is reported, not confirm
 
 test('a servo calibration the robot refuses is reported, not confirmed', async ({ page }) => {
   await fakeRobot(page, request =>
-    request.servoSettingsGet ? { servoSettings: { servos: [] } } : { statusCode: 400 }
+    request.servoSettingsGet ?
+      {
+        servoSettings: { servos: [Servo.create({ centerPwm: 306, direction: 1, conversion: 2.2 })] }
+      }
+    : { statusCode: 400 }
   )
   await page.goto(`${base}/peripherals/servo`)
-  await page.getByRole('button', { name: 'Save calibration' }).click()
+  await page.getByLabel('Servo 0 centre PWM').fill('310')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
 
   await expect(
     page.getByText('Not saved: the robot refused the servo calibration', { exact: true })
@@ -139,8 +151,7 @@ test('an I2C configuration the robot refuses is reported, not confirmed', async 
     request.peripheralSettingsGet ? { peripheralSettings: settings } : { statusCode: 400 }
   )
   await page.goto(`${base}/peripherals/i2c`)
-  await page.locator('.collapse').filter({ hasText: 'Configuration' }).getByRole('checkbox').check()
-  await page.getByRole('button', { name: 'Edit the I2C configuration' }).click()
+  await page.getByLabel('Frequency').fill('100000')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await page.getByRole('button', { name: 'Confirm' }).click()
 
