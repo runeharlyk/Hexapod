@@ -71,10 +71,6 @@ export class JointDrive {
     this.unsubscribe = driving.subscribe(value => (this.driving = value))
   }
 
-  get active() {
-    return this.driving
-  }
-
   /** The URDF joint `index` dragged to `radians`; false, and nothing sent, while not driving. */
   drag(index: number, radians: number): boolean {
     if (!this.driving) return false
