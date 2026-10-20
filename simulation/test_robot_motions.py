@@ -182,7 +182,7 @@ def test_a_velocity_starts_the_walk_and_a_stop_keeps_walking_mode():
     assert backend.velocity == ZERO and backend.mode is Mode.WALK
 
 
-# The app's stop button deactivates the robot and IDLE/POSE/ANIMATE are the user's; an unknown mode may be either.
+# The app's stop button deactivates the robot and IDLE/ANIMATE are the user's; an unknown mode may be either.
 @pytest.mark.parametrize("mode", [None, Mode.DEACTIVATED, Mode.IDLE, Mode.ANIMATE])
 def test_a_robot_the_script_did_not_stand_is_not_walked(mode):
     robot, backend = _robot(mode=mode)
