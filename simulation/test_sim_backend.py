@@ -7,7 +7,9 @@ import pytest
 from src.hexapod import Gait, Mode, Robot, RobotError, Velocity, speed_model
 from src.hexapod.backends.base import ZERO, GoalState
 from src.hexapod.backends.sim import SimBackend
+from src.sim import recording
 from src.sim.firmware_loop import FIRMWARE_DT
+from src.sim.virtual_robot import firmware_version
 
 STAND_HEIGHT_M = 0.072  # base height of the default stance (resting feet 66 mm below the body origin)
 
@@ -318,3 +320,86 @@ def test_leaving_sits_the_robot_down_before_switching_it_off():
     backend.sleep(1.0)
     assert seated < STAND_HEIGHT_M - 0.04
     assert seated - backend.sim.base_height() < 0.005
+
+
+def test_a_recording_is_the_firmwares_own_telemetry_tick_by_tick(tmp_path):
+    backend = SimBackend()
+    with Robot(backend=backend) as robot:
+        robot.stand()
+        robot.sleep(0.5)
+        with robot.recording(tmp_path / "r.hexrec"):
+            robot.sleep(0.2)
+            commanded = robot.set_velocity(0.1, 0.0, 0.0)
+            robot.sleep(1.5)
+            robot.stop()
+            robot.sleep(0.3)
+    rec = recording.load(tmp_path / "r.hexrec")
+    t = rec.ticks
+    assert rec.features["firmwareVersion"] == firmware_version() and rec.features["backend"] == "simulation"
+    assert np.all(np.diff(t["seq"]) == 1) and np.all(t["t_us"] == 5000 * t["seq"]) and np.all(t["period_us"] == 5000)
+    assert len(t["seq"]) == 400  # 2 s of ticks, in whole batches of five
+    assert t["mode"][0] == Mode.STAND and Mode.WALK in t["mode"]
+    walking = t["command"][:, 1] != 0.0
+    assert t["command"][walking, 1] == pytest.approx(speed_model.sticks_for(Gait.TRI_GATE, commanded).ly)
+    assert t["odom_distance"][-1] - t["odom_distance"][0] == pytest.approx(0.15, rel=0.15)
+    assert np.count_nonzero(t["imu_fresh"]) == pytest.approx(len(t["seq"]) / 5, abs=2)  # read every 25 ms
+
+
+def test_a_joint_moves_its_servo_in_idle_and_nowhere_else(sim):
+    femur = sim.sim.qpos_adr[1]
+    sim.set_mode(Mode.STAND)
+    sim.sleep(1.0)
+    standing = math.degrees(sim.sim.data.qpos[femur])
+    sim.set_joint(1, 60.0)  # STAND drives the joints itself and ignores it
+    sim.sleep(0.5)
+    assert math.degrees(sim.sim.data.qpos[femur]) == pytest.approx(standing, abs=1.0)
+    sim.set_mode(Mode.IDLE)
+    sim.sleep(0.2)
+    sim.set_joint(1, 60.0)  # lifts leg 0's foot off the floor
+    sim.sleep(0.5)
+    assert math.degrees(sim.sim.data.qpos[femur]) == pytest.approx(60.0, abs=2.0)
+    with pytest.raises(RobotError, match="no servo 18"):
+        sim.set_joint(18, 0.0)
+
+
+class CtrlCOnStop:
+    """A simulated backend on which the next stop raises KeyboardInterrupt, as a second Ctrl-C does when it lands
+    while the facade stops the robot on its way out of the first."""
+
+    def __init__(self, backend: SimBackend):
+        self._backend, self.armed = backend, False
+
+    def __getattr__(self, name):
+        return getattr(self._backend, name)
+
+    def set_velocity(self, velocity):
+        if self.armed and velocity == ZERO:
+            self.armed = False
+            raise KeyboardInterrupt
+        return self._backend.set_velocity(velocity)
+
+
+def test_a_second_ctrl_c_while_leaving_still_switches_the_robot_off():
+    backend = SimBackend()
+    interrupting = CtrlCOnStop(backend)
+    with pytest.raises(KeyboardInterrupt):
+        with Robot(backend=interrupting) as robot:
+            robot.stand()
+            robot.set_velocity(0.05, 0.0, 0.0)
+            robot.sleep(0.5)
+            interrupting.armed = True
+            raise KeyboardInterrupt
+    assert backend.fresh_mode() is Mode.DEACTIVATED
+
+
+def test_a_pwm_outside_the_boards_counts_is_refused_before_it_is_sent(sim):
+    robot = Robot(backend=sim)
+    sim.set_mode(Mode.IDLE)
+    sim.sleep(0.1)
+    written = sim._servos.pwm.copy()
+    for wrong in (-1, 4096, 70000):
+        with pytest.raises(ValueError, match="0-4095"):
+            robot.set_servo_pwm(1, wrong)
+    assert np.array_equal(sim._servos.pwm, written)
+    robot.set_servo_pwm(1, 4095)
+    assert sim._servos.pwm[1] == 4095

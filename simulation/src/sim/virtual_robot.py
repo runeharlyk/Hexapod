@@ -10,6 +10,7 @@ The library also holds the WALK_NN control path the training environment runs (f
 """
 import ctypes
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -24,6 +25,12 @@ C_SOURCES = ([ROOT / "submodules" / "nanopb" / name for name in ("pb_common.c", 
              + [GENERATED / f"{name}.pb.c" for name in ("animation", "api", "message")])
 
 DEACTIVATED, STAND, WALK = 0, 3, 4  # ModesEnum's wire values, which setMode takes
+SAMPLE_BYTES = 1024  # an encoded TickSample is under 400 bytes (message.options' fixed counts)
+
+
+def firmware_version() -> str:
+    """APP_VERSION, as firmware/factory_settings.ini gives it to every build and the robot reports it."""
+    return re.search(r'APP_VERSION=\\"([^"\\]*)\\"', (FIRMWARE / "factory_settings.ini").read_text())[1]
 
 
 def _feature_flags() -> list[str]:
@@ -68,7 +75,10 @@ def _library() -> ctypes.CDLL:
     lib.setImu.argtypes = floats(9)
     lib.servosDriven.restype = lib.resetOdometry.restype = ctypes.c_bool
     lib.servoAngles.restype = ctypes.POINTER(ctypes.c_float)
-    lib.servoWrites.restype = ctypes.c_uint
+    lib.servoWrites.restype = lib.jointWrites.restype = ctypes.c_uint
+    lib.setJoint.argtypes = [ctypes.c_int, ctypes.c_float]
+    lib.telemetrySample.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_int]
+    lib.telemetrySample.restype = ctypes.c_int
     lib.classicWalkTarget.argtypes = [ctypes.c_int, *floats(8), ctypes.POINTER(ctypes.c_float)]
     lib.autoWalk.argtypes = [ctypes.c_int, *floats(8), ctypes.POINTER(ctypes.c_float)]
     lib.autoWalk.restype = ctypes.c_int
@@ -126,6 +136,23 @@ class VirtualRobot:
     def servo_writes(self) -> int:
         """Poses sent to the servos since the robot started over."""
         return self._lib.servoWrites()
+
+    def set_joint(self, servo: int, degrees: float) -> None:
+        """A JointAngleData message: one joint in degrees as the telemetry reports its angles, taken in IDLE alone."""
+        self._lib.setJoint(servo, degrees)
+
+    def joint_writes(self) -> int:
+        """Single joints written in IDLE since the robot started over."""
+        return self._lib.jointWrites()
+
+    def telemetry_sample(self) -> bytes:
+        """The last tick's TickSample encoded as the robot sends it, with the control loop's seq, t_us, period_us and
+        compute_us left at 0."""
+        out = (ctypes.c_uint8 * SAMPLE_BYTES)()
+        size = self._lib.telemetrySample(out, SAMPLE_BYTES)
+        if size == 0:
+            raise RuntimeError(f"a TickSample did not encode into {SAMPLE_BYTES} bytes")
+        return bytes(out[:size])
 
     def goal_move(self, kind: int, distance: float, angle: float, radius: float, speed: float, gait: int,
                   stride: float, s1: float, h: float, fd: float) -> int:

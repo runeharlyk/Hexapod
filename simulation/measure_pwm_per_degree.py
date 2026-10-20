@@ -1,7 +1,6 @@
 """Measures the servos' PWM counts per degree with the IMU alone: uv run python measure_pwm_per_degree.py 192.168.4.1
 
-On the robot this needs the real backend's roll, servo_calibration and set_servo_pwm, which are being added to
-src/hexapod/backends/real.py; until then it refuses, naming what is missing. `simulation` runs it today.
+The address is the robot's (its WebSocket) or its native USB port (COMx), or `simulation` for the MuJoCo model.
 
 The firmware turns each joint's IK angle into PCA9685 counts through its servo calibration, assuming `conversion`
 counts per degree (factory 2; src/hexapod/servos.py has the mapping, firmware/include/peripherals/servo_controller.h
@@ -63,16 +62,6 @@ KINEMATICS = Kinematics()
 
 class Refused(Exception):
     pass
-
-
-SERVO_ACCESS = ("servo_calibration", "set_servo_pwm")
-
-
-def require_servo_access(backend) -> None:
-    """Refuses a backend that cannot read the servo calibration or write a raw PWM."""
-    missing = [name for name in SERVO_ACCESS if not hasattr(backend, name)]
-    if missing:
-        raise Refused(f"the {type(backend).__name__} has no {' or '.join(missing)}, which this measurement needs")
 
 
 def floor_roll(angles_deg) -> float:
@@ -241,7 +230,6 @@ def main() -> int:
         backend = RealBackend(args.address)
     # The robot is left as the operator stood it: a refusal has moved nothing, and a measurement ends in STAND.
     try:
-        require_servo_access(backend)
         robot = Robot(backend=backend)
         robot.connect()
         try:

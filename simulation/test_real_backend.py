@@ -7,6 +7,7 @@ import threading
 import time
 from dataclasses import astuple
 
+import numpy as np
 import pytest
 import serial
 from websockets.asyncio.server import serve
@@ -17,10 +18,17 @@ from src.hexapod.backends import real, serial_link
 from src.hexapod.backends.base import GoalState, Odometry
 from src.hexapod.backends.real import RealBackend
 from src.hexapod.backends.serial_link import SerialLink
+from src.hexapod.backends.sim import SimBackend
+from src.hexapod.servos import ServoCalibration
+from src.platform_shared import api_pb2
 from src.platform_shared import message_pb2 as pb
 from src.robot import serial_frame
+from src.sim import recording
+from src.sim.firmware_loop import imu_reading
 
 STEERING_TIMEOUT_S = 0.6  # firmware/include/motion.h STEERING_TIMEOUT_MS
+SERVO_SETTINGS = [api_pb2.Servo(center_pwm=300 + i, direction=-1.0 if i % 2 else 1.0, center_angle=i / 10,
+                                    conversion=2.0 + i / 100, name=f"servo {i}") for i in range(18)]
 BOOT_S = 0.5  # how long the fake board ignores the host after a reset; the ESP32-S3 takes about as long
 HELD_GAP_S = 0.02  # between the answers to frames held through a boot, each in its own USB transfer
 RESET_LAG_S = 0.05
@@ -147,7 +155,10 @@ class FakeRobot:
     a state topic with its current value and then the subscribe echoed as the ack, anything else with the ack alone; the
     goal status is a topic only with `goals`. With `snapshots=False` it answers no subscribe, as a firmware from before
     the snapshots. It loses the next `lost_mode_snapshots` snapshots of its mode, as a full BLE queue drops them, and
-    the next `lost_mode_acks` acks of a subscribe to it."""
+    the next `lost_mode_acks` acks of a subscribe to it.
+
+    It answers the servo settings with SERVO_SETTINGS, takes servo PWMs and joint angles as the frames it records, and
+    streams a TelemetryBatch every 25 ms to a subscriber of the telemetry until it unsubscribes."""
 
     def __init__(self, imu=True, obey=True, reset_on_open=None, goals=False, snapshots=True):
         self.imu, self.obey, self.reset_on_open, self.goals = imu, obey, reset_on_open, goals
@@ -162,6 +173,8 @@ class FakeRobot:
         self.reset_at = None
         self.status, self.silent = 200, False
         self.yaw_rad = 0.3
+        self.pitch_rad = 0.0
+        self.batches_sent = 0
         self.mode = pb.DEACTIVATED
         self.subscribed = set()
         self.received = []  # (monotonic time handled, Message)
@@ -239,6 +252,8 @@ class FakeRobot:
                 self.lost_mode_acks -= 1
                 return
             yield pb.Message(sub_notif=pb.SubscribeNotification(tag=tag))
+        elif kind == "unsub_notif":
+            self.subscribed.discard(message.unsub_notif.tag)
         elif kind == "pingmsg":
             yield pb.Message(pongmsg=pb.PongMsg())
         elif kind == "mode" and self.obey:
@@ -255,6 +270,10 @@ class FakeRobot:
             asked = request.WhichOneof("request")
             if asked == "features_data_request":
                 response.features_data_response.imu = self.imu
+                response.features_data_response.firmware_version = "0.1.1"
+                response.features_data_response.firmware_elf_sha256 = "cd" * 32
+            elif asked == "servo_settings_get":
+                response.servo_settings.servos.extend(SERVO_SETTINGS)
             elif not self.goals:
                 response.status_code = 400
             elif asked == "goal_move":
@@ -295,7 +314,14 @@ class FakeRobot:
         pushed = pb.GoalStatus()
         while True:
             if self.imu and not self.silent and _tag("imu") in self.subscribed:
-                await link.send(pb.Message(imu=pb.IMUData(z=self.yaw_rad)).SerializeToString())
+                await link.send(pb.Message(imu=pb.IMUData(y=self.pitch_rad, z=self.yaw_rad)).SerializeToString())
+            if _tag("telemetry_batch") in self.subscribed and not self.silent:
+                for _ in range(2):  # every 25 ms, at this loop's 50 ms
+                    ticks = [pb.TickSample(seq=5 * self.batches_sent + k, t_us=25_000 * self.batches_sent + 5000 * k,
+                                           period_us=5000) for k in range(5)]
+                    batch = pb.TelemetryBatch(batch_seq=self.batches_sent, ticks=ticks)
+                    self.batches_sent += 1
+                    await link.send(pb.Message(telemetry_batch=batch).SerializeToString())
             status = self.goal_status()
             if status != pushed and _tag("goal_status") in self.subscribed and not self.silent:
                 pushed = status
@@ -1040,3 +1066,67 @@ def test_a_refused_goal_leaves_the_posture_the_inputs_carry(goal_robot, goal_fak
     goal_robot.sleep(0.5)
     after = [m.input for _, m in goal_fake.received[refused:] if m.WhichOneof("message") == "input"]
     assert after and all((d.s1, d.feet_distance) == (0, 0) for d in after)
+
+
+def test_the_roll_is_the_dmp_pitch_negated_so_left_side_up(robot, fake):
+    fake.pitch_rad = -0.2  # the right side down reads a negative pitch (docs/conventions.md, IMU angles)
+    _eventually(lambda: robot.state().roll == pytest.approx(math.degrees(0.2)))
+
+
+def test_the_roll_from_the_dmp_matches_the_simulations_roll_of_the_same_body():
+    """The real backend reads the roll from the DMP, the simulation from the body's pose: tilted alike, they agree."""
+    backend = SimBackend()
+    backend.connect()
+    for axis, angle in ((1, 0.2), (1, -0.3), (0, 0.25)):  # right side down, left side down, nose up
+        quaternion = [math.cos(angle / 2), 0.0, 0.0, 0.0]
+        quaternion[1 + axis] = math.sin(angle / 2)
+        backend.sim.data.qpos[3:7] = quaternion
+        (_, pitch, _), _, _ = imu_reading(backend.sim.base_quat(), [0.0, 0.0, 0.0])
+        assert real.IMU_ROLL_FROM_PITCH * math.degrees(pitch) == pytest.approx(backend.state().roll, abs=1e-6)
+
+
+def test_the_servo_calibration_is_the_robots_servo_settings(robot, fake):
+    calibration = robot.servo_calibration()
+    assert calibration == ServoCalibration(center_pwm=tuple(300.0 + i for i in range(18)),
+                                           direction=tuple(-1.0 if i % 2 else 1.0 for i in range(18)),
+                                           center_angle=tuple(pytest.approx(i / 10) for i in range(18)),
+                                           conversion=tuple(pytest.approx(2.0 + i / 100) for i in range(18)))
+
+
+def test_a_servo_pwm_and_a_joint_reach_the_robot_and_a_servo_that_does_not_exist_is_refused(robot, fake):
+    robot.set_servo_pwm(4, 333)
+    robot.set_joint(7, -42.5)
+    _eventually(lambda: {"servo_pwm", "joint_angle"} <= set(fake.kinds()))
+    sent = {message.WhichOneof("message"): message for _, message in fake.received}
+    assert (sent["servo_pwm"].servo_pwm.servo_id, sent["servo_pwm"].servo_pwm.servo_pwm) == (4, 333)
+    assert (sent["joint_angle"].joint_angle.servo, sent["joint_angle"].joint_angle.degrees) == (7, -42.5)
+    for wrong in (-1, 18):
+        with pytest.raises(RobotError, match=f"no servo {wrong}"):
+            robot.set_joint(wrong, 0.0)
+
+
+def test_a_recording_keeps_the_robots_telemetry_while_it_runs_and_stops_its_stream(robot, fake, tmp_path):
+    path = tmp_path / "r.hexrec"
+    with robot.recording(path):
+        _eventually(lambda: len(recording.load(path).ticks["seq"]) >= 30, timeout=3.0)  # six batches written
+    _eventually(lambda: _tag("telemetry_batch") not in fake.subscribed)  # the fake drops it on its own thread
+    size = path.stat().st_size
+    time.sleep(0.15)
+    assert path.stat().st_size == size  # nothing is written once the block has left
+    rec = recording.load(path)
+    assert rec.features["firmwareVersion"] == "0.1.1" and rec.features["firmwareElfSha256"] == "cd" * 32
+    assert len(rec.ticks["seq"]) >= 30 and rec.missing_ticks == 0 and rec.link_gaps == 0
+    assert np.all(np.diff(rec.batch_rx_us) >= 0)
+
+
+def test_a_host_that_answers_http_but_no_websocket_fails_as_a_lost_link():
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), SimpleHTTPRequestHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with pytest.raises(RobotDisconnected, match="opened no WebSocket"):
+            RealBackend(f"127.0.0.1:{server.server_address[1]}").connect()
+    finally:
+        server.shutdown()
+        server.server_close()

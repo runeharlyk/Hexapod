@@ -7,6 +7,7 @@
 #include <gait_speed.h>
 #include <host_api.h>
 #include <motion_state_wire.h>
+#include <pb_encode.h>
 #include <virtual_robot.h>
 
 namespace {
@@ -109,6 +110,21 @@ API const float *servoAngles() { return instance().servoAngles(); }
 
 // Poses sent to the servos since reset().
 API unsigned servoWrites() { return instance().servoWrites(); }
+
+// A JointAngleData message, as main.cpp's handler passes it on: one joint in degrees, taken in IDLE alone.
+API void setJoint(int servo, float degrees) { instance().setJoint(servo, degrees); }
+
+// Single joints written in IDLE since reset().
+API unsigned jointWrites() { return instance().jointWrites(); }
+
+// The last tick's TickSample encoded as the robot's telemetry carries it, without the control loop's own fields (seq,
+// t_us, period_us, compute_us): the bytes written into `out`, or 0 when they do not fit in `size`.
+API int telemetrySample(uint8_t *out, int size) {
+    pb_ostream_t stream = pb_ostream_from_buffer(out, static_cast<size_t>(size));
+    return pb_encode(&stream, socket_message_TickSample_fields, &instance().sample())
+               ? static_cast<int>(stream.bytes_written)
+               : 0;
+}
 
 // gait_speed.h on its own, no robot needed, for the simulation's port to be checked against: a classic gait's walk
 // command for a stick at a posture and stride, as step x, step y, step angle and phase rate.

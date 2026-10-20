@@ -16,13 +16,14 @@ square closes on the robot's own heading.
             robot.walk(1.0)
             robot.turn(90)
 """
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import replace
 
+from ..sim.recording import RecordingWriter
 from . import motions
 from .backends.base import (ZERO, Backend, Gait, Goal, GoalKind, GoalState, GoalStatus, GoalTimedOut, Mode, RobotError,
                             RobotState, RobotTimeout, Style, Velocity)
-from .servos import ServoCalibration
+from .servos import PWM_MAX, ServoCalibration
 
 # The modes a script may walk from. DEACTIVATED is the app's stop button and IDLE and ANIMATE are the user's:
 # walking would take over servos the user put somewhere else.
@@ -108,9 +109,10 @@ class Robot:
         """Lowers a standing robot onto its belly, then switches the servos off: a drop of a few millimetres
         instead of the full 50 mm a standing robot falls when deactivated. Lowering takes STAND, which would stand up a
         robot that is not standing, so the robot is asked for its mode rather than trusted to be in the one last heard,
-        and a robot whose mode stays unknown is switched off where it is."""
-        self.stop()
+        and a robot whose mode stays unknown is switched off where it is. It is switched off however the stop or the
+        lowering ends, a second Ctrl-C included."""
         try:
+            self.stop()
             if self._backend.fresh_mode() in WALKS_FROM:
                 self._backend.set_mode(Mode.STAND)
                 self._backend.set_height(1.0)
@@ -132,8 +134,35 @@ class Robot:
         return self._backend.servo_calibration()
 
     def set_servo_pwm(self, servo: int, pwm: int) -> None:
-        """Writes one servo's raw PWM in PCA9685 counts; see idle()."""
+        """Writes one servo's raw PWM in PCA9685 counts (0-4095); see idle(). The robot writes it in any mode and holds
+        it to no joint's travel or servo's range, so keep it within the servo's own (servo_calibration()); a PWM out of
+        0-4095 is refused here, as the firmware would take 4096 as a channel switched fully on."""
+        if not 0 <= pwm <= PWM_MAX:
+            raise ValueError(f"a PWM is 0-{PWM_MAX} PCA9685 counts, not {pwm}")
         self._backend.set_servo_pwm(servo, pwm)
+
+    def set_joint(self, servo: int, degrees: float) -> None:
+        """Drives one joint (servo 0-17, coxa, femur and tibia per leg) to `degrees` as the telemetry reports its
+        angles, held within the joint's travel; the robot takes it in IDLE alone and ignores it in every other mode."""
+        self._backend.set_joint(servo, degrees)
+
+    def features(self) -> dict:
+        """The robot's features: firmwareVersion and firmwareElfSha256 among them."""
+        return self._backend.features()
+
+    @contextmanager
+    def recording(self, path):
+        """Writes the robot's per-tick telemetry to the .hexrec file `path` while the block runs, as record.py does
+        (src/sim/recording.py); the file is complete up to the last batch also when the block raises."""
+        writer = RecordingWriter(path, self._backend.features())
+        try:
+            self._backend.stream_telemetry(writer.write)
+            yield
+        finally:
+            try:
+                self._backend.stream_telemetry(None)
+            finally:
+                writer.close()
 
     def set_gait(self, gait: Gait) -> None:
         """Stops first: the firmware swaps the leg schedule only once the gait has stopped stepping. The style's gait
