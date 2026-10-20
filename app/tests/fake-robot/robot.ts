@@ -1,4 +1,5 @@
 import {
+  AnglesData,
   AnimationStatus,
   CorrelationRequest,
   CorrelationResponse,
@@ -31,6 +32,7 @@ const camel = (name: string) => name.replace(/_(\w)/g, (_, c: string) => c.toUpp
 // Each state topic's value at boot, keyed by its field in the Message oneof: the idle values the firmware reports.
 const BOOT_VALUES: Record<string, unknown> = {
   mode: ModeData.create(),
+  angles: AnglesData.create(),
   gait: GaitData.create(),
   wifiStatus: WifiStatus.create(),
   apStatus: APStatus.create(),

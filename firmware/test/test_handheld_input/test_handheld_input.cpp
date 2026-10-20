@@ -1,5 +1,6 @@
 // The handheld controller's frames as the ESP-NOW adapter turns them into commands
-// (communication/handheld_input.h): the sticks and the height trim, and whether the frame moves the robot.
+// (communication/handheld_input.h): the sticks and the height trim, whether the frame moves the robot, and the mode its
+// mode button asks for.
 
 #include <unity.h>
 #include <initializer_list>
@@ -76,6 +77,22 @@ void test_the_height_trim_in_a_stand_is_kept_and_moves_the_robot() {
     TEST_ASSERT_EQUAL_FLOAT(-0.4f, walking.h);
 }
 
+// Each press asks for the next mode of the cycle from the one the robot reports, WALK wrapping to DEACTIVATED.
+void test_the_mode_button_steps_through_the_cycle() {
+    TEST_ASSERT_EQUAL(MOTION_STATE::IDLE, nextHandheldMode(MOTION_STATE::DEACTIVATED));
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, nextHandheldMode(MOTION_STATE::IDLE));
+    TEST_ASSERT_EQUAL(MOTION_STATE::WALK, nextHandheldMode(MOTION_STATE::STAND));
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, nextHandheldMode(MOTION_STATE::WALK));
+}
+
+// ANIMATE has no place in the cycle: the robot is in it for an app's play or for the ease out of IDLE, both on their
+// way to a stand or a walk. A press there asks for STAND, the ease's own target when the handheld began it from IDLE
+// and a graceful leave of a play, so the legs ease home; never the IDLE the cycle's start would give, which stops the
+// robot where it is, half-eased, until a further press.
+void test_the_mode_button_in_animate_asks_for_the_stand() {
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, nextHandheldMode(MOTION_STATE::ANIMATE));
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_the_sticks_are_the_commands_axes_at_full_scale);
@@ -83,5 +100,7 @@ int main(int, char **) {
     RUN_TEST(test_an_axis_drifting_under_the_threshold_is_centred);
     RUN_TEST(test_a_centred_frame_is_the_handheld_at_rest_whatever_its_buttons);
     RUN_TEST(test_the_height_trim_in_a_stand_is_kept_and_moves_the_robot);
+    RUN_TEST(test_the_mode_button_steps_through_the_cycle);
+    RUN_TEST(test_the_mode_button_in_animate_asks_for_the_stand);
     return UNITY_END();
 }

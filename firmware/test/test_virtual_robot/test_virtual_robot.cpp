@@ -16,6 +16,7 @@
 #include <gait_speed.h>
 #include <pb_decode.h>
 #include <pb_encode.h>
+#include <servo_angles_wire.h>
 #include <virtual_robot.h>
 
 namespace {
@@ -84,6 +85,23 @@ void test_idle_from_boot_wakes_the_boards_but_sends_no_pose() {
     TEST_ASSERT_EQUAL_UINT(0, robot.servoWrites());
 }
 
+// The boards wake with every channel off, so IDLE after a deactivation leaves the robot lying limp where it sagged,
+// rather than restarting the stand it held before.
+void test_idle_after_a_deactivated_stand_leaves_every_servo_limp() {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setMode(MOTION_STATE::DEACTIVATED);
+    robot.tick();
+    robot.setMode(MOTION_STATE::IDLE);
+    for (int t = 0; t < ticksFor(0.5f); ++t) robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::IDLE, robot.mode());
+    TEST_ASSERT_FALSE(robot.servosDriven());
+    TEST_ASSERT_EQUAL_HEX32(0, robot.drivenServos());
+    robot.setJoint(4, 20.0f);
+    robot.tick();
+    TEST_ASSERT_EQUAL_HEX32(1u << 4, robot.drivenServos());
+}
+
 void test_a_standing_robot_drives_its_servos_to_the_motions_pose() {
     VirtualRobot robot;
     standUp(robot);
@@ -111,8 +129,8 @@ void test_a_mode_is_reported_applied_in_the_tick_that_applies_it() {
     auto listener = EventBus<ModeMsg>::subscribe([&applied](const ModeMsg &m) {
         if (m.kind == ModeMsgKind::APPLIED) applied.push_back(m.mode);
     });
-    for (const MOTION_STATE mode : {MOTION_STATE::STAND, MOTION_STATE::WALK, MOTION_STATE::IDLE, MOTION_STATE::POSE,
-                                    MOTION_STATE::STAND, MOTION_STATE::DEACTIVATED}) {
+    for (const MOTION_STATE mode : {MOTION_STATE::STAND, MOTION_STATE::WALK, MOTION_STATE::IDLE, MOTION_STATE::STAND,
+                                    MOTION_STATE::DEACTIVATED}) {
         applied.clear();
         robot.setMode(mode);
         host_bus::drainAll();
@@ -122,6 +140,321 @@ void test_a_mode_is_reported_applied_in_the_tick_that_applies_it() {
         TEST_ASSERT_EQUAL_size_t(1, applied.size());
         TEST_ASSERT_EQUAL(mode, applied[0]);
     }
+}
+
+// The modes a joint drag or a centring must never move the robot in.
+constexpr MOTION_STATE NOT_IDLE[] = {MOTION_STATE::DEACTIVATED, MOTION_STATE::STAND, MOTION_STATE::WALK,
+                                     MOTION_STATE::WALK_NN, MOTION_STATE::ANIMATE};
+
+void idleFromStand(VirtualRobot &robot) {
+    standUp(robot);
+    robot.setMode(MOTION_STATE::IDLE);
+    robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::IDLE, robot.mode());
+}
+
+// IDLE stops the motion where it is: the servos keep the stand's angles and no pose is written over them, so a joint
+// dragged first moves from where the robot stands.
+void test_entering_idle_holds_the_servos_angles() {
+    VirtualRobot robot;
+    standUp(robot);
+    float stood[18];
+    std::copy_n(robot.servoAngles(), 18, stood);
+    const unsigned writes = robot.servoWrites();
+    robot.setMode(MOTION_STATE::IDLE);
+    for (int t = 0; t < ticksFor(1.0f); ++t) robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::IDLE, robot.mode());
+    TEST_ASSERT_EQUAL_UINT(writes, robot.servoWrites());
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(stood, robot.servoAngles(), 18);
+}
+
+// A joint dragged in IDLE moves that servo alone, from the next tick, and every other joint holds its angle. The tick
+// reports the write of the joint's board, the right one for servo 4, and the tick after it none.
+void test_a_joint_in_idle_moves_only_its_servo() {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    float held[18];
+    std::copy_n(robot.servoAngles(), 18, held);
+    robot.setJoint(4, 20.0f);
+    TEST_ASSERT_EQUAL_FLOAT(held[4], robot.servoAngles()[4]);
+    robot.tick();
+    held[4] = 20.0f;
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(held, robot.servoAngles(), 18);
+    TEST_ASSERT_EQUAL_UINT(1, robot.jointWrites());
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_OK, robot.servoWrite());
+    robot.tick();
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_NONE, robot.servoWrite());
+}
+
+void test_a_joint_in_idle_is_held_within_its_travel() {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    robot.setJoint(0, 80.0f);
+    robot.setJoint(5, -170.0f);
+    robot.tick();
+    TEST_ASSERT_EQUAL_FLOAT(JOINT_LIMIT_DEG[0], robot.servoAngles()[0]);
+    TEST_ASSERT_EQUAL_FLOAT(-JOINT_LIMIT_DEG[2], robot.servoAngles()[5]);
+}
+
+// Outside IDLE a joint is ignored: the motion owns the servos, and deactivated they are limp.
+void test_a_joint_outside_idle_is_ignored() {
+    for (const MOTION_STATE mode : NOT_IDLE) {
+        VirtualRobot robot;
+        standUp(robot);
+        robot.setMode(mode);
+        for (int t = 0; t < ticksFor(0.2f); ++t) robot.tick();
+        TEST_ASSERT_EQUAL(mode, robot.mode());
+        robot.setJoint(4, 20.0f);
+        robot.tick();
+        TEST_ASSERT_EQUAL_UINT(0, robot.jointWrites());
+    }
+}
+
+// A joint dragged while a mode leaving IDLE is on its way finds that mode applied first, and moves nothing.
+void test_a_joint_sent_behind_a_mode_out_of_idle_is_ignored() {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    robot.setMode(MOTION_STATE::STAND);
+    robot.setJoint(4, 20.0f);
+    robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, robot.mode());
+    TEST_ASSERT_EQUAL_UINT(0, robot.jointWrites());
+}
+
+// The calibration page's "Centre all servos": accepted, and carried out at the next tick, in IDLE alone.
+void test_the_servos_are_centred_only_in_idle() {
+    for (const MOTION_STATE mode : NOT_IDLE) {
+        VirtualRobot robot;
+        standUp(robot);
+        robot.setMode(mode);
+        for (int t = 0; t < ticksFor(0.2f); ++t) robot.tick();
+        TEST_ASSERT_EQUAL_INT(409, robot.centreServos());
+        robot.tick();
+        TEST_ASSERT_EQUAL_UINT(0, robot.centrings());
+    }
+    VirtualRobot robot;
+    idleFromStand(robot);
+    TEST_ASSERT_EQUAL_INT(200, robot.centreServos());
+    TEST_ASSERT_EQUAL_UINT(0, robot.centrings());
+    robot.tick();
+    TEST_ASSERT_EQUAL_UINT(1, robot.centrings());
+}
+
+// A centring answered 200 is carried out, in the order things arrived: before a mode that arrived after it, even one
+// leaving IDLE, and over every joint dragged before it, which a joint dragged after it then moves again.
+void test_a_centring_is_carried_out_in_arrival_order() {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    TEST_ASSERT_EQUAL_INT(200, robot.centreServos());
+    robot.setMode(MOTION_STATE::STAND);
+    robot.tick();
+    TEST_ASSERT_EQUAL_UINT(1, robot.centrings());
+
+    VirtualRobot joints;
+    idleFromStand(joints);
+    joints.setJoint(4, 20.0f);
+    TEST_ASSERT_EQUAL_INT(200, joints.centreServos());
+    joints.setJoint(7, 15.0f);
+    joints.tick();
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, joints.servoAngles()[4]);
+    TEST_ASSERT_EQUAL_FLOAT(15.0f, joints.servoAngles()[7]);
+}
+
+// A mode already on its way when the centring is asked for is applied first and may leave IDLE, so the centring is
+// refused rather than answered 200 and dropped.
+void test_a_centring_behind_a_queued_mode_is_refused() {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    robot.setMode(MOTION_STATE::STAND);
+    host_bus::drainAll();
+    TEST_ASSERT_EQUAL_INT(409, robot.centreServos());
+    robot.tick();
+    TEST_ASSERT_EQUAL_UINT(0, robot.centrings());
+}
+
+// The angles the robot publishes for the app (main.cpp bridges them to AnglesData), each publication in order.
+using Published = std::vector<std::array<float, 18>>;
+
+EventBus<ServoAnglesMsg>::Handle recordAngles(Published &heard) {
+    return EventBus<ServoAnglesMsg>::subscribe([&heard](const ServoAnglesMsg &a) {
+        std::array<float, 18> angles;
+        std::copy_n(a.angles, 18, angles.begin());
+        heard.push_back(angles);
+    });
+}
+
+std::array<float, 18> servoAnglesOf(const VirtualRobot &robot) {
+    std::array<float, 18> angles;
+    std::copy_n(robot.servoAngles(), 18, angles.begin());
+    return angles;
+}
+
+// IDLE publishes the angles its servos hold as it is entered, so the app draws the robot as it stands, and nothing
+// more while nothing moves them: no publication on a timer. The telemetry reports the same angles.
+void test_entering_idle_publishes_the_held_angles_once() {
+    VirtualRobot robot;
+    standUp(robot);
+    const std::array<float, 18> stood = servoAnglesOf(robot);
+    Published heard;
+    auto listener = recordAngles(heard);
+    robot.setMode(MOTION_STATE::IDLE);
+    robot.tick();
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(stood.data(), heard[0].data(), 18);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(stood.data(), robot.angles(), 18);
+    for (int t = 0; t < ticksFor(2.0f); ++t) robot.tick();
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+}
+
+// Each tick that writes joints publishes the angles once, with the joints as written, within their travel, and every
+// other joint as held.
+void test_a_joint_write_in_idle_publishes_the_angles() {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    std::array<float, 18> expected = servoAnglesOf(robot);
+    Published heard;
+    auto listener = recordAngles(heard);
+    robot.setJoint(4, 20.0f);
+    robot.setJoint(13, -120.0f);
+    robot.tick();
+    expected[4] = 20.0f;
+    expected[13] = -JOINT_LIMIT_DEG[1];
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected.data(), heard[0].data(), 18);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected.data(), robot.angles(), 18);
+    for (int t = 0; t < ticksFor(1.0f); ++t) robot.tick();
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+}
+
+// Centring publishes the centre pose in joint angles: the stand-in's factory calibration centres every coxa and femur
+// at 0 and every tibia at -90, the servo's centre under the square knee.
+void test_centring_in_idle_publishes_the_centre_pose() {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    Published heard;
+    auto listener = recordAngles(heard);
+    TEST_ASSERT_EQUAL_INT(200, robot.centreServos());
+    robot.tick();
+    std::array<float, 18> centre {};
+    for (int leg = 0; leg < 6; ++leg) centre[leg * 3 + 2] = -90.0f;
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(centre.data(), heard[0].data(), 18);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(centre.data(), robot.servoAngles(), 18);
+    for (int t = 0; t < ticksFor(1.0f); ++t) robot.tick();
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+}
+
+// The angles as the app receives them (servo_angles_wire.h), each publication in order.
+EventBus<ServoAnglesMsg>::Handle recordWire(std::vector<socket_message_AnglesData> &heard) {
+    return EventBus<ServoAnglesMsg>::subscribe([&heard](const ServoAnglesMsg &a) { heard.push_back(anglesData(a)); });
+}
+
+// A servo no pulse has driven since the boards woke holds no angle anyone knows. IDLE entered from boot or after a
+// deactivation publishes every servo limp, which reaches the app as no angles at all rather than zeros; a joint written
+// is reported at its angle from then on, the servos still limp marked so and given none, and the centring drives all.
+// Entered from a stand, IDLE has no limp servo.
+void test_idle_reports_its_limp_servos_as_limp() {
+    for (const bool stoodFirst : {false, true}) {
+        VirtualRobot robot;
+        if (stoodFirst) {
+            standUp(robot);
+            robot.setMode(MOTION_STATE::DEACTIVATED);
+            robot.tick();
+        }
+        std::vector<socket_message_AnglesData> heard;
+        auto listener = recordWire(heard);
+        robot.setMode(MOTION_STATE::IDLE);
+        robot.tick();
+        TEST_ASSERT_EQUAL_size_t(1, heard.size());
+        TEST_ASSERT_EQUAL_size_t(0, heard[0].angles_count);
+
+        robot.setJoint(4, 20.4f);
+        robot.tick();
+        TEST_ASSERT_EQUAL_size_t(2, heard.size());
+        TEST_ASSERT_EQUAL_size_t(18, heard[1].angles_count);
+        TEST_ASSERT_EQUAL_HEX32(ALL_SERVOS_LIMP & ~(1u << 4), heard[1].limp);
+        TEST_ASSERT_EQUAL_INT32(20, heard[1].angles[4]);
+        for (int servo = 0; servo < 18; ++servo)
+            if (servo != 4) TEST_ASSERT_EQUAL_INT32(0, heard[1].angles[servo]);
+
+        TEST_ASSERT_EQUAL_INT(200, robot.centreServos());
+        robot.tick();
+        TEST_ASSERT_EQUAL_size_t(3, heard.size());
+        TEST_ASSERT_EQUAL_HEX32(0, heard[2].limp);
+        TEST_ASSERT_EQUAL_INT32(-90, heard[2].angles[2]);
+    }
+    VirtualRobot robot;
+    standUp(robot);
+    std::vector<socket_message_AnglesData> heard;
+    auto listener = recordWire(heard);
+    robot.setMode(MOTION_STATE::IDLE);
+    robot.tick();
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+    TEST_ASSERT_EQUAL_size_t(18, heard[0].angles_count);
+    TEST_ASSERT_EQUAL_HEX32(0, heard[0].limp);
+}
+
+// The servo page's switch is applied by the control task at its next tick, as a mode is, never by the bus worker that
+// delivers it, and published as the limp servos it leaves. Off in a stand, every servo is limp and stays so while the
+// stand writes its pose to the sleeping boards; on again, every servo is limp until written. In IDLE it leaves every
+// servo limp either way. It is taken before the modes that arrive with it, so a DEACTIVATED taken in the same tick has
+// the last word.
+void test_the_servo_pages_switch_is_applied_by_the_control_task() {
+    VirtualRobot robot;
+    standUp(robot);
+    std::vector<socket_message_AnglesData> heard;
+    auto listener = recordWire(heard);
+    robot.servoSwitch(false);
+    host_bus::drainAll();
+    TEST_ASSERT_TRUE(robot.servosAwake());
+    robot.tick();
+    TEST_ASSERT_FALSE(robot.servosAwake());
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+    TEST_ASSERT_EQUAL_size_t(0, heard[0].angles_count);
+    for (int t = 0; t < ticksFor(0.5f); ++t) robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, robot.mode());
+    TEST_ASSERT_EQUAL_HEX32(0, robot.drivenServos());
+    robot.servoSwitch(true);
+    robot.tick();
+    TEST_ASSERT_TRUE(robot.servosDriven());
+
+    robot.setMode(MOTION_STATE::IDLE);
+    robot.tick();
+    robot.setJoint(4, 20.0f);
+    robot.tick();
+    heard.clear();
+    robot.servoSwitch(false);
+    robot.tick();
+    robot.servoSwitch(true);
+    robot.tick();
+    TEST_ASSERT_TRUE(robot.servosAwake());
+    TEST_ASSERT_EQUAL_HEX32(0, robot.drivenServos());
+    TEST_ASSERT_EQUAL_size_t(2, heard.size());
+    TEST_ASSERT_EQUAL_size_t(0, heard[1].angles_count);
+
+    robot.setMode(MOTION_STATE::DEACTIVATED);
+    robot.servoSwitch(true);
+    robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::DEACTIVATED, robot.mode());
+    TEST_ASSERT_FALSE(robot.servosAwake());
+}
+
+// Deactivated, every servo is limp, so the angles a client subscribing then is answered with are none, rather than the
+// pose the robot held before it sagged.
+void test_deactivating_publishes_every_servo_limp() {
+    VirtualRobot robot;
+    standUp(robot);
+    std::vector<socket_message_AnglesData> heard;
+    auto listener = recordWire(heard);
+    robot.setMode(MOTION_STATE::DEACTIVATED);
+    robot.tick();
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+    TEST_ASSERT_EQUAL_size_t(0, heard[0].angles_count);
+    ServoAnglesMsg latest;
+    TEST_ASSERT_TRUE(EventBus<ServoAnglesMsg>::peek(latest));
+    TEST_ASSERT_EQUAL_size_t(0, anglesData(latest).angles_count);
+    for (int t = 0; t < ticksFor(1.0f); ++t) robot.tick();
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
 }
 
 void test_a_standing_robot_holds_still() {
@@ -763,6 +1096,28 @@ CommandMsg fullStick(float lx, float ly, float rx, float stride = 0) { return {l
 const CommandMsg FULL_STICKS[] = {fullStick(0, 1, 0), fullStick(0, -1, 0), fullStick(1, 0, 0), fullStick(-1, 0, 0),
                                   fullStick(0, 0, 1), fullStick(0, 0, -1), fullStick(1, 1, 1), fullStick(-1, -1, -1)};
 
+// A pose beyond a joint's travel, which the searched gait asks for, is held within it by the controller, so IDLE
+// entered from it publishes the angles within travel, as the servos hold them, not the motion's command.
+void test_idle_entered_from_a_pose_beyond_travel_publishes_the_held_angles() {
+    VirtualRobot robot;
+    walkIn(robot, GaitType::TUNED);
+    const CommandMsg stick = fullStick(1, 1, 1);
+    bool beyond = false;
+    for (int t = 0; t < ticksFor(5.0f) && !beyond; ++t) {
+        if (t % COMMAND_PERIOD_TICKS == 0) robot.command(stick);
+        robot.tick();
+        for (int j = 0; j < 18; ++j) beyond |= withinTravel(robot.angles()[j], j % 3) != robot.angles()[j];
+    }
+    TEST_ASSERT_TRUE_MESSAGE(beyond, "the walk never asked for a joint beyond its travel");
+    const std::array<float, 18> held = servoAnglesOf(robot);
+    Published heard;
+    auto listener = recordAngles(heard);
+    robot.setMode(MOTION_STATE::IDLE);
+    robot.tick();
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(held.data(), heard[0].data(), 18);
+}
+
 void describe(char *msg, size_t size, GaitType gait, const CommandMsg &c, const HeldRun &run) {
     std::snprintf(msg, size, "gait %d stick (%.0f %.0f %.0f) h %.2f fd %.2f: %d clamped, largest step %.2f deg",
                   (int)gait, c.lx, c.ly, c.rx, c.h, c.fd, run.clamped, run.largestStep);
@@ -1148,6 +1503,68 @@ void test_a_walk_after_walk_nn_takes_its_posture_again() {
     }
 }
 
+// What WALK_NN reads of a command, which the app's controls in that mode follow (app/src/lib/mode-controls.ts): the
+// policy walks the sticks' lx, ly and rx alone. It walks the stance it was trained on and rides at its own height, lift,
+// stride and cadence, so the feet distance, height, speed, step height, stride and the right stick's ry change nothing.
+void test_walk_nn_reads_the_sticks_alone() {
+    const CommandMsg walking {0.3f, 0.6f, 0.2f, 0, 0, 0, 0, 0, 0};
+    const auto base = traceHeld(MOTION_STATE::WALK_NN, walking, ticksFor(2.0f));
+    struct Field {
+        const char *name;
+        float CommandMsg::*field;
+        bool read;
+    };
+    const Field fields[] = {
+        {"lx", &CommandMsg::lx, true},  {"ly", &CommandMsg::ly, true}, {"rx", &CommandMsg::rx, true},
+        {"ry", &CommandMsg::ry, false}, {"h", &CommandMsg::h, false},  {"s", &CommandMsg::s, false},
+        {"s1", &CommandMsg::s1, false}, {"fd", &CommandMsg::fd, false}, {"stride", &CommandMsg::stride, false}};
+    for (const Field &f : fields) {
+        CommandMsg changed = walking;
+        changed.*f.field = -0.8f;
+        const bool differs = traceHeld(MOTION_STATE::WALK_NN, changed, ticksFor(2.0f)) != base;
+        TEST_ASSERT_EQUAL_MESSAGE(f.read, differs, f.name);
+    }
+}
+
+// The middle right foot's mean distance out from the body over a WALK_NN walk of `ticks`, entered from a stand at
+// the feet distance `fd`, the walk's commands sending it too.
+float walkNnStanceMm(VirtualRobot &robot, float fd, int ticks) {
+    CommandMsg walking {0.3f, 0.6f, 0.2f, 0, 0, 0, 0, fd, 0};
+    standUp(robot);
+    hold(robot, {0, 0, 0, 0, 0, 0, 0, fd, 0}, ticksFor(3.0f));
+    TEST_ASSERT_FLOAT_WITHIN(0.5f, DEFAULT_STANCE[1][0] * feetScale(fd), robot.bodyState().feet[1][0]);
+    robot.setMode(MOTION_STATE::WALK_NN);
+    float sum = 0.0f;
+    for (int t = 0; t < ticks; ++t) {
+        if (t % COMMAND_PERIOD_TICKS == 0) robot.command(walking);
+        robot.tick();
+        sum += robot.bodyState().feet[1][0];
+    }
+    return sum / ticks;
+}
+
+// The policy was trained on the stance of fd 0 alone (firmware/host/policy_api.cpp), so WALK_NN entered from a stand
+// at a wider stance resets on that stance and walks it as from a stand at fd 0, a quarter narrower. Leaving it, the
+// stand steps the feet back to the stance the last feet distance set, with no command to ask for it.
+void test_walk_nn_walks_the_stance_it_was_trained_on() {
+    const float wideFd = 1.0f;
+    VirtualRobot trainedRobot;
+    const float trained = walkNnStanceMm(trainedRobot, 0.0f, ticksFor(2.0f));
+    VirtualRobot robot;
+    const float wide = walkNnStanceMm(robot, wideFd, ticksFor(2.0f));
+    char msg[80];
+    std::snprintf(msg, sizeof(msg), "middle foot out %.1f mm from fd 0, %.1f mm from fd 1", trained, wide);
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(2.0f, trained, wide, msg);
+
+    // The sticks centred, so the dead-man's 2 s, not its 600 ms while steering, runs from the last command.
+    robot.command({0, 0, 0, 0, 0, 0, 0, wideFd, 0});
+    robot.tick();
+    robot.setMode(MOTION_STATE::STAND);
+    for (int t = 0; t < ticksFor(1.8f); ++t) robot.tick();
+    TEST_ASSERT_FALSE(robot.linkLost());
+    TEST_ASSERT_FLOAT_WITHIN(0.5f, DEFAULT_STANCE[1][0] * feetScale(wideFd), robot.bodyState().feet[1][0]);
+}
+
 // A settle cut short by WALK_NN starts over on the way back. Cut in its last stage, raising the lift, which checks
 // nothing else, a stale settle would release the walk as soon as the lift arrived, over whatever height and stance the
 // policy left; a fresh one first takes the stand's lift and the posture again.
@@ -1389,6 +1806,324 @@ void test_every_stop_eases_the_stroke_out_with_the_cadence() {
     char summary[96];
     std::snprintf(summary, sizeof(summary), "walk peak %.2f, stop peak %.2f deg per tick", walkPeak, stopPeak);
     TEST_MESSAGE(summary);
+}
+
+namespace {
+
+// What the servos receive while a mode asked for from IDLE takes over: the largest change of a servo's angle in a tick,
+// from the angles it held in IDLE, over `ticks`, and the mode reported each tick.
+struct Takeover {
+    float largestStep = 0.0f;
+    std::vector<MOTION_STATE> modes;
+};
+
+// What the servos receive over `ticks` from the angles they hold now.
+Takeover follow(VirtualRobot &robot, int ticks) {
+    Takeover run;
+    std::array<float, 18> previous = servoAnglesOf(robot);
+    for (int t = 0; t < ticks; ++t) {
+        robot.tick();
+        run.modes.push_back(robot.mode());
+        for (int j = 0; j < 18; ++j)
+            run.largestStep = std::max(run.largestStep, std::fabs(robot.servoAngles()[j] - previous[j]));
+        previous = servoAnglesOf(robot);
+    }
+    return run;
+}
+
+Takeover takeOver(VirtualRobot &robot, MOTION_STATE mode, int ticks) {
+    robot.setMode(mode);
+    return follow(robot, ticks);
+}
+
+// The ease out of IDLE turns a joint at most half the servo's top speed in a tick, 13.1 rad/s over the 5 ms tick
+// halved, so a leg folded far from the stand swings home at a pace the servo follows with torque to spare; the puppet
+// path otherwise turns one at the servo's top speed.
+constexpr float IDLE_EASE_STEP_DEG = 1.875f;
+constexpr float PUPPET_STEP_DEG = 3.75f;
+constexpr float CAP_TOLERANCE_DEG = 1e-3f;
+
+// The joints dragged far from the stand: a coxa at its travel, a femur raised square and a tibia folded back.
+void dragAway(VirtualRobot &robot) {
+    robot.setJoint(0, JOINT_LIMIT_DEG[0]);
+    robot.setJoint(1, JOINT_LIMIT_DEG[1]);
+    robot.setJoint(5, JOINT_LIMIT_DEG[2]);
+    robot.tick();
+}
+
+} // namespace
+
+// Leaving an IDLE whose joints were dragged for STAND or WALK eases every joint from the angle it holds to the stand,
+// through ANIMATE's puppet path as leaving an animation does, at half the servo's top speed, and then hands back to the
+// mode asked for, standing as a robot stood up from rest stands.
+void test_leaving_idle_after_drags_eases_the_joints_to_the_stand() {
+    VirtualRobot stood;
+    standUp(stood);
+    const std::array<float, 18> stand = servoAnglesOf(stood);
+    for (const MOTION_STATE next : {MOTION_STATE::STAND, MOTION_STATE::WALK}) {
+        VirtualRobot robot;
+        idleFromStand(robot);
+        dragAway(robot);
+        const Takeover run = takeOver(robot, next, ticksFor(2.0f));
+        char msg[64];
+        std::snprintf(msg, sizeof(msg), "to mode %d: largest step %.2f deg", (int)next, run.largestStep);
+        TEST_MESSAGE(msg);
+        TEST_ASSERT_FLOAT_WITHIN_MESSAGE(CAP_TOLERANCE_DEG, IDLE_EASE_STEP_DEG, run.largestStep, msg);
+        TEST_ASSERT_EQUAL_MESSAGE(MOTION_STATE::ANIMATE, run.modes.front(), msg);
+        TEST_ASSERT_EQUAL_MESSAGE(next, run.modes.back(), msg);
+        for (int j = 0; j < 18; ++j) TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, stand[j], robot.servoAngles()[j], msg);
+    }
+}
+
+// From limp servos, a mode stands the robot up as it does from DEACTIVATED: at once, with no ease, since a limp servo
+// holds no angle to ease from. Dragged ones among them still ease; the limp ones are written at the stand at once.
+void test_leaving_limp_idle_stands_up_as_from_deactivated() {
+    VirtualRobot robot;
+    robot.setMode(MOTION_STATE::IDLE);
+    robot.tick();
+    Takeover run = takeOver(robot, MOTION_STATE::STAND, 1);
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, run.modes.front());
+    TEST_ASSERT_TRUE(robot.servosDriven());
+
+    VirtualRobot dragged;
+    dragged.setMode(MOTION_STATE::IDLE);
+    dragged.tick();
+    dragged.setJoint(1, JOINT_LIMIT_DEG[1]);
+    dragged.tick();
+    run = takeOver(dragged, MOTION_STATE::STAND, 1);
+    TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, run.modes.front());
+    TEST_ASSERT_TRUE(dragged.servosDriven());
+    TEST_ASSERT_FLOAT_WITHIN(STEP_BOUND_DEG, JOINT_LIMIT_DEG[1], dragged.servoAngles()[1]);
+    const std::array<float, 18> first = servoAnglesOf(dragged);
+    for (int t = 0; t < ticksFor(2.0f); ++t) dragged.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, dragged.mode());
+    for (int j = 0; j < 18; ++j)
+        if (j / 3 != 0) TEST_ASSERT_FLOAT_WITHIN(0.5f, dragged.servoAngles()[j], first[j]);
+}
+
+// IDLE taken during the ease out of IDLE, as the handheld's next press or the app's IDLE does, holds the joints where
+// the ease left them, a pose no motion set, so a STAND after it eases them again from there instead of snapping them to
+// the stand: the tibia it left folded would otherwise swing up to 240 deg in a tick.
+void test_idle_taken_during_the_ease_out_of_idle_holds_the_pose_the_ease_left() {
+    for (const int eased : {3, 10, 30}) {
+        VirtualRobot robot;
+        idleFromStand(robot);
+        dragAway(robot);
+        TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, takeOver(robot, MOTION_STATE::STAND, eased).modes.back());
+        Takeover run = takeOver(robot, MOTION_STATE::IDLE, 2);
+        TEST_ASSERT_EQUAL(MOTION_STATE::IDLE, run.modes.back());
+        TEST_ASSERT_EQUAL_FLOAT(0.0f, run.largestStep);
+        run = takeOver(robot, MOTION_STATE::STAND, ticksFor(2.0f));
+        char msg[80];
+        std::snprintf(msg, sizeof(msg), "IDLE after %d ticks of the ease: largest step %.2f deg", eased,
+                      run.largestStep);
+        TEST_MESSAGE(msg);
+        TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(IDLE_EASE_STEP_DEG + CAP_TOLERANCE_DEG, run.largestStep, msg);
+        TEST_ASSERT_EQUAL_MESSAGE(MOTION_STATE::ANIMATE, run.modes.front(), msg);
+        TEST_ASSERT_EQUAL_MESSAGE(MOTION_STATE::STAND, run.modes.back(), msg);
+    }
+}
+
+// Two modes out of an IDLE whose joints were dragged, taken in one tick, as a double press or two clients send them:
+// the first borrows ANIMATE for the ease, and the second, finding the ease begun, becomes the mode it hands back to
+// rather than applying at once.
+void test_a_second_mode_in_the_tick_of_the_ease_out_of_idle_waits_for_it() {
+    for (const MOTION_STATE second : {MOTION_STATE::STAND, MOTION_STATE::WALK}) {
+        VirtualRobot robot;
+        idleFromStand(robot);
+        dragAway(robot);
+        robot.setMode(MOTION_STATE::STAND);
+        const Takeover run = takeOver(robot, second, ticksFor(2.0f));
+        char msg[80];
+        std::snprintf(msg, sizeof(msg), "STAND then mode %d: largest step %.2f deg", (int)second, run.largestStep);
+        TEST_MESSAGE(msg);
+        TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(IDLE_EASE_STEP_DEG + CAP_TOLERANCE_DEG, run.largestStep, msg);
+        TEST_ASSERT_EQUAL_MESSAGE(MOTION_STATE::ANIMATE, run.modes.front(), msg);
+        TEST_ASSERT_EQUAL_MESSAGE(second, run.modes.back(), msg);
+    }
+}
+
+// Puppeteering keeps the servo's top speed whatever ANIMATE was entered for: a pose sent during the ease out of IDLE,
+// and after it in an ANIMATE asked for, is approached at 3.75 deg a tick, and so is the stand a graceful leave of that
+// pose eases home to.
+void test_puppeteering_and_its_leave_keep_the_servos_top_speed_beside_the_ease_out_of_idle() {
+    PoseMsg folded {};
+    folded.joints[0] = true;
+    std::copy_n(JOINT_LIMIT_DEG, 3, folded.legs[0]);
+
+    VirtualRobot during;
+    idleFromStand(during);
+    dragAway(during);
+    takeOver(during, MOTION_STATE::STAND, 1);
+    during.animationPose(folded);
+    Takeover run = follow(during, ticksFor(1.0f));
+    TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, run.modes.back());
+    TEST_ASSERT_FLOAT_WITHIN(CAP_TOLERANCE_DEG, PUPPET_STEP_DEG, run.largestStep);
+
+    VirtualRobot after;
+    idleFromStand(after);
+    dragAway(after);
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, takeOver(after, MOTION_STATE::STAND, ticksFor(2.0f)).modes.back());
+    takeOver(after, MOTION_STATE::ANIMATE, 1);
+    after.animationPose(folded);
+    run = follow(after, ticksFor(1.0f));
+    TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, run.modes.back());
+    TEST_ASSERT_FLOAT_WITHIN(CAP_TOLERANCE_DEG, PUPPET_STEP_DEG, run.largestStep);
+    run = takeOver(after, MOTION_STATE::STAND, ticksFor(2.0f));
+    TEST_ASSERT_EQUAL(MOTION_STATE::STAND, run.modes.back());
+    TEST_ASSERT_FLOAT_WITHIN(CAP_TOLERANCE_DEG, PUPPET_STEP_DEG, run.largestStep);
+}
+
+namespace {
+
+// The fixtures whose own motion, played from a stand, stays within the ease's pace, with their entry times;
+// fx_overlay's body outruns the ease from a stand too.
+struct PacedClip {
+    const char *name;
+    float entrySeconds;
+};
+constexpr PacedClip EASE_PACED_CLIPS[] = {{"fx_single", 0.31f}, {"fx_mixed_legs", 0.37f}, {"fx_params", 0.5f}};
+
+// What the servos receive while a play runs, and the ticks, counted from the play, at which the player began the clip's
+// Entry and ended it.
+struct PlayRun {
+    float largestStep = 0.0f;
+    int entryTick = -1;
+    int playingTick = -1;
+};
+
+PlayRun followPlay(VirtualRobot &robot, const char *clip, int ticks) {
+    PlayRun run;
+    int tick = 0;
+    auto listener = EventBus<socket_message_AnimationStatus>::subscribe([&](const socket_message_AnimationStatus &s) {
+        if (s.state == socket_message_AnimationState_ANIM_ENTRY && run.entryTick < 0) run.entryTick = tick;
+        if (s.state == socket_message_AnimationState_ANIM_PLAYING && run.playingTick < 0) run.playingTick = tick;
+    });
+    robot.animationPlay(playOf(clip));
+    std::array<float, 18> previous = servoAnglesOf(robot);
+    for (; tick < ticks; ++tick) {
+        robot.tick();
+        for (int j = 0; j < 18; ++j)
+            run.largestStep = std::max(run.largestStep, std::fabs(robot.servoAngles()[j] - previous[j]));
+        previous = servoAnglesOf(robot);
+    }
+    return run;
+}
+
+void assertPacedPlay(const PlayRun &run, const PacedClip &clip, const char *from) {
+    char msg[120];
+    std::snprintf(msg, sizeof(msg), "%s played %s: largest step %.2f deg, Entry from tick %d to %d", clip.name, from,
+                  run.largestStep, run.entryTick, run.playingTick);
+    TEST_MESSAGE(msg);
+    TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(IDLE_EASE_STEP_DEG + CAP_TOLERANCE_DEG, run.largestStep, msg);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT_MESSAGE(0, run.entryTick, msg);
+    TEST_ASSERT_INT_WITHIN_MESSAGE(1, ticksFor(clip.entrySeconds), run.playingTick - run.entryTick, msg);
+}
+
+// A failed assertion jumps out of the test past every destructor, and a robot left alive keeps its bus subscriptions,
+// which the next test's messages reach on a robot gone. So each run below ends its robot before anything is asserted.
+
+PlayRun playFromStand(const char *clip) {
+    VirtualRobot robot;
+    standUp(robot);
+    return followPlay(robot, clip, ticksFor(3.0f));
+}
+
+// The play `eased` ticks into the ease a STAND borrowed out of dragged joints, those ticks' largest step included.
+PlayRun playDuringTheEase(const char *clip, int eased) {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    dragAway(robot);
+    const float easeStep = takeOver(robot, MOTION_STATE::STAND, eased).largestStep;
+    PlayRun run = followPlay(robot, clip, ticksFor(4.0f));
+    run.largestStep = std::max(run.largestStep, easeStep);
+    return run;
+}
+
+// The play in an ANIMATE asked for out of dragged joints, the tick after the ANIMATE.
+PlayRun playInAnimateFromHeldAngles(const char *clip) {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    dragAway(robot);
+    const Takeover entered = takeOver(robot, MOTION_STATE::ANIMATE, 1);
+    PlayRun run = followPlay(robot, clip, ticksFor(4.0f));
+    run.largestStep = std::max(run.largestStep, entered.largestStep);
+    return run;
+}
+
+} // namespace
+
+// A play asked for while the robot comes out of IDLE-held angles, during the ease a STAND borrowed or in an ANIMATE
+// asked for from them, waits for the ease to reach the stand and then enters at the clip's own entry time, as from a
+// stand: an Entry from the folded joints covers their whole distance in that time, 8.5 deg a tick on a dragged tibia.
+void test_a_play_out_of_idle_held_angles_waits_for_the_ease() {
+    for (const PacedClip &clip : EASE_PACED_CLIPS) {
+        const PlayRun stood = playFromStand(clip.name);
+        assertPacedPlay(stood, clip, "from a stand");
+        TEST_ASSERT_EQUAL_INT(0, stood.entryTick);
+        for (const int eased : {1, 10, 60}) {
+            char from[48];
+            std::snprintf(from, sizeof(from), "%d ticks into the ease", eased);
+            assertPacedPlay(playDuringTheEase(clip.name, eased), clip, from);
+        }
+        assertPacedPlay(playInAnimateFromHeldAngles(clip.name), clip, "in an ANIMATE from the held angles");
+    }
+}
+
+namespace {
+
+enum class AfterPair { STOP, STAND, WALK };
+
+// What IDLE and STAND taken in one tick from ANIMATE, a play's or the ease's, and `next` sent five ticks later leave.
+struct PairRun {
+    MOTION_STATE before = MOTION_STATE::DEACTIVATED; // the mode the pair was sent in
+    float largestStep = 0.0f;
+    MOTION_STATE last = MOTION_STATE::DEACTIVATED; // the mode three seconds after `next`
+};
+
+PairRun idleAndStandFromAnimate(bool playing, AfterPair next) {
+    VirtualRobot robot;
+    if (playing) {
+        standUp(robot);
+        robot.animationPlay(playOf("fx_single"));
+        follow(robot, ticksFor(1.0f));
+    } else {
+        idleFromStand(robot);
+        dragAway(robot);
+        takeOver(robot, MOTION_STATE::STAND, 10);
+    }
+    PairRun run;
+    run.before = robot.mode();
+    robot.setMode(MOTION_STATE::IDLE);
+    const Takeover pair = takeOver(robot, MOTION_STATE::STAND, 5);
+    if (next == AfterPair::STOP) robot.animationStop();
+    if (next == AfterPair::STAND) robot.setMode(MOTION_STATE::STAND);
+    if (next == AfterPair::WALK) robot.setMode(MOTION_STATE::WALK);
+    const Takeover after = follow(robot, ticksFor(3.0f));
+    run.largestStep = std::max(pair.largestStep, after.largestStep);
+    run.last = after.modes.back();
+    return run;
+}
+
+} // namespace
+
+// IDLE and then STAND taken in one tick while ANIMATE runs, a play or the ease out of IDLE, as a script sending them
+// back to back does, are the IDLE that ends what ANIMATE ran and holds its pose and the STAND that eases from there, as
+// when taken a tick apart: the robot is not left in ANIMATE, so a stop, a STAND and a WALK sent after the pair each act.
+void test_idle_and_stand_in_one_tick_from_animate_ease_to_the_stand() {
+    for (const bool playing : {true, false}) {
+        for (const AfterPair next : {AfterPair::STOP, AfterPair::STAND, AfterPair::WALK}) {
+            const PairRun run = idleAndStandFromAnimate(playing, next);
+            const char *nextName = next == AfterPair::STOP ? "a stop" : next == AfterPair::STAND ? "STAND" : "WALK";
+            char msg[96];
+            std::snprintf(msg, sizeof(msg), "%s, then %s: largest step %.2f deg, mode %d",
+                          playing ? "mid-play" : "mid-ease", nextName, run.largestStep, (int)run.last);
+            TEST_MESSAGE(msg);
+            TEST_ASSERT_EQUAL_MESSAGE(MOTION_STATE::ANIMATE, run.before, msg);
+            TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(IDLE_EASE_STEP_DEG + CAP_TOLERANCE_DEG, run.largestStep, msg);
+            TEST_ASSERT_EQUAL_MESSAGE(next == AfterPair::WALK ? MOTION_STATE::WALK : MOTION_STATE::STAND, run.last, msg);
+        }
+    }
 }
 
 namespace {
@@ -1799,9 +2534,25 @@ int main(int, char **) {
     RUN_TEST(test_a_new_robot_is_deactivated);
     RUN_TEST(test_a_new_robot_drives_no_servo);
     RUN_TEST(test_idle_from_boot_wakes_the_boards_but_sends_no_pose);
+    RUN_TEST(test_idle_after_a_deactivated_stand_leaves_every_servo_limp);
     RUN_TEST(test_a_standing_robot_drives_its_servos_to_the_motions_pose);
     RUN_TEST(test_a_mode_request_reaches_the_motion_through_the_bus);
     RUN_TEST(test_a_mode_is_reported_applied_in_the_tick_that_applies_it);
+    RUN_TEST(test_entering_idle_holds_the_servos_angles);
+    RUN_TEST(test_a_joint_in_idle_moves_only_its_servo);
+    RUN_TEST(test_a_joint_in_idle_is_held_within_its_travel);
+    RUN_TEST(test_a_joint_outside_idle_is_ignored);
+    RUN_TEST(test_a_joint_sent_behind_a_mode_out_of_idle_is_ignored);
+    RUN_TEST(test_the_servos_are_centred_only_in_idle);
+    RUN_TEST(test_a_centring_is_carried_out_in_arrival_order);
+    RUN_TEST(test_a_centring_behind_a_queued_mode_is_refused);
+    RUN_TEST(test_entering_idle_publishes_the_held_angles_once);
+    RUN_TEST(test_idle_entered_from_a_pose_beyond_travel_publishes_the_held_angles);
+    RUN_TEST(test_a_joint_write_in_idle_publishes_the_angles);
+    RUN_TEST(test_centring_in_idle_publishes_the_centre_pose);
+    RUN_TEST(test_idle_reports_its_limp_servos_as_limp);
+    RUN_TEST(test_deactivating_publishes_every_servo_limp);
+    RUN_TEST(test_the_servo_pages_switch_is_applied_by_the_control_task);
     RUN_TEST(test_a_standing_robot_holds_still);
     RUN_TEST(test_a_stick_held_in_walk_steps_the_legs);
     RUN_TEST(test_a_walk_obeys_its_last_command_for_600_ms_and_no_longer);
@@ -1843,11 +2594,20 @@ int main(int, char **) {
     RUN_TEST(test_a_gait_change_during_a_settle_waits_for_it);
     RUN_TEST(test_leaving_a_walk_for_stand_mid_stride_stays_in_travel);
     RUN_TEST(test_a_walk_after_walk_nn_takes_its_posture_again);
+    RUN_TEST(test_walk_nn_reads_the_sticks_alone);
+    RUN_TEST(test_walk_nn_walks_the_stance_it_was_trained_on);
     RUN_TEST(test_an_interrupted_settle_starts_over);
     RUN_TEST(test_a_walk_from_a_stand_at_rest_steps_at_once);
     RUN_TEST(test_a_walk_from_a_stand_at_rest_settles_a_new_posture_first);
     RUN_TEST(test_a_tuned_walk_after_the_stand_spends_its_rest_posture);
     RUN_TEST(test_every_stop_eases_the_stroke_out_with_the_cadence);
+    RUN_TEST(test_leaving_idle_after_drags_eases_the_joints_to_the_stand);
+    RUN_TEST(test_leaving_limp_idle_stands_up_as_from_deactivated);
+    RUN_TEST(test_idle_taken_during_the_ease_out_of_idle_holds_the_pose_the_ease_left);
+    RUN_TEST(test_a_second_mode_in_the_tick_of_the_ease_out_of_idle_waits_for_it);
+    RUN_TEST(test_puppeteering_and_its_leave_keep_the_servos_top_speed_beside_the_ease_out_of_idle);
+    RUN_TEST(test_a_play_out_of_idle_held_angles_waits_for_the_ease);
+    RUN_TEST(test_idle_and_stand_in_one_tick_from_animate_ease_to_the_stand);
     RUN_TEST(test_full_stick_walk_stays_in_travel_at_every_stride);
     RUN_TEST(test_a_gait_at_rest_takes_a_new_stride_at_once);
     RUN_TEST(test_a_small_stick_at_the_longest_stride_steps_slowly_with_the_full_stroke);

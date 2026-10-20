@@ -1,4 +1,5 @@
 import {
+  AnglesData,
   AnimationStatus,
   GaitData,
   GoalStatus,
@@ -17,6 +18,7 @@ import type { Failure } from './reply'
  */
 export const STATE_TOPICS = [
   ModeData,
+  AnglesData,
   GaitData,
   WifiStatus,
   APStatus,

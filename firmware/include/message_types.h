@@ -9,7 +9,9 @@
 
 // Internal EventBus message structs (in-RAM only; the wire protocol is protobuf).
 
-enum class MOTION_STATE { DEACTIVATED, IDLE, POSE, STAND, WALK, WALK_NN, ANIMATE };
+// Each mode's value is its ModesEnum value on the wire (motion_state_wire.h). 2 was POSE and is reserved there, so the
+// values are explicit and keep their wire positions rather than close the gap.
+enum class MOTION_STATE { DEACTIVATED = 0, IDLE = 1, STAND = 3, WALK = 4, WALK_NN = 5, ANIMATE = 6 };
 
 // REQUEST: a mode asked for by a client, the controller or the firmware itself. BORROW: an animation
 // play asking for ANIMATE. HANDBACK: the control task asking for the borrowed mode back. BORROW and
@@ -33,6 +35,7 @@ struct GaitMsg {
 
 struct ServoAnglesMsg {
     float angles[NUM_SERVO];
+    uint32_t limp; // a bit per servo driven by no pulse since the boards woke, whose angle is unknown
 };
 
 struct ServoSignalMsg {

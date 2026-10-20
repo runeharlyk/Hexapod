@@ -21,7 +21,6 @@ constexpr Rgb modeColour(MOTION_STATE mode) {
     switch (mode) {
         case MOTION_STATE::DEACTIVATED: return {6, 6, 6}; // dim white: servos limp, safe to handle
         case MOTION_STATE::IDLE: return {0, 0, 32};       // blue
-        case MOTION_STATE::POSE: return {24, 0, 24};      // magenta: calibration pose
         case MOTION_STATE::STAND: return {0, 32, 0};      // green
         case MOTION_STATE::WALK: return {0, 24, 24};      // cyan
         case MOTION_STATE::WALK_NN: return {24, 20, 0};   // yellow

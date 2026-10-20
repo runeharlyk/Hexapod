@@ -55,10 +55,10 @@ describe('the fake robot', () => {
     client.subscribe(MODE)
     client.frames.length = 0
 
-    robot.set(ModeData, { mode: 2, handheld: false })
+    robot.set(ModeData, { mode: 4, handheld: false })
     robot.push(IMUData, IMUData.create({ x: 1 }))
 
-    expect(client.lines()).toEqual(['mode 2'])
+    expect(client.lines()).toEqual(['mode 4'])
   })
 
   it('cannot be built without a value for every state topic', () => {

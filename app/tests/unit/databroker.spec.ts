@@ -14,7 +14,7 @@ const createFakeTransport = () => {
   const status = writable<LinkStatus>('disconnected')
   const sent: Message[] = []
   // The motion frames handed over as the latest of their kind (transport/latest-frames.ts), with that kind.
-  const latest: { kind: number; message: Message }[] = []
+  const latest: { kind: string; message: Message }[] = []
   const callbacks = {
     data: [] as ((bytes: Uint8Array) => void)[],
     connect: [] as (() => void)[],
@@ -182,7 +182,7 @@ describe('DataBroker', () => {
     await serial.transport.connect()
 
     expect(serial.latest.map(({ kind, message }) => [kind, message.input?.left?.y])).toEqual([
-      [tagOf(ControllerInputData), 0.5]
+      [`${tagOf(ControllerInputData)}`, 0.5]
     ])
     expect(serial.sent.filter(m => m.input)).toEqual([])
   })

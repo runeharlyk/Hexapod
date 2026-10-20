@@ -20,10 +20,6 @@ static std::atomic<MOTION_STATE> s_mode {MOTION_STATE::DEACTIVATED};
 static std::atomic<GaitType> s_gait {GaitType::TRI_GATE};
 static float s_height = 0.0f;
 
-static constexpr MOTION_STATE MODE_CYCLE[] = {MOTION_STATE::DEACTIVATED, MOTION_STATE::IDLE,
-                                              MOTION_STATE::STAND, MOTION_STATE::WALK};
-static constexpr size_t MODE_CYCLE_N = sizeof(MODE_CYCLE) / sizeof(MODE_CYCLE[0]);
-
 #ifndef ESPNOW_WIFI_CHANNEL
 #define ESPNOW_WIFI_CHANNEL 1
 #endif
@@ -52,14 +48,7 @@ static void handlePacket(const uint8_t* data, int len) {
     }
 
     if (rising & BTN_LEFT) {
-        MOTION_STATE cur = s_mode.load(std::memory_order_relaxed);
-        size_t idx = 0;
-        for (size_t i = 0; i < MODE_CYCLE_N; ++i)
-            if (MODE_CYCLE[i] == cur) {
-                idx = i;
-                break;
-            }
-        MOTION_STATE next = MODE_CYCLE[(idx + 1) % MODE_CYCLE_N];
+        const MOTION_STATE next = nextHandheldMode(s_mode.load(std::memory_order_relaxed));
         s_mode.store(next, std::memory_order_relaxed);
         EventBus<ModeMsg>::publish({next});
     }

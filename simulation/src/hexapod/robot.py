@@ -24,7 +24,7 @@ from .backends.base import (ZERO, Backend, Gait, Goal, GoalKind, GoalState, Goal
                             RobotState, RobotTimeout, Style, Velocity)
 from .servos import ServoCalibration
 
-# The modes a script may walk from. DEACTIVATED is the app's stop button and IDLE, POSE and ANIMATE are the user's:
+# The modes a script may walk from. DEACTIVATED is the app's stop button and IDLE and ANIMATE are the user's:
 # walking would take over servos the user put somewhere else.
 WALKS_FROM = (Mode.STAND, Mode.WALK)
 HEIGHT_RANGE_MM = 50.0  # motion.h handleCommand: zm = h * 50, and a positive zm lowers the body

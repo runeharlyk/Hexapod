@@ -155,7 +155,7 @@ describe('the connected robot on its IMU', () => {
 })
 
 // The view draws whatever angles it has, the robot's or the virtual robot's, and places them by the link: a linked
-// robot by its IMU, whether or not it has sent angles yet (it sends none in DEACTIVATED, IDLE and POSE), and only an
+// robot by its IMU, whether or not it has sent angles yet (it sends none in DEACTIVATED and IDLE), and only an
 // unlinked robot and the animation preview on the ground under their feet.
 describe('the view places the robot by its link', () => {
   const NOSE_DOWN = { x: (-12 * Math.PI) / 180, y: 0, z: 0 }

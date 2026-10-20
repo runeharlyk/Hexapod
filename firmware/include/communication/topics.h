@@ -24,7 +24,7 @@ inline constexpr TopicKindEntry TOPIC_KINDS[] = {
     {socket_message_Message_mode_tag, TopicKind::STATE},
     {socket_message_Message_analytics_tag, TopicKind::STREAM},
     {socket_message_Message_gait_tag, TopicKind::STATE},
-    {socket_message_Message_angles_tag, TopicKind::STREAM},
+    {socket_message_Message_angles_tag, TopicKind::STATE},
     {socket_message_Message_wifi_status_tag, TopicKind::STATE},
     {socket_message_Message_ap_status_tag, TopicKind::STATE},
     {socket_message_Message_ota_status_tag, TopicKind::STATE},

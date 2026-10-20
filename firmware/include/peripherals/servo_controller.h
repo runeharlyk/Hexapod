@@ -3,6 +3,7 @@
 
 #include <esp_log.h>
 #include <esp_timer.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <event_bus.h>
@@ -64,25 +65,40 @@ class ServoController {
         if (!_right.begin(now)) ESP_LOGW(TAG, "servo board 0x%02X does not answer", _right.address());
 
         _signalSub = EventBus<ServoSignalMsg>::subscribe([this](ServoSignalMsg const &m) { servoEvent(m); });
-        _stateSub = EventBus<ServoStateMsg>::subscribe([this](ServoStateMsg const &m) {
-            m.active ? activate() : deactivate();
-        });
         _calibrationSub = ServoSettingsBus::subscribe([this](api_ServoSettings const &s) { applyCalibration(s); });
         api_ServoSettings pending;
         if (ServoSettingsBus::peek(pending)) applyCalibration(pending);  // if the service published first
     }
 
+    // Control task, as every call below that writes the cached pulses or the driven servos is; the servo page's switch
+    // reaches it through the motion inbox. Every servo limp until it is written: the boards wake with every channel
+    // off, and no pulse from before is kept for a board started again after losing power to restore. The wake is the
+    // tick's write of each board, reported as one, so a board left asleep because its all-off failed shows as a failed
+    // write.
     void activate() {
         if (is_active) return;
         control_state = SERVO_CONTROL_STATE::ANGLE;
         is_active = true;
-        _left.wakeup();
-        _right.wakeup();
+        std::fill(std::begin(left_pwm), std::end(left_pwm), 0);
+        std::fill(std::begin(right_pwm), std::end(right_pwm), 0);
+        _driven = 0;
+        const int64_t now = esp_timer_get_time();
+        const bool leftWasAnswering = _left.answering();
+        const bool rightWasAnswering = _right.answering();
+        const ServoBoard::Write left = _left.wakeup(now);
+        const ServoBoard::Write right = _right.wakeup(now);
+        _leftWrite = report(_left, leftWasAnswering, left);
+        _rightWrite = report(_right, rightWasAnswering, right);
     }
+
+    // A bit per servo written since the boards were activated, in servo order; the others are limp, and all are while
+    // the boards sleep.
+    uint32_t driven() const { return _driven; }
 
     void deactivate() {
         if (!is_active) return;
         is_active = false;
+        _driven = 0;
         control_state = SERVO_CONTROL_STATE::DEACTIVATED;
         _left.sleep();
         _right.sleep();
@@ -175,6 +191,32 @@ class ServoController {
         }
     }
 
+    // Control task, IDLE: one joint dragged in the app, through the same travel, calibration and direction as the
+    // motion's angles, written to its own channel alone, so every other servo holds its pulse. It is its board's write
+    // of the tick, backed off and reported as the motion's are.
+    void setJointAngle(int servo, float angleDeg) {
+        if (servo < 0 || servo >= NUM_SERVO || !std::isfinite(angleDeg)) return;
+        const int joint = servo % 3;
+        target_angles[servo] = withinTravel(angleDeg, joint) + (joint == 2 ? 90.0f : 0.0f);
+        const ServoCfg &c = cfg[servo];
+        const bool right = servo < 9;
+        uint16_t *pwm = right ? right_pwm : left_pwm;
+        pwm[c.pin] = toPwm(target_angles[servo], c);
+        if (is_active) _driven |= 1u << servo;
+        _writtenThisTick |= 1u << servo;
+        ServoBoard &board = right ? _right : _left;
+        const int64_t start = esp_timer_get_time();
+        const bool wasAnswering = board.answering();
+        const ServoBoard::Write write = board.writeChannel(pwm, channel_count, c.pin, start);
+        _writeUs += static_cast<uint32_t>(esp_timer_get_time() - start);
+        (right ? _rightWrite : _leftWrite) = report(board, wasAnswering, write);
+    }
+
+    // The joint angle whose pulse is the servo's calibrated centre (toPwm's inverse at centerPwm): the calibration's
+    // centre angle negated, less the tibia's square knee.
+    float centreAngle(int servo) const { return -cfg[servo].centerAngle - (servo % 3 == 2 ? 90.0f : 0.0f); }
+
+    // Control task, IDLE: every servo to its calibrated centre pulse, the pose the calibration page lines joints up in.
     void setCenterPwm() {
         for (int i = 0; i < 9; i++) {
             right_pwm[cfg[i].pin] = cfg[i].centerPwm;
@@ -190,23 +232,26 @@ class ServoController {
     // Control task, before the tick's writes: a tick that writes nothing reports no write.
     void startTick() {
         _rightWrite = _leftWrite = socket_message_ServoWrite_SERVO_WRITE_NONE;
+        _writtenThisTick = 0;
         _writeUs = 0;
     }
 
-    // Control task, after the tick's writes: what they did, and the pulses they wrote or meant to write in servo order.
+    // Control task, after the tick's writes: what they did, and the pulses they wrote or meant to write in servo order, of
+    // the servos written alone.
     void fillTelemetry(socket_message_TickSample &tick) const {
         tick.servo_write_right = _rightWrite;
         tick.servo_write_left = _leftWrite;
         tick.servo_write_us = _writeUs;
         for (int i = 0; i < NUM_SERVO; i++) {
-            const bool right = i < 9;
-            if ((right ? _rightWrite : _leftWrite) == socket_message_ServoWrite_SERVO_WRITE_NONE) continue;
-            tick.pwm[i] = (right ? right_pwm : left_pwm)[cfg[i].pin];
+            if (!(_writtenThisTick & (1u << i))) continue;
+            tick.pwm[i] = (i < 9 ? right_pwm : left_pwm)[cfg[i].pin];
         }
     }
 
   private:
     void writeBoards() {
+        if (is_active) _driven = ALL_SERVOS;
+        _writtenThisTick = ALL_SERVOS;
         const int64_t start = esp_timer_get_time();
         const bool leftWasAnswering = _left.answering();
         const bool rightWasAnswering = _right.answering();
@@ -271,6 +316,9 @@ class ServoController {
     uint16_t left_pwm[16] = {0};
     uint16_t right_pwm[16] = {0};
     uint8_t channel_count = 0;
+    static constexpr uint32_t ALL_SERVOS = (1u << NUM_SERVO) - 1;
+    uint32_t _driven = 0;
+    uint32_t _writtenThisTick = 0; // a bit per servo this tick wrote, for its telemetry
 
     SERVO_CONTROL_STATE control_state = SERVO_CONTROL_STATE::DEACTIVATED;
     bool is_active{false};
@@ -287,7 +335,6 @@ class ServoController {
     uint32_t _writeUs = 0;
 
     EventBus<ServoSignalMsg>::Handle _signalSub;
-    EventBus<ServoStateMsg>::Handle _stateSub;
     ServoSettingsBus::Handle _calibrationSub;
 };
 

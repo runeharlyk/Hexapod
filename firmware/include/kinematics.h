@@ -46,7 +46,8 @@ constexpr void get_transformation_matrix(const BodyStateMsg &b, float T[4][4]) {
 }
 
 // Per-joint travel in degrees, order coxa, femur, tibia. Mirrors COXA/FEMUR/TIBIA_RANGE in
-// simulation/src/resources/build_model.py, which derives them from the servo's real travel.
+// simulation/src/resources/build_model.py, which derives them from the servo's real travel; the app's joint drag holds
+// to a copy (app/src/lib/joint-drive.ts JOINT_LIMIT_DEG, kept equal by its unit test).
 static constexpr float JOINT_LIMIT_DEG[3] = {31.5f, 90.0f, 149.0f};
 
 // The angle a servo is driven to for a commanded joint angle (joint 0 coxa, 1 femur, 2 tibia): held within the

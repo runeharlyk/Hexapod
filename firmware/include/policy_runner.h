@@ -25,8 +25,8 @@ class PolicyRunner {
         return err < 1e-4f;
     }
 
-    // Mirrors the env reset: phase 0, zero previous action, feet snapped to the default
-    // stance the policy was trained around (foot-distance scaling does not apply in NN mode).
+    // Mirrors the env reset: phase 0, zero previous action, feet snapped to the stance the policy was trained around,
+    // the stance of fd 0 (DEFAULT_STANCE), which MotionService walks WALK_NN on whatever the feet distance.
     void reset(GaitController &gait, const float trained_feet[6][4]) {
         tick = 0;
         lastInferenceUs = 0;

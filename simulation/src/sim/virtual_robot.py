@@ -23,7 +23,7 @@ SOURCES = [FIRMWARE / "host" / name for name in ("virtual_robot_api.cpp", "polic
 C_SOURCES = ([ROOT / "submodules" / "nanopb" / name for name in ("pb_common.c", "pb_decode.c", "pb_encode.c")]
              + [GENERATED / f"{name}.pb.c" for name in ("animation", "api", "message")])
 
-DEACTIVATED, IDLE, POSE, STAND, WALK, WALK_NN, ANIMATE = range(7)
+DEACTIVATED, STAND, WALK = 0, 3, 4  # ModesEnum's wire values, which setMode takes
 
 
 def _feature_flags() -> list[str]:

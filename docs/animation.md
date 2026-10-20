@@ -73,7 +73,7 @@ There are two ways in.
 
 Every mode decision is made by the control task, at the start of the tick after the mode arrived and in the order the modes arrive, by `decideMode` in `firmware/include/animation/mode_arbiter.h`; `firmware/test/test_mode_arbiter` replays the interleavings.
 
-- A borrow arriving after a DEACTIVATED, IDLE or POSE is refused, the loaded play is dropped, and the standing mode is published again as `APPLIED`.
+- A borrow arriving after a DEACTIVATED or IDLE is refused, the loaded play is dropped, and the standing mode is published again as `APPLIED`.
 - The hand-back is only requested by the control task, as a `ModeMsg` of kind `HANDBACK` posted into its own inbox behind every mode that arrived before it, at most once until it has taken another mode.
   It is applied only while the robot is still in a borrowed ANIMATE and the runner is not busy, so an emergency stop or a sticky ANIMATE that arrived first wins, and a play chained after the request keeps the borrow; the control task asks again once it has taken another mode and the runner is idle at stance.
 - `AnimationRunner::busy()` is true while the player is not idle, a play is pending, or the pose is away from stance (any joint-angle leg, or a body or foot offset above 1 mm or 0.01 rad).
@@ -82,7 +82,13 @@ Every mode decision is made by the control task, at the start of the tick after 
   A running player is stopped, and a pose held by an idle player (a puppeteer pose) eases home through the puppet path toward stance; the requested mode becomes the hand-back target, and the mode changes once every leg is home.
   Leaving at once would snap joint-angle legs to stance at full servo speed.
   A mode observer sees the requested mode when the robot switches, about one exit time after the request.
-- DEACTIVATED, IDLE and POSE apply at the next tick even mid-play, because cutting or centring the servos immediately is the safety property.
+- DEACTIVATED and IDLE apply at the next tick even mid-play, because cutting the servos or stopping their drive immediately is the safety property.
+- An explicit STAND, WALK or WALK_NN from an IDLE that wrote a servo (a joint dragged, or the centring), or that was entered from ANIMATE (a play's pose, or this ease half done), borrows ANIMATE with the requested mode as the hand-back target.
+  A second explicit mode taken in the same tick finds the ease busy, though it has not begun, and becomes the hand-back target as a graceful leave does.
+  The runner starts from the angles the servos hold, every leg in joint angles (`AnimationRunner::enterFromJoints`), and the puppet path eases them to stance, so the mode reported is ANIMATE until every leg is home.
+  A servo still limp has no angle to ease from and is written at its stance angle at once, as a stand from DEACTIVATED writes it.
+  A play asked for during this ease, or in an explicit ANIMATE taken from such an IDLE, waits until every leg is home and enters from stance at the clip's own entry time, as from a stand: an Entry covers its distance in the entry time however far it is, so from a joint folded far from the stand it would outrun the ease.
+  IDLE and such a mode taken in one tick from ANIMATE leave it for the IDLE and enter it again: the IDLE ends what ANIMATE ran, and the ease starts from the angles ANIMATE left.
 - Any other explicit mode ends a borrow, so an explicit ANIMATE mid-play makes the robot stay in ANIMATE afterwards.
 
 A `ModeMsg` carries a `ModeMsgKind` (`firmware/include/message_types.h`):
@@ -124,6 +130,8 @@ The robot's validate request sweeps the same bases and reports the union of the 
 
 A `PoseData` message (a `BodyPose` plus 0 or 6 `LegTarget`s) is applied only in ANIMATE while the player is idle.
 The firmware lerps toward it with the STAND smoothing factor and holds it if the stream stops.
+A joint-angle leg turns at most 3.75 deg a tick, the servo's own speed (`PUPPET_JOINT_STEP_DEG`), so a joint far from its target is not left behind by its command.
+The ease out of IDLE turns one at half that, 1.875 deg a tick (`IDLE_EASE_JOINT_STEP_DEG`), until a puppeteer's pose takes over; a graceful leave keeps the pace the pose was approached at.
 
 ### Messages
 
@@ -294,7 +302,7 @@ Nothing is sent while the pose is unchanged; the firmware holds the last pose.
 The last pose is sent again when a `ModeData` reports ANIMATE, because the robot drops a pose that arrives before it has applied the mode, and when `AnimationStatus` returns to IDLE, because a play leaves the robot at stance.
 Switching it off, losing the link, or leaving the editor cancels the stream.
 The robot stays in the explicit, sticky ANIMATE (spec section 3) holding the last pose; the way back is a mode change from the controller page.
-A STAND or walking mode eases the pose home before the mode switches; DEACTIVATED, IDLE and POSE apply at the next tick, even mid-play (see [Mode, borrow and hand-back](#mode-borrow-and-hand-back)).
+A STAND or walking mode eases the pose home before the mode switches; DEACTIVATED and IDLE apply at the next tick, even mid-play (see [Mode, borrow and hand-back](#mode-borrow-and-hand-back)).
 
 "Play on robot" uploads the current document, overwriting any robot file of the same name, then plays it with the Animation panel's preview values.
 Stop sends `animation_stop`.

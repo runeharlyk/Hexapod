@@ -9,7 +9,7 @@ import {
   OtaStatusData
 } from '$lib/platform_shared/message'
 import { GaitType } from '$lib/gait'
-import { MotionModes } from '$lib/motion'
+import { MotionModes, modeFromWire } from '$lib/motion'
 import { GOAL_END_HOLD_MS, isGoalActive } from '$lib/stores/goal'
 import { dataBroker, type DataBroker } from '$lib/transport/databroker'
 import { describeFailure } from '$lib/transport/reply'
@@ -81,10 +81,9 @@ export const robotState = (broker: DataBroker) => {
     gaitState,
     goalState,
     animationState,
-    mode: derived(modeState, ({ value }): MotionModes =>
-      value === undefined ?
-        MotionModes.DEACTIVATED
-      : (Object.values(MotionModes)[value.mode] ?? MotionModes.DEACTIVATED)
+    /** The robot's mode, DEACTIVATED until it reports one, and null for one this app does not know (UNKNOWN_MODE_HINT). */
+    mode: derived(modeState, ({ value }): MotionModes | null =>
+      value === undefined ? MotionModes.DEACTIVATED : (modeFromWire(value.mode) ?? null)
     ),
     /** Whether the ESP-NOW handheld drives the robot, which then drops this app's sticks and refuses its goals. */
     handheldDriving: derived(modeState, ({ value, stale }) => !stale && (value?.handheld ?? false)),

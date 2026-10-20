@@ -1,10 +1,8 @@
 import { expect, test, type Page } from '@playwright/test'
 import { Message } from '../../src/lib/platform_shared/message'
-import { MotionModes } from '../../src/lib/motion'
+import { MotionModes, modeToWire } from '../../src/lib/motion'
 
 const base = process.env.BASE_PATH ?? ''
-
-const modeIndex = (mode: MotionModes) => Object.values(MotionModes).indexOf(mode)
 
 // The preview origin is http, so the layout opens ws://<host>/api/ws by itself; the route stands in for the robot and
 // keeps every mode the app sends it.
@@ -28,7 +26,7 @@ test("the 3D view's panel leaves the robot's mode to the controller", async ({ p
   // The controller's own mode button, sent after the panel's: the first mode the robot hears must be this one.
   await page.getByRole('button', { name: 'Stand', exact: true }).click()
 
-  await expect.poll(() => sentModes).toEqual([modeIndex(MotionModes.STAND)])
+  await expect.poll(() => sentModes).toEqual([modeToWire(MotionModes.STAND)])
 })
 
 type Counted = { glDraws: number }

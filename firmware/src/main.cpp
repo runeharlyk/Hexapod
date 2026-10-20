@@ -44,6 +44,7 @@
 #include <communication/serial_adapter.h>
 #include <www_mount.hpp>
 #include <hexapod.h>
+#include <servo_angles_wire.h>
 #include <peripherals/i2c_bus.h>
 #include <peripherals/i2c_scan.h>
 #include <peripherals/status_led.h>
@@ -54,6 +55,7 @@
 #include <servo_settings_service.h>
 #include <event_bus.h>
 #include <message_types.h>
+#include <motion_state_wire.h>
 #include <platform_shared/message.pb.h>
 #include <animation/animation.h>
 #include <animation/animation_store.h>
@@ -330,12 +332,13 @@ static void registerHandlers(CommAdapterBase &c) {
         if (cmd.sanitize()) EventBus<CommandMsg>::publish(cmd);
     });
     c.on<socket_message_ModeData>([](const socket_message_ModeData &m, int) {
-        if ((int)m.mode < 0 || (int)m.mode > (int)socket_message_ModesEnum_ANIMATE) return;
-        if (!FT_ENABLED(USE_POLICY) && m.mode == socket_message_ModesEnum_WALK_NN) return;
+        const std::optional<MOTION_STATE> mode = motionStateFromWire(m.mode);
+        if (!mode) return;
+        if (!FT_ENABLED(USE_POLICY) && *mode == MOTION_STATE::WALK_NN) return;
         // The robot stays deactivated while a new firmware is written: a brownout mid-write would
         // corrupt the update.
         if (ota_service::inProgress) return;
-        EventBus<ModeMsg>::publish({static_cast<MOTION_STATE>(m.mode)});
+        EventBus<ModeMsg>::publish({*mode});
     });
     c.on<socket_message_GaitData>([](const socket_message_GaitData &g, int) {
         if ((int)g.gait < 0 || (int)g.gait > (int)socket_message_GaitEnum_AUTO) return;
@@ -346,6 +349,10 @@ static void registerHandlers(CommAdapterBase &c) {
     });
     c.on<socket_message_ServoStateData>(
         [](const socket_message_ServoStateData &s, int) { EventBus<ServoStateMsg>::publish({s.active}); });
+    // A drag of the 3D model in IDLE; the motion ignores it in any other mode (MotionService::setJoint).
+    c.on<socket_message_JointAngleData>([](const socket_message_JointAngleData &j, int) {
+        if (j.servo < NUM_SERVO) robot.setJoint(static_cast<int>(j.servo), j.degrees);
+    });
     c.on<socket_message_AnimationPlay>([](const socket_message_AnimationPlay &p, int) {
         if (!anim::validName(p.name)) return;
         AnimationCommandMsg cmd {};
@@ -514,6 +521,14 @@ static void registerHandlers(CommAdapterBase &c) {
                 if (r == StateUpdateResult::ERROR) res.status_code = 400;
                 res.which_response = socket_message_CorrelationResponse_servo_settings_tag;
                 snapshot(servoSettingsService, res.response.servo_settings);
+                break;
+            }
+            case socket_message_CorrelationRequest_servo_centre_tag: {
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                res.status_code = robot.centreServos();
+                if (res.status_code == 409)
+                    strncpy(res.error_message, "Only an idle robot, with no mode on its way, centres its servos",
+                            sizeof(res.error_message) - 1);
                 break;
             }
             case socket_message_CorrelationRequest_peripheral_settings_get_tag: {
@@ -847,7 +862,15 @@ static constexpr Topic TOPICS[] = {
          gait.gait = static_cast<socket_message_GaitEnum>(latestOr<GaitMsg>({GaitType::TRI_GATE}).gait);
          sink.put(gait);
      }},
-    {MessageTraits<socket_message_AnglesData>::tag, TopicKind::STREAM, nullptr},
+    {MessageTraits<socket_message_AnglesData>::tag, TopicKind::STATE,
+     [](SnapshotSink &sink) {
+         // The angles the motion published last, which IDLE publishes as it is entered and after each write; none, an
+         // empty list, before the motion first drives the servos or enters IDLE, and while every servo is limp.
+         ServoAnglesMsg latest;
+         sink.put(EventBus<ServoAnglesMsg>::peek(latest)
+                      ? anglesData(latest)
+                      : socket_message_AnglesData(socket_message_AnglesData_init_zero));
+     }},
     {MessageTraits<api_WifiStatus>::tag, TopicKind::STATE,
      [](SnapshotSink &sink) {
          api_WifiStatus status = api_WifiStatus_init_zero;
@@ -940,12 +963,8 @@ static void setupComm() {
     wsSocket.onSubscriptionChange(refreshBridge);
     bleAdapter.onSubscriptionChange(refreshBridge);
 
-    addBridge<ServoAnglesMsg>(MessageTraits<socket_message_AnglesData>::tag, [](const ServoAnglesMsg &a) {
-        socket_message_AnglesData out = socket_message_AnglesData_init_zero;
-        out.angles_count = NUM_SERVO;
-        for (int i = 0; i < NUM_SERVO; i++) out.angles[i] = static_cast<int32_t>(lroundf(a.angles[i]));
-        emitAll(out);
-    });
+    addBridge<ServoAnglesMsg>(MessageTraits<socket_message_AnglesData>::tag,
+                              [](const ServoAnglesMsg &a) { emitAll(anglesData(a)); });
 
     addBridge<IMUAnglesMsg>(MessageTraits<socket_message_IMUData>::tag, [](const IMUAnglesMsg &m) {
         socket_message_IMUData out = socket_message_IMUData_init_zero;

@@ -8,12 +8,12 @@ import { tagOf } from '$lib/transport/message-codec'
 import { ACK_TIMEOUT_MS, type Watched } from '$lib/transport/topics'
 import { watch } from '$lib/robot/watch'
 import { describeFailure } from '$lib/transport/reply'
-import { GoalStatus, ModeData } from '$lib/platform_shared/message'
+import { GoalStatus, ModeData, ModesEnum } from '$lib/platform_shared/message'
 import { FakeRobot, fakeLink } from '../fake-robot/transport'
 
 const MODE = tagOf(ModeData)
-const STAND = 2
-const WALK = 3
+const STAND = ModesEnum.STAND
+const WALK = ModesEnum.WALK
 
 // Lets the fake robot's frames, which arrive on later microtasks, land.
 const settle = () => vi.advanceTimersByTimeAsync(0)

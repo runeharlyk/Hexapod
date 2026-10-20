@@ -5,6 +5,8 @@
 
 #include <unity.h>
 
+#include <algorithm>
+#include <array>
 #include <memory>
 #include "../../include/peripherals/servo_controller.h"
 
@@ -15,6 +17,7 @@ constexpr uint8_t LEFT_BOARD = 0x40;
 constexpr uint8_t LED0_ON_L = 0x06;
 constexpr uint8_t PRE_SCALE = 0xFE;
 constexpr uint8_t MODE1 = 0x00;
+constexpr uint8_t ALL_LED_OFF_H = 0xFD;
 constexpr int64_t TICK_US = 5000;
 // The PCA9685 channel each servo drives, in servo order (servo_controller.h's cfg).
 constexpr uint8_t CHANNEL[NUM_SERVO] = {8, 9, 10, 2, 3, 4, 5, 6, 7, 8, 9, 10, 2, 3, 4, 5, 6, 7};
@@ -110,6 +113,57 @@ void test_the_centre_pose_reports_its_write() {
     for (int i = 0; i < NUM_SERVO; i++) TEST_ASSERT_EQUAL_UINT16(306, tick.pwm[i]);
 }
 
+// A tick in IDLE that writes the joints dragged in the app.
+socket_message_TickSample jointTick(ServoController& controller, int servo, float degrees) {
+    host_clock::advance(TICK_US);
+    controller.startTick();
+    controller.setJointAngle(servo, degrees);
+    socket_message_TickSample tick = socket_message_TickSample_init_zero;
+    controller.fillTelemetry(tick);
+    return tick;
+}
+
+// A joint dragged in IDLE is a write of its own board, reported as the motion's are, with the pulse it got; the other
+// board is not written.
+void test_a_joint_write_reports_its_boards_write() {
+    ServoController& c = started();
+    bus().transferUs = 120;
+    const socket_message_TickSample right = jointTick(c, 4, 20.0f);
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_OK, right.servo_write_right);
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_NONE, right.servo_write_left);
+    TEST_ASSERT_EQUAL_UINT16(offCount(RIGHT_BOARD, CHANNEL[4]), right.pwm[4]);
+    TEST_ASSERT_EQUAL_UINT16(306 + 20 * 2, right.pwm[4]);
+    TEST_ASSERT_EQUAL_UINT32(120, right.servo_write_us);
+    const socket_message_TickSample left = jointTick(c, 13, 10.0f);
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_NONE, left.servo_write_right);
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_OK, left.servo_write_left);
+}
+
+// A joint write reports the one pulse it wrote: the other servos of its board hold pulses from an earlier tick, which
+// this tick did not write, and report none, as the servos of a board a tick does not write report none.
+void test_a_joint_write_reports_only_its_servos_pulse() {
+    ServoController& c = started();
+    angleTick(c);
+    const socket_message_TickSample tick = jointTick(c, 4, 20.0f);
+    TEST_ASSERT_EQUAL_UINT16(306 + 20 * 2, tick.pwm[4]);
+    for (int i = 0; i < NUM_SERVO; i++)
+        if (i != 4) TEST_ASSERT_EQUAL_UINT16_MESSAGE(0, tick.pwm[i], "a servo the tick did not write");
+}
+
+// A joint dragged onto a board that stopped answering waits out its backoff as the motion's writes do: skipped, never
+// sent to the bus, and reported so.
+void test_a_joint_write_to_a_board_in_backoff_is_skipped() {
+    ServoController& c = started();
+    angleTick(c);
+    bus().absent.insert(RIGHT_BOARD);
+    for (int t = 0; t < 3; t++) angleTick(c);
+    bus().attempts.clear();
+    const socket_message_TickSample tick = jointTick(c, 4, 20.0f);
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_SKIPPED, tick.servo_write_right);
+    TEST_ASSERT_EQUAL_INT(0, bus().attempts[RIGHT_BOARD]);
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_OK, jointTick(c, 13, 10.0f).servo_write_left);
+}
+
 // A tick after a written one, in a mode that drives no servo, reports no write rather than the last one.
 void test_a_tick_that_writes_nothing_reports_no_write() {
     ServoController& c = started();
@@ -178,10 +232,136 @@ void test_the_write_time_is_the_bus_time_of_the_tick() {
     TEST_ASSERT_EQUAL_UINT32(150, skipping.servo_write_us);
 }
 
+// Which of a board's channels output a pulse, from every write the controller made to it, replayed in order on a chip
+// that powered on as setUp powers it: a write to ALL_LED_OFF_H loads every channel's LEDn_OFF_H, as the PCA9685 does,
+// and a sleeping chip outputs nothing.
+std::array<bool, 16> pulsing(uint8_t addr) {
+    constexpr uint8_t ALL_LED_ON_L = 0xFA, SLEEP = 0x10, FULL = 0x10;
+    std::array<uint8_t, 256> chip {};
+    chip[MODE1] = 0x11;
+    for (int ch = 0; ch < 16; ch++) chip[LED0_ON_L + 4 * ch + 3] = FULL;
+    for (const FakeWrite& w : bus().writes) {
+        if (w.addr != addr) continue;
+        for (size_t i = 0; i < w.bytes.size(); i++) {
+            const uint8_t reg = (w.reg + i) & 0xFF;
+            if (reg >= ALL_LED_ON_L && reg <= ALL_LED_OFF_H) {
+                for (int ch = 0; ch < 16; ch++) chip[LED0_ON_L + 4 * ch + (reg - ALL_LED_ON_L)] = w.bytes[i];
+            } else {
+                chip[reg] = w.bytes[i];
+            }
+        }
+    }
+    std::array<bool, 16> out {};
+    for (int ch = 0; ch < 16; ch++) {
+        const uint8_t* led = &chip[LED0_ON_L + 4 * ch];
+        const bool fullOff = led[3] & FULL, fullOn = led[1] & FULL;
+        const uint16_t off = led[2] | ((led[3] & 0x0F) << 8);
+        out[ch] = !(chip[MODE1] & SLEEP) && !fullOff && (fullOn || off != 0);
+    }
+    return out;
+}
+
+int pulsingChannels(uint8_t addr) {
+    const std::array<bool, 16> out = pulsing(addr);
+    return static_cast<int>(std::count(out.begin(), out.end(), true));
+}
+
+// A chip keeps its channel registers asleep and restarts them on waking, so the servos driven before a deactivation
+// would all jump back to that pose the moment the boards are activated again. Activated, every servo is limp until it
+// is written: a joint drives its own servo alone, and a board started again after losing power restarts none of the
+// pulses from before the activation.
+void test_an_activation_after_a_drive_leaves_every_servo_limp_until_written() {
+    ServoController& c = started();
+    angleTick(c);
+    TEST_ASSERT_EQUAL_INT(9, pulsingChannels(RIGHT_BOARD));
+    c.deactivate();
+    TEST_ASSERT_EQUAL_INT(0, pulsingChannels(RIGHT_BOARD));
+    c.activate();
+    TEST_ASSERT_EQUAL_INT(0, pulsingChannels(RIGHT_BOARD));
+    TEST_ASSERT_EQUAL_INT(0, pulsingChannels(LEFT_BOARD));
+
+    jointTick(c, 4, 20.0f);
+    TEST_ASSERT_EQUAL_INT(1, pulsingChannels(RIGHT_BOARD));
+    TEST_ASSERT_TRUE(pulsing(RIGHT_BOARD)[CHANNEL[4]]);
+    TEST_ASSERT_EQUAL_INT(0, pulsingChannels(LEFT_BOARD));
+
+    bus().absent.insert(LEFT_BOARD);
+    jointTick(c, 13, 10.0f);
+    powerOnChip(LEFT_BOARD);
+    bus().absent.clear();
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_RESTARTED, jointTick(c, 13, 10.0f).servo_write_left);
+    TEST_ASSERT_EQUAL_INT(1, pulsingChannels(LEFT_BOARD));
+    TEST_ASSERT_TRUE(pulsing(LEFT_BOARD)[CHANNEL[13]]);
+}
+
+// An activation whose all-off write a glitch on the bus loses must not wake that board, whose channels still hold the
+// pose from before the deactivation: it stays asleep, reported as a failed write is, and the next write that reaches it
+// wakes it with every channel off before its own pulse.
+void test_an_activation_whose_all_off_is_lost_leaves_its_board_asleep_and_reports_it() {
+    ServoController& c = started();
+    angleTick(c);
+    c.deactivate();
+    bool lost = false;
+    bus().writeOverride = [&](uint8_t addr, uint8_t reg, const uint8_t*, size_t) -> std::optional<esp_err_t> {
+        if (addr != RIGHT_BOARD || reg != ALL_LED_OFF_H || lost) return std::nullopt;
+        lost = true;
+        return ESP_FAIL;
+    };
+    host_clock::advance(TICK_US);
+    c.startTick();
+    c.activate();
+    socket_message_TickSample tick = socket_message_TickSample_init_zero;
+    c.fillTelemetry(tick);
+    TEST_ASSERT_TRUE(lost);
+    TEST_ASSERT_EQUAL_INT(0, pulsingChannels(RIGHT_BOARD));
+    TEST_ASSERT_EQUAL_INT(0, pulsingChannels(LEFT_BOARD));
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_FAILED, tick.servo_write_right);
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_OK, tick.servo_write_left);
+
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_OK, jointTick(c, 4, 20.0f).servo_write_right);
+    TEST_ASSERT_EQUAL_INT(1, pulsingChannels(RIGHT_BOARD));
+    TEST_ASSERT_TRUE(pulsing(RIGHT_BOARD)[CHANNEL[4]]);
+}
+
+// The servo page's switch is the control task's to apply (MotionService), as a mode is: delivered on the bus, it
+// leaves the boards and the servos written as they were, so no bus worker writes them beside the control task.
+void test_the_servo_pages_switch_on_the_bus_leaves_the_controller_alone() {
+    ServoController& c = started();
+    angleTick(c);
+    EventBus<ServoStateMsg>::publish({false});
+    host_bus::drainAll();
+    TEST_ASSERT_EQUAL_HEX32((1u << NUM_SERVO) - 1, c.driven());
+    TEST_ASSERT_EQUAL_INT(9, pulsingChannels(RIGHT_BOARD));
+}
+
+// A servo is driven only by a pulse an awake board outputs: a pose written while the boards sleep, as the servo page's
+// switch can leave them in any mode, drives none, and every servo stays limp until written after they wake.
+void test_a_pose_written_to_sleeping_boards_drives_no_servo() {
+    ServoController& c = started();
+    angleTick(c);
+    TEST_ASSERT_EQUAL_HEX32((1u << NUM_SERVO) - 1, c.driven());
+    c.deactivate();
+    TEST_ASSERT_EQUAL_HEX32(0, c.driven());
+    angleTick(c);
+    jointTick(c, 4, 20.0f);
+    TEST_ASSERT_EQUAL_HEX32(0, c.driven());
+    c.activate();
+    TEST_ASSERT_EQUAL_INT(0, pulsingChannels(RIGHT_BOARD));
+    jointTick(c, 4, 20.0f);
+    TEST_ASSERT_EQUAL_HEX32(1u << 4, c.driven());
+}
+
 int main() {
     UNITY_BEGIN();
+    RUN_TEST(test_an_activation_after_a_drive_leaves_every_servo_limp_until_written);
+    RUN_TEST(test_a_pose_written_to_sleeping_boards_drives_no_servo);
+    RUN_TEST(test_the_servo_pages_switch_on_the_bus_leaves_the_controller_alone);
+    RUN_TEST(test_an_activation_whose_all_off_is_lost_leaves_its_board_asleep_and_reports_it);
     RUN_TEST(test_a_written_tick_reports_both_boards_and_the_pulse_each_servo_got);
     RUN_TEST(test_the_centre_pose_reports_its_write);
+    RUN_TEST(test_a_joint_write_reports_its_boards_write);
+    RUN_TEST(test_a_joint_write_reports_only_its_servos_pulse);
+    RUN_TEST(test_a_joint_write_to_a_board_in_backoff_is_skipped);
     RUN_TEST(test_a_tick_that_writes_nothing_reports_no_write);
     RUN_TEST(test_a_board_that_stops_answering_reports_its_failures_apart_from_its_skips);
     RUN_TEST(test_a_board_that_lost_power_reports_its_restart_once);

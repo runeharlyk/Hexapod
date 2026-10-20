@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import Kinematics, { type body_state_t } from '../../src/lib/kinematic'
 import { config } from '../../src/lib/components/config'
-import { MotionModes } from '../../src/lib/motion'
+import { MotionModes, modeToWire } from '../../src/lib/motion'
 import {
   loadVirtualRobot,
   type Command as RobotCommand,
@@ -50,8 +50,8 @@ const SIDE_ZERO_MM = 1
 const STANCE_BAND_MM = 1
 // The command ramp and the feet's ease from a stand settle well within this before sampling starts.
 const SETTLE_TICKS = 300
-const STAND = Object.values(MotionModes).indexOf(MotionModes.STAND)
-const WALK = Object.values(MotionModes).indexOf(MotionModes.WALK)
+const STAND = modeToWire(MotionModes.STAND)
+const WALK = modeToWire(MotionModes.WALK)
 
 const kinematics = new Kinematics(config)
 const level: body_state_t = {

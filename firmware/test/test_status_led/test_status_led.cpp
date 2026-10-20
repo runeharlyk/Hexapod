@@ -10,9 +10,8 @@ using status_led::Rgb;
 
 namespace {
 
-constexpr MOTION_STATE MODES[] = {MOTION_STATE::DEACTIVATED, MOTION_STATE::IDLE, MOTION_STATE::POSE,
-                                  MOTION_STATE::STAND,       MOTION_STATE::WALK, MOTION_STATE::WALK_NN,
-                                  MOTION_STATE::ANIMATE};
+constexpr MOTION_STATE MODES[] = {MOTION_STATE::DEACTIVATED, MOTION_STATE::IDLE,    MOTION_STATE::STAND,
+                                  MOTION_STATE::WALK,        MOTION_STATE::WALK_NN, MOTION_STATE::ANIMATE};
 constexpr int64_t SERVICE_PERIOD_US = 100000;
 
 bool dark(const Rgb& c) { return c.r == 0 && c.g == 0 && c.b == 0; }

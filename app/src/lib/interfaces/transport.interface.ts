@@ -13,7 +13,7 @@ export interface ITransport {
    * the newest of its `kind` goes out once the writes under way complete. False, and nothing kept, while the link is
    * down.
    */
-  sendLatest: (kind: number, data: Uint8Array) => boolean
+  sendLatest: (kind: string, data: Uint8Array) => boolean
   onData: (cb: (data: Uint8Array) => void) => void
   onConnect: (cb: () => void) => void
   onDisconnect: (cb: () => void) => void

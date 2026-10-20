@@ -37,3 +37,17 @@ export function shapeStick({ x, y }: Stick): Stick {
   const shaped = ((axis * 90 + Math.sign(off) * opened) * Math.PI) / 180
   return { x: length * Math.cos(shaped), y: length * Math.sin(shaped) }
 }
+
+// The standard gamepad mapping reports up as -1; the sticks and the firmware expect up as +1.
+const gamepadStick = (axes: readonly number[], first: number) =>
+  shapeStick({ x: axes[first] ?? 0, y: -(axes[first + 1] ?? 0) })
+
+/**
+ * A gamepad's two sticks, shaped for driving; none in a mode that shows no sticks (mode-controls.ts), where the gamepad
+ * then sends nothing, as the keys send nothing there.
+ */
+export const gamepadSticks = (
+  axes: readonly number[],
+  sticksShown: boolean
+): { left: Stick; right: Stick } | null =>
+  sticksShown ? { left: gamepadStick(axes, 0), right: gamepadStick(axes, 2) } : null

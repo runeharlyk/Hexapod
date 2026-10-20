@@ -14,7 +14,7 @@ Paths are relative to `firmware/` unless they start at the repository root.
 | Entry point, task creation, message handlers, transport bridges | `src/main.cpp` |
 | Robot facade (owns motion, sensors, servos) | `include/hexapod.h` |
 | EventBus and internal message types | `include/event_bus.h`, `include/message_types.h` |
-| Motion state machine | `include/motion.h` (`MotionService`) |
+| Motion state machine | `include/motion.h` (`MotionService`), `include/motion_inbox.h`, the mode's wire values in `include/motion_state_wire.h` |
 | Gait generator and command ramp | `include/gait.h`, generated `include/gait_tuned.h` |
 | Classic gait speed envelope (stick to stroke and cadence, posture clamps) | `include/gait_speed.h`, generated `include/gait_envelope.h` |
 | Inverse kinematics | `include/kinematics.h` |
@@ -67,7 +67,7 @@ Other tasks are created by the components that need them:
 - the ESP-IDF tasks for WiFi, the event loop, NimBLE and `esp_http_server`.
 
 The control loop owns `MotionService`, `Peripherals` and `ServoController` through `Hexapod` (`include/hexapod.h`).
-Everything else reaches the motion through the EventBus or through the few `Hexapod` methods the message handlers call (animation play, stop and pose, IMU calibration).
+Everything else reaches the motion through the EventBus or through the few `Hexapod` methods the message handlers call (animation play, stop and pose, a joint dragged in IDLE, the servos' centring, IMU calibration).
 
 ### Task table
 
@@ -113,7 +113,7 @@ Callbacks run on the type's worker task, so a subscriber that touches state shar
 `MotionService` (`include/motion.h`) subscribes to `CommandMsg`, `ModeMsg` and `GaitMsg`, and `Hexapod::planMotion()` calls its `updateMotion()` once per control tick.
 Only the control task changes the motion.
 The subscribers and the goal and odometry requests post into `MotionInbox` under its one mutex, and `updateMotion()` starts by taking everything posted since the last tick, so nothing changes in the middle of one.
-It applies the modes in the order they arrived, then the newest gait, then the newest command, then the goal's mail.
+It applies the modes in the order they arrived, then the newest gait, then the newest command, then the goal's mail, and in IDLE the joints and the centring (below).
 Commands and gaits coalesce, since each is a whole snapshot; modes queue, eight deep and dropping the oldest when full, since a borrow and a hand-back are decided against the mode they find.
 What a goal depends on is decided on arrival, under the mutex: its takeover by a stick off centre, the end a mode or a gait implies, and the refusal of an odometry reset while a goal drives.
 So is the handheld's priority over the other sources (below).
@@ -124,9 +124,29 @@ A stop, a puppet pose and the loss of the last client judge it too, but also tak
 A goal accepted while a `DEACTIVATED` is queued is answered 202, since the mode applied still allows it, and is refused at the take, which applies the mode first: its status is `REFUSED`.
 A script that asks for a stand waits for the robot to report it before it sends a goal (`RealBackend.set_mode`), and that goal is accepted.
 The log lines of what a tick took come after its servo write (`Hexapod::updateActuators`), so a slow console does not delay the write.
-The mode is a `MOTION_STATE`: `DEACTIVATED`, `IDLE`, `POSE`, `STAND`, `WALK`, `WALK_NN` and `ANIMATE`.
+The mode is a `MOTION_STATE`: `DEACTIVATED`, `IDLE`, `STAND`, `WALK`, `WALK_NN` and `ANIMATE`.
+Each crosses the wire as its `ModesEnum` value (`include/motion_state_wire.h`), so the enum's values are explicit: 2 was `POSE`, which the proto reserves, and the modes after it keep 3 to 6.
+A value the robot has no mode for, 2 among them, is ignored by the mode handler and the virtual robot's interface rather than cast.
+A robot on older firmware reports 2 when it is in `POSE`: the app shows that as a mode it does not know, with the firmware-too-old hint, and shows none of the modes it knows as the robot's, and the Python facade's mode reads as unknown (`None`), in which no heartbeat keeps a walk alive.
 
-- `DEACTIVATED` puts both PCA9685 boards to sleep; `IDLE` keeps them powered and produces no angles; `POSE` drives every servo to its centre pulse for calibration.
+- `DEACTIVATED` puts both PCA9685 boards to sleep, and publishes every servo limp, so a client that subscribes to the angles then gets none rather than the pose the robot held before it sagged.
+  A chip keeps its channel registers asleep and restarts them as it wakes, so every mode that activates the servos wakes the boards with every channel off (`ServoBoard::wakeup`) and forgets the pulses written before (`ServoController::activate`): no servo jumps back to the pose it had before the deactivation, and each is limp until written.
+  A board the all-off does not reach is left asleep and counts as a failed write, in the backoff and the tick's telemetry, until a later write reaches it and wakes it so before its own pulses.
+  The servo page's switch (`ServoStateData`) wakes the boards or puts them to sleep whatever the mode: it reaches the control task through `MotionInbox`, the only task that writes the cached pulses and the driven servos, which applies it at its next tick before the modes taken with it and publishes the angles with the servos it leaves limp.
+  `STAND`, `WALK`, `WALK_NN` and `ANIMATE` write all 18 on their first tick, as a stand-up from `DEACTIVATED` always did.
+- `IDLE` keeps the boards powered and computes no pose.
+  Entered from a mode that drives the servos, every servo holds the pulse it had when the motion stopped and the first write after it moves nothing else; activated from `DEACTIVATED`, every servo stays limp until a joint or the centring writes it.
+  Two writes are taken in IDLE alone, through `MotionInbox` and by the control task: a joint dragged on the app's 3D model (`JointAngleData`, `Message` 212) and the calibration page's "Centre all servos" (`ServoCentreRequest`, request 82).
+  A joint is the kinematics' angle in degrees, as the robot reports its angles; `ServoController::setJointAngle` holds it within the joint's travel (`withinTravel`), turns it into a pulse with the servo's calibration and direction as the motion's angles are, and writes that one channel through its board's backoff (`ServoBoard::writeChannel`).
+  The inbox drops a joint on arrival unless the mode applied last is `IDLE` and keeps the newest per servo until the take; the control task writes the joints only if the modes taken before them leave the robot in `IDLE`, so a joint sent behind a mode leaving it moves nothing.
+  The centring is answered at once, 200 when the mode applied last is `IDLE` and no mode is queued, 409 otherwise, and sends every servo to its calibrated centre pulse at the next tick (`setCenterPwm`), before the modes that tick takes, so a mode that arrives after it cannot drop it.
+  It replaces the joints posted before it, and a joint posted after it is written after it.
+  IDLE publishes the angles its servos hold (`ServoAnglesMsg`, bridged to the `angles` topic) on change alone: as it is entered, within travel as the controller held the last pose, after each tick that writes a joint, with the joint held within its travel, and after the centring, as the centre pose in joint angles (`ServoController::centreAngle`, the calibration's centre angle negated, less the tibia's 90); never on a timer.
+  A servo no pulse has driven since the boards woke has no known angle: it is published limp (`ServoAnglesMsg::limp`, from `ServoController::driven`), and crosses the wire as a bit of `AnglesData.limp` with the angle 0, or, while every servo is limp, as no angles at all (`include/servo_angles_wire.h`).
+  The app's 3D view draws those angles, so a drag starts from where the servos are; a limp servo keeps the angle the model draws, so its first drag starts there, and the controls show how many servos are limp.
+  A joint is a position, not a rate, so a link that drops leaves the servo where the last joint put it.
+  Leaving an IDLE that wrote a servo, or that was entered from `ANIMATE` (a play's pose, or this ease half done), for `STAND` or a walking mode eases every joint from the angle it holds to the stand through a borrowed `ANIMATE`, at most 1.875 deg a tick, half the servo's top speed, and hands back to the mode asked for (`decideMode`, `docs/animation.md`); a second such mode taken in the tick of the borrow becomes the mode handed back to.
+  From an IDLE entered from any other mode and written nothing since, the mode applies at once.
 - `STAND` eases the body toward the commanded offset, height and tilt; the gait stays idle, except that a new stance width is reached by stepping the feet there rather than sliding them.
   A posture change is clamped to what the legs can stand in (`clampStandPosture`) and taken only once the feet are at rest.
   The left stick pushed right shifts the body right and pushed up forward; the right stick pushed right lowers the right side and pushed up the nose (`docs/conventions.md`).
@@ -148,7 +168,8 @@ The mode is a `MOTION_STATE`: `DEACTIVATED`, `IDLE`, `POSE`, `STAND`, `WALK`, `W
   The dead-man's neutral posture is taken like any other, once the walk has stopped; in `STAND` it waits until the feet are still.
 - `WALK_NN` hands stride, lift, cadence and ride height to `PolicyRunner`, which runs the exported network every fourth tick on top of the analytic gait.
   Its observation and action decoding is `PolicyCore` (`include/policy/policy_core.h`), which the training environment runs through `host/policy_api.cpp`, so the network trains on the code that deploys it.
-  Its `h` and `fd` are clamped to the classic gaits' walkable region (`clampPosture`).
+  It walks the stance of fd 0 the policy was trained on (`DEFAULT_STANCE`), resets the policy on it and takes no `fd`; leaving `WALK_NN`, the stance steps back to the one the last feet distance set.
+  Its `h` is clamped to the classic gaits' walkable region (`clampPosture`) and held for the mode after it, since the policy sets the ride height itself.
   `PolicyRunner::setCommand` turns the sticks into the policy's trained command (forward, right, counter-clockwise) with the walk's signs, so the policy's own input is unchanged by the stick mapping.
 - `ANIMATE` plays a clip or a streamed puppeteer pose through `AnimationRunner`.
 
@@ -166,7 +187,7 @@ A stick pushed past the top of the gait in effect therefore walks at that top un
 
 Mode changes are decided by the pure function in `include/animation/mode_arbiter.h` and applied only by the control task, in the order the modes arrived, which makes it the one place the mode changes.
 An animation play borrows `ANIMATE` from the current mode, and the control task asks for the mode back when the clip ends by posting the hand-back into its own inbox, behind every mode that arrived before it.
-`DEACTIVATED`, `IDLE` and `POSE` always apply at the next tick, even mid-play, which is the safety property.
+`DEACTIVATED` and `IDLE` always apply at the next tick, even mid-play, which is the safety property.
 Waking or sleeping the two PCA9685 boards waits 5 ms per board (`include/peripherals/drivers/pca9685.h`), so the tick that enters or leaves `DEACTIVATED` overruns its 5 ms period by about 10 ms, two ticks, on which the robot is not being driven.
 `deactivateServos()` in `main.cpp` publishes `DEACTIVATED` and waits 50 ms before a restart, a reset or a deep sleep.
 The control task takes the mode within the rest of its period and the next tick's sensor read, and writes the second board's sleep bit about 5 ms after the first, so both are asleep at most about 12 ms after the publish; the 50 ms leaves room for one I2C transfer timing out on the way (20 ms), not two.
@@ -316,7 +337,6 @@ The board's WS2812 on `WS2812_PIN` (GPIO 48) shows the motion mode and whether a
 | --- | --- |
 | `DEACTIVATED` | dim white |
 | `IDLE` | blue |
-| `POSE` | magenta |
 | `STAND` | green |
 | `WALK` | cyan |
 | `WALK_NN` | yellow |
@@ -346,7 +366,7 @@ Its `ProtoDecoder` dispatches each decoded message to the handler registered for
 `emit` encodes a message once and sends it to the clients subscribed to its tag, or to one client for a reply; with no subscriber it returns before encoding.
 
 `registerHandlers` in `src/main.cpp` registers the same handlers on every adapter.
-Commands, modes, gaits and raw servo signals are validated and republished onto the EventBus; animation requests call into `Hexapod`; a `CorrelationRequest` is answered with a `CorrelationResponse` carrying the same correlation id (system information, features, I2C scan, WiFi, AP, mDNS, servo and peripheral settings, IMU calibration, OTA chunks, file chunks, animation listing and validation).
+Commands, modes, gaits and raw servo signals are validated and republished onto the EventBus; animation requests and dragged joints call into `Hexapod`; a `CorrelationRequest` is answered with a `CorrelationResponse` carrying the same correlation id (system information, features, I2C scan, WiFi, AP, mDNS, servo and peripheral settings, IMU calibration, OTA chunks, file chunks, animation listing and validation).
 A request the firmware does not know is answered 501 without a message, and no other reply is a 501, so the app reads it as firmware too old for the request (`app/src/lib/transport/reply.ts`).
 Firmware up to v0.1.1 answered a bare 400 there, the status of a malformed request too, so the app reads that as too old only for a request without fields.
 The mDNS scan is answered later: its query collects answers for 3 s, and a transport task that waited them out took no other message from its client meanwhile, sticks, modes and pings included.
@@ -361,14 +381,15 @@ Outgoing data takes one of four shapes, chosen by the kind of data:
 - **Observable state** (mode, gait, WiFi status, AP status, OTA progress, animation status, goal status) is published on the EventBus by its producer when it changes and pushed to every subscribed client; a subscribe is answered with the current value, so a client that joins late needs no request.
   State is never sent on a timer.
 - **Settings** are read and written by request and response only, so a push can never overwrite a form being edited.
-- **Commands** (sticks, mode, restart, sleep) are fire-and-forget.
+- **Commands** (sticks, mode, dragged joints, restart, sleep) are fire-and-forget.
 
 Streams and observable state reach the transports through bridges in `setupComm()` (`addBridge`, `observeStatus<T>()`).
 A bridge holds its EventBus subscription only while some client on some transport subscribes to its tag, so nothing is converted for nobody.
 `emitAll` sends a message on every transport.
 
 `platform_shared/topics.json` names each topic's kind, state or stream, and `include/communication/topics.h` and the app's `src/lib/transport/topics.ts` are checked against it (`test/test_topic_snapshot/`, `app/tests/unit/topics.spec.ts`).
-`main.cpp`'s `TOPICS` gives each state topic a snapshot function that reads its owner, as the replies do: `MotionInbox` for the mode and the goal, `EventBus::peek` for the gait, the OTA and the animation status, and the WiFi and AP services for theirs.
+`main.cpp`'s `TOPICS` gives each state topic a snapshot function that reads its owner, as the replies do: `MotionInbox` for the mode and the goal, `EventBus::peek` for the gait, the joint angles, the OTA and the animation status, and the WiFi and AP services for theirs.
+The joint angles are a state topic so that a client subscribing while the robot idles gets the angles its servos hold, which IDLE publishes only on change; before the motion first publishes any, the snapshot is an empty `AnglesData`, which the app reads as no pose.
 A status nobody has published yet is its idle value, so every state topic has a value from boot; a `static_assert` holds `TOPICS` to `TOPIC_KINDS` in `topics.h`, which `test/test_topic_snapshot/` holds to the shared table.
 `CommAdapterBase::subscribe` adds the client unless it already subscribes, attaches the bridge on the tag's first subscriber, and then, under the adapter's `encodeMutex_`, sends a state topic's snapshot and then the `sub_notif` echoed to that client as the ack; a stream, and a tag that is no topic, get the ack alone.
 Every push to the adapter encodes and sends under the same lock, so a change made after the snapshot's read is pushed after the snapshot, never before it, and the bridge attaching first means no such change goes unpushed; a change made before the read may arrive twice, which only repeats the value.
@@ -391,10 +412,14 @@ When the last client on every transport has gone, a playing animation stops, so 
 Per-tick telemetry (`include/telemetry/telemetry.h`) is recorded by the control task into a lock-free single-producer ring, only while someone subscribes, and shipped in whole batches by the service task; a full ring drops samples and counts them rather than blocking the control loop.
 Each `TickSample` also carries the tick's servo write: the 18 pulses written or meant to be written (`pwm`, in PCA9685 counts), the time the write took (`servo_write_us`) and each board's result (`servo_write_right`, `servo_write_left`).
 A board's result is `OK`, `FAILED` for a write it did not acknowledge, `SKIPPED` for one left out while the board backs off, which never reached the bus, `RESTARTED` for one it took after being started again, and `NONE` for a tick that wrote nothing: a mode that drives no servo, a `WALK_NN` tick on which the policy produced no angles, or a tick on which a servo calibration signal took over the pulses.
+A joint dragged in `IDLE` is its board's write of the tick: written to its one channel, backed off and started again as the motion's writes are, and reported for that board, the other board reporting `NONE`; `pwm` reports that servo's pulse alone, the other 17 as 0.
+The centring writes both boards and is reported too.
 `link_lost` is set from the tick the dead-man stop zeroed the command until a command arrives or a goal takes the walk, so the tick it rises on is the tick the stop fired.
 `simulation/report_recording.py` lists the failed writes and the dead-man stops of a recording.
 
 The **ESP-NOW receiver** (`EspNowAdapter`) is input only: it turns the handheld controller's broadcasts into `CommandMsg`, `ModeMsg` and `GaitMsg` on the EventBus, so the controller drives `MotionService` as the app does, with priority over the other sources' sticks and goals while it moves a stick (Handheld priority).
+Its mode button steps from the mode the robot reports through `DEACTIVATED`, `IDLE`, `STAND` and `WALK`, back to `DEACTIVATED` (`nextHandheldMode`, `include/communication/handheld_input.h`); both buttons together are the emergency `DEACTIVATED`.
+A press in `ANIMATE`, which the cycle has no place for, asks for `STAND`: the robot is there for a play or the ease out of IDLE, so the stand is a graceful leave that eases every leg home, and the press never stops the legs half-eased in `IDLE` nor cuts the servos.
 ESP-NOW hears only the radio's current channel, so the robot pins its radio to `ESPNOW_WIFI_CHANNEL` unless a station connection holds it elsewhere, and it broadcasts a beacon on whatever channel it is on so the controller can find it.
 The packet format in `include/communication/controller_packet.h` is shared with the controller firmware and `simulation/controller_bridge.py`, so the three change together.
 

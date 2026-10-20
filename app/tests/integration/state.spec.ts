@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { APStatus, WifiStatus } from '../../src/lib/platform_shared/api'
+import { ModeData, type ModesEnum } from '../../src/lib/platform_shared/message'
+import { UNKNOWN_MODE_HINT } from '../../src/lib/motion'
 import { FakeRobot, serveRobot } from '../fake-robot/playwright'
 import { fakeRobot, tooOld } from './fake-robot'
 
@@ -16,6 +18,23 @@ test('a firmware without snapshots is named as too old for the live state', asyn
   await expect(
     page.getByText(`Robot state: ${outdated('live state')}`, { exact: true })
   ).toBeVisible({ timeout: 15000 })
+})
+
+// A robot on older firmware in POSE reports its 2, which this app has no mode for: the controller names the mode as
+// unknown and the firmware as too old, and marks no mode as the robot's, DEACTIVATED included.
+test('the controller names a mode it does not know as unknown, not as DEACTIVATED', async ({
+  page
+}) => {
+  const robot = new FakeRobot()
+  robot.set(ModeData, ModeData.create({ mode: 2 as ModesEnum }))
+  await serveRobot(page, robot)
+  await page.goto(`${base}/controller`)
+
+  await expect(page.getByText(UNKNOWN_MODE_HINT, { exact: true })).toBeVisible()
+  const deactivated = page.getByRole('button', { name: 'Deactivated', exact: true })
+  await expect(deactivated).toBeVisible()
+  await expect(deactivated).not.toHaveClass(/btn-error/)
+  await expect(page.locator('.join .btn-primary')).toHaveCount(0)
 })
 
 test('the Wi-Fi page shows the status the robot answers the subscribe with, and its changes', async ({

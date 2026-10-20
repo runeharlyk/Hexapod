@@ -14,11 +14,10 @@ from ..servos import ServoCalibration
 
 
 class Mode(IntEnum):
-    """firmware MOTION_STATE, by wire value (platform_shared/message.proto ModesEnum)."""
+    """firmware MOTION_STATE, by wire value (platform_shared/message.proto ModesEnum, which reserves POSE's 2)."""
 
     DEACTIVATED = 0
     IDLE = 1
-    POSE = 2
     STAND = 3
     WALK = 4
     WALK_NN = 5

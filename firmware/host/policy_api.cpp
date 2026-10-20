@@ -18,7 +18,7 @@ constexpr float CONTROL_TICK_S = 0.005f; // main.cpp's control task period
 constexpr int MAX_SPAN = 64;             // sensor frames a training run's history may span
 constexpr int MAX_ACTION = policy_layout::GAIT_CHANNELS + policy_layout::FOOT_CHANNELS;
 
-// MotionService's default_feet_pos, the stance PolicyRunner::reset snaps the feet to.
+// The stance of fd 0, gait_speed.h's DEFAULT_STANCE, which MotionService resets the policy on and walks WALK_NN on.
 constexpr float STANCE[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
                                 {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
 

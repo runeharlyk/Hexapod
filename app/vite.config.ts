@@ -29,5 +29,8 @@ export default defineConfig({
         ws: true
       }
     }
-  }
+  },
+  // A preview server inherits server.proxy by default; the built app is served by it for the integration tests, which
+  // must reach no address of a real network, where a robot that does not answer holds each request for a minute.
+  preview: { proxy: {} }
 })

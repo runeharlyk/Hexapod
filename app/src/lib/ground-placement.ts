@@ -94,7 +94,7 @@ export interface PreviewPose {
 
 /**
  * What the 3D view knows of the robot it draws, and where it places it. A linked robot is tilted by its IMU, over the
- * angles shown whoever produced them: it sends none in DEACTIVATED, IDLE and POSE, where the virtual robot's stand the
+ * angles shown whoever produced them: it sends none in DEACTIVATED and IDLE, where the virtual robot's stand the
  * view keeps drawing sets only its height. An unlinked robot and the animation preview have no IMU, so they stand on
  * the ground under their feet.
  */

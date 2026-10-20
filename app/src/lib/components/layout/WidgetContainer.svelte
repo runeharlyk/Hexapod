@@ -9,9 +9,11 @@
 
   interface Props {
     container: WidgetContainerConfig
+    // Its 3D views drive the robot's joints while the robot idles (Visualization's driveJoints).
+    driveJoints?: boolean
   }
 
-  let { container }: Props = $props()
+  let { container, driveJoints = false }: Props = $props()
 </script>
 
 <div class="w-full h-full flex flex-col overflow-hidden">
@@ -25,16 +27,16 @@
       <Widget>
         {#if isWidgetConfig(widget)}
           {#if widget.component === 'Visualization'}
-            <Visualization />
+            <Visualization {driveJoints} />
           {:else if widget.component === 'Simulation'}
             <LazySimulationView />
           {:else if widget.component === 'StreamWithRobot'}
-            <StreamWithRobot />
+            <StreamWithRobot {driveJoints} />
           {:else}
             <Stream />
           {/if}
         {:else if widget.widgets}
-          <WidgetContainer container={widget} />
+          <WidgetContainer container={widget} {driveJoints} />
         {/if}
       </Widget>
       {#if index !== container.widgets.length - 1}

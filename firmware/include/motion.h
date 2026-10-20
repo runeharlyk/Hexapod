@@ -39,6 +39,8 @@ class MotionService {
         _cmdSubHandle = EventBus<CommandMsg>::subscribe([&](CommandMsg const &c) { _inbox.postCommand(c, millis()); });
         _modeSubHandle = EventBus<ModeMsg>::subscribe([&](ModeMsg const &m) { _inbox.postMode(m, _animation.busy()); });
         _gaitSubHandle = EventBus<GaitMsg>::subscribe([&](GaitMsg const &g) { _inbox.postGait(g.gait); });
+        _servoSwitchSubHandle =
+            EventBus<ServoStateMsg>::subscribe([&](ServoStateMsg const &s) { _inbox.postServoSwitch(s.active); });
         ESP_LOGI("MotionService", "Event bus subscriptions completed");
         body_state.updateFeet(default_feet_pos);
         EventBus<ModeMsg>::publish({motionState});
@@ -67,17 +69,18 @@ class MotionService {
     // (animation/mode_arbiter.h); this executes them. The goal a mode ends was ended on arrival
     // (MotionInbox::postMode). Every mode applied, and the mode a refused borrow keeps, is published as APPLIED: the
     // robot reports a mode only once it is in it, and the observers that show the mode forward APPLIED alone. The mode
-    // is noted for the replies before it is reported, so a client that heard the report finds it in force.
+    // is noted for the replies before it is reported, so a client that heard the report finds it in force. The ease out
+    // of IDLE a mode of this tick borrowed has not begun yet, and is busy already: a mode after it waits for it.
     void handleInputMode(ModeMsg const &m) {
         _handbackSent = false;
-        const ModeArbiterDecision d =
-            decideMode({motionState, _borrowedMode, _previousMode, m.mode, m.kind, _animation.busy()});
+        const ModeArbiterDecision d = decideMode({motionState, _borrowedMode, _previousMode, m.mode, m.kind,
+                                                  _animation.busy() || _enterFromHeld, _idleHeld});
         _borrowedMode = d.borrowed;
         _previousMode = d.previous;
         if (d.cancelPending) _animation.cancelPendingPlay();
         if (d.requestLeave) _animation.requestLeave();
         if (d.action == ModeArbiterDecision::APPLY) applyMode(d.mode);
-        _inbox.noteMode({motionState, _borrowedMode, _previousMode});
+        noteModeState();
         if (d.action == ModeArbiterDecision::APPLY || d.action == ModeArbiterDecision::RESTATE)
             EventBus<ModeMsg>::publish({motionState, ModeMsgKind::APPLIED});
     }
@@ -94,10 +97,27 @@ class MotionService {
     void applyMode(MOTION_STATE mode) {
         const bool enteringWalk = mode == MOTION_STATE::WALK && motionState != MOTION_STATE::WALK;
         const bool leavingPolicy = motionState == MOTION_STATE::WALK_NN;
+        const bool deactivating = mode == MOTION_STATE::DEACTIVATED && motionState != MOTION_STATE::DEACTIVATED;
+        // ANIMATE entered from an IDLE whose servos were written eases from the angles they hold (decideMode).
+        if (mode != MOTION_STATE::ANIMATE)
+            _enterFromHeld = false;
+        else if (motionState == MOTION_STATE::IDLE && _idleHeld)
+            _enterFromHeld = true;
+        // ANIMATE's pose, a play's or the ease's half done, is no motion's: IDLE holds it as one it wrote.
+        if (mode != MOTION_STATE::IDLE)
+            _idleHeld = false;
+        else if (motionState == MOTION_STATE::ANIMATE)
+            _idleHeld = true;
         motionState = mode;
 #if FT_ENABLED(USE_POLICY)
-        if (mode == MOTION_STATE::WALK_NN) _policy.reset(gait, default_feet_pos);
+        // The policy was trained on the stance of fd 0 alone, so WALK_NN walks it whatever the feet distance, which
+        // the stance takes again, stepped, once WALK_NN is left.
+        if (mode == MOTION_STATE::WALK_NN) {
+            std::copy(&DEFAULT_STANCE[0][0], &DEFAULT_STANCE[0][0] + 6 * 4, &default_feet_pos[0][0]);
+            _policy.reset(gait, DEFAULT_STANCE);
+        }
 #endif
+        if (leavingPolicy && mode != MOTION_STATE::WALK_NN) updateFeetDistanceTarget(_feetDistance);
         // ANIMATE drives no gait, so a half-stride left in gait_state would resume after it.
         if (!isWalkingMode(mode)) stopLocomotionCommand(!actuated(mode) || mode == MOTION_STATE::ANIMATE);
         // WALK_NN keeps the command, and its policy moves the ride height and the feet; a stride or a posture left
@@ -106,6 +126,8 @@ class MotionService {
         // it took a joint past its travel at some phases of the walk before.
         if (enteringWalk) stopLocomotionCommand(leavingPolicy);
         mode == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
+        // Every servo goes limp, so the angles a client is answered with are none rather than the pose they held.
+        if (deactivating) publishState();
     }
 
   public:
@@ -143,6 +165,18 @@ class MotionService {
 
     void validateAnimation(const char *name, socket_message_AnimationReport &r) { _animation.validate(name, r); }
 
+    // Adapter task: a joint dragged on the app's 3D model, in degrees as the robot reports its angles. It moves that
+    // servo alone, in IDLE alone (MotionInbox::postJoint), from the control task's next tick. A servo that does not
+    // exist or an angle that is no number is dropped here, as input from the network.
+    void setJoint(int servo, float degrees) {
+        if (servo < 0 || servo >= NUM_SERVO || !std::isfinite(degrees)) return;
+        _inbox.postJoint(servo, degrees);
+    }
+
+    // Adapter task: the reply to the calibration page's "Centre all servos", 200 when the control task centres every
+    // servo at its next tick, 409 when the robot is not idle or a mode is on its way.
+    int requestCentreServos() { return _inbox.postCentreServos() ? 200 : 409; }
+
   private:
     // Control task, at the start of the tick after the command arrived; the dead-man's window runs from its arrival.
     void handleCommand(CommandMsg const &c, unsigned long arrivalMs) {
@@ -160,7 +194,6 @@ class MotionService {
             float h = c.h, fd = c.fd;
             if (mode == MOTION_STATE::WALK_NN) {
                 h = clamped.h;
-                fd = clamped.fd;
             } else if (!tuned) {
                 clampStandPosture(kinematics, h, fd);
             }
@@ -173,7 +206,7 @@ class MotionService {
                 _standPosturePending = true;
             } else {
                 _standPosturePending = false;
-                updateFeetDistanceTarget(fd);
+                if (mode != MOTION_STATE::WALK_NN) updateFeetDistanceTarget(fd);
                 target_body_state.zm = bodyHeightMm(h);
             }
         }
@@ -290,6 +323,9 @@ class MotionService {
     // imuFresh: the IMU was read on this tick, so its DMP packet and gyro rate are this tick's.
     bool updateMotion(bool imuFresh) {
         const MotionInbox::Mail mail = _inbox.take(millis());
+        if (mail.servoSwitch) switchServos(*mail.servoSwitch);
+        // Accepted in IDLE with no mode queued (MotionInbox::postCentreServos): before every mode taken with it.
+        if (mail.centreServos) centreServos();
         _modesTaken = mail.modes;
         _gaitTaken = mail.gait;
         for (int i = 0; i < mail.modes.count; ++i) handleInputMode(mail.modes.items[i]);
@@ -309,18 +345,24 @@ class MotionService {
             // The odometry holds its pose; whatever moves the feet meanwhile is no travel it can measure.
             _odometry.pause();
         }
-        // Entering and leaving ANIMATE are handled here, once every mode the tick took is applied.
-        if ((state == MOTION_STATE::ANIMATE) != _animating) {
-            _animating = state == MOTION_STATE::ANIMATE;
-            if (_animating)
-                _animation.enter(body_state, target_body_state.zm);
+        // Entering and leaving ANIMATE are handled here, once every mode the tick took is applied. An ANIMATE taken
+        // out of IDLE-held angles in a tick that began in ANIMATE left it for that IDLE and enters it again: the IDLE
+        // ended what ANIMATE ran, and the ease starts from the angles it holds.
+        const bool animating = state == MOTION_STATE::ANIMATE;
+        const bool fromHeld = animating && std::exchange(_enterFromHeld, false);
+        if (_animating && (!animating || fromHeld)) _animation.reset();
+        if (animating && (!_animating || fromHeld)) {
+            if (fromHeld)
+                _animation.enterFromJoints(msgAngles.angles, _servoController->driven(), target_body_state.zm);
             else
-                _animation.reset();
+                _animation.enter(body_state, target_body_state.zm);
         }
+        _animating = animating;
+        const bool enteringIdle = state == MOTION_STATE::IDLE && !_idling;
+        _idling = state == MOTION_STATE::IDLE;
         switch (state) {
             case MOTION_STATE::DEACTIVATED: return false;
-            case MOTION_STATE::IDLE: return false;
-            case MOTION_STATE::POSE: _servoController->setCenterPwm(); return false;
+            case MOTION_STATE::IDLE: driveIdleServos(mail, enteringIdle); return false;
             case MOTION_STATE::STAND: {
                 body_state.xm = lerpf(body_state.xm, target_body_state.xm, smoothing_factor);
                 body_state.ym = lerpf(body_state.ym, target_body_state.ym, smoothing_factor);
@@ -469,7 +511,11 @@ class MotionService {
         tick.odom_distance = odometry.distance;
     }
 
-    void publishState() { EventBus<ServoAnglesMsg>::publish(msgAngles); }
+    // The angles with the servos the controller has driven by no pulse since the boards woke marked limp.
+    void publishState() {
+        msgAngles.limp = ~_servoController->driven() & ((1u << NUM_SERVO) - 1);
+        EventBus<ServoAnglesMsg>::publish(msgAngles);
+    }
 
   private:
     ServoController *_servoController;
@@ -477,6 +523,7 @@ class MotionService {
     EventBus<CommandMsg>::Handle _cmdSubHandle;
     EventBus<ModeMsg>::Handle _modeSubHandle;
     EventBus<GaitMsg>::Handle _gaitSubHandle;
+    EventBus<ServoStateMsg>::Handle _servoSwitchSubHandle;
     Kinematics kinematics;
     GaitController gait;
 #if FT_ENABLED(USE_POLICY)
@@ -487,6 +534,9 @@ class MotionService {
     bool _borrowedMode = false;
     bool _handbackSent = false;              // a hand-back is queued; cleared by any mode taken
     bool _animating = false;                 // control task only: whether the last tick ran ANIMATE
+    bool _idling = false;                    // control task only: whether the last tick ran IDLE
+    bool _idleHeld = false; // control task only: IDLE holds servos at a pose no motion set, written there or ANIMATE's
+    bool _enterFromHeld = false; // control task only: ANIMATE is entered from such an IDLE
     bool _handheldReported = false;          // control task only: whether the handheld drove, as last reported
 
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
@@ -593,7 +643,7 @@ class MotionService {
     // The last command taken, for the telemetry.
     CommandMsg lastCommand{};
 
-    ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+    ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, .limp = 0};
 
   public:
     // Any task: the mode the control task applied last, the one the robot reports.
@@ -653,6 +703,50 @@ class MotionService {
         target_gait_state.step_angle = held ? 0.f : w.stepAngle;
         target_gait_state.phase_rate = held ? 0.f : w.phaseRate;
     }
+
+    // Control task, IDLE, after the tick's modes and the centring before them: the joints dragged while the robot
+    // idled. A joint writes its own servo alone, so every other servo holds the pulse it had when the motion stopped, or
+    // stays limp; a joint posted before a mode leaving IDLE was applied never gets here. The angles the servos hold, within travel as
+    // the controller held the motion's last pose, are published on entering IDLE and after each tick that writes, as the
+    // app's 3D view draws them, and never on a timer.
+    void driveIdleServos(const MotionInbox::Mail &mail, bool entering) {
+        if (entering)
+            for (int servo = 0; servo < NUM_SERVO; ++servo)
+                msgAngles.angles[servo] = withinTravel(msgAngles.angles[servo], servo % 3);
+        bool written = false;
+        for (int servo = 0; servo < NUM_SERVO; ++servo) {
+            if (!(mail.joints.servos & (1u << servo))) continue;
+            _servoController->setJointAngle(servo, mail.joints.degrees[servo]);
+            msgAngles.angles[servo] = withinTravel(mail.joints.degrees[servo], servo % 3);
+            written = true;
+        }
+        if (written) holdIdle();
+        if (entering || written) publishState();
+    }
+
+    // Control task, IDLE, before the tick's modes: every servo to its centre pulse, published as the centre pose.
+    void centreServos() {
+        _servoController->setCenterPwm();
+        for (int servo = 0; servo < NUM_SERVO; ++servo) msgAngles.angles[servo] = _servoController->centreAngle(servo);
+        holdIdle();
+        publishState();
+    }
+
+    // Control task, before the tick's modes: the servo page's switch, in any mode. The boards sleep, or wake with every
+    // channel off, and the angles are published with the servos that leaves limp.
+    void switchServos(bool on) {
+        on ? _servoController->activate() : _servoController->deactivate();
+        publishState();
+    }
+
+    // Control task, IDLE: the servos hold a pose IDLE wrote, so a mode leaving it eases out of it.
+    void holdIdle() {
+        _idleHeld = true;
+        noteModeState();
+    }
+
+    // Control task: the arbiter's state, for the decisions taken on arrival (MotionInbox::postMode).
+    void noteModeState() { _inbox.noteMode({motionState, _borrowedMode, _previousMode, _idleHeld}); }
 
     // Control task, WALK. A stride change is a change of the walk, not of its posture, so it never pauses the walk; but
     // the command ramp alone eases a stroke change fast enough to move a joint up to 5.5 deg in a tick, past the
