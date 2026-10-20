@@ -13,9 +13,12 @@
 
 class ServoController {
   public:
+    static constexpr uint32_t ALL_SERVOS = (1u << NUM_SERVO) - 1;
+
     struct Output {
         bool awake = false;    // activated, so the PCA9685s run
-        unsigned writes = 0;   // poses sent since boot; until the first an awake board drives no pulse
+        unsigned writes = 0;   // poses sent since boot
+        uint32_t driven = 0;   // a bit per servo written since the boards were activated; the rest are limp
         unsigned jointWrites = 0; // single joints written, in IDLE
         unsigned centrings = 0;   // every servo sent to its centre pulse, in IDLE
         float angles[NUM_SERVO] = {};
@@ -25,13 +28,20 @@ class ServoController {
     static void reset() { state() = {}; }
 
     void begin() {}
-    void activate() { state().awake = true; }
+    // As the robot's controller does: the boards wake with every channel off, so every servo is limp until written.
+    void activate() {
+        if (state().awake) return;
+        state().awake = true;
+        state().driven = 0;
+    }
+    uint32_t driven() const { return state().driven; }
     void deactivate() { state().awake = false; }
     // At the factory calibration, which this stand-in holds alone: every coxa and femur at 0, every tibia at -90.
     float centreAngle(int servo) const { return servo % 3 == 2 ? -90.0f : 0.0f; }
     void setCenterPwm() {
         for (int i = 0; i < NUM_SERVO; ++i) state().angles[i] = centreAngle(i);
         state().centrings++;
+        state().driven = ALL_SERVOS;
         _right = _left = socket_message_ServoWrite_SERVO_WRITE_OK;
     }
     // As the robot's controller does: that joint alone, held within its travel, a write of its own board (servos 0-8
@@ -40,6 +50,7 @@ class ServoController {
         if (servo < 0 || servo >= NUM_SERVO || !std::isfinite(angleDeg)) return;
         state().angles[servo] = withinTravel(angleDeg, servo % 3);
         state().jointWrites++;
+        state().driven |= 1u << servo;
         (servo < 9 ? _right : _left) = socket_message_ServoWrite_SERVO_WRITE_OK;
     }
     // As the robot's controller does: each joint held within its travel, and a non-finite command ignored.
@@ -47,6 +58,7 @@ class ServoController {
         for (int i = 0; i < NUM_SERVO; ++i)
             if (std::isfinite(angles[i])) state().angles[i] = withinTravel(angles[i], i % 3);
         state().writes++;
+        state().driven = ALL_SERVOS;
         _right = _left = socket_message_ServoWrite_SERVO_WRITE_OK;
     }
     void updateServoState() {}

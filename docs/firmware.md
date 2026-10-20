@@ -130,7 +130,10 @@ A value the robot has no mode for, 2 among them, is ignored by the mode handler 
 A robot on older firmware reports 2 when it is in `POSE`: the app shows that as a mode it does not know, with the firmware-too-old hint, and shows none of the modes it knows as the robot's, and the Python facade's mode reads as unknown (`None`), in which no heartbeat keeps a walk alive.
 
 - `DEACTIVATED` puts both PCA9685 boards to sleep.
-- `IDLE` keeps them powered and computes no pose, so every servo holds the pulse it had when the motion stopped and the first write after it moves nothing else.
+  A chip keeps its channel registers asleep and restarts them as it wakes, so every mode that activates the servos wakes the boards with every channel off (`ServoBoard::wakeup`) and forgets the pulses written before (`ServoController::activate`): no servo jumps back to the pose it had before the deactivation, and each is limp until written.
+  `STAND`, `WALK`, `WALK_NN` and `ANIMATE` write all 18 on their first tick, as a stand-up from `DEACTIVATED` always did.
+- `IDLE` keeps the boards powered and computes no pose.
+  Entered from a mode that drives the servos, every servo holds the pulse it had when the motion stopped and the first write after it moves nothing else; activated from `DEACTIVATED`, every servo stays limp until a joint or the centring writes it.
   Two writes are taken in IDLE alone, through `MotionInbox` and by the control task: a joint dragged on the app's 3D model (`JointAngleData`, `Message` 212) and the calibration page's "Centre all servos" (`ServoCentreRequest`, request 82).
   A joint is the kinematics' angle in degrees, as the robot reports its angles; `ServoController::setJointAngle` holds it within the joint's travel (`withinTravel`), turns it into a pulse with the servo's calibration and direction as the motion's angles are, and writes that one channel through its board's backoff (`ServoBoard::writeChannel`).
   The inbox drops a joint on arrival unless the mode applied last is `IDLE` and keeps the newest per servo until the take; the control task writes the joints only if the modes taken before them leave the robot in `IDLE`, so a joint sent behind a mode leaving it moves nothing.

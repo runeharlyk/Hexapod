@@ -5,6 +5,8 @@
 
 #include <unity.h>
 
+#include <algorithm>
+#include <array>
 #include <memory>
 #include "../../include/peripherals/servo_controller.h"
 
@@ -218,8 +220,71 @@ void test_the_write_time_is_the_bus_time_of_the_tick() {
     TEST_ASSERT_EQUAL_UINT32(150, skipping.servo_write_us);
 }
 
+// Which of a board's channels output a pulse, from every write the controller made to it, replayed in order on a chip
+// that powered on as setUp powers it: a write to ALL_LED_OFF_H loads every channel's LEDn_OFF_H, as the PCA9685 does,
+// and a sleeping chip outputs nothing.
+std::array<bool, 16> pulsing(uint8_t addr) {
+    constexpr uint8_t ALL_LED_ON_L = 0xFA, ALL_LED_OFF_H = 0xFD, SLEEP = 0x10, FULL = 0x10;
+    std::array<uint8_t, 256> chip {};
+    chip[MODE1] = 0x11;
+    for (int ch = 0; ch < 16; ch++) chip[LED0_ON_L + 4 * ch + 3] = FULL;
+    for (const FakeWrite& w : bus().writes) {
+        if (w.addr != addr) continue;
+        for (size_t i = 0; i < w.bytes.size(); i++) {
+            const uint8_t reg = (w.reg + i) & 0xFF;
+            if (reg >= ALL_LED_ON_L && reg <= ALL_LED_OFF_H) {
+                for (int ch = 0; ch < 16; ch++) chip[LED0_ON_L + 4 * ch + (reg - ALL_LED_ON_L)] = w.bytes[i];
+            } else {
+                chip[reg] = w.bytes[i];
+            }
+        }
+    }
+    std::array<bool, 16> out {};
+    for (int ch = 0; ch < 16; ch++) {
+        const uint8_t* led = &chip[LED0_ON_L + 4 * ch];
+        const bool fullOff = led[3] & FULL, fullOn = led[1] & FULL;
+        const uint16_t off = led[2] | ((led[3] & 0x0F) << 8);
+        out[ch] = !(chip[MODE1] & SLEEP) && !fullOff && (fullOn || off != 0);
+    }
+    return out;
+}
+
+int pulsingChannels(uint8_t addr) {
+    const std::array<bool, 16> out = pulsing(addr);
+    return static_cast<int>(std::count(out.begin(), out.end(), true));
+}
+
+// A chip keeps its channel registers asleep and restarts them on waking, so the servos driven before a deactivation
+// would all jump back to that pose the moment the boards are activated again. Activated, every servo is limp until it
+// is written: a joint drives its own servo alone, and a board started again after losing power restarts none of the
+// pulses from before the activation.
+void test_an_activation_after_a_drive_leaves_every_servo_limp_until_written() {
+    ServoController& c = started();
+    angleTick(c);
+    TEST_ASSERT_EQUAL_INT(9, pulsingChannels(RIGHT_BOARD));
+    c.deactivate();
+    TEST_ASSERT_EQUAL_INT(0, pulsingChannels(RIGHT_BOARD));
+    c.activate();
+    TEST_ASSERT_EQUAL_INT(0, pulsingChannels(RIGHT_BOARD));
+    TEST_ASSERT_EQUAL_INT(0, pulsingChannels(LEFT_BOARD));
+
+    jointTick(c, 4, 20.0f);
+    TEST_ASSERT_EQUAL_INT(1, pulsingChannels(RIGHT_BOARD));
+    TEST_ASSERT_TRUE(pulsing(RIGHT_BOARD)[CHANNEL[4]]);
+    TEST_ASSERT_EQUAL_INT(0, pulsingChannels(LEFT_BOARD));
+
+    bus().absent.insert(LEFT_BOARD);
+    jointTick(c, 13, 10.0f);
+    powerOnChip(LEFT_BOARD);
+    bus().absent.clear();
+    TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_RESTARTED, jointTick(c, 13, 10.0f).servo_write_left);
+    TEST_ASSERT_EQUAL_INT(1, pulsingChannels(LEFT_BOARD));
+    TEST_ASSERT_TRUE(pulsing(LEFT_BOARD)[CHANNEL[13]]);
+}
+
 int main() {
     UNITY_BEGIN();
+    RUN_TEST(test_an_activation_after_a_drive_leaves_every_servo_limp_until_written);
     RUN_TEST(test_a_written_tick_reports_both_boards_and_the_pulse_each_servo_got);
     RUN_TEST(test_the_centre_pose_reports_its_write);
     RUN_TEST(test_a_joint_write_reports_its_boards_write);

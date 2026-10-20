@@ -84,6 +84,23 @@ void test_idle_from_boot_wakes_the_boards_but_sends_no_pose() {
     TEST_ASSERT_EQUAL_UINT(0, robot.servoWrites());
 }
 
+// The boards wake with every channel off, so IDLE after a deactivation leaves the robot lying limp where it sagged,
+// rather than restarting the stand it held before.
+void test_idle_after_a_deactivated_stand_leaves_every_servo_limp() {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setMode(MOTION_STATE::DEACTIVATED);
+    robot.tick();
+    robot.setMode(MOTION_STATE::IDLE);
+    for (int t = 0; t < ticksFor(0.5f); ++t) robot.tick();
+    TEST_ASSERT_EQUAL(MOTION_STATE::IDLE, robot.mode());
+    TEST_ASSERT_FALSE(robot.servosDriven());
+    TEST_ASSERT_EQUAL_HEX32(0, robot.drivenServos());
+    robot.setJoint(4, 20.0f);
+    robot.tick();
+    TEST_ASSERT_EQUAL_HEX32(1u << 4, robot.drivenServos());
+}
+
 void test_a_standing_robot_drives_its_servos_to_the_motions_pose() {
     VirtualRobot robot;
     standUp(robot);
@@ -1993,6 +2010,7 @@ int main(int, char **) {
     RUN_TEST(test_a_new_robot_is_deactivated);
     RUN_TEST(test_a_new_robot_drives_no_servo);
     RUN_TEST(test_idle_from_boot_wakes_the_boards_but_sends_no_pose);
+    RUN_TEST(test_idle_after_a_deactivated_stand_leaves_every_servo_limp);
     RUN_TEST(test_a_standing_robot_drives_its_servos_to_the_motions_pose);
     RUN_TEST(test_a_mode_request_reaches_the_motion_through_the_bus);
     RUN_TEST(test_a_mode_is_reported_applied_in_the_tick_that_applies_it);

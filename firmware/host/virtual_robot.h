@@ -74,9 +74,14 @@ class VirtualRobot {
     // What the last tick's telemetry reports of its servo write, as the stand-in controller records it.
     socket_message_ServoWrite servoWrite() const { return _sample.servo_write_right; }
 
-    // What the servos receive: they are driven once the boards are awake and a pose has been sent, to the last pose.
-    // The count of poses sent tells a tick that wrote one from a tick that left the servos where they were.
-    bool servosDriven() const { return ServoController::output().awake && ServoController::output().writes > 0; }
+    // What the servos receive: every one is driven once the boards are awake and each has been written since they woke,
+    // to the last pose. The count of poses sent tells a tick that wrote one from a tick that left the servos where they
+    // were.
+    bool servosDriven() const {
+        return ServoController::output().awake && ServoController::output().driven == ServoController::ALL_SERVOS;
+    }
+    // A bit per servo written since the boards woke; the others are limp.
+    uint32_t drivenServos() const { return ServoController::output().driven; }
     const float *servoAngles() const { return ServoController::output().angles; }
     unsigned servoWrites() const { return ServoController::output().writes; }
     // Single joints written in IDLE, and centrings of every servo.

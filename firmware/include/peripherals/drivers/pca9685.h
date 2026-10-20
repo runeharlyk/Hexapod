@@ -17,13 +17,16 @@ class PCA9685Driver {
     bool begin(uint32_t oscillatorHz, float pwmHz) {
         if (!I2CBus::instance().probe(_addr)) return false;
 
-        writeReg(REG_ALL_LED_OFF_H, FULL_OFF_BIT);
+        allOff();
         writeReg(REG_MODE1, MODE1_SLEEP | MODE1_AI);
         writeReg(REG_PRESCALE, prescale(oscillatorHz, pwmHz));
 
         _initialized = true;
         return true;
     }
+
+    // Every channel fully off, whatever pulse its registers held: a waking chip then restarts none.
+    void allOff() { writeReg(REG_ALL_LED_OFF_H, FULL_OFF_BIT); }
 
     void sleep() {
         uint8_t mode = readReg(REG_MODE1);

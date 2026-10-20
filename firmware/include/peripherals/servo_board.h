@@ -49,8 +49,11 @@ class ServoBoard {
         return ok;
     }
 
+    // Wakes with every channel off: the pulses the chip held asleep would restart with it, and every servo would jump
+    // to the pose it had when the board went to sleep.
     void wakeup() {
         _awake = true;
+        _pca.allOff();
         _pca.wakeup();
     }
 

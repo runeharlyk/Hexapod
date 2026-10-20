@@ -3,6 +3,7 @@
 
 #include <esp_log.h>
 #include <esp_timer.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <event_bus.h>
@@ -72,13 +73,21 @@ class ServoController {
         if (ServoSettingsBus::peek(pending)) applyCalibration(pending);  // if the service published first
     }
 
+    // Every servo limp until it is written: the boards wake with every channel off, and no pulse from before is kept
+    // for a board started again after losing power to restore.
     void activate() {
         if (is_active) return;
         control_state = SERVO_CONTROL_STATE::ANGLE;
         is_active = true;
+        std::fill(std::begin(left_pwm), std::end(left_pwm), 0);
+        std::fill(std::begin(right_pwm), std::end(right_pwm), 0);
+        _driven = 0;
         _left.wakeup();
         _right.wakeup();
     }
+
+    // A bit per servo written since the boards were activated, in servo order; the others are limp.
+    uint32_t driven() const { return _driven; }
 
     void deactivate() {
         if (!is_active) return;
@@ -186,6 +195,7 @@ class ServoController {
         const bool right = servo < 9;
         uint16_t *pwm = right ? right_pwm : left_pwm;
         pwm[c.pin] = toPwm(target_angles[servo], c);
+        _driven |= 1u << servo;
         ServoBoard &board = right ? _right : _left;
         const int64_t start = esp_timer_get_time();
         const bool wasAnswering = board.answering();
@@ -231,6 +241,7 @@ class ServoController {
 
   private:
     void writeBoards() {
+        _driven = ALL_SERVOS;
         const int64_t start = esp_timer_get_time();
         const bool leftWasAnswering = _left.answering();
         const bool rightWasAnswering = _right.answering();
@@ -295,6 +306,8 @@ class ServoController {
     uint16_t left_pwm[16] = {0};
     uint16_t right_pwm[16] = {0};
     uint8_t channel_count = 0;
+    static constexpr uint32_t ALL_SERVOS = (1u << NUM_SERVO) - 1;
+    uint32_t _driven = 0;
 
     SERVO_CONTROL_STATE control_state = SERVO_CONTROL_STATE::DEACTIVATED;
     bool is_active{false};
