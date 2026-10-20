@@ -25,6 +25,11 @@ module.exports = {
       parser: 'svelte-eslint-parser',
       parserOptions: {
         parser: '@typescript-eslint/parser'
+      },
+      // svelte-check type-checks every name; this parser does not see a component's `generics` and calls them undefined,
+      // as typescript-eslint advises against no-undef in TypeScript for that reason.
+      rules: {
+        'no-undef': 'off'
       }
     }
   ]

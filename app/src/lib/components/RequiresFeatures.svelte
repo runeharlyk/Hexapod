@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte'
+  import LoadFailure from './layout/LoadFailure.svelte'
   import {
     featureFlagsState,
     refreshFeatureFlags,
@@ -22,19 +23,19 @@
 </script>
 
 {#if $featureFlagsState.kind === 'failed'}
-  <div role="alert" class="alert alert-error w-full max-w-2xl self-center">
-    <span>The robot's features could not be read: {$featureFlagsState.message}</span>
-    <button class="btn btn-sm" onclick={retry}>Retry</button>
-  </div>
+  <LoadFailure
+    message="The robot's features could not be read: {$featureFlagsState.message}"
+    {retry}
+  />
 {:else if $featureFlagsState.kind === 'pending'}
-  <div class="flex w-full justify-center p-8">
+  <div class="col-span-full flex w-full justify-center p-8">
     <span class="loading loading-spinner loading-md" aria-label="Reading the robot's features"
     ></span>
   </div>
 {:else if has($features)}
   {@render children()}
 {:else}
-  <div role="alert" class="alert alert-info w-full max-w-2xl self-center">
+  <div role="alert" class="alert alert-info col-span-full">
     <span>{absent}</span>
   </div>
 {/if}
