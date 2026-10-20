@@ -149,7 +149,7 @@ class AnimationRunner {
 
     // Control task, on the first ANIMATE tick after an IDLE whose servos were written: the pose is the angles they
     // hold, every leg in joint angles, and it eases to stance as a puppet target would, at IDLE_EASE_JOINT_STEP_DEG
-    // until a puppeteer's pose takes over. A servo no pulse drives
+    // until a puppeteer's pose takes over; a play waits for it (consumeRequests). A servo no pulse drives
     // (`driven`, a bit per servo) holds no angle to ease from, so it starts at its stance angle and is stood up at
     // once, as a stand from DEACTIVATED stands it.
     void enterFromJoints(const float held[18], uint32_t driven, float sliderZm) {
@@ -168,8 +168,8 @@ class AnimationRunner {
         }
         jointStepDeg_ = IDLE_EASE_JOINT_STEP_DEG;
         busy_.store(true, std::memory_order_release);
-        havePuppet_ = !pendingPlay_.load(std::memory_order_acquire);
-        if (havePuppet_) puppetTarget_ = anim::Pose {};
+        havePuppet_ = true;
+        puppetTarget_ = anim::Pose {};
     }
 
     // Control task, on the first tick after ANIMATE: drop any play or pose and return the player to
@@ -307,9 +307,20 @@ class AnimationRunner {
         return p ? new (p) anim::Clip() : nullptr;
     }
 
+    // The ease out of IDLE-held angles is under way: the idle player's pose is still on its way to stance at the
+    // ease's pace, which a puppeteer's pose alone changes.
+    bool easingFromHeld() const {
+        return player_->state() == anim::State::IDLE && jointStepDeg_ == IDLE_EASE_JOINT_STEP_DEG &&
+               !anim::atStance(current_);
+    }
+
     void consumeRequests() {
-        // Never block the control loop: if a request holds the lock, the swap waits a tick.
-        if (pendingPlay_.load(std::memory_order_acquire) && xSemaphoreTake(loadMutex_, 0) == pdTRUE) {
+        // Never block the control loop: if a request holds the lock, the swap waits a tick. A play waits for the ease
+        // out of IDLE-held angles to reach stance and enters from there, as from a stand: its Entry covers the distance
+        // from its start in the clip's entry time, whatever the distance, and from a joint folded far from the stand
+        // that outruns the ease several times over.
+        if (pendingPlay_.load(std::memory_order_acquire) && !easingFromHeld() &&
+            xSemaphoreTake(loadMutex_, 0) == pdTRUE) {
             // Raised before the play is taken, so a hand-back decided meanwhile cannot see an idle runner.
             busy_.store(true, std::memory_order_release);
             if (pendingPlay_.exchange(false, std::memory_order_acq_rel)) {

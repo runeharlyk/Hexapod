@@ -1976,6 +1976,158 @@ void test_puppeteering_and_its_leave_keep_the_servos_top_speed_beside_the_ease_o
 
 namespace {
 
+// The fixtures whose own motion, played from a stand, stays within the ease's pace, with their entry times;
+// fx_overlay's body outruns the ease from a stand too.
+struct PacedClip {
+    const char *name;
+    float entrySeconds;
+};
+constexpr PacedClip EASE_PACED_CLIPS[] = {{"fx_single", 0.31f}, {"fx_mixed_legs", 0.37f}, {"fx_params", 0.5f}};
+
+// What the servos receive while a play runs, and the ticks, counted from the play, at which the player began the clip's
+// Entry and ended it.
+struct PlayRun {
+    float largestStep = 0.0f;
+    int entryTick = -1;
+    int playingTick = -1;
+};
+
+PlayRun followPlay(VirtualRobot &robot, const char *clip, int ticks) {
+    PlayRun run;
+    int tick = 0;
+    auto listener = EventBus<socket_message_AnimationStatus>::subscribe([&](const socket_message_AnimationStatus &s) {
+        if (s.state == socket_message_AnimationState_ANIM_ENTRY && run.entryTick < 0) run.entryTick = tick;
+        if (s.state == socket_message_AnimationState_ANIM_PLAYING && run.playingTick < 0) run.playingTick = tick;
+    });
+    robot.animationPlay(playOf(clip));
+    std::array<float, 18> previous = servoAnglesOf(robot);
+    for (; tick < ticks; ++tick) {
+        robot.tick();
+        for (int j = 0; j < 18; ++j)
+            run.largestStep = std::max(run.largestStep, std::fabs(robot.servoAngles()[j] - previous[j]));
+        previous = servoAnglesOf(robot);
+    }
+    return run;
+}
+
+void assertPacedPlay(const PlayRun &run, const PacedClip &clip, const char *from) {
+    char msg[120];
+    std::snprintf(msg, sizeof(msg), "%s played %s: largest step %.2f deg, Entry from tick %d to %d", clip.name, from,
+                  run.largestStep, run.entryTick, run.playingTick);
+    TEST_MESSAGE(msg);
+    TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(IDLE_EASE_STEP_DEG + CAP_TOLERANCE_DEG, run.largestStep, msg);
+    TEST_ASSERT_GREATER_OR_EQUAL_INT_MESSAGE(0, run.entryTick, msg);
+    TEST_ASSERT_INT_WITHIN_MESSAGE(1, ticksFor(clip.entrySeconds), run.playingTick - run.entryTick, msg);
+}
+
+// A failed assertion jumps out of the test past every destructor, and a robot left alive keeps its bus subscriptions,
+// which the next test's messages reach on a robot gone. So each run below ends its robot before anything is asserted.
+
+PlayRun playFromStand(const char *clip) {
+    VirtualRobot robot;
+    standUp(robot);
+    return followPlay(robot, clip, ticksFor(3.0f));
+}
+
+// The play `eased` ticks into the ease a STAND borrowed out of dragged joints, those ticks' largest step included.
+PlayRun playDuringTheEase(const char *clip, int eased) {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    dragAway(robot);
+    const float easeStep = takeOver(robot, MOTION_STATE::STAND, eased).largestStep;
+    PlayRun run = followPlay(robot, clip, ticksFor(4.0f));
+    run.largestStep = std::max(run.largestStep, easeStep);
+    return run;
+}
+
+// The play in an ANIMATE asked for out of dragged joints, the tick after the ANIMATE.
+PlayRun playInAnimateFromHeldAngles(const char *clip) {
+    VirtualRobot robot;
+    idleFromStand(robot);
+    dragAway(robot);
+    const Takeover entered = takeOver(robot, MOTION_STATE::ANIMATE, 1);
+    PlayRun run = followPlay(robot, clip, ticksFor(4.0f));
+    run.largestStep = std::max(run.largestStep, entered.largestStep);
+    return run;
+}
+
+} // namespace
+
+// A play asked for while the robot comes out of IDLE-held angles, during the ease a STAND borrowed or in an ANIMATE
+// asked for from them, waits for the ease to reach the stand and then enters at the clip's own entry time, as from a
+// stand: an Entry from the folded joints covers their whole distance in that time, 8.5 deg a tick on a dragged tibia.
+void test_a_play_out_of_idle_held_angles_waits_for_the_ease() {
+    for (const PacedClip &clip : EASE_PACED_CLIPS) {
+        const PlayRun stood = playFromStand(clip.name);
+        assertPacedPlay(stood, clip, "from a stand");
+        TEST_ASSERT_EQUAL_INT(0, stood.entryTick);
+        for (const int eased : {1, 10, 60}) {
+            char from[48];
+            std::snprintf(from, sizeof(from), "%d ticks into the ease", eased);
+            assertPacedPlay(playDuringTheEase(clip.name, eased), clip, from);
+        }
+        assertPacedPlay(playInAnimateFromHeldAngles(clip.name), clip, "in an ANIMATE from the held angles");
+    }
+}
+
+namespace {
+
+enum class AfterPair { STOP, STAND, WALK };
+
+// What IDLE and STAND taken in one tick from ANIMATE, a play's or the ease's, and `next` sent five ticks later leave.
+struct PairRun {
+    MOTION_STATE before = MOTION_STATE::DEACTIVATED; // the mode the pair was sent in
+    float largestStep = 0.0f;
+    MOTION_STATE last = MOTION_STATE::DEACTIVATED; // the mode three seconds after `next`
+};
+
+PairRun idleAndStandFromAnimate(bool playing, AfterPair next) {
+    VirtualRobot robot;
+    if (playing) {
+        standUp(robot);
+        robot.animationPlay(playOf("fx_single"));
+        follow(robot, ticksFor(1.0f));
+    } else {
+        idleFromStand(robot);
+        dragAway(robot);
+        takeOver(robot, MOTION_STATE::STAND, 10);
+    }
+    PairRun run;
+    run.before = robot.mode();
+    robot.setMode(MOTION_STATE::IDLE);
+    const Takeover pair = takeOver(robot, MOTION_STATE::STAND, 5);
+    if (next == AfterPair::STOP) robot.animationStop();
+    if (next == AfterPair::STAND) robot.setMode(MOTION_STATE::STAND);
+    if (next == AfterPair::WALK) robot.setMode(MOTION_STATE::WALK);
+    const Takeover after = follow(robot, ticksFor(3.0f));
+    run.largestStep = std::max(pair.largestStep, after.largestStep);
+    run.last = after.modes.back();
+    return run;
+}
+
+} // namespace
+
+// IDLE and then STAND taken in one tick while ANIMATE runs, a play or the ease out of IDLE, as a script sending them
+// back to back does, are the IDLE that ends what ANIMATE ran and holds its pose and the STAND that eases from there, as
+// when taken a tick apart: the robot is not left in ANIMATE, so a stop, a STAND and a WALK sent after the pair each act.
+void test_idle_and_stand_in_one_tick_from_animate_ease_to_the_stand() {
+    for (const bool playing : {true, false}) {
+        for (const AfterPair next : {AfterPair::STOP, AfterPair::STAND, AfterPair::WALK}) {
+            const PairRun run = idleAndStandFromAnimate(playing, next);
+            const char *nextName = next == AfterPair::STOP ? "a stop" : next == AfterPair::STAND ? "STAND" : "WALK";
+            char msg[96];
+            std::snprintf(msg, sizeof(msg), "%s, then %s: largest step %.2f deg, mode %d",
+                          playing ? "mid-play" : "mid-ease", nextName, run.largestStep, (int)run.last);
+            TEST_MESSAGE(msg);
+            TEST_ASSERT_EQUAL_MESSAGE(MOTION_STATE::ANIMATE, run.before, msg);
+            TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(IDLE_EASE_STEP_DEG + CAP_TOLERANCE_DEG, run.largestStep, msg);
+            TEST_ASSERT_EQUAL_MESSAGE(next == AfterPair::WALK ? MOTION_STATE::WALK : MOTION_STATE::STAND, run.last, msg);
+        }
+    }
+}
+
+namespace {
+
 // Neutral and the envelope's extreme corners, clamped as the walk clamps them.
 const Posture3 STRIDE_POSTURES[] = {{0, 0, 0}, {1, -1, -1}, {-1, -1, 0}, {1, 1, 1}};
 
@@ -2454,6 +2606,8 @@ int main(int, char **) {
     RUN_TEST(test_idle_taken_during_the_ease_out_of_idle_holds_the_pose_the_ease_left);
     RUN_TEST(test_a_second_mode_in_the_tick_of_the_ease_out_of_idle_waits_for_it);
     RUN_TEST(test_puppeteering_and_its_leave_keep_the_servos_top_speed_beside_the_ease_out_of_idle);
+    RUN_TEST(test_a_play_out_of_idle_held_angles_waits_for_the_ease);
+    RUN_TEST(test_idle_and_stand_in_one_tick_from_animate_ease_to_the_stand);
     RUN_TEST(test_full_stick_walk_stays_in_travel_at_every_stride);
     RUN_TEST(test_a_gait_at_rest_takes_a_new_stride_at_once);
     RUN_TEST(test_a_small_stick_at_the_longest_stride_steps_slowly_with_the_full_stroke);

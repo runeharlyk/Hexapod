@@ -345,16 +345,19 @@ class MotionService {
             // The odometry holds its pose; whatever moves the feet meanwhile is no travel it can measure.
             _odometry.pause();
         }
-        // Entering and leaving ANIMATE are handled here, once every mode the tick took is applied.
-        if ((state == MOTION_STATE::ANIMATE) != _animating) {
-            _animating = state == MOTION_STATE::ANIMATE;
-            if (_animating && std::exchange(_enterFromHeld, false))
+        // Entering and leaving ANIMATE are handled here, once every mode the tick took is applied. An ANIMATE taken
+        // out of IDLE-held angles in a tick that began in ANIMATE left it for that IDLE and enters it again: the IDLE
+        // ended what ANIMATE ran, and the ease starts from the angles it holds.
+        const bool animating = state == MOTION_STATE::ANIMATE;
+        const bool fromHeld = animating && std::exchange(_enterFromHeld, false);
+        if (_animating && (!animating || fromHeld)) _animation.reset();
+        if (animating && (!_animating || fromHeld)) {
+            if (fromHeld)
                 _animation.enterFromJoints(msgAngles.angles, _servoController->driven(), target_body_state.zm);
-            else if (_animating)
-                _animation.enter(body_state, target_body_state.zm);
             else
-                _animation.reset();
+                _animation.enter(body_state, target_body_state.zm);
         }
+        _animating = animating;
         const bool enteringIdle = state == MOTION_STATE::IDLE && !_idling;
         _idling = state == MOTION_STATE::IDLE;
         switch (state) {

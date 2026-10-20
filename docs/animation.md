@@ -87,6 +87,8 @@ Every mode decision is made by the control task, at the start of the tick after 
   A second explicit mode taken in the same tick finds the ease busy, though it has not begun, and becomes the hand-back target as a graceful leave does.
   The runner starts from the angles the servos hold, every leg in joint angles (`AnimationRunner::enterFromJoints`), and the puppet path eases them to stance, so the mode reported is ANIMATE until every leg is home.
   A servo still limp has no angle to ease from and is written at its stance angle at once, as a stand from DEACTIVATED writes it.
+  A play asked for during this ease, or in an explicit ANIMATE taken from such an IDLE, waits until every leg is home and enters from stance at the clip's own entry time, as from a stand: an Entry covers its distance in the entry time however far it is, so from a joint folded far from the stand it would outrun the ease.
+  IDLE and such a mode taken in one tick from ANIMATE leave it for the IDLE and enter it again: the IDLE ends what ANIMATE ran, and the ease starts from the angles ANIMATE left.
 - Any other explicit mode ends a borrow, so an explicit ANIMATE mid-play makes the robot stay in ANIMATE afterwards.
 
 A `ModeMsg` carries a `ModeMsgKind` (`firmware/include/message_types.h`):
