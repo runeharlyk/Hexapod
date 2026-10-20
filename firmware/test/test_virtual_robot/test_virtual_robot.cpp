@@ -394,6 +394,24 @@ void test_idle_reports_its_limp_servos_as_limp() {
     TEST_ASSERT_EQUAL_HEX32(0, heard[0].limp);
 }
 
+// Deactivated, every servo is limp, so the angles a client subscribing then is answered with are none, rather than the
+// pose the robot held before it sagged.
+void test_deactivating_publishes_every_servo_limp() {
+    VirtualRobot robot;
+    standUp(robot);
+    std::vector<socket_message_AnglesData> heard;
+    auto listener = recordWire(heard);
+    robot.setMode(MOTION_STATE::DEACTIVATED);
+    robot.tick();
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+    TEST_ASSERT_EQUAL_size_t(0, heard[0].angles_count);
+    ServoAnglesMsg latest;
+    TEST_ASSERT_TRUE(EventBus<ServoAnglesMsg>::peek(latest));
+    TEST_ASSERT_EQUAL_size_t(0, anglesData(latest).angles_count);
+    for (int t = 0; t < ticksFor(1.0f); ++t) robot.tick();
+    TEST_ASSERT_EQUAL_size_t(1, heard.size());
+}
+
 void test_a_standing_robot_holds_still() {
     VirtualRobot robot;
     standUp(robot);
@@ -2251,6 +2269,7 @@ int main(int, char **) {
     RUN_TEST(test_a_joint_write_in_idle_publishes_the_angles);
     RUN_TEST(test_centring_in_idle_publishes_the_centre_pose);
     RUN_TEST(test_idle_reports_its_limp_servos_as_limp);
+    RUN_TEST(test_deactivating_publishes_every_servo_limp);
     RUN_TEST(test_a_standing_robot_holds_still);
     RUN_TEST(test_a_stick_held_in_walk_steps_the_legs);
     RUN_TEST(test_a_walk_obeys_its_last_command_for_600_ms_and_no_longer);

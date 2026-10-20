@@ -35,7 +35,10 @@ class ServoController {
         state().driven = 0;
     }
     uint32_t driven() const { return state().driven; }
-    void deactivate() { state().awake = false; }
+    void deactivate() {
+        state().awake = false;
+        state().driven = 0;
+    }
     // At the factory calibration, which this stand-in holds alone: every coxa and femur at 0, every tibia at -90.
     float centreAngle(int servo) const { return servo % 3 == 2 ? -90.0f : 0.0f; }
     void setCenterPwm() {

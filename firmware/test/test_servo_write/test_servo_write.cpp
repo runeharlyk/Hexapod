@@ -293,9 +293,27 @@ void test_an_activation_after_a_drive_leaves_every_servo_limp_until_written() {
     TEST_ASSERT_TRUE(pulsing(LEFT_BOARD)[CHANNEL[13]]);
 }
 
+// A servo is driven only by a pulse an awake board outputs: a pose written while the boards sleep, as the servo page's
+// switch can leave them in any mode, drives none, and every servo stays limp until written after they wake.
+void test_a_pose_written_to_sleeping_boards_drives_no_servo() {
+    ServoController& c = started();
+    angleTick(c);
+    TEST_ASSERT_EQUAL_HEX32((1u << NUM_SERVO) - 1, c.driven());
+    c.deactivate();
+    TEST_ASSERT_EQUAL_HEX32(0, c.driven());
+    angleTick(c);
+    jointTick(c, 4, 20.0f);
+    TEST_ASSERT_EQUAL_HEX32(0, c.driven());
+    c.activate();
+    TEST_ASSERT_EQUAL_INT(0, pulsingChannels(RIGHT_BOARD));
+    jointTick(c, 4, 20.0f);
+    TEST_ASSERT_EQUAL_HEX32(1u << 4, c.driven());
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_an_activation_after_a_drive_leaves_every_servo_limp_until_written);
+    RUN_TEST(test_a_pose_written_to_sleeping_boards_drives_no_servo);
     RUN_TEST(test_a_written_tick_reports_both_boards_and_the_pulse_each_servo_got);
     RUN_TEST(test_the_centre_pose_reports_its_write);
     RUN_TEST(test_a_joint_write_reports_its_boards_write);

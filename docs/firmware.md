@@ -129,7 +129,7 @@ Each crosses the wire as its `ModesEnum` value (`include/motion_state_wire.h`), 
 A value the robot has no mode for, 2 among them, is ignored by the mode handler and the virtual robot's interface rather than cast.
 A robot on older firmware reports 2 when it is in `POSE`: the app shows that as a mode it does not know, with the firmware-too-old hint, and shows none of the modes it knows as the robot's, and the Python facade's mode reads as unknown (`None`), in which no heartbeat keeps a walk alive.
 
-- `DEACTIVATED` puts both PCA9685 boards to sleep.
+- `DEACTIVATED` puts both PCA9685 boards to sleep, and publishes every servo limp, so a client that subscribes to the angles then gets none rather than the pose the robot held before it sagged.
   A chip keeps its channel registers asleep and restarts them as it wakes, so every mode that activates the servos wakes the boards with every channel off (`ServoBoard::wakeup`) and forgets the pulses written before (`ServoController::activate`): no servo jumps back to the pose it had before the deactivation, and each is limp until written.
   `STAND`, `WALK`, `WALK_NN` and `ANIMATE` write all 18 on their first tick, as a stand-up from `DEACTIVATED` always did.
 - `IDLE` keeps the boards powered and computes no pose.

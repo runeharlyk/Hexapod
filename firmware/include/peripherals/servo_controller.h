@@ -86,12 +86,14 @@ class ServoController {
         _right.wakeup();
     }
 
-    // A bit per servo written since the boards were activated, in servo order; the others are limp.
+    // A bit per servo written since the boards were activated, in servo order; the others are limp, and all are while
+    // the boards sleep.
     uint32_t driven() const { return _driven; }
 
     void deactivate() {
         if (!is_active) return;
         is_active = false;
+        _driven = 0;
         control_state = SERVO_CONTROL_STATE::DEACTIVATED;
         _left.sleep();
         _right.sleep();
@@ -195,7 +197,7 @@ class ServoController {
         const bool right = servo < 9;
         uint16_t *pwm = right ? right_pwm : left_pwm;
         pwm[c.pin] = toPwm(target_angles[servo], c);
-        _driven |= 1u << servo;
+        if (is_active) _driven |= 1u << servo;
         _writtenThisTick |= 1u << servo;
         ServoBoard &board = right ? _right : _left;
         const int64_t start = esp_timer_get_time();
@@ -243,7 +245,8 @@ class ServoController {
 
   private:
     void writeBoards() {
-        _driven = _writtenThisTick = ALL_SERVOS;
+        if (is_active) _driven = ALL_SERVOS;
+        _writtenThisTick = ALL_SERVOS;
         const int64_t start = esp_timer_get_time();
         const bool leftWasAnswering = _left.answering();
         const bool rightWasAnswering = _right.answering();

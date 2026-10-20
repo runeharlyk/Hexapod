@@ -94,6 +94,7 @@ class MotionService {
     void applyMode(MOTION_STATE mode) {
         const bool enteringWalk = mode == MOTION_STATE::WALK && motionState != MOTION_STATE::WALK;
         const bool leavingPolicy = motionState == MOTION_STATE::WALK_NN;
+        const bool deactivating = mode == MOTION_STATE::DEACTIVATED && motionState != MOTION_STATE::DEACTIVATED;
         // ANIMATE entered from an IDLE whose servos were written eases from the angles they hold (decideMode).
         if (mode != MOTION_STATE::ANIMATE)
             _enterFromHeld = false;
@@ -118,6 +119,8 @@ class MotionService {
         // it took a joint past its travel at some phases of the walk before.
         if (enteringWalk) stopLocomotionCommand(leavingPolicy);
         mode == MOTION_STATE::DEACTIVATED ? _servoController->deactivate() : _servoController->activate();
+        // Every servo goes limp, so the angles a client is answered with are none rather than the pose they held.
+        if (deactivating) publishState();
     }
 
   public:
