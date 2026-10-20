@@ -52,7 +52,7 @@ Widening `JOINT_LIMIT_DEG` for the coxa, or adding a mode that bypasses `setAngl
 ## Limits
 
 The links are the capsules of the MuJoCo model, not the real servo housings and brackets, which are bulkier near the hip and knee; the 9.5 mm margin holds for the model and is unverified against the CAD.
-The sweep keeps the body level, as the WALK gait does; body roll, pitch and yaw from POSE mode and the command transitions are not covered.
+The sweep keeps the body level, as the WALK gait does; the body roll, pitch and yaw that STAND's sticks and the animations command, and the command transitions, are not covered.
 Clamping a joint at travel means the foot no longer follows the planned path, so on the 47 to 76 % of samples beyond travel the robot is not walking the gait the command asked for; that is a feasibility problem in its own right, separate from clearance.
 
 ## Reproduce
