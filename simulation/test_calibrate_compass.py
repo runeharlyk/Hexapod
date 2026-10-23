@@ -180,22 +180,32 @@ def test_a_yawed_field_stronger_than_the_earths_is_refused(tmp_path, capsys):
     assert "horizontal field" in capsys.readouterr().err
 
 
-def serve_robot(updates, stored_z=0.0, update_status=200):
-    """A stand-in robot holding I2C settings and a z offset; `updates` collects the settings it is sent."""
+def serve_robot(updates, stored_z=0.0, update_status=200, frames=None, topic=True):
+    """A stand-in robot holding I2C settings and a z offset, serving them as the firmware serves a state topic (the
+    value, then the subscribe as the ack; without `topic`, the ack alone, as a firmware from before the topics) and
+    answering no request for them; `updates` collects the settings it is sent, `frames` the kinds of the frames it gets."""
+    tag = message_pb2.Message.DESCRIPTOR.fields_by_name["peripheral_settings"].number
 
     async def robot(socket):
         async for raw in socket:
-            request = message_pb2.Message.FromString(raw).correlation_request
-            reply = message_pb2.Message()
-            reply.correlation_response.correlation_id = request.correlation_id
-            kind = request.WhichOneof("request")
-            if kind == "peripheral_settings_get":
-                stored = reply.correlation_response.peripheral_settings
-                stored.sda, stored.scl, stored.frequency, stored.mag_offset_z = 47, 21, 100000, stored_z
-            elif kind == "peripheral_settings_update":
-                updates.append(request.peripheral_settings_update)
-                reply.correlation_response.status_code = update_status
-            await socket.send(reply.SerializeToString())
+            message = message_pb2.Message.FromString(raw)
+            kind = message.WhichOneof("message")
+            if frames is not None:
+                frames.append(kind)
+            if kind == "sub_notif" and message.sub_notif.tag == tag:
+                if topic:
+                    stored = message_pb2.Message().peripheral_settings
+                    stored.sda, stored.scl, stored.frequency, stored.mag_offset_z = 47, 21, 100000, stored_z
+                    await socket.send(message_pb2.Message(peripheral_settings=stored).SerializeToString())
+                await socket.send(raw)
+            elif kind == "correlation_request":
+                request = message.correlation_request
+                reply = message_pb2.Message()
+                reply.correlation_response.correlation_id = request.correlation_id
+                if request.WhichOneof("request") == "peripheral_settings_update":
+                    updates.append(request.peripheral_settings_update)
+                    reply.correlation_response.status_code = update_status
+                await socket.send(reply.SerializeToString())
 
     return robot
 
@@ -218,6 +228,24 @@ def test_write_stores_the_offset_and_keeps_the_other_settings(tmp_path):
     (sent,) = updates
     assert (sent.sda, sent.scl, sent.frequency) == (47, 21, 100000)
     np.testing.assert_allclose([sent.mag_offset_x, sent.mag_offset_y, sent.mag_offset_z], TRUE_OFFSET, atol=0.3)
+
+
+def test_the_offset_is_written_over_the_settings_read_from_the_topic(tmp_path):
+    path = tmp_path / "good.hexrec"
+    write_recording(path, TRUE_OFFSET + EARTH_UT * directions(300, np.random.default_rng(11)))
+    updates, frames = [], []
+    assert write_to_robot(path, serve_robot(updates, frames=frames)) == 0
+    assert frames == ["sub_notif", "unsub_notif", "correlation_request"]
+    assert (updates[0].sda, updates[0].scl, updates[0].frequency) == (47, 21, 100000)
+
+
+def test_a_robot_without_the_settings_topic_is_named_and_nothing_is_written(tmp_path, capsys):
+    path = tmp_path / "good.hexrec"
+    write_recording(path, TRUE_OFFSET + EARTH_UT * directions(300, np.random.default_rng(12)))
+    updates = []
+    assert write_to_robot(path, serve_robot(updates, topic=False)) == 1
+    assert "its firmware is older than the settings topics" in capsys.readouterr().err
+    assert updates == []
 
 
 def test_write_of_a_yawed_robot_keeps_the_z_offset_the_robot_holds(tmp_path):
