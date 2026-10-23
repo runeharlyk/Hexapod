@@ -6,18 +6,7 @@ api.APStatus.mac_address max_size:18
 api.Servo.name max_size:16
 api.ServoSettings.servos max_count:18
 
-api.FileEntry.name max_size:64
-api.FileEntry.children type:FT_POINTER
-api.FileList.entries type:FT_POINTER
-
-api.Response.error_message type:FT_POINTER
-
 api.FileDeleteRequest.path max_size:128
-
-api.FileEditRequest.path max_size:128
-api.FileEditRequest.content type:FT_POINTER
-
-api.FileMkdirRequest.path max_size:128
 
 api.WifiNetwork.ssid max_size:33
 api.WifiNetwork.password max_size:65
@@ -36,7 +25,6 @@ api.MDNSTxtRecord.key max_size:32
 api.MDNSTxtRecord.value max_size:64
 
 # The caps keep an MDNSSettings, which a CorrelationRequest carries, within the 768 bytes test_protocol_size allows it.
-# The status holds one record more than the settings: it adds the firmware version to the user's.
 api.MDNSServiceDef.service max_size:16
 api.MDNSServiceDef.protocol max_size:8
 api.MDNSServiceDef.txt_records max_count:1
@@ -45,11 +33,6 @@ api.MDNSSettings.hostname max_size:33
 api.MDNSSettings.instance max_size:64
 api.MDNSSettings.services max_count:3
 api.MDNSSettings.global_txt_records max_count:2
-
-api.MDNSStatus.hostname max_size:33
-api.MDNSStatus.instance max_size:64
-api.MDNSStatus.services max_count:3
-api.MDNSStatus.global_txt_records max_count:3
 
 api.MDNSQueryRequest.service max_size:16
 api.MDNSQueryRequest.protocol max_size:8

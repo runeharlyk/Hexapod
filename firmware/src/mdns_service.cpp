@@ -92,28 +92,6 @@ void MDNSService::addServices() {
     }
 }
 
-void MDNSService::statusProto(api_MDNSStatus &status) {
-    status.started = _started;
-    strncpy(status.hostname, state().hostname, sizeof(status.hostname) - 1);
-    strncpy(status.instance, state().instance, sizeof(status.instance) - 1);
-
-    status.services_count = state().services_count;
-    for (size_t i = 0; i < state().services_count; i++) {
-        status.services[i] = state().services[i];
-    }
-
-    status.global_txt_records_count = state().global_txt_records_count;
-    for (size_t i = 0; i < state().global_txt_records_count; i++) {
-        status.global_txt_records[i] = state().global_txt_records[i];
-    }
-    constexpr size_t txtCapacity = sizeof(status.global_txt_records) / sizeof(status.global_txt_records[0]);
-    if (status.global_txt_records_count < txtCapacity) {
-        auto &version = status.global_txt_records[status.global_txt_records_count++];
-        strncpy(version.key, MDNS_FIRMWARE_VERSION_KEY, sizeof(version.key) - 1);
-        strncpy(version.value, APP_VERSION, sizeof(version.value) - 1);
-    }
-}
-
 bool EspMdnsBrowser::begin(const char *service, const char *protocol, uint32_t timeoutMs) {
     ESP_LOGI(TAG, "Querying for service: %s, protocol: %s", service, protocol);
     constexpr size_t capacity = sizeof(api_MDNSQueryResponse::services) / sizeof(api_MDNSQueryResult);

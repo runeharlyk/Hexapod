@@ -438,11 +438,6 @@ static void registerHandlers(CommAdapterBase &c) {
                     scan.devices[scan.devices_count++].address = found.addresses[i];
                 break;
             }
-            case socket_message_CorrelationRequest_wifi_settings_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_wifi_settings_tag;
-                settings_topics::readRedacted(wifiService, res.response.wifi_settings);
-                break;
-            }
             case socket_message_CorrelationRequest_wifi_settings_update_tag: {
                 StateUpdateResult r = wifiService.update(
                     [&req](WiFiSettings &s) {
@@ -468,11 +463,6 @@ static void registerHandlers(CommAdapterBase &c) {
                 else if (count == -2) res.status_code = 503;  // radio busy (STA connecting); give up
                 break;
             }
-            case socket_message_CorrelationRequest_ap_settings_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_ap_settings_tag;
-                settings_topics::readRedacted(apService, res.response.ap_settings);
-                break;
-            }
             case socket_message_CorrelationRequest_ap_settings_update_tag: {
                 StateUpdateResult r = apService.update(
                     [&req](APSettings &s) { return APSettings_update(req.request.ap_settings_update, s); },
@@ -480,11 +470,6 @@ static void registerHandlers(CommAdapterBase &c) {
                 if (r == StateUpdateResult::ERROR) res.status_code = 400;
                 res.which_response = socket_message_CorrelationResponse_ap_settings_tag;
                 settings_topics::readRedacted(apService, res.response.ap_settings);
-                break;
-            }
-            case socket_message_CorrelationRequest_mdns_status_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_mdns_status_tag;
-                mdnsService.statusProto(res.response.mdns_status);
                 break;
             }
             case socket_message_CorrelationRequest_mdns_settings_update_tag: {
@@ -512,11 +497,6 @@ static void registerHandlers(CommAdapterBase &c) {
                 strncpy(res.error_message, reply.reason, sizeof(res.error_message) - 1);
                 break;
             }
-            case socket_message_CorrelationRequest_servo_settings_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_servo_settings_tag;
-                settings_topics::readRedacted(servoSettingsService, res.response.servo_settings);
-                break;
-            }
             case socket_message_CorrelationRequest_servo_settings_update_tag: {
                 StateUpdateResult r = servoSettingsService.update(
                     [&req](ServoSettings &s) { return ServoSettings_update(req.request.servo_settings_update, s); },
@@ -532,11 +512,6 @@ static void registerHandlers(CommAdapterBase &c) {
                 if (res.status_code == 409)
                     strncpy(res.error_message, "Only an idle robot, with no mode on its way, centres its servos",
                             sizeof(res.error_message) - 1);
-                break;
-            }
-            case socket_message_CorrelationRequest_peripheral_settings_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_peripheral_settings_tag;
-                settings_topics::readRedacted(peripheralSettingsService, res.response.peripheral_settings);
                 break;
             }
             case socket_message_CorrelationRequest_peripheral_settings_update_tag: {
