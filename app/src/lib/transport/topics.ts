@@ -18,6 +18,17 @@ import {
 } from '$lib/platform_shared/api'
 import type { Failure } from './reply'
 
+/** The settings groups: state topics a page writes by request (robot/settings-write.ts) and reads as they are pushed. */
+export const SETTINGS_TOPICS = [
+  ServoSettings,
+  PeripheralSettings,
+  WifiSettings,
+  APSettings,
+  MDNSSettings
+] as const
+
+export type SettingsTopic = (typeof SETTINGS_TOPICS)[number]
+
 /**
  * The robot's state topics, as platform_shared/topics.json lists them (tests/unit/topics.spec.ts checks this table
  * against it). A state topic holds one current value: the robot answers a subscribe with that value and then the
@@ -33,11 +44,7 @@ export const STATE_TOPICS = [
   OtaStatusData,
   AnimationStatus,
   GoalStatus,
-  ServoSettings,
-  PeripheralSettings,
-  WifiSettings,
-  APSettings,
-  MDNSSettings
+  ...SETTINGS_TOPICS
 ] as const
 
 /** A state topic's message type: `watch(IMUData)` does not type-check. */
@@ -55,14 +62,15 @@ export const SUBSCRIBE_TRIES = 3
  * A state topic as a page sees it. `value` is the robot's last value, undefined until the first arrives. `status` is
  * `live` once the robot acked the subscribe after sending its value, `subscribing` until then, and `error` when the
  * robot never sent one; `failure` then says why. `stale` marks a value kept from a link that dropped, until the next
- * link's snapshot replaces it. The design's fourth field, `pending` (a mode or gait sent and not yet reported, cleared
- * after 1 s), is left to phase 2, whose `watchSettings.save()` counts its writes into it and is its first reader.
+ * link's snapshot replaces it. `pending` is true while a write to the topic is in flight (DataBroker.writing), from its
+ * send to the reply that settles it, answered or not.
  */
 export interface Watched<T> {
   value: T | undefined
   status: 'subscribing' | 'live' | 'error'
   stale: boolean
   failure: Failure | null
+  pending: boolean
 }
 
 /** What a state entry needs of the data broker. */
@@ -73,6 +81,8 @@ export interface StateLink {
   framesHeard(): number
   /** Whether the link up now has acked any subscribe. */
   ackHeard(): boolean
+  /** Whether a write to the topic is in flight. */
+  writing(tag: number): boolean
 }
 
 /**
@@ -82,12 +92,7 @@ export interface StateLink {
  * end in `error`. A link that carries frames but never acks is firmware from before the snapshots, named as too old.
  */
 export class StateEntry<T> {
-  private state: Watched<T> = {
-    value: undefined,
-    status: 'subscribing',
-    stale: false,
-    failure: null
-  }
+  private state: Watched<T>
   private readonly watchers = new Set<(state: Watched<T>) => void>()
   private awaitingAck = false
   private valueSinceSubscribe = false
@@ -98,7 +103,15 @@ export class StateEntry<T> {
   constructor(
     private readonly tag: number,
     private readonly link: StateLink
-  ) {}
+  ) {
+    this.state = {
+      value: undefined,
+      status: 'subscribing',
+      stale: false,
+      failure: null,
+      pending: link.writing(tag)
+    }
+  }
 
   /** Adds a watcher and tells it the state at once; the returned function removes it, true when it was the last. */
   add(watcher: (state: Watched<T>) => void): () => boolean {
@@ -110,6 +123,12 @@ export class StateEntry<T> {
       this.stopTimers()
       return true
     }
+  }
+
+  /** A write to the topic began or ended. */
+  writesChanged() {
+    const pending = this.link.writing(this.tag)
+    if (pending !== this.state.pending) this.update({ pending })
   }
 
   /** Sends a subscribe, when a link is up, and waits for its ack. */

@@ -1,4 +1,4 @@
-<script lang="ts" generics="T">
+<script lang="ts" generics="T extends object">
   import { onMount, type Snippet } from 'svelte'
   import { beforeNavigate, goto } from '$app/navigation'
   import { modals } from 'svelte-modals'
@@ -21,8 +21,11 @@
     confirm?: (save: () => void) => void
     /** Edits held outside the draft, such as an open editor's, which leaving the page would lose as well. */
     pending?: boolean
-    /** The fields, bound to the draft it is given. */
-    children: Snippet<[T]>
+    /**
+     * The fields, bound to the draft it is given. Each input of a watched form is named by its dotted path in the group;
+     * `notes` holds the robot's value of each field it changed under the user's edit, by field (`fieldOf`).
+     */
+    children: Snippet<[T, Record<string, unknown>]>
   }
 
   const {
@@ -39,7 +42,12 @@
 
   const placeholders = $derived(Array.from({ length: rows }, (_, row) => row))
 
-  onMount(() => settings.load())
+  onMount(() => {
+    if (settings.follows) return settings.start()
+    settings.load()
+  })
+
+  const nameOf = (event: FocusEvent) => (event.target as HTMLInputElement).name
 
   const save = () => settings.save()
 
@@ -95,13 +103,13 @@
   <button
     type="button"
     class="btn btn-ghost"
-    disabled={!settings.dirty || settings.saving}
+    disabled={!settings.dirty || settings.pending}
     onclick={() => settings.reset()}
   >
     Reset
   </button>
-  <button type="submit" class="btn btn-primary" disabled={!settings.dirty || settings.saving}>
-    {#if settings.saving}<span class="loading loading-spinner loading-xs"></span>{/if}
+  <button type="submit" class="btn btn-primary" disabled={!settings.dirty || settings.pending}>
+    {#if settings.pending}<span class="loading loading-spinner loading-xs"></span>{/if}
     Save
   </button>
 {/snippet}
@@ -109,7 +117,9 @@
 <form
   bind:this={formElement}
   onsubmit={submit}
-  aria-busy={settings.status === 'loading' || settings.saving}
+  onfocusin={event => settings.focus(nameOf(event))}
+  onfocusout={event => settings.blur(nameOf(event))}
+  aria-busy={settings.status === 'loading' || settings.pending}
 >
   <Section
     {title}
@@ -128,10 +138,13 @@
         {/each}
       </div>
     {:else if settings.status === 'failed'}
-      <LoadFailure message={settings.error} retry={() => settings.load()} />
+      <LoadFailure
+        message={settings.error}
+        retry={settings.follows ? undefined : () => settings.load()}
+      />
     {:else}
-      <fieldset class="fieldset gap-4 p-0 text-sm" disabled={settings.saving}>
-        {@render children(settings.value)}
+      <fieldset class="fieldset gap-4 p-0 text-sm" disabled={settings.pending}>
+        {@render children(settings.value, settings.notes)}
       </fieldset>
     {/if}
   </Section>

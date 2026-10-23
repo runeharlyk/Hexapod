@@ -13,7 +13,8 @@ import {
   ModesEnum,
   OtaStatusData,
   StaticSystemInformation,
-  TaskState
+  TaskState,
+  type MessageFns
 } from '../../src/lib/platform_shared/message'
 import {
   APProvisionMode,
@@ -27,8 +28,9 @@ import {
   WifiSettings,
   WifiStatus
 } from '../../src/lib/platform_shared/api'
+import type { StateTopic } from '../../src/lib/transport/topics'
 import { FakeRobot, serveRobot } from './playwright'
-import type { RequestKey } from './robot'
+import { FACTORY_MDNS_SETTINGS, type RequestKey } from './robot'
 
 // The firmware's IPAddress packing, as proto-api's ipToU32, which cannot load outside the app for its store imports.
 const ip = (dotted: string) =>
@@ -44,6 +46,8 @@ export const STOCK = {
     mag: true,
     servo: true,
     mdns: true,
+    settingsTopics: true,
+    robotId: '240ac4129f3c',
     firmwareElfSha256: '3f1c9a0d'.repeat(8)
   }),
   wifiStatus: WifiStatus.create({
@@ -165,17 +169,38 @@ interface Held {
   apSettings: APSettings
   servoSettings: ServoSettings
   peripheralSettings: PeripheralSettings
+  mdnsSettings: MDNSSettings
 }
+
+const HELD_KEYS = [
+  'wifiSettings',
+  'apSettings',
+  'servoSettings',
+  'peripheralSettings',
+  'mdnsSettings'
+] as const satisfies readonly (keyof Held)[]
+
+const SETTINGS_TYPES = {
+  wifiSettings: WifiSettings,
+  apSettings: APSettings,
+  servoSettings: ServoSettings,
+  peripheralSettings: PeripheralSettings,
+  mdnsSettings: MDNSSettings
+} as const satisfies Record<keyof Held, MessageFns<unknown>>
 
 // Each settings update, by the settings it replaces.
 const UPDATES = {
   wifiSettingsUpdate: 'wifiSettings',
   apSettingsUpdate: 'apSettings',
   servoSettingsUpdate: 'servoSettings',
-  peripheralSettingsUpdate: 'peripheralSettings'
+  peripheralSettingsUpdate: 'peripheralSettings',
+  mdnsSettingsUpdate: 'mdnsSettings'
 } as const satisfies Partial<Record<RequestKey, keyof Held>>
 
 export type SettingsUpdate = keyof typeof UPDATES
+
+// The firmware's reply to an mDNS update that names no valid host name (firmware/src/main.cpp).
+const MDNS_HOSTNAME_REFUSAL = 'the hostname must be one DNS label: a-z, 0-9 and -'
 
 // firmware/include/settings/servo_settings.h, Servo_isValid.
 const servoIsValid = (servo: Servo) =>
@@ -187,37 +212,91 @@ const servoIsValid = (servo: Servo) =>
   servo.centerAngle >= -180 &&
   servo.centerAngle <= 180
 
+// firmware/include/settings/mdns_settings.h, MDNSSettings_validHostname: one DNS label of at most the 32 characters the
+// wire carries (platform_shared/api.options).
+const hostnameIsValid = (hostname: string) => /^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$/.test(hostname)
+
+const withUnderscore = (label: string) =>
+  label === '' || label.startsWith('_') ? label : `_${label}`
+
+// firmware/include/settings/mdns_settings.h, MDNSSettings_update: what is stored of a valid update.
+const mdnsStored = (update: MDNSSettings): MDNSSettings => ({
+  hostname: update.hostname === 'esp32' ? FACTORY_MDNS_SETTINGS.hostname : update.hostname,
+  instance: update.instance === 'ESP32 Device' ? FACTORY_MDNS_SETTINGS.instance : update.instance,
+  services: update.services
+    .map(service => ({
+      ...service,
+      service: withUnderscore(service.service),
+      protocol: withUnderscore(service.protocol)
+    }))
+    .filter(
+      service =>
+        service.service !== '' &&
+        service.protocol !== '' &&
+        service.port > 0 &&
+        service.port <= 65535
+    ),
+  globalTxtRecords: update.globalTxtRecords.filter(record => record.key !== 'Firmware Version')
+})
+
+/** The settings as a read, a snapshot, a push or an update's reply carries them: passwords and the secret left out. */
+const redacted = <K extends keyof Held>(key: K, value: Held[K]): Held[K] => {
+  switch (key) {
+    case 'wifiSettings': {
+      const wifi = value as WifiSettings
+      return {
+        ...wifi,
+        appliedSecret: 0,
+        wifiNetworks: wifi.wifiNetworks.map(network => ({ ...network, password: '' }))
+      } as Held[K]
+    }
+    case 'apSettings':
+      return { ...(value as APSettings), password: '' } as Held[K]
+    default:
+      return value
+  }
+}
+
+const encoded = <K extends keyof Held>(key: K, value: Held[K]) =>
+  Buffer.from((SETTINGS_TYPES[key] as MessageFns<Held[K]>).encode(value).finish()).toString('hex')
+
+const STOCK_HELD: Held = {
+  wifiSettings: STOCK.wifiSettings,
+  apSettings: STOCK.apSettings,
+  servoSettings: ServoSettings.create({ servos: STOCK.servos }),
+  peripheralSettings: STOCK.peripheralSettings,
+  mdnsSettings: FACTORY_MDNS_SETTINGS
+}
+
 /**
- * The stock robot's stored settings, kept as the firmware keeps them (firmware/src/main.cpp): a read or an update's
- * reply leaves the passwords out (redactedWifiSettings, redactedApSettings), an update with an empty password keeps the
- * one stored for that SSID, and a refused update is a 400 without a reason that carries the settings kept.
+ * The stock robot's stored settings, kept and served as the firmware does (firmware/src/main.cpp,
+ * firmware/include/settings/settings_topics.h). Each group is a state topic: a subscribe is answered with the stored
+ * group and then the ack, and a stored change is pushed to every subscribed client, never an update that leaves the
+ * stored value as it was or one that is refused. A read, a snapshot, a push and an update's reply leave the passwords
+ * out (`shown`); an update with an empty password keeps the one stored for that SSID; a refused update is a 400 that
+ * carries the settings kept.
  */
 export class StockRobot extends FakeRobot {
-  held: Held = {
-    wifiSettings: STOCK.wifiSettings,
-    apSettings: STOCK.apSettings,
-    servoSettings: ServoSettings.create({ servos: STOCK.servos }),
-    peripheralSettings: STOCK.peripheralSettings
+  held: Held
+
+  constructor(boot: Record<string, unknown>, held: Held = STOCK_HELD) {
+    super({
+      ...boot,
+      ...Object.fromEntries(HELD_KEYS.map(key => [key, redacted(key, held[key])]))
+    })
+    this.held = held
   }
 
-  /** The settings as a read or an update's reply carries them. */
+  /** The settings as a read, a snapshot or an update's reply carries them. */
   shown<K extends keyof Held>(key: K): Held[K] {
-    const held = this.held
-    switch (key) {
-      case 'wifiSettings':
-        return {
-          ...held.wifiSettings,
-          appliedSecret: 0,
-          wifiNetworks: held.wifiSettings.wifiNetworks.map(network => ({
-            ...network,
-            password: ''
-          }))
-        } as Held[K]
-      case 'apSettings':
-        return { ...held.apSettings, password: '' } as Held[K]
-      default:
-        return held[key]
-    }
+    return redacted(key, this.held[key])
+  }
+
+  /** The robot's own change, or another client's: stored, and pushed to the subscribers when the value differs. */
+  hold<K extends keyof Held>(key: K, value: Held[K]) {
+    if (encoded(key, value) === encoded(key, this.held[key])) return
+    this.held = { ...this.held, [key]: value }
+    this.set(SETTINGS_TYPES[key] as StateTopic, this.shown(key) as never)
   }
 
   /** Refuses the update as the firmware refuses one it cannot store. */
@@ -234,37 +313,37 @@ export class StockRobot extends FakeRobot {
       case 'servoSettings': {
         const servos = request.servoSettingsUpdate!
         if (!servos.servos.every(servoIsValid)) return { statusCode: 400, [key]: this.shown(key) }
-        this.held = { ...held, servoSettings: servos }
+        this.hold(key, servos)
         break
       }
       case 'wifiSettings': {
         const wifi = request.wifiSettingsUpdate!
         const stored = held.wifiSettings.wifiNetworks
-        this.held = {
-          ...held,
-          wifiSettings: {
-            ...wifi,
-            appliedSecret: held.wifiSettings.appliedSecret,
-            wifiNetworks: wifi.wifiNetworks.map(network => ({
-              ...network,
-              password:
-                network.password || stored.find(s => s.ssid === network.ssid)?.password || ''
-            }))
-          }
-        }
+        this.hold(key, {
+          ...wifi,
+          appliedSecret: held.wifiSettings.appliedSecret,
+          wifiNetworks: wifi.wifiNetworks.map(network => ({
+            ...network,
+            password: network.password || stored.find(s => s.ssid === network.ssid)?.password || ''
+          }))
+        })
         break
       }
       case 'apSettings': {
         const ap = request.apSettingsUpdate!
-        this.held = {
-          ...held,
-          apSettings: { ...ap, password: ap.password || held.apSettings.password }
-        }
+        this.hold(key, { ...ap, password: ap.password || held.apSettings.password })
         break
       }
       case 'peripheralSettings':
-        this.held = { ...held, peripheralSettings: request.peripheralSettingsUpdate! }
+        this.hold(key, request.peripheralSettingsUpdate!)
         break
+      case 'mdnsSettings': {
+        const mdns = request.mdnsSettingsUpdate!
+        if (!hostnameIsValid(mdns.hostname))
+          return { statusCode: 400, errorMessage: MDNS_HOSTNAME_REFUSAL, [key]: this.shown(key) }
+        this.hold(key, mdnsStored(mdns))
+        break
+      }
     }
     return { [key]: this.shown(key) }
   }
@@ -283,12 +362,7 @@ export const stockRobot = () => {
     apStatus: STOCK.apStatus,
     otaStatus: OtaStatusData.create(),
     animationStatus: AnimationStatus.create(),
-    goalStatus: GoalStatus.create(),
-    servoSettings: ServoSettings.create(),
-    peripheralSettings: PeripheralSettings.create(),
-    wifiSettings: WifiSettings.create(),
-    apSettings: APSettings.create(),
-    mdnsSettings: MDNSSettings.create()
+    goalStatus: GoalStatus.create()
   })
   robot.respond('featuresDataRequest', () => ({ featuresDataResponse: STOCK.features }))
   robot.respond('peripheralSettingsGet', () => ({

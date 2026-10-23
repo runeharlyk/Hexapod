@@ -16,6 +16,8 @@ export interface Features {
   bmp: boolean
   servo: boolean
   mdns: boolean
+  settings_topics: boolean
+  robot_id: string
   analytics: boolean
   sleep: boolean
   ota: boolean
@@ -34,6 +36,8 @@ const unknownFeatures: Features = {
   bmp: false,
   servo: false,
   mdns: false,
+  settings_topics: false,
+  robot_id: '',
   analytics: false,
   sleep: false,
   ota: false,
@@ -70,7 +74,9 @@ const requestFeatures = async (signal: AbortSignal): Promise<Features> => {
     imu: f.imu,
     mag: f.mag,
     servo: f.servo,
-    mdns: f.mdns
+    mdns: f.mdns,
+    settings_topics: f.settingsTopics,
+    robot_id: f.robotId
   }
 }
 
