@@ -62,6 +62,7 @@ REPLY_TIMEOUT_S = 3.0
 MODE_WAIT_S = 1.0  # fresh_mode's wait for the mode's snapshot, on the way out of a script
 SILENCE_S = 2.0  # pongs arrive every KEEPALIVE_S: this long without a frame means the link is gone
 CONFIRM_S = 1.0
+SETTINGS_TOPICS = ("servo_settings", "peripheral_settings")
 # Under the handheld's 600 ms window (motion_inbox.h HANDHELD_PRIORITY_MS), so a refresh falls inside every drive.
 REFRESH_S = 0.4
 RESET_POLL_S = 0.02
@@ -183,6 +184,7 @@ class RealBackend:
         self._snapshots = False  # the firmware answers a subscribe with the current value and an ack
         # Per tag: the frames of it heard, and the subscribes awaiting their ack with that count when they went out.
         self._heard: collections.Counter[int] = collections.Counter()
+        self._settings_heard: dict[str, object] = {}
         self._acks: dict[int, list[tuple[asyncio.Future, int]]] = {}
         self._taken_over = False  # the handheld took over a walk, which the script has not been told of yet
         self._centre_first = True  # the robot may be waiting for this client to send a centred stick
@@ -252,6 +254,20 @@ class RealBackend:
         except TimeoutError:
             return None
 
+    # A settings topic answers a subscribe with its value and then the ack; the subscription ends with the read.
+    async def _settings(self, name: str):
+        ack = await self._subscribe(name)
+        try:
+            heard = await self._acked(ack)
+        finally:
+            await self._send(pb.Message(unsub_notif=pb.UnsubscribeNotification(tag=_tag(name))))
+        if heard is None:
+            raise RobotTimeout(f"{self._transport.name} did not answer for the {name}")
+        if not heard:
+            raise RobotError(f"the robot sent no {name}: its firmware is older than the settings topics")
+        with self._changed:
+            return self._settings_heard[name]
+
     async def _read(self) -> None:
         try:
             while True:
@@ -287,8 +303,10 @@ class RealBackend:
                     if not ack.done():
                         ack.set_result(self._heard[tag] > heard)
                 return
-            if kind in ("mode", "gait", "goal_status"):
+            if kind in ("mode", "gait", "goal_status") or kind in SETTINGS_TOPICS:
                 self._heard[_tag(kind)] += 1
+            if kind in SETTINGS_TOPICS:
+                self._settings_heard[kind] = getattr(message, kind)
             if kind == "goal_status":
                 self._hear_goal(message.goal_status, arrived)
             elif kind == "mode":
@@ -484,7 +502,7 @@ class RealBackend:
             self._run(self._send(pb.Message(sub_notif=pb.SubscribeNotification(tag=tag))))
 
     def servo_calibration(self) -> ServoCalibration:
-        servos = self._run(self._ask(pb.CorrelationRequest(servo_settings_get={}))).servo_settings.servos
+        servos = self._run(self._settings("servo_settings")).servos
         if len(servos) != NUM_SERVOS:
             raise RobotError(f"the robot's servo settings hold {len(servos)} servos, not {NUM_SERVOS}")
         return ServoCalibration(center_pwm=tuple(s.center_pwm for s in servos),

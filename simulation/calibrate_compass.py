@@ -31,13 +31,30 @@ async def _ask(socket, request: message_pb2.CorrelationRequest) -> message_pb2.C
             return reply.correlation_response
 
 
+async def _read_peripheral_settings(socket) -> api_pb2.PeripheralSettings:
+    """Subscribes to the settings topic, which answers with its value and then the subscribe as the ack, and ends the
+    subscription."""
+    tag = message_pb2.Message.DESCRIPTOR.fields_by_name["peripheral_settings"].number
+    await socket.send(message_pb2.Message(sub_notif=message_pb2.SubscribeNotification(tag=tag)).SerializeToString())
+    settings = None
+    while True:
+        frame = message_pb2.Message.FromString(await asyncio.wait_for(socket.recv(), timeout=REPLY_TIMEOUT_S))
+        kind = frame.WhichOneof("message")
+        if kind == "peripheral_settings":
+            settings = frame.peripheral_settings
+        elif kind == "sub_notif" and frame.sub_notif.tag == tag:
+            break
+    await socket.send(message_pb2.Message(unsub_notif=message_pb2.UnsubscribeNotification(tag=tag)).SerializeToString())
+    if settings is None:
+        raise RuntimeError("the robot sent no peripheral_settings: its firmware is older than the settings topics")
+    return settings
+
+
 async def store_offset(address: str, x: float, y: float, z: float | None) -> None:
     """Writes the offset into the robot's peripheral settings, keeping the I2C configuration it holds, and its z
     offset when z is None."""
     async with websockets.connect(f"ws://{address}/api/ws", open_timeout=10) as socket:
-        request = message_pb2.CorrelationRequest(peripheral_settings_get=api_pb2.PeripheralSettingsRequest())
-        current = await _ask(socket, request)
-        settings = current.peripheral_settings
+        settings = await _read_peripheral_settings(socket)
         settings.mag_offset_x, settings.mag_offset_y = x, y
         if z is not None:
             settings.mag_offset_z = z
