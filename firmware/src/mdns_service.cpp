@@ -7,7 +7,7 @@ static const char *TAG = "MDNSService";
 MDNSService::MDNSService()
     : _persistence(MDNSSettings_read, MDNSSettings_update, this, MDNS_SETTINGS_FILE, api_MDNSSettings_fields,
                    api_MDNSSettings_size, MDNSSettings_defaults()) {
-    addUpdateHandler([&](const std::string &originId) { reconfigureMDNS(); }, false);
+    addUpdateHandler([&](const std::string &originId) { _reconfigurePending = true; }, false);
 }
 
 MDNSService::~MDNSService() {
@@ -19,6 +19,10 @@ MDNSService::~MDNSService() {
 void MDNSService::begin() {
     _persistence.readFromFS();
     startMDNS();
+}
+
+void MDNSService::applyPendingReconfigure(bool scanRunning) {
+    if (!scanRunning && _reconfigurePending.exchange(false)) reconfigureMDNS();
 }
 
 void MDNSService::reconfigureMDNS() {

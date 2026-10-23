@@ -60,6 +60,47 @@ struct MessageTraits<api_APStatus> {
     static const api_APStatus& access(const socket_message_Message& msg) { return msg.message.ap_status; }
 };
 
+template <>
+struct MessageTraits<api_ServoSettings> {
+    static constexpr pb_size_t tag = socket_message_Message_servo_settings_tag;
+    static void assign(socket_message_Message& msg, const api_ServoSettings& data) {
+        msg.message.servo_settings = data;
+    }
+    static const api_ServoSettings& access(const socket_message_Message& msg) { return msg.message.servo_settings; }
+};
+
+template <>
+struct MessageTraits<api_PeripheralSettings> {
+    static constexpr pb_size_t tag = socket_message_Message_peripheral_settings_tag;
+    static void assign(socket_message_Message& msg, const api_PeripheralSettings& data) {
+        msg.message.peripheral_settings = data;
+    }
+    static const api_PeripheralSettings& access(const socket_message_Message& msg) {
+        return msg.message.peripheral_settings;
+    }
+};
+
+template <>
+struct MessageTraits<api_WifiSettings> {
+    static constexpr pb_size_t tag = socket_message_Message_wifi_settings_tag;
+    static void assign(socket_message_Message& msg, const api_WifiSettings& data) { msg.message.wifi_settings = data; }
+    static const api_WifiSettings& access(const socket_message_Message& msg) { return msg.message.wifi_settings; }
+};
+
+template <>
+struct MessageTraits<api_APSettings> {
+    static constexpr pb_size_t tag = socket_message_Message_ap_settings_tag;
+    static void assign(socket_message_Message& msg, const api_APSettings& data) { msg.message.ap_settings = data; }
+    static const api_APSettings& access(const socket_message_Message& msg) { return msg.message.ap_settings; }
+};
+
+template <>
+struct MessageTraits<api_MDNSSettings> {
+    static constexpr pb_size_t tag = socket_message_Message_mdns_settings_tag;
+    static void assign(socket_message_Message& msg, const api_MDNSSettings& data) { msg.message.mdns_settings = data; }
+    static const api_MDNSSettings& access(const socket_message_Message& msg) { return msg.message.mdns_settings; }
+};
+
 class ProtoDecoder {
   public:
     using SubscribeHandler = std::function<void(int32_t tag, int clientId)>;

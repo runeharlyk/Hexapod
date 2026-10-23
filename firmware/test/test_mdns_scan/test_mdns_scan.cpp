@@ -231,6 +231,26 @@ void test_the_reply_is_dropped_rather_than_waited_for_when_the_client_cannot_tak
     TEST_ASSERT_EQUAL(1, adapter.sent);
 }
 
+// mDNS restarts only while no scan holds it (MDNSService::applyPendingReconfigure): from the request, through the
+// query, until the reply has taken the query's answers, which a restart would free under it.
+void test_the_scan_holds_mdns_from_the_request_until_its_reply_is_written() {
+    FakeBrowser browser;
+    MdnsScan scan(browser);
+    TEST_ASSERT_TRUE(scan.idle());
+
+    scan.start(HTTP, {&ws, 3}, 41);
+    TEST_ASSERT_FALSE(scan.idle());
+    scan.due();
+    TEST_ASSERT_FALSE(scan.idle());
+    browser.answered = true;
+    TEST_ASSERT_TRUE(scan.due());
+    TEST_ASSERT_FALSE(scan.idle());
+
+    socket_message_CorrelationResponse res = socket_message_CorrelationResponse_init_zero;
+    scan.answer(res);
+    TEST_ASSERT_TRUE(scan.idle());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_a_request_queues_the_query_and_returns_without_touching_the_network);
@@ -243,5 +263,6 @@ int main(int, char**) {
     RUN_TEST(test_a_client_that_leaves_before_its_query_begins_sends_none);
     RUN_TEST(test_the_same_id_on_another_transport_is_another_client);
     RUN_TEST(test_the_reply_is_dropped_rather_than_waited_for_when_the_client_cannot_take_it);
+    RUN_TEST(test_the_scan_holds_mdns_from_the_request_until_its_reply_is_written);
     return UNITY_END();
 }

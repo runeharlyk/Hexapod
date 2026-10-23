@@ -474,6 +474,7 @@
    "ap_settings_update": "61 api.APSettings",
    "mdns_status_get": "70 api.MDNSStatusRequest",
    "mdns_query": "71 api.MDNSQueryRequest",
+   "mdns_settings_update": "72 api.MDNSSettings",
    "servo_settings_get": "80 api.ServoSettingsRequest",
    "servo_settings_update": "81 api.ServoSettings",
    "servo_centre": "82 socket_message.ServoCentreRequest",
@@ -508,6 +509,7 @@
    "ap_settings": "60 api.APSettings",
    "mdns_status": "70 api.MDNSStatus",
    "mdns_query_response": "71 api.MDNSQueryResponse",
+   "mdns_settings": "72 api.MDNSSettings",
    "servo_settings": "80 api.ServoSettings",
    "peripheral_settings": "90 api.PeripheralSettings",
    "empty": "5 api.EmptyMessage",
@@ -528,7 +530,9 @@
    "mag": "5 bool",
    "servo": "6 bool",
    "mdns": "7 bool",
-   "firmware_elf_sha256": "8 string"
+   "firmware_elf_sha256": "8 string",
+   "settings_topics": "9 bool",
+   "robot_id": "10 string"
   },
   "socket_message.GaitData": {
    "gait": "1 socket_message.GaitEnum"
@@ -609,7 +613,12 @@
    "pose": "282 socket_message.PoseData",
    "animation_status": "283 socket_message.AnimationStatus",
    "telemetry_batch": "290 socket_message.TelemetryBatch",
-   "goal_status": "300 socket_message.GoalStatus"
+   "goal_status": "300 socket_message.GoalStatus",
+   "servo_settings": "310 api.ServoSettings",
+   "peripheral_settings": "311 api.PeripheralSettings",
+   "wifi_settings": "312 api.WifiSettings",
+   "ap_settings": "313 api.APSettings",
+   "mdns_settings": "314 api.MDNSSettings"
   },
   "socket_message.ModeData": {
    "mode": "1 socket_message.ModesEnum",

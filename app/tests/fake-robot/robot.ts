@@ -11,7 +11,15 @@ import {
   SubscribeNotification,
   type MessageFns
 } from '../../src/lib/platform_shared/message'
-import { APStatus, WifiStatus } from '../../src/lib/platform_shared/api'
+import {
+  APSettings,
+  APStatus,
+  MDNSSettings,
+  PeripheralSettings,
+  ServoSettings,
+  WifiSettings,
+  WifiStatus
+} from '../../src/lib/platform_shared/api'
 import { encodeMessage, keyOf, tagOf } from '../../src/lib/transport/message-codec'
 import type { StateTopic, ValueOf } from '../../src/lib/transport/topics'
 import topicsJson from '../../../platform_shared/topics.json' with { type: 'json' }
@@ -38,7 +46,12 @@ const BOOT_VALUES: Record<string, unknown> = {
   apStatus: APStatus.create(),
   otaStatus: OtaStatusData.create(),
   animationStatus: AnimationStatus.create(),
-  goalStatus: GoalStatus.create()
+  goalStatus: GoalStatus.create(),
+  servoSettings: ServoSettings.create(),
+  peripheralSettings: PeripheralSettings.create(),
+  wifiSettings: WifiSettings.create(),
+  apSettings: APSettings.create(),
+  mdnsSettings: MDNSSettings.create()
 }
 
 const requestKeyOf = (request: CorrelationRequest) =>

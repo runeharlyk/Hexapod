@@ -1,33 +1,24 @@
 // Host tests of a subscription on CommAdapterBase (communication/comm_base.hpp), on a fake transport that decodes what
-// it sends. A client subscribes to a tag with sub_notif. A state topic answers with its owner's current value (the
-// snapshot), then with the sub_notif echoed as the ack, and pushes every change after; a stream answers with the ack
-// alone.
+// it sends (communication/fake_adapter.h). A client subscribes to a tag with sub_notif. A state topic answers with its
+// owner's current value (the snapshot), then with the sub_notif echoed as the ack, and pushes every change after; a
+// stream answers with the ack alone.
 
 #include <unity.h>
 
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <fstream>
 #include <functional>
 #include <future>
 #include <iterator>
-#include <mutex>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
-#include <pb_decode.h>
-#include <pb_encode.h>
-#include <communication/comm_base.hpp>
+#include <communication/fake_adapter.h>
 #include <communication/topics.h>
 
 namespace {
-
-struct Frame {
-    int cid;
-    socket_message_Message message;
-};
 
 constexpr int32_t MODE_TAG = socket_message_Message_mode_tag;
 constexpr int32_t GAIT_TAG = socket_message_Message_gait_tag;
@@ -63,90 +54,6 @@ constexpr Topic TOPICS[] = {
     {IMU_TAG, TopicKind::STREAM, nullptr},
     {MODE_TAG, TopicKind::STATE, modeSnapshot},
     {GAIT_TAG, TopicKind::STATE, gaitSnapshot},
-};
-
-// A transport whose clients can take a frame while `writable`; it keeps every frame it sent, decoded, with its client.
-// While `sendsFail`, a client looks ready but every send fails, as a BLE notify does without an mbuf, and so do the next
-// `failNext` sends. The `slowClient` cannot take a frame, and a send to it blocks until `releaseSlow()`, as httpd's
-// send to a full socket does for up to its 5 s send timeout.
-class FakeAdapter : public CommAdapterBase {
-  public:
-    FakeAdapter() { setTopics(TOPICS); }
-
-    std::atomic<bool> writable {true};
-    std::atomic<bool> sendsFail {false};
-    std::atomic<int> failNext {0};
-    std::atomic<int> slowClient {-1};
-    std::atomic<bool> blockedOnSlow {false};
-
-    void releaseSlow() {
-        {
-            std::lock_guard<std::mutex> lock(slowMutex_);
-            slowReleased_ = true;
-        }
-        slowReleasedCv_.notify_all();
-    }
-    bool hasClient() const override { return true; }
-
-    void receive(const socket_message_Message& message, int cid) {
-        uint8_t bytes[64];
-        pb_ostream_t stream = pb_ostream_from_buffer(bytes, sizeof(bytes));
-        TEST_ASSERT_TRUE(pb_encode(&stream, socket_message_Message_fields, &message));
-        handleIncoming(bytes, stream.bytes_written, cid);
-    }
-
-    void subscribeTo(int32_t tag, int cid) {
-        socket_message_Message message = socket_message_Message_init_zero;
-        message.which_message = socket_message_Message_sub_notif_tag;
-        message.message.sub_notif.tag = tag;
-        receive(message, cid);
-    }
-
-    std::vector<Frame> to(int cid) {
-        std::lock_guard<std::mutex> lock(sentMutex_);
-        std::vector<Frame> frames;
-        for (const Frame& frame : sent_)
-            if (frame.cid == cid) frames.push_back(frame);
-        return frames;
-    }
-
-    size_t sentCount() {
-        std::lock_guard<std::mutex> lock(sentMutex_);
-        return sent_.size();
-    }
-
-    void forget() {
-        std::lock_guard<std::mutex> lock(sentMutex_);
-        sent_.clear();
-    }
-
-  protected:
-    bool ready(int cid) override { return writable && cid != slowClient; }
-    bool send(const uint8_t* data, size_t len, int cid) override {
-        if (cid == slowClient) {
-            blockedOnSlow = true;
-            std::unique_lock<std::mutex> lock(slowMutex_);
-            slowReleasedCv_.wait(lock, [this] { return slowReleased_; });
-        }
-        if (sendsFail) return false;
-        if (failNext > 0) {
-            failNext--;
-            return false;
-        }
-        Frame frame {cid, socket_message_Message_init_zero};
-        pb_istream_t stream = pb_istream_from_buffer(data, len);
-        TEST_ASSERT_TRUE(pb_decode(&stream, socket_message_Message_fields, &frame.message));
-        std::lock_guard<std::mutex> lock(sentMutex_);
-        sent_.push_back(frame);
-        return true;
-    }
-
-  private:
-    std::mutex sentMutex_;
-    std::vector<Frame> sent_;
-    std::mutex slowMutex_;
-    std::condition_variable slowReleasedCv_;
-    bool slowReleased_ = false;
 };
 
 // A frame as a line: "mode 2", "ack 130".
@@ -205,7 +112,7 @@ void setUp() {
 void tearDown() {}
 
 void test_a_subscribe_to_a_state_topic_is_answered_with_the_current_value_then_the_ack() {
-    FakeAdapter adapter;
+    FakeAdapter adapter(TOPICS);
     ownerMode = socket_message_ModesEnum_WALK;
 
     adapter.subscribeTo(MODE_TAG, 3);
@@ -214,7 +121,7 @@ void test_a_subscribe_to_a_state_topic_is_answered_with_the_current_value_then_t
 }
 
 void test_a_second_client_gets_its_own_snapshot_and_the_first_nothing() {
-    FakeAdapter adapter;
+    FakeAdapter adapter(TOPICS);
     adapter.subscribeTo(MODE_TAG, 3);
     adapter.forget();
 
@@ -227,7 +134,7 @@ void test_a_second_client_gets_its_own_snapshot_and_the_first_nothing() {
 // The app resubscribes every tag on a reconnect and on a fail-over between transports, so the robot hears a subscribe
 // from a client that already has it: it answers again, but a second entry on the list would send every push twice.
 void test_a_repeated_subscribe_is_answered_again_and_gets_each_push_once() {
-    FakeAdapter adapter;
+    FakeAdapter adapter(TOPICS);
     adapter.subscribeTo(MODE_TAG, 3);
     adapter.subscribeTo(MODE_TAG, 3);
     assertFrames({DEACTIVATED, MODE_ACK, DEACTIVATED, MODE_ACK}, adapter.to(3));
@@ -240,7 +147,7 @@ void test_a_repeated_subscribe_is_answered_again_and_gets_each_push_once() {
 
 // One unsubscribe ends the subscription, however often it was asked for.
 void test_one_unsubscribe_ends_a_repeated_subscription() {
-    FakeAdapter adapter;
+    FakeAdapter adapter(TOPICS);
     adapter.subscribeTo(MODE_TAG, 3);
     adapter.subscribeTo(MODE_TAG, 3);
     socket_message_Message unsubscribe = socket_message_Message_init_zero;
@@ -256,7 +163,7 @@ void test_one_unsubscribe_ends_a_repeated_subscription() {
 }
 
 void test_a_stream_and_an_unknown_tag_get_the_ack_alone() {
-    FakeAdapter adapter;
+    FakeAdapter adapter(TOPICS);
 
     adapter.subscribeTo(IMU_TAG, 3);
     adapter.subscribeTo(999, 3);
@@ -266,7 +173,7 @@ void test_a_stream_and_an_unknown_tag_get_the_ack_alone() {
 
 // The snapshot is the owner's value at the subscribe, and a change after it is pushed after the ack.
 void test_the_snapshot_is_the_value_at_the_subscribe_and_a_later_push_follows_the_ack() {
-    FakeAdapter adapter;
+    FakeAdapter adapter(TOPICS);
     ownerMode = socket_message_ModesEnum_STAND;
 
     adapter.subscribeTo(MODE_TAG, 3);
@@ -278,7 +185,7 @@ void test_the_snapshot_is_the_value_at_the_subscribe_and_a_later_push_follows_th
 // A bridge holds its EventBus subscription only while someone listens. Read before it attached, the owner could change
 // in between and the change would never be pushed.
 void test_the_bridge_attaches_before_the_owner_is_read() {
-    FakeAdapter adapter;
+    FakeAdapter adapter(TOPICS);
     adapter.onSubscriptionChange([](int32_t tag) { events.push_back("attach " + std::to_string(tag)); });
 
     adapter.subscribeTo(MODE_TAG, 3);
@@ -292,7 +199,7 @@ void test_the_bridge_attaches_before_the_owner_is_read() {
 // went out, and the bridge pushes the change from its own task. Sent first, that push would be overtaken by the older
 // snapshot, and the client would show a mode the robot has left, as live. The push must wait for the snapshot.
 void test_a_change_made_while_the_snapshot_is_sent_is_pushed_after_it() {
-    FakeAdapter adapter;
+    FakeAdapter adapter(TOPICS);
     std::thread bridge;
     std::promise<void> pushed;
     std::future<void> pushedNow = pushed.get_future();
@@ -320,7 +227,7 @@ void test_a_change_made_while_the_snapshot_is_sent_is_pushed_after_it() {
 // A state push the client cannot take now is dropped, as every frame is; left at that, the client would show the value
 // before it until the next change. The service loop's resend sends the current value once the client can take it.
 void test_a_dropped_state_push_is_resent_once_as_the_current_value() {
-    FakeAdapter adapter;
+    FakeAdapter adapter(TOPICS);
     adapter.subscribeTo(MODE_TAG, 3);
     adapter.forget();
     adapter.writable = false;
@@ -341,7 +248,7 @@ void test_a_dropped_state_push_is_resent_once_as_the_current_value() {
 // A send can fail on a client that looked ready: a BLE notify without an mbuf, a serial write cut short. The push is
 // then lost as a dropped one is, and resent the same way; a resend that fails too keeps the mark for the next pass.
 void test_a_state_push_whose_send_fails_is_resent_once_it_goes_out() {
-    FakeAdapter adapter;
+    FakeAdapter adapter(TOPICS);
     adapter.subscribeTo(MODE_TAG, 3);
     adapter.forget();
     adapter.sendsFail = true;
@@ -360,7 +267,7 @@ void test_a_state_push_whose_send_fails_is_resent_once_it_goes_out() {
 // A subscribe's snapshot that does not go out is followed by no ack: the app, without it, subscribes again, and the
 // subscription is marked, so the current value is resent once a send goes out, even if the app never asks again.
 void test_a_subscribe_whose_snapshot_fails_is_left_unacked_and_resent() {
-    FakeAdapter adapter;
+    FakeAdapter adapter(TOPICS);
     ownerMode = socket_message_ModesEnum_WALK;
     adapter.failNext = 1;
 
@@ -378,7 +285,7 @@ void test_a_subscribe_whose_snapshot_fails_is_left_unacked_and_resent() {
 // marked for resendDirty, which sends the current value once it can, and the app, without the ack, asks again.
 void test_a_subscribe_from_a_client_that_cannot_take_a_frame_holds_up_no_push() {
     using namespace std::chrono_literals;
-    FakeAdapter adapter;
+    FakeAdapter adapter(TOPICS);
     adapter.subscribeTo(MODE_TAG, 4);
     adapter.forget();
     adapter.slowClient = 3;
@@ -405,7 +312,7 @@ void test_a_subscribe_from_a_client_that_cannot_take_a_frame_holds_up_no_push() 
 
 // A stream's next frame supersedes the one dropped, and a client that took every push has nothing to catch up on.
 void test_a_dropped_stream_frame_and_a_delivered_push_are_not_resent() {
-    FakeAdapter adapter;
+    FakeAdapter adapter(TOPICS);
     adapter.subscribeTo(IMU_TAG, 3);
     adapter.subscribeTo(MODE_TAG, 4);
     adapter.forget();

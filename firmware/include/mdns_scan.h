@@ -88,6 +88,13 @@ class MdnsScan {
         return client_;
     }
 
+    // Whether no scan holds mDNS: none queued, running, or ended with its answers not yet taken. The service task
+    // restarts mDNS only then (MDNSService::applyPendingReconfigure).
+    bool idle() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return state_ == State::IDLE;
+    }
+
     // A transport task, when a client leaves: a query not begun yet is dropped; a running one runs out unanswered.
     void clientGone(Client client) {
         std::lock_guard<std::mutex> lock(mutex_);

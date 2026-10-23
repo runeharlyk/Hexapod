@@ -24,6 +24,7 @@ export const REQUEST_KINDS: Record<RequestKey, RequestKind> = {
   wifiNetworksGet: 'read',
   apSettingsGet: 'read',
   apSettingsUpdate: 'setting',
+  mdnsSettingsUpdate: 'setting',
   mdnsStatusGet: 'read',
   mdnsQuery: 'read',
   servoSettingsGet: 'read',
