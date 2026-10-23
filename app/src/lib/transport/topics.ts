@@ -7,7 +7,15 @@ import {
   OtaStatusData,
   type MessageFns
 } from '$lib/platform_shared/message'
-import { APStatus, WifiStatus } from '$lib/platform_shared/api'
+import {
+  APSettings,
+  APStatus,
+  MDNSSettings,
+  PeripheralSettings,
+  ServoSettings,
+  WifiSettings,
+  WifiStatus
+} from '$lib/platform_shared/api'
 import type { Failure } from './reply'
 
 /**
@@ -24,7 +32,12 @@ export const STATE_TOPICS = [
   APStatus,
   OtaStatusData,
   AnimationStatus,
-  GoalStatus
+  GoalStatus,
+  ServoSettings,
+  PeripheralSettings,
+  WifiSettings,
+  APSettings,
+  MDNSSettings
 ] as const
 
 /** A state topic's message type: `watch(IMUData)` does not type-check. */

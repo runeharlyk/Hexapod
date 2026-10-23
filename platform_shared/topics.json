@@ -11,6 +11,11 @@
     { "name": "ota_status", "tag": 270, "kind": "state" },
     { "name": "animation_status", "tag": 283, "kind": "state" },
     { "name": "telemetry_batch", "tag": 290, "kind": "stream" },
-    { "name": "goal_status", "tag": 300, "kind": "state" }
+    { "name": "goal_status", "tag": 300, "kind": "state" },
+    { "name": "servo_settings", "tag": 310, "kind": "state" },
+    { "name": "peripheral_settings", "tag": 311, "kind": "state" },
+    { "name": "wifi_settings", "tag": 312, "kind": "state" },
+    { "name": "ap_settings", "tag": 313, "kind": "state" },
+    { "name": "mdns_settings", "tag": 314, "kind": "state" }
   ]
 }

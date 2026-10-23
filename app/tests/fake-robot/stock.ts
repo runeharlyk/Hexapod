@@ -19,6 +19,7 @@ import {
   APProvisionMode,
   APSettings,
   APStatus,
+  MDNSSettings,
   MDNSStatus,
   PeripheralSettings,
   Servo,
@@ -282,7 +283,12 @@ export const stockRobot = () => {
     apStatus: STOCK.apStatus,
     otaStatus: OtaStatusData.create(),
     animationStatus: AnimationStatus.create(),
-    goalStatus: GoalStatus.create()
+    goalStatus: GoalStatus.create(),
+    servoSettings: ServoSettings.create(),
+    peripheralSettings: PeripheralSettings.create(),
+    wifiSettings: WifiSettings.create(),
+    apSettings: APSettings.create(),
+    mdnsSettings: MDNSSettings.create()
   })
   robot.respond('featuresDataRequest', () => ({ featuresDataResponse: STOCK.features }))
   robot.respond('peripheralSettingsGet', () => ({

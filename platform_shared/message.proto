@@ -179,6 +179,11 @@ message FeaturesDataResponse {
   // SHA-256 of the running firmware's ELF, from its app descriptor, as 64 hex digits. An update
   // that rolled back reports the previous image's hash, which is how the app tells the two apart.
   string firmware_elf_sha256 = 8;
+  // True when the robot serves the servo, peripheral, WiFi, AP and mDNS settings as state topics: a subscribe is
+  // answered with the current value, and a write is pushed to every client.
+  bool settings_topics = 9;
+  // The robot's base MAC as 12 hex digits, which names it across address changes; empty on a robot that has none.
+  string robot_id = 10;
 }
 
 // Calibrates the MPU6050 on a robot lying still and level: the gyro bias goes to zero and the
@@ -368,6 +373,7 @@ message CorrelationRequest {
     api.APSettings ap_settings_update = 61;
     api.MDNSStatusRequest mdns_status_get = 70;
     api.MDNSQueryRequest mdns_query = 71;
+    api.MDNSSettings mdns_settings_update = 72;
     api.ServoSettingsRequest servo_settings_get = 80;
     api.ServoSettings servo_settings_update = 81;
     ServoCentreRequest servo_centre = 82;
@@ -409,6 +415,7 @@ message CorrelationResponse {
     api.APSettings ap_settings = 60;
     api.MDNSStatus mdns_status = 70;
     api.MDNSQueryResponse mdns_query_response = 71;
+    api.MDNSSettings mdns_settings = 72;
     api.ServoSettings servo_settings = 80;
     api.PeripheralSettings peripheral_settings = 90;
     api.EmptyMessage empty = 5;
@@ -523,5 +530,10 @@ message Message {
     AnimationStatus animation_status = 283;  // observable status: pushed while an animation runs
     TelemetryBatch telemetry_batch = 290;    // stream: every control tick while subscribed
     GoalStatus goal_status = 300;            // observable status: pushed while a goal runs
+    api.ServoSettings servo_settings = 310;            // observable settings: pushed on every write
+    api.PeripheralSettings peripheral_settings = 311;  // observable settings: pushed on every write
+    api.WifiSettings wifi_settings = 312;              // observable settings: pushed on every write
+    api.APSettings ap_settings = 313;                  // observable settings: pushed on every write
+    api.MDNSSettings mdns_settings = 314;              // observable settings: pushed on every write
   }
 }
