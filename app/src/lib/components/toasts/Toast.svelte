@@ -31,7 +31,12 @@
       out:fly={{ x: 100, duration: 400 }}
     >
       <SvelteComponent class="h-6 w-6 shrink-0" />
-      <span>{notification.message}</span>
+      <span>
+        {notification.message}
+        {#if notification.link}
+          <a class="link" href={notification.link.href}>{notification.link.label}</a>
+        {/if}
+      </span>
     </div>
   {/each}
 </div>

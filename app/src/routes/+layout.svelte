@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
+  import { derived } from 'svelte/store'
   import { page } from '$app/state'
   import { Modals, modals } from 'svelte-modals'
   import Toast from '$lib/components/toasts/Toast.svelte'
@@ -22,8 +23,15 @@
   import { ble } from '$lib/transport/ble-adapter'
   import { websocket } from '$lib/transport/websocket-adapter'
   import { ControllerInputData } from '$lib/platform_shared/message'
-  import { connectWebsocket, isLinked, reachedRobot } from '$lib/stores/link'
-  import { followFeatureFlags } from '$lib/stores/featureFlags'
+  import { connectWebsocket, isLinked, link, reachedRobot } from '$lib/stores/link'
+  import {
+    currentFeatureFlags,
+    featureFlagsState,
+    followFeatureFlags
+  } from '$lib/stores/featureFlags'
+  import { MDNSSettings, WifiStatus } from '$lib/platform_shared/api'
+  import { watch } from '$lib/robot/watch'
+  import { startSavedRobotSync } from '$lib/robot/saved-robot-sync'
   import { followSticks } from '$lib/stick-link'
   import { watchUpdateOutcome } from '$lib/firmware/watch-update'
 
@@ -39,11 +47,21 @@
   let stopWatchingUpdate: (() => void) | undefined
   let stopFollowingState: (() => void)[] = []
   let stopFollowingFeatures: (() => void) | undefined
+  let stopSavedRobotSync: (() => void) | undefined
 
   let { children }: Props = $props()
 
   onMount(() => {
     stopFollowingFeatures = followFeatureFlags(reachedRobot)
+    stopSavedRobotSync = startSavedRobotSync({
+      transport: derived(link, $link => $link.transport),
+      features: currentFeatureFlags,
+      featuresState: featureFlagsState,
+      mdns: watch(MDNSSettings),
+      wifi: watch(WifiStatus),
+      disconnect: () => websocket.disconnect(),
+      pageHostname: window.location.hostname
+    })
     stopWatchingUpdate = watchUpdateOutcome()
     if (canReachRobot(page.url, $location)) connectWebsocket()
 
@@ -69,6 +87,7 @@
     stopWatchingUpdate?.()
     stopFollowingState.forEach(stop => stop())
     stopFollowingFeatures?.()
+    stopSavedRobotSync?.()
   })
 
   let menuOpen = $state(false)

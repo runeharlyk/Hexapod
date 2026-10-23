@@ -1,11 +1,12 @@
 import { get } from 'svelte/store'
 import { location } from '$lib/stores/location-store'
+import { robotHost } from '$lib/stores/robot-host'
 
-// Points robot-relative paths at the saved robot address, over http even from an https page, as the
-// robot serves no TLS; absolute URLs pass through.
-export function resolveUrl(url: string): string {
+// Points robot-relative paths at the host the robot is reached at, over http even from an https page, as the
+// robot serves no TLS; absolute URLs pass through. A caller that follows `robotHost` passes the host it holds.
+export function resolveUrl(url: string, host = get(robotHost)): string {
   if (url.startsWith('http') || !get(location)) return url
-  return `http://${get(location)}${url.startsWith('/') ? '' : '/'}${url}`
+  return `http://${host}${url.startsWith('/') ? '' : '/'}${url}`
 }
 
 // IPv4 <-> uint32 matching the firmware IPAddress packing: little-endian, byte 0 is the first octet.

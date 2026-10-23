@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
   import { resolveUrl } from '$lib/proto-api'
+  import { robotHost } from '$lib/stores/robot-host'
 
-  // Absolute URL so it works from the dev origin too; an <img> source isn't subject to CORS.
-  let source = $state(resolveUrl('/api/camera/stream'))
+  // Absolute URL so it works from the dev origin too, at the host the socket reached, which is the saved robot's IP
+  // while its name does not open; an <img> source isn't subject to CORS.
+  let source = $derived(resolveUrl('/api/camera/stream', $robotHost))
 
   onDestroy(() => (source = '#'))
 </script>

@@ -13,6 +13,7 @@
   import { topicSource } from '$lib/robot/settings-sources'
   import { ask } from '$lib/transport/reply'
   import {
+    HOSTNAME_PATTERN,
     MDNS_LIMITS,
     advertisedLabel,
     localName,
@@ -23,8 +24,6 @@
     txtLabel
   } from '$lib/mdns'
 
-  // The firmware refuses a host name that is not one DNS label (settings/mdns_settings.h): a-z, 0-9 and -, none at an end.
-  const HOSTNAME_PATTERN = String.raw`[a-z0-9](?:[a-z0-9\-]{0,${MDNS_LIMITS.hostname - 2}}[a-z0-9])?`
   const SERVICE_PATTERN = String.raw`_[a-z0-9\-]{1,${MDNS_LIMITS.serviceType - 1}}`
   const PROTOCOL_PATTERN = '_(?:tcp|udp)'
 
