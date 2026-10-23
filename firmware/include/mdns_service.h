@@ -20,8 +20,6 @@ class MDNSService : public StatefulService<MDNSSettings> {
     // holds it. An update runs on the requesting transport's task, and mDNS starts and stops on this task only.
     void applyPendingReconfigure(bool scanRunning);
 
-    void statusProto(api_MDNSStatus &status);
-
   private:
     FSPersistencePB<MDNSSettings> _persistence;
     bool _started {false};

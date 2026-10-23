@@ -53,7 +53,7 @@ Paths are relative to `firmware/` unless they start at the repository root.
 - The **control task** (`control`, core 1, priority 5) runs a fixed 5 ms loop: `readSensors()`, `planMotion()`, `updateActuators()` on the `Hexapod` object, then probes up to eight addresses of a requested I2C scan, records a telemetry sample if anyone listens and publishes the servo angles every 20 ms.
   The period is held with `xTaskDelayUntil`; after an overrun the schedule restarts from the current tick instead of replaying the missed ones.
 - The **service task** (`service`, priority 2) brings up WiFi, mDNS and the soft AP, then the HTTP server, the transports, ESP-NOW and the camera, in that order.
-  It then loops every 100 ms: services WiFi and the AP, expires an abandoned OTA session, ships telemetry batches, begins and polls a requested mDNS scan and sends its reply, resends the state pushes a client could not take, samples CPU usage and emits analytics while subscribed, and confirms the running OTA image once the control loop has run 200 ticks.
+  It then loops every 100 ms: services WiFi and the AP, restarts mDNS once an update of its settings has changed them and no scan holds it, expires an abandoned OTA session, ships telemetry batches, begins and polls a requested mDNS scan and sends its reply, resends the state pushes a client could not take, samples CPU usage and emits analytics while subscribed, and confirms the running OTA image once the control loop has run 200 ticks.
 
 Other tasks are created by the components that need them:
 
@@ -366,7 +366,7 @@ Its `ProtoDecoder` dispatches each decoded message to the handler registered for
 `emit` encodes a message once and sends it to the clients subscribed to its tag, or to one client for a reply; with no subscriber it returns before encoding.
 
 `registerHandlers` in `src/main.cpp` registers the same handlers on every adapter.
-Commands, modes, gaits and raw servo signals are validated and republished onto the EventBus; animation requests and dragged joints call into `Hexapod`; a `CorrelationRequest` is answered with a `CorrelationResponse` carrying the same correlation id (system information, features, I2C scan, WiFi, AP, mDNS, servo and peripheral settings, IMU calibration, OTA chunks, file chunks, animation listing and validation).
+Commands, modes, gaits and raw servo signals are validated and republished onto the EventBus; animation requests and dragged joints call into `Hexapod`; a `CorrelationRequest` is answered with a `CorrelationResponse` carrying the same correlation id (system information, features, I2C scan, the WiFi networks scan, the updates of the WiFi, AP, mDNS, servo and peripheral settings, the mDNS scan, servo centring, IMU calibration, OTA chunks, file chunks, animation listing and validation).
 A request the firmware does not know is answered 501 without a message, and no other reply is a 501, so the app reads it as firmware too old for the request (`app/src/lib/transport/reply.ts`).
 Firmware up to v0.1.1 answered a bare 400 there, the status of a malformed request too, so the app reads that as too old only for a request without fields.
 The mDNS scan is answered later: its query collects answers for 3 s, and a transport task that waited them out took no other message from its client meanwhile, sticks, modes and pings included.
@@ -380,7 +380,8 @@ Outgoing data takes one of four shapes, chosen by the kind of data:
 - **Streams** (servo angles, IMU, analytics, per-tick telemetry) are emitted at their own rate while a client subscribes.
 - **Observable state** (mode, gait, WiFi status, AP status, OTA progress, animation status, goal status) is published on the EventBus by its producer when it changes and pushed to every subscribed client; a subscribe is answered with the current value, so a client that joins late needs no request.
   State is never sent on a timer.
-- **Settings** are read and written by request and response only, so a push can never overwrite a form being edited.
+- **Settings** (servo, peripheral, WiFi, AP and mDNS) are state topics written by an update request, which is answered with the stored group; there is no get request.
+  A push carries the whole group, which the app's form folds into a draft field by field, so a push never overwrites a field being edited.
 - **Commands** (sticks, mode, dragged joints, restart, sleep) are fire-and-forget.
 
 Streams and observable state reach the transports through bridges in `setupComm()` (`addBridge`, `observeStatus<T>()`).
@@ -389,6 +390,7 @@ A bridge holds its EventBus subscription only while some client on some transpor
 
 `platform_shared/topics.json` names each topic's kind, state or stream, and `include/communication/topics.h` and the app's `src/lib/transport/topics.ts` are checked against it (`test/test_topic_snapshot/`, `app/tests/unit/topics.spec.ts`).
 `main.cpp`'s `TOPICS` gives each state topic a snapshot function that reads its owner, as the replies do: `MotionInbox` for the mode and the goal, `EventBus::peek` for the gait, the joint angles, the OTA and the animation status, and the WiFi and AP services for theirs.
+The five settings groups are state topics whose snapshot and push read the group under its service's lock and redact the passwords and the merge fingerprint (`include/settings/settings_topics.h`); each copy lives in PSRAM, since internal RAM is the binding limit, and a push is sent after the update has released the service's lock.
 The joint angles are a state topic so that a client subscribing while the robot idles gets the angles its servos hold, which IDLE publishes only on change; before the motion first publishes any, the snapshot is an empty `AnglesData`, which the app reads as no pose.
 A status nobody has published yet is its idle value, so every state topic has a value from boot; a `static_assert` holds `TOPICS` to `TOPIC_KINDS` in `topics.h`, which `test/test_topic_snapshot/` holds to the shared table.
 `CommAdapterBase::subscribe` adds the client unless it already subscribes, attaches the bridge on the tag's first subscriber, and then, under the adapter's `encodeMutex_`, sends a state topic's snapshot and then the `sub_notif` echoed to that client as the ack; a stream, and a tag that is no topic, get the ack alone.

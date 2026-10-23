@@ -21,7 +21,6 @@ import {
   APSettings,
   APStatus,
   MDNSSettings,
-  MDNSStatus,
   PeripheralSettings,
   Servo,
   ServoSettings,
@@ -112,16 +111,6 @@ export const STOCK = {
       name: ''
     })
   ),
-  mdnsStatus: MDNSStatus.create({
-    started: true,
-    hostname: 'hexapod',
-    instance: 'Hexapod',
-    services: [
-      { service: '_http', protocol: '_tcp', port: 80, txtRecords: [] },
-      { service: '_ws', protocol: '_tcp', port: 80, txtRecords: [] }
-    ],
-    globalTxtRecords: [{ key: 'firmware', value: '0.1.1' }]
-  }),
   staticInfo: StaticSystemInformation.create({
     espPlatform: 'ESP32-S3',
     firmwareVersion: '0.1.1',
@@ -365,18 +354,11 @@ export const stockRobot = () => {
     goalStatus: GoalStatus.create()
   })
   robot.respond('featuresDataRequest', () => ({ featuresDataResponse: STOCK.features }))
-  robot.respond('peripheralSettingsGet', () => ({
-    peripheralSettings: robot.shown('peripheralSettings')
-  }))
   robot.respond('i2cScanDataRequest', () => ({
     i2cScanData: { devices: STOCK.i2cAddresses.map(address => ({ address })) }
   }))
-  robot.respond('servoSettingsGet', () => ({ servoSettings: robot.shown('servoSettings') }))
-  robot.respond('wifiSettingsGet', () => ({ wifiSettings: robot.shown('wifiSettings') }))
-  robot.respond('apSettingsGet', () => ({ apSettings: robot.shown('apSettings') }))
   for (const update of Object.keys(UPDATES) as SettingsUpdate[])
     robot.respond(update, request => robot.store(update, request))
-  robot.respond('mdnsStatusGet', () => ({ mdnsStatus: STOCK.mdnsStatus }))
   robot.respond('mdnsQuery', () => ({
     mdnsQueryResponse: {
       services: [

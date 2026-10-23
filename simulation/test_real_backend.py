@@ -1095,7 +1095,6 @@ def test_the_servo_calibration_comes_from_the_settings_topic_and_ends_its_subscr
                                            center_angle=tuple(pytest.approx(i / 10) for i in range(18)),
                                            conversion=tuple(pytest.approx(2.0 + i / 100) for i in range(18)))
     _eventually(lambda: _tag("servo_settings") not in fake.subscribed)  # the fake drops it on its own thread
-    assert fake.requests("servo_settings_get") == []
 
 
 def test_old_firmware_without_the_topic_is_named(fake, target):

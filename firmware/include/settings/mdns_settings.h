@@ -25,7 +25,6 @@ constexpr const char* MDNS_LEGACY_INSTANCE = "ESP32 Device";
 using MDNSTxtRecord = api_MDNSTxtRecord;
 using MDNSServiceDef = api_MDNSServiceDef;
 using MDNSSettings = api_MDNSSettings;
-using MDNSStatus = api_MDNSStatus;
 
 inline MDNSSettings MDNSSettings_defaults() {
     MDNSSettings settings = api_MDNSSettings_init_zero;

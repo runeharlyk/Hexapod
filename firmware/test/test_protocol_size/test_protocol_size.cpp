@@ -92,25 +92,11 @@ void test_the_largest_mdns_update_fits_one_ble_frame() {
     TEST_ASSERT_LESS_OR_EQUAL(PROTO_BUFFER_SIZE - 64, encodedSize(msg));
 }
 
-void test_the_largest_mdns_status_reply_fits_the_encode_buffer() {
-    static socket_message_Message msg = socket_message_Message_init_zero;
-    msg.which_message = socket_message_Message_correlation_response_tag;
-    auto &res = msg.message.correlation_response;
-    res.correlation_id = UINT32_MAX;
-    res.status_code = UINT32_MAX;
-    res.which_response = socket_message_CorrelationResponse_mdns_status_tag;
-    auto &status = res.response.mdns_status;
-    status.started = true;
-    fillToEveryCap(status);
-    TEST_ASSERT_LESS_OR_EQUAL(PROTO_BUFFER_SIZE, encodedSize(msg));
-}
-
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_the_protocol_structs_stay_small);
     RUN_TEST(test_an_i2c_scan_reply_holds_every_address_and_fits_the_encode_buffer);
     RUN_TEST(test_the_largest_mdns_settings_push_fits_the_encode_buffer);
     RUN_TEST(test_the_largest_mdns_update_fits_one_ble_frame);
-    RUN_TEST(test_the_largest_mdns_status_reply_fits_the_encode_buffer);
     return UNITY_END();
 }
