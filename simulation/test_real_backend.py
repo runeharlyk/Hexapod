@@ -157,11 +157,14 @@ class FakeRobot:
     the snapshots. It loses the next `lost_mode_snapshots` snapshots of its mode, as a full BLE queue drops them, and
     the next `lost_mode_acks` acks of a subscribe to it.
 
-    It answers the servo settings with SERVO_SETTINGS, takes servo PWMs and joint angles as the frames it records, and
+    It serves the servo settings, SERVO_SETTINGS, as a state topic of its own, and answers no request for them; with
+    `settings_topics=False` it acks a subscribe to them without a value, as a firmware from before the settings topics.
+    It takes servo PWMs and joint angles as the frames it records, and
     streams a TelemetryBatch every 25 ms to a subscriber of the telemetry until it unsubscribes."""
 
-    def __init__(self, imu=True, obey=True, reset_on_open=None, goals=False, snapshots=True):
+    def __init__(self, imu=True, obey=True, reset_on_open=None, goals=False, snapshots=True, settings_topics=True):
         self.imu, self.obey, self.reset_on_open, self.goals = imu, obey, reset_on_open, goals
+        self.settings_topics = settings_topics
         self.snapshots = snapshots
         self.lost_mode_snapshots = 0
         self.lost_mode_acks = 0
@@ -246,6 +249,8 @@ class FakeRobot:
                 yield pb.Message(gait=pb.GaitData(gait=self.gait))
             elif tag == _tag("goal_status") and self.goals:
                 yield pb.Message(goal_status=self.goal_status())
+            elif tag == _tag("servo_settings") and self.settings_topics:
+                yield pb.Message(servo_settings=api_pb2.ServoSettings(servos=SERVO_SETTINGS))
             elif tag == _tag("animation_status"):
                 yield pb.Message(animation_status=pb.AnimationStatus(state=pb.ANIM_IDLE))
             if tag == _tag("mode") and self.lost_mode_acks:
@@ -272,8 +277,6 @@ class FakeRobot:
                 response.features_data_response.imu = self.imu
                 response.features_data_response.firmware_version = "0.1.1"
                 response.features_data_response.firmware_elf_sha256 = "cd" * 32
-            elif asked == "servo_settings_get":
-                response.servo_settings.servos.extend(SERVO_SETTINGS)
             elif not self.goals:
                 response.status_code = 400
             elif asked == "goal_move":
@@ -1085,12 +1088,27 @@ def test_the_roll_from_the_dmp_matches_the_simulations_roll_of_the_same_body():
         assert real.IMU_ROLL_FROM_PITCH * math.degrees(pitch) == pytest.approx(backend.state().roll, abs=1e-6)
 
 
-def test_the_servo_calibration_is_the_robots_servo_settings(robot, fake):
+def test_the_servo_calibration_comes_from_the_settings_topic_and_ends_its_subscription(robot, fake):
     calibration = robot.servo_calibration()
     assert calibration == ServoCalibration(center_pwm=tuple(300.0 + i for i in range(18)),
                                            direction=tuple(-1.0 if i % 2 else 1.0 for i in range(18)),
                                            center_angle=tuple(pytest.approx(i / 10) for i in range(18)),
                                            conversion=tuple(pytest.approx(2.0 + i / 100) for i in range(18)))
+    _eventually(lambda: _tag("servo_settings") not in fake.subscribed)  # the fake drops it on its own thread
+
+
+def test_old_firmware_without_the_topic_is_named(fake, target):
+    fake.settings_topics = False
+    client = Robot(target)
+    client.connect()
+    try:
+        with pytest.raises(
+            RobotError, match="the robot sent no servo_settings: its firmware is older than the settings topics"
+        ):
+            client.servo_calibration()
+        _eventually(lambda: _tag("servo_settings") not in fake.subscribed)
+    finally:
+        client.close()
 
 
 def test_a_servo_pwm_and_a_joint_reach_the_robot_and_a_servo_that_does_not_exist_is_refused(robot, fake):

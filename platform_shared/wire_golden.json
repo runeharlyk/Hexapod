@@ -162,70 +162,18 @@
    "gateway_ip": "8 uint32",
    "subnet_mask": "9 uint32"
   },
-  "api.APSettingsRequest": {},
   "api.APStatus": {
    "status": "1 api.APNetworkStatus",
    "ip_address": "2 uint32",
    "mac_address": "3 string",
    "station_num": "4 uint32"
   },
-  "api.APStatusRequest": {},
-  "api.CameraSettings": {
-   "pixformat": "1 uint32",
-   "framesize": "2 uint32",
-   "quality": "3 uint32",
-   "brightness": "4 int32",
-   "contrast": "5 int32",
-   "saturation": "6 int32",
-   "sharpness": "7 int32",
-   "denoise": "8 uint32",
-   "gainceiling": "9 uint32",
-   "whitebal": "10 uint32",
-   "special_effect": "11 uint32",
-   "wb_mode": "12 uint32",
-   "awb": "13 uint32",
-   "exposure_ctrl": "14 uint32",
-   "awb_gain": "15 uint32",
-   "gain_ctrl": "16 uint32",
-   "aec": "17 uint32",
-   "aec2": "18 uint32",
-   "ae_level": "19 int32",
-   "aec_value": "20 uint32",
-   "agc": "21 uint32",
-   "agc_gain": "22 uint32",
-   "bpc": "23 uint32",
-   "wpc": "24 uint32",
-   "raw_gma": "25 uint32",
-   "lenc": "26 uint32",
-   "hmirror": "27 uint32",
-   "vflip": "28 uint32",
-   "dcw": "29 uint32",
-   "colorbar": "30 uint32"
-  },
-  "api.CameraSettingsRequest": {},
   "api.EmptyMessage": {},
   "api.FileChunk": {
    "content": "1 bytes",
    "total_size": "2 uint32"
   },
   "api.FileDeleteRequest": {
-   "path": "1 string"
-  },
-  "api.FileEditRequest": {
-   "path": "1 string",
-   "content": "2 bytes"
-  },
-  "api.FileEntry": {
-   "name": "1 string",
-   "is_directory": "2 bool",
-   "size": "3 uint32",
-   "children": "4 repeated api.FileEntry"
-  },
-  "api.FileList": {
-   "entries": "1 repeated api.FileEntry"
-  },
-  "api.FileListRequest": {},
-  "api.FileMkdirRequest": {
    "path": "1 string"
   },
   "api.FileReadChunk": {
@@ -263,15 +211,6 @@
    "services": "3 repeated api.MDNSServiceDef",
    "global_txt_records": "4 repeated api.MDNSTxtRecord"
   },
-  "api.MDNSSettingsRequest": {},
-  "api.MDNSStatus": {
-   "started": "1 bool",
-   "hostname": "2 string",
-   "instance": "3 string",
-   "services": "4 repeated api.MDNSServiceDef",
-   "global_txt_records": "5 repeated api.MDNSTxtRecord"
-  },
-  "api.MDNSStatusRequest": {},
   "api.MDNSTxtRecord": {
    "key": "1 string",
    "value": "2 string"
@@ -285,50 +224,11 @@
    "mag_offset_y": "6 float",
    "mag_offset_z": "7 float"
   },
-  "api.PeripheralSettingsRequest": {},
   "api.PinConfig": {
    "pin": "1 int32",
    "mode": "2 string",
    "type": "3 string",
    "role": "4 string"
-  },
-  "api.Request": {
-   "ap_settings": "10 api.APSettings",
-   "ap_settings_request": "11 api.APSettingsRequest",
-   "ap_status_request": "12 api.APStatusRequest",
-   "servo_settings": "20 api.ServoSettings",
-   "servo_settings_request": "21 api.ServoSettingsRequest",
-   "file_list_request": "30 api.FileListRequest",
-   "file_delete_request": "31 api.FileDeleteRequest",
-   "file_edit_request": "32 api.FileEditRequest",
-   "file_mkdir_request": "33 api.FileMkdirRequest",
-   "wifi_settings": "40 api.WifiSettings",
-   "wifi_settings_request": "41 api.WifiSettingsRequest",
-   "camera_settings": "50 api.CameraSettings",
-   "camera_settings_request": "51 api.CameraSettingsRequest",
-   "mdns_settings": "60 api.MDNSSettings",
-   "mdns_settings_request": "61 api.MDNSSettingsRequest",
-   "mdns_status_request": "62 api.MDNSStatusRequest",
-   "mdns_query_request": "63 api.MDNSQueryRequest",
-   "peripheral_settings": "70 api.PeripheralSettings",
-   "peripheral_settings_request": "71 api.PeripheralSettingsRequest"
-  },
-  "api.Response": {
-   "status_code": "1 uint32",
-   "error_message": "2 string",
-   "empty_message": "5 api.EmptyMessage",
-   "ap_settings": "10 api.APSettings",
-   "ap_status": "11 api.APStatus",
-   "servo_settings": "20 api.ServoSettings",
-   "file_list": "30 api.FileList",
-   "wifi_settings": "40 api.WifiSettings",
-   "wifi_network_list": "41 api.WifiNetworkList",
-   "wifi_status": "42 api.WifiStatus",
-   "camera_settings": "50 api.CameraSettings",
-   "mdns_settings": "60 api.MDNSSettings",
-   "mdns_status": "61 api.MDNSStatus",
-   "mdns_query_response": "62 api.MDNSQueryResponse",
-   "peripheral_settings": "70 api.PeripheralSettings"
   },
   "api.Servo": {
    "center_pwm": "1 float",
@@ -340,7 +240,6 @@
   "api.ServoSettings": {
    "servos": "1 repeated api.Servo"
   },
-  "api.ServoSettingsRequest": {},
   "api.WifiNetwork": {
    "ssid": "1 string",
    "password": "2 string",
@@ -369,7 +268,6 @@
    "selected_network": "4 uint32",
    "applied_secret": "5 uint32"
   },
-  "api.WifiSettingsRequest": {},
   "api.WifiStatus": {
    "status": "1 uint32",
    "local_ip": "2 uint32",
@@ -467,17 +365,13 @@
    "features_data_request": "10 socket_message.FeaturesDataRequest",
    "i2c_scan_data_request": "20 socket_message.I2CScanDataRequest",
    "system_information_request": "40 socket_message.SystemInformationRequest",
-   "wifi_settings_get": "50 api.WifiSettingsRequest",
    "wifi_settings_update": "51 api.WifiSettings",
    "wifi_networks_get": "52 api.WifiNetworksRequest",
-   "ap_settings_get": "60 api.APSettingsRequest",
    "ap_settings_update": "61 api.APSettings",
-   "mdns_status_get": "70 api.MDNSStatusRequest",
    "mdns_query": "71 api.MDNSQueryRequest",
-   "servo_settings_get": "80 api.ServoSettingsRequest",
+   "mdns_settings_update": "72 api.MDNSSettings",
    "servo_settings_update": "81 api.ServoSettings",
    "servo_centre": "82 socket_message.ServoCentreRequest",
-   "peripheral_settings_get": "90 api.PeripheralSettingsRequest",
    "peripheral_settings_update": "91 api.PeripheralSettings",
    "imu_calibrate": "92 socket_message.ImuCalibrateRequest",
    "ota_start": "120 socket_message.OtaStart",
@@ -506,8 +400,8 @@
    "wifi_settings": "50 api.WifiSettings",
    "wifi_network_list": "52 api.WifiNetworkList",
    "ap_settings": "60 api.APSettings",
-   "mdns_status": "70 api.MDNSStatus",
    "mdns_query_response": "71 api.MDNSQueryResponse",
+   "mdns_settings": "72 api.MDNSSettings",
    "servo_settings": "80 api.ServoSettings",
    "peripheral_settings": "90 api.PeripheralSettings",
    "empty": "5 api.EmptyMessage",
@@ -528,7 +422,9 @@
    "mag": "5 bool",
    "servo": "6 bool",
    "mdns": "7 bool",
-   "firmware_elf_sha256": "8 string"
+   "firmware_elf_sha256": "8 string",
+   "settings_topics": "9 bool",
+   "robot_id": "10 string"
   },
   "socket_message.GaitData": {
    "gait": "1 socket_message.GaitEnum"
@@ -609,7 +505,12 @@
    "pose": "282 socket_message.PoseData",
    "animation_status": "283 socket_message.AnimationStatus",
    "telemetry_batch": "290 socket_message.TelemetryBatch",
-   "goal_status": "300 socket_message.GoalStatus"
+   "goal_status": "300 socket_message.GoalStatus",
+   "servo_settings": "310 api.ServoSettings",
+   "peripheral_settings": "311 api.PeripheralSettings",
+   "wifi_settings": "312 api.WifiSettings",
+   "ap_settings": "313 api.APSettings",
+   "mdns_settings": "314 api.MDNSSettings"
   },
   "socket_message.ModeData": {
    "mode": "1 socket_message.ModesEnum",

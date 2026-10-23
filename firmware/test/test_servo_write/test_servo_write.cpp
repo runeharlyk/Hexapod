@@ -9,6 +9,7 @@
 #include <array>
 #include <memory>
 #include "../../include/peripherals/servo_controller.h"
+#include <event_bus.h>
 
 namespace {
 
@@ -79,6 +80,7 @@ ServoController& started() {
 } // namespace
 
 void setUp() {
+    host_bus::resetAll();
     bus().reset();
     powerOnChip(RIGHT_BOARD);
     powerOnChip(LEFT_BOARD);

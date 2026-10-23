@@ -3,7 +3,9 @@
 // Host stand-in for firmware/include/event_bus.h with the same interface. On the robot each message type
 // has its own queue and worker task; here a publish only queues, and host_bus::drainAll() delivers
 // everything queued, including what the deliveries publish in turn, on the calling thread. The queue
-// depth is the real one, so a publish onto a full queue fails as it does on the robot.
+// depth is the real one, so a publish onto a full queue fails as it does on the robot. Every bus lives for the
+// whole process, so host_bus::resetAll() empties them all, except the subscriptions consume() holds for the
+// program's lifetime; a Handle from before the reset is inert afterwards.
 
 #include <array>
 #include <cstddef>
@@ -25,11 +27,21 @@ inline std::vector<bool (*)()> &drains() {
     return registered;
 }
 
+inline std::vector<void (*)()> &resets() {
+    static std::vector<void (*)()> registered;
+    return registered;
+}
+
+// Indexed, because a delivery that first touches a bus enrols it in drains() mid-loop.
 inline void drainAll() {
     for (bool delivered = true; delivered;) {
         delivered = false;
-        for (bool (*drain)() : drains()) delivered |= drain();
+        for (size_t i = 0; i < drains().size(); ++i) delivered |= drains()[i]();
     }
+}
+
+inline void resetAll() {
+    for (void (*reset)() : resets()) reset();
 }
 
 }  // namespace host_bus
@@ -43,21 +55,49 @@ class EventBus {
     static constexpr size_t NO_EX = MaxSubs;
     using Callback = std::function<void(const Msg *, size_t)>;
 
-    static std::deque<Item> &queue() {
-        static std::deque<Item> items;
-        static const bool registered = (host_bus::drains().push_back(&drain), true);
+    static void enrol() {
+        static const bool registered =
+            (host_bus::drains().push_back(&drain), host_bus::resets().push_back(&reset), true);
         (void)registered;
+    }
+
+    static std::deque<Item> &queue() {
+        enrol();
+        static std::deque<Item> items;
         return items;
     }
 
     static std::array<std::optional<Callback>, MaxSubs> &subs() {
+        enrol();
         static std::array<std::optional<Callback>, MaxSubs> table;
         return table;
     }
 
+    // Counts the resets that cleared a slot, so a Handle can tell its own subscription from a later one in it.
+    static std::array<uint32_t, MaxSubs> &generations() {
+        static std::array<uint32_t, MaxSubs> table{};
+        return table;
+    }
+
+    static std::array<bool, MaxSubs> &permanent() {
+        static std::array<bool, MaxSubs> table{};
+        return table;
+    }
+
     static std::optional<Msg> &latest() {
+        enrol();
         static std::optional<Msg> value;
         return value;
+    }
+
+    static void reset() {
+        queue().clear();
+        latest().reset();
+        for (size_t i = 0; i < MaxSubs; ++i) {
+            if (permanent()[i]) continue;
+            subs()[i].reset();
+            ++generations()[i];
+        }
     }
 
     static bool drain() {
@@ -83,28 +123,30 @@ class EventBus {
   public:
     class Handle {
         size_t idx{NO_EX};
+        uint32_t generation{0};
         friend class EventBus;
-        explicit Handle(size_t i) : idx(i) {}
+        Handle(size_t i, uint32_t g) : idx(i), generation(g) {}
 
       public:
         Handle() = default;
         Handle(const Handle &) = delete;
         Handle &operator=(const Handle &) = delete;
-        Handle(Handle &&o) noexcept : idx(o.idx) { o.idx = NO_EX; }
+        Handle(Handle &&o) noexcept : idx(o.idx), generation(o.generation) { o.idx = NO_EX; }
         Handle &operator=(Handle &&o) noexcept {
             if (this != &o) {
                 unsubscribe();
                 idx = o.idx;
+                generation = o.generation;
                 o.idx = NO_EX;
             }
             return *this;
         }
         ~Handle() { unsubscribe(); }
         void unsubscribe() {
-            if (idx < MaxSubs) subs()[idx].reset();
+            if (valid()) subs()[idx].reset();
             idx = NO_EX;
         }
-        bool valid() const { return idx < MaxSubs; }
+        bool valid() const { return idx < MaxSubs && generations()[idx] == generation; }
     };
 
     static void store(const Msg &m) { latest() = m; }
@@ -112,7 +154,7 @@ class EventBus {
     template <typename C>
     static void consume(C fn) {
         static Handle h = subscribe(std::forward<C>(fn));
-        (void)h;
+        if (h.valid()) permanent()[h.idx] = true;
     }
 
     // Rate limits are not modelled: every message is delivered on the next drain.
@@ -121,10 +163,10 @@ class EventBus {
         for (size_t i = 0; i < MaxSubs; ++i) {
             if (!subs()[i]) {
                 subs()[i].emplace(std::move(fn));
-                return Handle(i);
+                return Handle(i, generations()[i]);
             }
         }
-        return Handle(NO_EX);
+        return Handle(NO_EX, 0);
     }
 
     template <typename C>

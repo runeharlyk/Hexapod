@@ -31,6 +31,11 @@ inline constexpr TopicKindEntry TOPIC_KINDS[] = {
     {socket_message_Message_animation_status_tag, TopicKind::STATE},
     {socket_message_Message_telemetry_batch_tag, TopicKind::STREAM},
     {socket_message_Message_goal_status_tag, TopicKind::STATE},
+    {socket_message_Message_servo_settings_tag, TopicKind::STATE},
+    {socket_message_Message_peripheral_settings_tag, TopicKind::STATE},
+    {socket_message_Message_wifi_settings_tag, TopicKind::STATE},
+    {socket_message_Message_ap_settings_tag, TopicKind::STATE},
+    {socket_message_Message_mdns_settings_tag, TopicKind::STATE},
 };
 
 // A topic as an adapter serves it: a state topic's snapshot reads its owner's current value and puts it into the sink,

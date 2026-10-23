@@ -15,6 +15,7 @@
 #include <gait.h>
 #include <kinematics.h>
 #include <virtual_robot.h>
+#include <event_bus.h>
 
 namespace {
 
@@ -344,7 +345,7 @@ std::pair<BodyOverFeet, BodyOverFeet> stand(const Fixture& f, const StandStick& 
 
 }  // namespace
 
-void setUp() {}
+void setUp() { host_bus::resetAll(); }
 void tearDown() {}
 
 void test_fixture_is_readable() {

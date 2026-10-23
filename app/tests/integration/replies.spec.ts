@@ -1,39 +1,54 @@
 import { expect, test } from '@playwright/test'
 import { fakeRobot, tooOld, tooOldUpToV011 } from './fake-robot'
-import { PeripheralSettings, Servo, WifiSettings } from '../../src/lib/platform_shared/api'
+import { FeaturesDataResponse } from '../../src/lib/platform_shared/message'
+import { serveStockRobot, stockRobot, STOCK } from '../fake-robot/stock'
+import type { RequestKey } from '../fake-robot/robot'
 
 const base = process.env.BASE_PATH ?? ''
 
 const outdated = (feature: string) => `the robot's firmware does not support ${feature}; update it`
 
-// A robot whose firmware knows none of the requests answers each with a 501, and every page says the firmware lacks it.
-const loads = [
-  {
-    path: '/peripherals/servo',
-    shown: [`Could not read the servo calibration: ${outdated('the servo calibration')}`]
-  },
+// A robot whose firmware serves no settings topics is not subscribed to for them, and each settings page says so.
+const settingsPages = [
+  { path: '/peripherals/servo', what: 'the servo calibration' },
   {
     path: '/peripherals/i2c',
-    shown: [
-      `Could not read the I2C settings: ${outdated('the I2C settings')}`,
-      `Scan failed: ${outdated('the I2C scan')}`
-    ]
+    what: 'the I2C settings',
+    scan: { request: 'i2cScanDataRequest', what: 'the I2C scan' }
   },
-  {
-    path: '/wifi/sta',
-    shown: [`Could not read the Wi-Fi settings: ${outdated('the Wi-Fi settings')}`]
-  },
-  {
-    path: '/wifi/ap',
-    shown: [`Could not read the access point settings: ${outdated('the access point settings')}`]
-  },
+  { path: '/wifi/sta', what: 'the Wi-Fi settings' },
+  { path: '/wifi/ap', what: 'the access point settings' },
   {
     path: '/wifi/mdns',
-    shown: [
-      `The robot did not report its mDNS status: ${outdated('the mDNS status')}.`,
-      `Scan failed: ${outdated('the mDNS scan')}`
-    ]
-  },
+    what: 'the mDNS settings',
+    scan: { request: 'mdnsQuery', what: 'the mDNS scan' }
+  }
+] satisfies { path: string; what: string; scan?: { request: RequestKey; what: string } }[]
+
+for (const { path, what, scan } of settingsPages)
+  test(`${path} tells firmware without settings topics from a refusal`, async ({ page }) => {
+    const robot = stockRobot()
+    robot.respond('featuresDataRequest', () => ({
+      featuresDataResponse: FeaturesDataResponse.create({
+        ...STOCK.features,
+        settingsTopics: false
+      })
+    }))
+    if (scan) robot.refuse(scan.request, 501)
+    await serveStockRobot(page, robot)
+    await page.goto(`${base}${path}`)
+
+    await expect(
+      page.getByText(`Could not read ${what}: ${outdated(what)}`, { exact: true })
+    ).toBeVisible()
+    if (scan)
+      await expect(
+        page.getByText(`Scan failed: ${outdated(scan.what)}`, { exact: true })
+      ).toBeVisible()
+  })
+
+// A robot whose firmware knows none of the requests answers each with a 501, and the pages that still ask say so.
+const loads = [
   {
     path: '/system/status',
     shown: [`System status could not be loaded: ${outdated('the system status')}`]
@@ -54,11 +69,9 @@ test('a firmware up to v0.1.1 is named as too old only for a request without fie
 }) => {
   await fakeRobot(page, tooOldUpToV011)
   await page.goto(`${base}/wifi/mdns`)
-  for (const text of [
-    `The robot did not report its mDNS status: ${outdated('the mDNS status')}.`,
-    'Scan failed: the robot refused the mDNS scan'
-  ])
-    await expect(page.getByText(text, { exact: true })).toBeVisible()
+  await expect(
+    page.getByText('Scan failed: the robot refused the mDNS scan', { exact: true })
+  ).toBeVisible()
 })
 
 // A refusal answers the same on every poll, so the scan stops at once and says why. The page offers the scan once it
@@ -66,11 +79,9 @@ test('a firmware up to v0.1.1 is named as too old only for a request without fie
 test('a Wi-Fi scan names the firmware it needs from a robot that does not know the request', async ({
   page
 }) => {
-  await fakeRobot(page, request =>
-    request.wifiSettingsGet ?
-      { wifiSettings: WifiSettings.create({ hostname: 'hexapod' }) }
-    : tooOld()
-  )
+  const robot = stockRobot()
+  robot.refuse('wifiNetworksGet', 501)
+  await serveStockRobot(page, robot)
   await page.goto(`${base}/wifi/sta`)
   await page.getByRole('button', { name: 'Scan for networks' }).click()
 
@@ -81,12 +92,9 @@ test('a Wi-Fi scan names the firmware it needs from a robot that does not know t
 
 // The robot answers a settings update it refuses with a 400 and the settings it kept.
 test('a Wi-Fi settings update the robot refuses is reported, not confirmed', async ({ page }) => {
-  const settings = WifiSettings.create({ hostname: 'hexapod', priorityRssi: true })
-  await fakeRobot(page, request => {
-    if (request.wifiSettingsGet) return { wifiSettings: settings }
-    if (request.wifiSettingsUpdate) return { statusCode: 400, wifiSettings: settings }
-    return tooOld()
-  })
+  const robot = stockRobot()
+  robot.refuseUpdate('wifiSettingsUpdate')
+  await serveStockRobot(page, robot)
   await page.goto(`${base}/wifi/sta`)
   await page.getByLabel('Host name').fill('hexapod-2')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
@@ -100,24 +108,9 @@ test('a Wi-Fi settings update the robot refuses is reported, not confirmed', asy
 test('an access point settings update the robot refuses is reported, not confirmed', async ({
   page
 }) => {
-  const ip = (a: number, b: number, c: number, d: number) =>
-    (a | (b << 8) | (c << 16) | (d << 24)) >>> 0
-  const settings = {
-    provisionMode: 0,
-    ssid: 'hexapod',
-    password: 'password',
-    channel: 1,
-    ssidHidden: false,
-    maxClients: 4,
-    localIp: ip(192, 168, 4, 1),
-    gatewayIp: ip(192, 168, 4, 1),
-    subnetMask: ip(255, 255, 255, 0)
-  }
-  await fakeRobot(page, request => {
-    if (request.apSettingsGet) return { apSettings: settings }
-    if (request.apSettingsUpdate) return { statusCode: 400, apSettings: settings }
-    return tooOld()
-  })
+  const robot = stockRobot()
+  robot.refuseUpdate('apSettingsUpdate')
+  await serveStockRobot(page, robot)
   await page.goto(`${base}/wifi/ap`)
   await page.getByLabel('SSID', { exact: true }).fill('hexapod-2')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
@@ -129,13 +122,9 @@ test('an access point settings update the robot refuses is reported, not confirm
 })
 
 test('a servo calibration the robot refuses is reported, not confirmed', async ({ page }) => {
-  await fakeRobot(page, request =>
-    request.servoSettingsGet ?
-      {
-        servoSettings: { servos: [Servo.create({ centerPwm: 306, direction: 1, conversion: 2.2 })] }
-      }
-    : { statusCode: 400 }
-  )
+  const robot = stockRobot()
+  robot.refuseUpdate('servoSettingsUpdate')
+  await serveStockRobot(page, robot)
   await page.goto(`${base}/peripherals/servo`)
   await page.getByLabel('Servo 0 centre PWM').fill('310')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
@@ -146,16 +135,15 @@ test('a servo calibration the robot refuses is reported, not confirmed', async (
 })
 
 test('an I2C configuration the robot refuses is reported, not confirmed', async ({ page }) => {
-  const settings = PeripheralSettings.create({ sda: 1, scl: 2, frequency: 400000 })
-  await fakeRobot(page, request =>
-    request.peripheralSettingsGet ? { peripheralSettings: settings } : { statusCode: 400 }
-  )
+  const robot = stockRobot()
+  robot.refuseUpdate('peripheralSettingsUpdate')
+  await serveStockRobot(page, robot)
   await page.goto(`${base}/peripherals/i2c`)
   await page.getByLabel('Frequency').fill('100000')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await page.getByRole('button', { name: 'Confirm' }).click()
 
   await expect(
-    page.getByText('Not saved: the robot refused the I2C configuration', { exact: true })
+    page.getByText('Not saved: the robot refused the I2C settings', { exact: true })
   ).toBeVisible()
 })

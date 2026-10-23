@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { dataBroker } from '$lib/transport/databroker'
 import { FakeRobot, fakeLink } from '../fake-robot/transport'
 import { PeripheralSettings, ServoSettings } from '$lib/platform_shared/api'
@@ -27,19 +27,31 @@ const i2c = (sda: number, scl: number) =>
     pins: [{ pin: 4, mode: 'output', type: 'digital', role: 'led' }]
   })
 
-// Stands in for the firmware's settings handlers: a get answers the stored settings, an update
-// answers the stored settings after the update, which keeps the old ones when it is refused.
+// Stands in for the firmware's settings handlers: both groups are state topics, which a subscribe answers with the
+// stored settings and a stored change pushes; an update answers the stored settings after the update, which keeps the
+// old ones when it is refused.
+const stored = { servo: calibration(18, 0), peripherals: i2c(1, 2) }
 const robot = {
-  servo: calibration(18, 0),
-  peripherals: i2c(1, 2),
+  get servo() {
+    return stored.servo
+  },
+  set servo(settings: ServoSettings) {
+    stored.servo = settings
+    fake.set(ServoSettings, settings)
+  },
+  get peripherals() {
+    return stored.peripherals
+  },
+  set peripherals(settings: PeripheralSettings) {
+    stored.peripherals = settings
+    fake.set(PeripheralSettings, settings)
+  },
   refuseServos: false,
   refusePeripherals: false
 }
 const updates: string[] = []
 
 const fake = new FakeRobot()
-fake.respond('servoSettingsGet', () => ({ servoSettings: robot.servo }))
-fake.respond('peripheralSettingsGet', () => ({ peripheralSettings: robot.peripherals }))
 fake.respond('servoSettingsUpdate', request => {
   updates.push('servo')
   if (!robot.refuseServos) robot.servo = request.servoSettingsUpdate!
@@ -195,5 +207,24 @@ describe('robot configuration file', () => {
       'The robot rejected the peripheral settings; the servo calibration was already applied'
     )
     expect(robot.peripherals).toEqual(i2c(1, 2))
+  })
+})
+
+describe('robot configuration file with no link', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('fails at once as not connected, before the feature flags are in', async () => {
+    vi.useFakeTimers()
+    vi.resetModules()
+    const offline = await import('$lib/robot-config')
+    let outcome: unknown = 'unsettled'
+    offline.exportConfig().then(
+      () => (outcome = 'exported'),
+      (error: Error) => (outcome = error.message)
+    )
+
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(outcome).toBe('The robot did not send its servo calibration: the robot is not connected')
   })
 })

@@ -4,6 +4,7 @@
 #include <unity.h>
 
 #include <cstring>
+#include <string>
 #include <settings/mdns_settings.h>
 
 namespace {
@@ -79,6 +80,18 @@ void test_migrated_settings_are_stable_on_the_next_boot() {
     TEST_ASSERT_EQUAL(StateUpdateResult::UNCHANGED, MDNSSettings_update(migrated, state));
 }
 
+// A name the user enters is refused, not changed: the app shows the robot under the name it stored.
+void test_a_hostname_must_be_one_dns_label() {
+    TEST_ASSERT_TRUE(MDNSSettings_validHostname("hexapod-2"));
+    TEST_ASSERT_TRUE(MDNSSettings_validHostname(std::string(32, 'a').c_str()));
+    TEST_ASSERT_FALSE(MDNSSettings_validHostname(""));
+    TEST_ASSERT_FALSE(MDNSSettings_validHostname("-a"));
+    TEST_ASSERT_FALSE(MDNSSettings_validHostname("a-"));
+    TEST_ASSERT_FALSE(MDNSSettings_validHostname("a.b"));
+    TEST_ASSERT_FALSE(MDNSSettings_validHostname("Hexapod"));
+    TEST_ASSERT_FALSE(MDNSSettings_validHostname(std::string(33, 'a').c_str()));
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_a_fresh_robot_advertises_as_the_hexapod);
@@ -87,5 +100,6 @@ int main() {
     RUN_TEST(test_an_empty_hostname_falls_back_to_the_factory_name);
     RUN_TEST(test_a_stored_firmware_version_is_dropped_and_other_txt_records_kept);
     RUN_TEST(test_migrated_settings_are_stable_on_the_next_boot);
+    RUN_TEST(test_a_hostname_must_be_one_dns_label);
     return UNITY_END();
 }

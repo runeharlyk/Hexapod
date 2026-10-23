@@ -9,6 +9,7 @@
 #include <cmath>
 
 #include "../../include/peripherals/servo_controller.h"
+#include <event_bus.h>
 
 namespace {
 
@@ -55,6 +56,7 @@ void drive(int servo, float angle) {
 } // namespace
 
 void setUp() {
+    host_bus::resetAll();
     bus().reset();
     powerOnChip(RIGHT_BOARD);
     powerOnChip(LEFT_BOARD);

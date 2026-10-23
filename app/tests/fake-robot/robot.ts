@@ -11,7 +11,15 @@ import {
   SubscribeNotification,
   type MessageFns
 } from '../../src/lib/platform_shared/message'
-import { APStatus, WifiStatus } from '../../src/lib/platform_shared/api'
+import {
+  APSettings,
+  APStatus,
+  MDNSSettings,
+  PeripheralSettings,
+  ServoSettings,
+  WifiSettings,
+  WifiStatus
+} from '../../src/lib/platform_shared/api'
 import { encodeMessage, keyOf, tagOf } from '../../src/lib/transport/message-codec'
 import type { StateTopic, ValueOf } from '../../src/lib/transport/topics'
 import topicsJson from '../../../platform_shared/topics.json' with { type: 'json' }
@@ -29,7 +37,18 @@ const SHARED: { topics: { name: string; tag: number; kind: string }[] } = topics
 
 const camel = (name: string) => name.replace(/_(\w)/g, (_, c: string) => c.toUpperCase())
 
-// Each state topic's value at boot, keyed by its field in the Message oneof: the idle values the firmware reports.
+/** The mDNS settings of a robot fresh from the factory (firmware/include/settings/mdns_settings.h, MDNSSettings_defaults). */
+export const FACTORY_MDNS_SETTINGS = MDNSSettings.create({
+  hostname: 'hexapod',
+  instance: 'Hexapod',
+  services: [
+    { service: '_http', protocol: '_tcp', port: 80, txtRecords: [] },
+    { service: '_ws', protocol: '_tcp', port: 80, txtRecords: [] }
+  ]
+})
+
+// Each state topic's value at boot, keyed by its field in the Message oneof: empty, but for the mDNS settings, which
+// are the factory's. A robot that holds settings of its own (StockRobot) passes its values for the other four.
 const BOOT_VALUES: Record<string, unknown> = {
   mode: ModeData.create(),
   angles: AnglesData.create(),
@@ -38,7 +57,12 @@ const BOOT_VALUES: Record<string, unknown> = {
   apStatus: APStatus.create(),
   otaStatus: OtaStatusData.create(),
   animationStatus: AnimationStatus.create(),
-  goalStatus: GoalStatus.create()
+  goalStatus: GoalStatus.create(),
+  servoSettings: ServoSettings.create(),
+  peripheralSettings: PeripheralSettings.create(),
+  wifiSettings: WifiSettings.create(),
+  apSettings: APSettings.create(),
+  mdnsSettings: FACTORY_MDNS_SETTINGS
 }
 
 const requestKeyOf = (request: CorrelationRequest) =>

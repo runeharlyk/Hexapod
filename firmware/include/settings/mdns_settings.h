@@ -25,7 +25,6 @@ constexpr const char* MDNS_LEGACY_INSTANCE = "ESP32 Device";
 using MDNSTxtRecord = api_MDNSTxtRecord;
 using MDNSServiceDef = api_MDNSServiceDef;
 using MDNSSettings = api_MDNSSettings;
-using MDNSStatus = api_MDNSStatus;
 
 inline MDNSSettings MDNSSettings_defaults() {
     MDNSSettings settings = api_MDNSSettings_init_zero;
@@ -94,6 +93,21 @@ inline void MDNS_replaceIf(char (&field)[N], const char* unwanted, const char* r
     if (strncmp(field, unwanted, N) != 0) return;
     strncpy(field, replacement, N - 1);
     field[N - 1] = '\0';
+}
+
+// A hostname a client may store: one DNS label of lowercase letters, digits and hyphens, with no hyphen at either end,
+// as the WiFi hostname is kept to (toHostLabel in settings/placeholders.h), and no longer than the wire carries (32
+// characters, the field's max_size less its terminator). A client's name is refused rather than changed, so the app
+// never shows a name the robot does not answer to.
+inline bool MDNSSettings_validHostname(const char* hostname) {
+    constexpr size_t maxLength = sizeof(MDNSSettings::hostname) - 1;
+    const size_t length = strnlen(hostname, maxLength + 1);
+    if (length == 0 || length > maxLength || hostname[0] == '-' || hostname[length - 1] == '-') return false;
+    for (size_t i = 0; i < length; i++) {
+        const char c = hostname[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return false;
+    }
+    return true;
 }
 
 inline StateUpdateResult MDNSSettings_update(const MDNSSettings& proto, MDNSSettings& settings) {

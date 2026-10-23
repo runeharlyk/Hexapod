@@ -9,6 +9,7 @@
 #include <esp_sleep.h>
 #include <esp_task_wdt.h>
 #include <esp_littlefs.h>
+#include <esp_mac.h>
 #include <esp_app_desc.h>
 #include <driver/temperature_sensor.h>
 #include <nvs_flash.h>
@@ -53,6 +54,7 @@
 #include <filesystem_service.h>
 #include <camera_service.h>
 #include <servo_settings_service.h>
+#include <settings/settings_topics.h>
 #include <event_bus.h>
 #include <message_types.h>
 #include <motion_state_wire.h>
@@ -142,6 +144,14 @@ static const char *resetReasonName(esp_reset_reason_t reason) {
 static void runningElfSha256(char out[65]) {
     const uint8_t *sha = esp_app_get_description()->app_elf_sha256;
     for (int i = 0; i < 32; i++) snprintf(out + 2 * i, 3, "%02x", sha[i]);
+}
+
+// The robot's identity, which no setting changes: the base MAC as 12 lowercase hex digits and a terminator. The app
+// matches its saved robot by it, since every robot ships with the same mDNS name.
+static void robotId(char out[13]) {
+    uint8_t mac[6] = {};
+    esp_read_mac(mac, ESP_MAC_BASE);
+    snprintf(out, 13, "%02x%02x%02x%02x%02x%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
 // Before the transports and the control task start: the check reads the whole dump from flash, parking the other
@@ -294,30 +304,6 @@ static void eraseConfigDirectory() {
     closedir(dir);
 }
 
-// A copy taken under the service lock: the correlation handlers run on the adapter tasks while the
-// service task may be updating the same state.
-// Written straight into the response rather than returned: the correlation handler already holds a
-// ~2 KB response on its stack, and a temporary settings copy would push it past the stack budget.
-template <typename T>
-static void snapshot(StatefulService<T> &service, T &out) {
-    service.read([&out](const T &state) { out = state; });
-}
-
-// Passwords never leave the device. The update paths treat an empty password as "keep the stored
-// one" (WiFiSettings_update / APSettings_update), so a client can round-trip these unchanged.
-static void redactedWifiSettings(api_WifiSettings &out) {
-    snapshot(wifiService, out);
-    out.applied_secret = 0;  // a hash of the secret password; it stays on the robot
-    for (pb_size_t i = 0; i < out.wifi_networks_count; i++) {
-        memset(out.wifi_networks[i].password, 0, sizeof(out.wifi_networks[i].password));
-    }
-}
-
-static void redactedApSettings(api_APSettings &out) {
-    snapshot(apService, out);
-    memset(out.password, 0, sizeof(out.password));
-}
-
 // Drops the servos before the chip goes down: the PCA9685 keeps its last outputs across an ESP reset
 // and deep sleep, so a restart would otherwise leave the legs energised while the firmware reports
 // DEACTIVATED. The control task applies the mode at its next tick, so give it a moment to reach the driver.
@@ -425,6 +411,8 @@ static void registerHandlers(CommAdapterBase &c) {
                 f.mag = robot.magnetometerPresent();
                 f.servo = true;
                 f.mdns = USE_MDNS;
+                f.settings_topics = true;
+                robotId(f.robot_id);
                 break;
             }
             case socket_message_CorrelationRequest_system_information_request_tag: {
@@ -450,11 +438,6 @@ static void registerHandlers(CommAdapterBase &c) {
                     scan.devices[scan.devices_count++].address = found.addresses[i];
                 break;
             }
-            case socket_message_CorrelationRequest_wifi_settings_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_wifi_settings_tag;
-                redactedWifiSettings(res.response.wifi_settings);
-                break;
-            }
             case socket_message_CorrelationRequest_wifi_settings_update_tag: {
                 StateUpdateResult r = wifiService.update(
                     [&req](WiFiSettings &s) {
@@ -467,7 +450,7 @@ static void registerHandlers(CommAdapterBase &c) {
                     "correlation");
                 if (r == StateUpdateResult::ERROR) res.status_code = 400;
                 res.which_response = socket_message_CorrelationResponse_wifi_settings_tag;
-                redactedWifiSettings(res.response.wifi_settings);
+                settings_topics::readRedacted(wifiService, res.response.wifi_settings);
                 break;
             }
             case socket_message_CorrelationRequest_wifi_networks_get_tag: {
@@ -480,23 +463,28 @@ static void registerHandlers(CommAdapterBase &c) {
                 else if (count == -2) res.status_code = 503;  // radio busy (STA connecting); give up
                 break;
             }
-            case socket_message_CorrelationRequest_ap_settings_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_ap_settings_tag;
-                redactedApSettings(res.response.ap_settings);
-                break;
-            }
             case socket_message_CorrelationRequest_ap_settings_update_tag: {
                 StateUpdateResult r = apService.update(
                     [&req](APSettings &s) { return APSettings_update(req.request.ap_settings_update, s); },
                     "correlation");
                 if (r == StateUpdateResult::ERROR) res.status_code = 400;
                 res.which_response = socket_message_CorrelationResponse_ap_settings_tag;
-                redactedApSettings(res.response.ap_settings);
+                settings_topics::readRedacted(apService, res.response.ap_settings);
                 break;
             }
-            case socket_message_CorrelationRequest_mdns_status_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_mdns_status_tag;
-                mdnsService.statusProto(res.response.mdns_status);
+            case socket_message_CorrelationRequest_mdns_settings_update_tag: {
+                const MDNSSettings &incoming = req.request.mdns_settings_update;
+                if (MDNSSettings_validHostname(incoming.hostname)) {
+                    // The new name is live from the service task's next pass (MDNSService::applyPendingReconfigure).
+                    mdnsService.update([&incoming](MDNSSettings &s) { return MDNSSettings_update(incoming, s); },
+                                       "correlation");
+                } else {
+                    res.status_code = 400;
+                    strncpy(res.error_message, "the hostname must be one DNS label: a-z, 0-9 and -",
+                            sizeof(res.error_message) - 1);
+                }
+                res.which_response = socket_message_CorrelationResponse_mdns_settings_tag;
+                settings_topics::readRedacted(mdnsService, res.response.mdns_settings);
                 break;
             }
             case socket_message_CorrelationRequest_mdns_query_tag: {
@@ -509,18 +497,13 @@ static void registerHandlers(CommAdapterBase &c) {
                 strncpy(res.error_message, reply.reason, sizeof(res.error_message) - 1);
                 break;
             }
-            case socket_message_CorrelationRequest_servo_settings_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_servo_settings_tag;
-                snapshot(servoSettingsService, res.response.servo_settings);
-                break;
-            }
             case socket_message_CorrelationRequest_servo_settings_update_tag: {
                 StateUpdateResult r = servoSettingsService.update(
                     [&req](ServoSettings &s) { return ServoSettings_update(req.request.servo_settings_update, s); },
                     "correlation");
                 if (r == StateUpdateResult::ERROR) res.status_code = 400;
                 res.which_response = socket_message_CorrelationResponse_servo_settings_tag;
-                snapshot(servoSettingsService, res.response.servo_settings);
+                settings_topics::readRedacted(servoSettingsService, res.response.servo_settings);
                 break;
             }
             case socket_message_CorrelationRequest_servo_centre_tag: {
@@ -531,11 +514,6 @@ static void registerHandlers(CommAdapterBase &c) {
                             sizeof(res.error_message) - 1);
                 break;
             }
-            case socket_message_CorrelationRequest_peripheral_settings_get_tag: {
-                res.which_response = socket_message_CorrelationResponse_peripheral_settings_tag;
-                snapshot(peripheralSettingsService, res.response.peripheral_settings);
-                break;
-            }
             case socket_message_CorrelationRequest_peripheral_settings_update_tag: {
                 StateUpdateResult r = peripheralSettingsService.update(
                     [&req](PeripheralSettings &s) {
@@ -544,7 +522,7 @@ static void registerHandlers(CommAdapterBase &c) {
                     "correlation");
                 if (r == StateUpdateResult::ERROR) res.status_code = 400;
                 res.which_response = socket_message_CorrelationResponse_peripheral_settings_tag;
-                snapshot(peripheralSettingsService, res.response.peripheral_settings);
+                settings_topics::readRedacted(peripheralSettingsService, res.response.peripheral_settings);
                 break;
             }
             case socket_message_CorrelationRequest_imu_calibrate_tag: {
@@ -844,7 +822,8 @@ static ProtoT latestOr(ProtoT idle) {
 
 // What a subscribe to each topic is answered with (communication/topics.h). The snapshots read the owners the bridges
 // above push from, as the replies do; none waits on an EventBus worker, and no owner pushes while holding a lock its
-// snapshot takes: MotionInbox and the services publish to the EventBus, never to an adapter.
+// snapshot takes: MotionInbox and the status services publish to the EventBus, never to an adapter, and the settings
+// services push after their update has released the lock (settings/settings_topics.h).
 static constexpr Topic TOPICS[] = {
     {MessageTraits<socket_message_IMUData>::tag, TopicKind::STREAM, nullptr},
     {MessageTraits<socket_message_ModeData>::tag, TopicKind::STATE,
@@ -894,6 +873,16 @@ static constexpr Topic TOPICS[] = {
     {MessageTraits<socket_message_TelemetryBatch>::tag, TopicKind::STREAM, nullptr},
     {MessageTraits<socket_message_GoalStatus>::tag, TopicKind::STATE,
      [](SnapshotSink &sink) { sink.put(robot.motion().goalStatus()); }},
+    {MessageTraits<api_ServoSettings>::tag, TopicKind::STATE,
+     [](SnapshotSink &sink) { settings_topics::snapshot(servoSettingsService, sink); }},
+    {MessageTraits<api_PeripheralSettings>::tag, TopicKind::STATE,
+     [](SnapshotSink &sink) { settings_topics::snapshot(peripheralSettingsService, sink); }},
+    {MessageTraits<api_WifiSettings>::tag, TopicKind::STATE,
+     [](SnapshotSink &sink) { settings_topics::snapshot(wifiService, sink); }},
+    {MessageTraits<api_APSettings>::tag, TopicKind::STATE,
+     [](SnapshotSink &sink) { settings_topics::snapshot(apService, sink); }},
+    {MessageTraits<api_MDNSSettings>::tag, TopicKind::STATE,
+     [](SnapshotSink &sink) { settings_topics::snapshot(mdnsService, sink); }},
 };
 static_assert(servesEveryTopic(TOPICS), "TOPICS serves every topic of TOPIC_KINDS, a snapshot for each state");
 
@@ -926,16 +915,18 @@ static void setupServer() {
         servoSettingsService.read([&servosCalibrated](const ServoSettings &settings) {
             servosCalibrated = ServoSettings_calibrated(settings);
         });
+        char id[13];
+        robotId(id);
         char buf[512];
         snprintf(buf, sizeof(buf),
                  "{\"camera\":%s,\"imu\":%s,\"mag\":%s,\"bmp\":false,\"mdns\":%s,\"servo\":true,"
                  "\"analytics\":true,\"sleep\":true,\"ota\":true,\"download_firmware\":true,"
                  "\"upload_firmware\":true,\"firmware_version\":\"%s\",\"firmware_name\":\"%s\","
                  "\"firmware_built_target\":\"esp32-wroom-camera\",\"firmware_elf_sha256\":\"%s\","
-                 "\"servos_calibrated\":%s}",
+                 "\"servos_calibrated\":%s,\"settings_topics\":true,\"robot_id\":\"%s\"}",
                  USE_CAMERA ? "true" : "false", robot.imuPresent() ? "true" : "false",
                  robot.magnetometerPresent() ? "true" : "false", USE_MDNS ? "true" : "false", APP_VERSION, APP_NAME,
-                 sha, servosCalibrated ? "true" : "false");
+                 sha, servosCalibrated ? "true" : "false", id);
         httpd_resp_set_type(r, "application/json");
         return httpd_resp_sendstr(r, buf);
     });
@@ -998,6 +989,13 @@ static void setupComm() {
     observeStatus<api_APStatus>();
     observeStatus<socket_message_AnimationStatus>();
     observeStatus<socket_message_GoalStatus, GoalStatusBus>();
+
+    // Every stored change to a settings group is pushed, whichever client or task made it.
+    settings_topics::pushOnChange(servoSettingsService, [](const api_ServoSettings &s) { emitAll(s); });
+    settings_topics::pushOnChange(peripheralSettingsService, [](const api_PeripheralSettings &s) { emitAll(s); });
+    settings_topics::pushOnChange(wifiService, [](const api_WifiSettings &s) { emitAll(s); });
+    settings_topics::pushOnChange(apService, [](const api_APSettings &s) { emitAll(s); });
+    settings_topics::pushOnChange(mdnsService, [](const api_MDNSSettings &s) { emitAll(s); });
 
     // A client that leaves ends the goal it asked for; losing the last client on every transport stops an animation,
     // so nothing walks or plays unattended.
@@ -1161,6 +1159,7 @@ static void serviceLoop(void *) {
         EXECUTE_EVERY_N_MS(1000, otaSession.expire(esp_timer_get_time() / 1000));
         sendTelemetry();
         answerMdnsScan();
+        mdnsService.applyPendingReconfigure(!mdnsScan.idle());
         resendDroppedState();
         EXECUTE_EVERY_N_MS(2000, {
             // sample() keeps running regardless: its uint32 idle-counter deltas only stay valid

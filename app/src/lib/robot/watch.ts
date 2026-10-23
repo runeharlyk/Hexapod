@@ -7,7 +7,8 @@ const NOTHING_YET: Watched<never> = {
   value: undefined,
   status: 'subscribing',
   stale: false,
-  failure: null
+  failure: null,
+  pending: false
 }
 
 /**
