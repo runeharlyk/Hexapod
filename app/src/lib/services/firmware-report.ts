@@ -8,12 +8,13 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 /** The report in an /api/features answer; null when the answer is not one. */
 export const parseFirmwareReport = (features: unknown): FirmwareReport | null => {
   if (!isObject(features)) return null
-  const { firmware_version, firmware_elf_sha256, servos_calibrated } = features
+  const { firmware_version, firmware_elf_sha256, servos_calibrated, robot_id } = features
   if (typeof firmware_version !== 'string' || !firmware_version) return null
   return {
     version: firmware_version,
     build: typeof firmware_elf_sha256 === 'string' ? firmware_elf_sha256 : '',
-    servosCalibrated: typeof servos_calibrated === 'boolean' ? servos_calibrated : null
+    servosCalibrated: typeof servos_calibrated === 'boolean' ? servos_calibrated : null,
+    robotId: typeof robot_id === 'string' && robot_id ? robot_id : null
   }
 }
 

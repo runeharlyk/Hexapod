@@ -1,4 +1,4 @@
-import { persistentStore } from '$lib/utilities'
+import { persistentStore } from '$lib/utilities/svelte-utilities'
 import { writable } from 'svelte/store'
 import appEnv from 'app-env'
 

@@ -20,6 +20,11 @@ export const MDNS_LIMITS = {
   globalTxt: 2
 } as const
 
+// The firmware refuses a host name that is not one DNS label (settings/mdns_settings.h): a-z, 0-9 and -, none at an end.
+export const HOSTNAME_PATTERN = String.raw`[a-z0-9](?:[a-z0-9\-]{0,${MDNS_LIMITS.hostname - 2}}[a-z0-9])?`
+
+export const isHostname = (value: string) => new RegExp(`^${HOSTNAME_PATTERN}$`).test(value)
+
 const HTTP: ServiceType = { service: '_http', protocol: '_tcp' }
 
 export const localName = (hostname: string) => `${hostname}.local`

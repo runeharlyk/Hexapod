@@ -152,6 +152,9 @@ const readInBackground = () => {
   })
 }
 
+/** The flags as they stand, without reading them: what the robot reported last, or all false while none is in. */
+export const currentFeatureFlags: Readable<Features> = { subscribe: flags.subscribe }
+
 /** The robot's flags. Reads them unless they are in or being read, so a page that mounts after a failure retries. */
 export function useFeatureFlags(): Readable<Features> {
   if (get(state).kind !== 'known' && !reading) readInBackground()
