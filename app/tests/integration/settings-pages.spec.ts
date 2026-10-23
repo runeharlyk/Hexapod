@@ -231,7 +231,7 @@ test('deleting a network before the selected one keeps the selection on its netw
   page
 }) => {
   const robot = stockRobot()
-  robot.held.wifiSettings = { ...robot.held.wifiSettings, selectedNetwork: 1 }
+  robot.hold('wifiSettings', { ...robot.held.wifiSettings, selectedNetwork: 1 })
   const { robot: served } = await serveStockRobot(page, robot)
   await page.goto(`${base}/wifi/sta`)
 

@@ -5,38 +5,30 @@
   import Advanced from '$lib/components/layout/Advanced.svelte'
   import Field from '$lib/components/layout/Field.svelte'
   import SettingsForm from '$lib/components/layout/SettingsForm.svelte'
+  import ChangedNote from '$lib/components/layout/ChangedNote.svelte'
   import { Settings } from '$lib/components/layout/settings.svelte'
-  import { dataBroker } from '$lib/transport/databroker'
-  import { ask } from '$lib/transport/reply'
-  import type { PeripheralSettings } from '$lib/platform_shared/api'
+  import { topicSource } from '$lib/robot/settings-sources'
+  import { PeripheralSettings } from '$lib/platform_shared/api'
 
-  const settings = new Settings<PeripheralSettings>({
-    what: 'the I2C settings',
-    read: async () => {
-      const res = await ask(dataBroker, { peripheralSettingsGet: {} }, 'the I2C settings')
-      if (!res.peripheralSettings) throw new Error('the reply carried no settings')
-      return res.peripheralSettings
-    },
-    // The firmware rejects out-of-range pins or frequencies with 400 and keeps the stored config.
-    write: async value => {
-      const res = await ask(
-        dataBroker,
-        {
-          peripheralSettingsUpdate: {
-            ...value,
-            sda: Number(value.sda),
-            scl: Number(value.scl),
-            frequency: Number(value.frequency),
-            pins: []
-          }
-        },
-        'the I2C configuration'
-      )
-      return res.peripheralSettings
-    },
-    // The bus is opened once at boot, so new pins take effect on the next restart.
-    saved: 'I2C configuration saved - restart the robot to apply it.'
-  })
+  const settings = new Settings<PeripheralSettings>(
+    topicSource(PeripheralSettings, {
+      what: 'the I2C settings',
+      // The bus is opened once at boot, so new pins take effect on the next restart.
+      saved: 'I2C configuration saved - restart the robot to apply it.',
+      // The firmware rejects out-of-range pins or frequencies with 400 and keeps the stored config.
+      update: value => ({
+        peripheralSettingsUpdate: {
+          ...value,
+          sda: Number(value.sda),
+          scl: Number(value.scl),
+          frequency: Number(value.frequency),
+          pins: []
+        }
+      }),
+      // The pin list is one field: a push that changes its length replaces it whole.
+      together: [['pins']]
+    })
+  )
 
   const confirm = (save: () => void) =>
     modals.open(ConfirmDialog, {
@@ -62,11 +54,12 @@
   rows={1}
   {confirm}
 >
-  {#snippet children(form)}
+  {#snippet children(form, notes)}
     <Field label="Frequency" for="frequency" hint="100000 to 400000 Hz">
       <label class="input validator w-full">
         <input
           id="frequency"
+          name="frequency"
           type="number"
           required
           min="100000"
@@ -75,6 +68,7 @@
         />
         <span class="label">Hz</span>
       </label>
+      <ChangedNote {notes} field="frequency" />
     </Field>
     <Advanced
       title="Pins"
@@ -83,6 +77,7 @@
       <Field label="SDA" for="sda" hint="GPIO 0 to 48">
         <input
           id="sda"
+          name="sda"
           class="input validator w-full"
           type="number"
           required
@@ -90,10 +85,12 @@
           max="48"
           bind:value={form.sda}
         />
+        <ChangedNote {notes} field="sda" />
       </Field>
       <Field label="SCL" for="scl" hint="GPIO 0 to 48">
         <input
           id="scl"
+          name="scl"
           class="input validator w-full"
           type="number"
           required
@@ -101,6 +98,7 @@
           max="48"
           bind:value={form.scl}
         />
+        <ChangedNote {notes} field="scl" />
       </Field>
     </Advanced>
   {/snippet}

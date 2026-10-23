@@ -37,7 +37,18 @@ const SHARED: { topics: { name: string; tag: number; kind: string }[] } = topics
 
 const camel = (name: string) => name.replace(/_(\w)/g, (_, c: string) => c.toUpperCase())
 
-// Each state topic's value at boot, keyed by its field in the Message oneof: the idle values the firmware reports.
+/** The mDNS settings of a robot fresh from the factory (firmware/include/settings/mdns_settings.h, MDNSSettings_defaults). */
+export const FACTORY_MDNS_SETTINGS = MDNSSettings.create({
+  hostname: 'hexapod',
+  instance: 'Hexapod',
+  services: [
+    { service: '_http', protocol: '_tcp', port: 80, txtRecords: [] },
+    { service: '_ws', protocol: '_tcp', port: 80, txtRecords: [] }
+  ]
+})
+
+// Each state topic's value at boot, keyed by its field in the Message oneof: empty, but for the mDNS settings, which
+// are the factory's. A robot that holds settings of its own (StockRobot) passes its values for the other four.
 const BOOT_VALUES: Record<string, unknown> = {
   mode: ModeData.create(),
   angles: AnglesData.create(),
@@ -51,7 +62,7 @@ const BOOT_VALUES: Record<string, unknown> = {
   peripheralSettings: PeripheralSettings.create(),
   wifiSettings: WifiSettings.create(),
   apSettings: APSettings.create(),
-  mdnsSettings: MDNSSettings.create()
+  mdnsSettings: FACTORY_MDNS_SETTINGS
 }
 
 const requestKeyOf = (request: CorrelationRequest) =>

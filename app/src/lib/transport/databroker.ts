@@ -16,7 +16,8 @@ import { SETTING_GRACE_MS, kindOfRequest } from './request-kinds'
 
 const PING_INTERVAL_MS = 4000
 const PONG_TIMEOUT_MS = 12000
-const REQUEST_TIMEOUT_MS = 15000
+/** How long a request waits for its reply, counted from the call. */
+export const REQUEST_TIMEOUT_MS = 15000
 
 export class DataBroker {
   private transports: ITransport[] = []
@@ -45,11 +46,14 @@ export class DataBroker {
   private framesHeard = 0
   private ackHeard = false
   private readonly stateLink: StateLink = {
-    linked: () => this.activeTransport() !== undefined,
+    linked: () => this.linked(),
     subscribe: tag => this.sendSubscribe(tag),
     framesHeard: () => this.framesHeard,
-    ackHeard: () => this.ackHeard
+    ackHeard: () => this.ackHeard,
+    writing: tag => (this.writes.get(tag) ?? 0) > 0
   }
+  // The writes in flight to each state topic (writing()).
+  private writes = new Map<number, number>()
 
   // Held while no transport is connected, sent once one connects, so requests aren't lost.
   private deferred: Array<{
@@ -59,6 +63,11 @@ export class DataBroker {
     reject: (e: Error) => void
   }> = []
   private static readonly MAX_DEFERRED = 16
+
+  /** Whether a link is up. */
+  linked(): boolean {
+    return this.activeTransport() !== undefined
+  }
 
   request(
     payload: Omit<CorrelationRequest, 'correlationId'>,
@@ -198,6 +207,28 @@ export class DataBroker {
       this.stateListeners.delete(tag)
       if (listener) this.off(tag, listener)
     }
+  }
+
+  /**
+   * Counts a write into a state topic's `pending` (transport/topics.ts): true while any write is under way. Returns the
+   * function that ends this write, which the reply settling it calls; calling it again changes nothing.
+   */
+  writing<T>(fns: MessageFns<T>): () => void {
+    const tag = tagOf(fns)
+    this.countWrites(tag, 1)
+    let ended = false
+    return () => {
+      if (ended) return
+      ended = true
+      this.countWrites(tag, -1)
+    }
+  }
+
+  private countWrites(tag: number, change: number) {
+    const count = (this.writes.get(tag) ?? 0) + change
+    if (count > 0) this.writes.set(tag, count)
+    else this.writes.delete(tag)
+    this.states.get(tag)?.writesChanged()
   }
 
   /** Forgets every state topic's value and asks the robot again, for a link that may reach another robot. */

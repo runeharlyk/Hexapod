@@ -3,11 +3,12 @@
   import LegDiagram from '$lib/components/LegDiagram.svelte'
   import Section from '$lib/components/layout/Section.svelte'
   import SettingsForm from '$lib/components/layout/SettingsForm.svelte'
+  import ChangedNote from '$lib/components/layout/ChangedNote.svelte'
   import { Settings } from '$lib/components/layout/settings.svelte'
-  import { dataBroker } from '$lib/transport/databroker'
-  import { ask } from '$lib/transport/reply'
-  import type { ServoSettings } from '$lib/platform_shared/api'
+  import { topicSource } from '$lib/robot/settings-sources'
+  import { ServoSettings } from '$lib/platform_shared/api'
   import { shortestFloat32 } from '$lib/utilities'
+  import { derived } from 'svelte/store'
 
   let { pwm = $bindable(306), servoId = $bindable(0) } = $props()
 
@@ -23,19 +24,19 @@
     }))
   })
 
-  const settings = new Settings<ServoSettings>({
+  // The robot refuses the whole calibration with a 400 when one servo is out of range, and keeps the one it had.
+  const source = topicSource(ServoSettings, {
     what: 'the servo calibration',
-    read: async () => {
-      const res = await ask(dataBroker, { servoSettingsGet: {} }, 'the servo calibration')
-      if (!res.servoSettings) throw new Error('the reply carried no calibration')
-      return shown(res.servoSettings)
-    },
-    // The robot refuses the whole calibration with a 400 when one servo is out of range, and keeps the one it had.
-    write: async value => {
-      const res = await ask(dataBroker, { servoSettingsUpdate: value }, 'the servo calibration')
-      return res.servoSettings && shown(res.servoSettings)
-    },
-    saved: 'Servo calibration saved.'
+    saved: 'Servo calibration saved.',
+    update: value => ({ servoSettingsUpdate: value }),
+    together: []
+  })
+  const settings = new Settings<ServoSettings>({
+    ...source,
+    watched: derived(source.watched, state => ({
+      ...state,
+      value: state.value && shown(state.value)
+    }))
   })
 
   // The robot takes a conversion above 0, which no number input's min can say, so the field says it itself.
@@ -65,11 +66,11 @@
   rows={6}
 >
   {#snippet actions()}
-    <button type="button" class="btn btn-sm" disabled={settings.saving} onclick={setServoCenter}>
+    <button type="button" class="btn btn-sm" disabled={settings.pending} onclick={setServoCenter}>
       Set servo {servoId} centre to {pwm}
     </button>
   {/snippet}
-  {#snippet children(form)}
+  {#snippet children(form, notes)}
     <div class="overflow-x-auto">
       <table class="table-sm table">
         <thead>
@@ -89,6 +90,7 @@
                 <input
                   type="number"
                   class="input input-sm validator w-20"
+                  name="servos.{index}.centerPwm"
                   aria-label="Servo {index} centre PWM"
                   aria-describedby="servo-limits"
                   title="80 to 600"
@@ -98,11 +100,13 @@
                   step="any"
                   bind:value={servo.centerPwm}
                 />
+                <ChangedNote {notes} field="servos.{index}.centerPwm" />
               </td>
               <td>
                 <button
                   type="button"
                   class="btn btn-sm btn-ghost btn-square"
+                  name="servos.{index}.direction"
                   title="Toggle direction ({servo.direction})"
                   aria-label="Servo {index} direction {servo.direction}"
                   onclick={() => (servo.direction = servo.direction === 1 ? -1 : 1)}
@@ -113,11 +117,13 @@
                     <RotateCcw class="size-4" />
                   {/if}
                 </button>
+                <ChangedNote {notes} field="servos.{index}.direction" />
               </td>
               <td>
                 <input
                   type="number"
                   class="input input-sm validator w-20"
+                  name="servos.{index}.centerAngle"
                   aria-label="Servo {index} centre angle"
                   aria-describedby="servo-limits"
                   title="-180 to 180"
@@ -127,11 +133,13 @@
                   step="any"
                   bind:value={servo.centerAngle}
                 />
+                <ChangedNote {notes} field="servos.{index}.centerAngle" />
               </td>
               <td>
                 <input
                   type="number"
                   class="input input-sm validator w-20"
+                  name="servos.{index}.conversion"
                   aria-label="Servo {index} conversion"
                   aria-describedby="servo-limits"
                   title="Above 0, up to 100"
@@ -141,6 +149,7 @@
                   bind:value={servo.conversion}
                   use:aboveZero={servo.conversion}
                 />
+                <ChangedNote {notes} field="servos.{index}.conversion" />
               </td>
             </tr>
           {/each}
