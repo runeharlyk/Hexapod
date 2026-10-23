@@ -10,6 +10,7 @@
 #include <imu_frame.h>
 #include <odometry.h>
 #include <virtual_robot.h>
+#include <event_bus.h>
 
 namespace {
 
@@ -471,7 +472,7 @@ float yawWalkedOnGyro(VirtualRobot &robot, float rate) {
 
 } // namespace
 
-void setUp() {}
+void setUp() { host_bus::resetAll(); }
 // The IMU stand-in is process-wide, so a test that feeds it a yaw or a rate must not hand it on, even when it fails.
 void tearDown() {
     Peripherals::setImu({});
