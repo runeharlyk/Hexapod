@@ -358,5 +358,24 @@ Its docstring describes the course file; on a rendered video the track comes wit
 `score_track.py` aligns the track's clock with a `record.py` recording on the start motion (open a course with a turn in place from standing), then prints, per estimate, the distance made good, the position and yaw error, the yaw drift per metre walked and the ratio of the paths.
 The estimate is the commanded motion, each tick's sticks through the speed model in WALK, so a recording that walked at a nonzero stride (the ninth command entry of a tick) is refused; the firmware's odometry (the ticks' `odom_x`, `odom_y` and `odom_yaw`) is scored beside it when the recording carries it.
 `measure_pwm_per_degree.py` sets the nominal stand height, switches the robot to IDLE and steps the six femurs through raw PWMs, left side against right, and fits the counts per degree that make the firmware's leg geometry predict the body roll each step gave; `test_measure_pwm.py` recovers a scale injected into the simulated servos within 2 %.
-On the robot it needs the real backend's roll, `servo_calibration` and `set_servo_pwm`, which are being added to `src/hexapod/backends/real.py`; until then it refuses and names what is missing.
+On the robot it reads the roll from the DMP's pitch (`docs/conventions.md`, IMU angles), the calibration from the servo settings, and writes raw PWMs as the servo page does, over WiFi or the native USB port.
 The operator stands the robot on a flat, level floor before running it; the script refuses a robot that is not standing still.
+
+## Hardware session
+
+Two scripts run the measurements of a session at the robot, in the order of `docs/hardware-acceptance.md` (Session checklist); `--sim` runs either on the MuJoCo model with no questions asked.
+
+```sh
+uv run python bench_floor.py run --host <ip> --out floor-<date>                   # rest, turn, tri, metre, square, circle
+uv run python bench_floor.py report floor-<date> --track track.csv                # summary.md again, scored against the camera
+uv run python servo_envelope.py --host <ip> --out envelope-<date> move travel     # the femur's 60 deg move and each joint's travel
+```
+
+`bench_floor.py` records each run to a `.hexrec` through `Robot.recording()` and writes `summary.md`, whose tables (forward speed against the speed model, the DMP's yaw rate, the 1 m goal walks, the square's and the circle's closure, the IMU at rest) are written for `docs/sim-to-real.md`.
+It takes a robot that reports DEACTIVATED only, checks that it stands level before every run, and lowers it and switches it off after each run and on Ctrl-C.
+It must be the robot's only driver: an open app re-sends centred sticks every 200 ms, which the firmware takes as the last writer, so a velocity run whose recording shows any other command inside the script's hold is marked INVALID and its speed or rate left out.
+`servo_envelope.py` swings a femur in IDLE through `Robot.set_joint()` (`JointAngleData`) and steps each joint of a leg within its servo's calibrated pulse range and the firmware's limit, asking the operator what they see (Enter stops, only `f` steps on); the servos report no position, so the move time comes from a slow-motion video and the dwell sweep's bounds, and the telemetry gives each command's tick, its write and the IMU's response.
+Their tests (`test_bench_floor.py`, `test_servo_envelope.py`) run every routine on the simulation, against a camera track made from the model's true pose and a MuJoCo femur that must reach each commanded angle.
+
+`Robot.recording(path)` writes the telemetry to a `.hexrec` while its block runs, from the robot over the facade's own link, and from the simulation as the firmware's own `TickSample` of every tick, which the host's servo stand-in leaves without PWM and write time.
+`score_track.py` aligns a run of goal moves on its odometry, as a goal's sticks are written by the firmware and the telemetry's command does not carry them.

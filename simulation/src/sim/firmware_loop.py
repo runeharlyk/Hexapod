@@ -3,6 +3,8 @@ the code main.cpp's control task runs) reads the simulated IMU and drives the se
 tick. Modes, gaits, sticks and goals reach it as a transport delivers them, and the current sticks are sent again every
 20 ms, as the app's heartbeat does, so a held command outlasts the firmware's dead-man timeout as it does on the robot.
 """
+from collections.abc import Callable
+
 import numpy as np
 
 from src.sim.firmware_policy import dmp_angles
@@ -35,7 +37,8 @@ class FirmwareLoop:
         self._mode = DEACTIVATED
         self._mode_undelivered = False  # a mode request reaches the motion on the next tick
         self._sticks = None
-        self._writes = 0
+        self._writes = (0, 0)
+        self.observers: list[Callable[[], None]] = []  # called after every tick, in order
 
     def set_mode(self, mode: int) -> None:
         if mode != self._mode:
@@ -95,9 +98,10 @@ class FirmwareLoop:
         self.robot.set_imu(*imu_reading(self.sim.base_quat(), gyro))
         self.robot.tick()
         self.sim.set_powered(self.robot.servos_driven())
-        # Only a tick that wrote a pose moves the targets: in IDLE a raw PWM write holds, as on the robot.
-        if self.robot.servo_writes() != self._writes:
-            self._writes = self.robot.servo_writes()
+        # Only a tick that wrote a pose or a joint moves the targets: in IDLE a raw PWM write holds, as on the robot.
+        writes = (self.robot.servo_writes(), self.robot.joint_writes())
+        if writes != self._writes:
+            self._writes = writes
             self.sim.set_joint_targets(np.radians(self.robot.servo_angles()))
         self._mode_undelivered = False
         self.ticks += 1
@@ -105,6 +109,8 @@ class FirmwareLoop:
         due = int(round(self.ticks * FIRMWARE_DT / self.sim.model.opt.timestep))
         self.sim.step_physics(due - self.physics_steps)
         self.physics_steps = due
+        for observer in self.observers:
+            observer()
 
     def _send(self, sticks: dict) -> None:
         self._sticks = sticks

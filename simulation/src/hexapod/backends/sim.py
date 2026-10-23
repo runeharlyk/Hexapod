@@ -1,24 +1,53 @@
 """The MuJoCo hexapod behind the backend interface: the firmware's STAND/WALK loop, stepped only inside sleep().
 
 It takes the same sticks the real robot does, from the same speed model, so a script behaves alike on both. It does
-not model the link: no command is ever lost, so the dead-man stop never fires and link_drops stays 0.
+not model the link: no command is ever lost, so the dead-man stop never fires and link_drops stays 0. Its telemetry is
+the firmware's own TickSample of every tick, on the simulation's clock, with no compute time and no PWM or write time,
+which the host's servo stand-in does not have.
 """
 import math
 import time
+from collections.abc import Callable
 from dataclasses import replace
 
 import numpy as np
 
 from ...sim.firmware_loop import FIRMWARE_DT, FirmwareLoop
 from ...sim.mj_runtime import HexapodSim
+from ...sim.virtual_robot import firmware_version
 from .. import speed_model
 from ..servos import FACTORY, NUM_SERVOS, ServoCalibration
 from .base import Gait, Goal, GoalStatus, Mode, Odometry, RobotDisconnected, RobotError, RobotState, Style, Velocity
+from .messages import pb
 
 POWERED = (Mode.STAND, Mode.WALK, Mode.IDLE)
 # Why the firmware refuses a goal (main.cpp goalRefusal), for the transport the simulation has none of.
 REFUSALS = {400: "a malformed goal or style", 409: "only a standing or walking robot takes a goal",
             422: "no goal walks in this style: TUNED, or no speed at its posture"}
+BATCH_TICKS = 5  # platform_shared/message.options: TelemetryBatch.ticks max_count
+TICK_US = round(FIRMWARE_DT * 1e6)
+
+
+class TelemetryStream:
+    """The robot's telemetry from the virtual robot, as main.cpp's control loop and sendTelemetry make it: each tick's
+    TickSample with the loop's seq, start time and period, in batches of BATCH_TICKS, each handed to the sink with its
+    last tick's time. A batch not yet full when the stream stops is dropped, as the robot drops its leftovers."""
+
+    def __init__(self, loop: FirmwareLoop, sink: Callable[[bytes, int], None]):
+        self._loop, self._sink = loop, sink
+        self._batch, self._sent = pb.TelemetryBatch(), 0
+
+    def __call__(self) -> None:
+        tick = self._batch.ticks.add()
+        tick.ParseFromString(self._loop.robot.telemetry_sample())
+        tick.seq = self._loop.ticks - 1
+        tick.t_us = tick.seq * TICK_US
+        tick.period_us = TICK_US
+        if len(self._batch.ticks) == BATCH_TICKS:
+            self._batch.batch_seq = self._sent
+            self._sent += 1
+            self._sink(pb.Message(telemetry_batch=self._batch).SerializeToString(), tick.t_us)
+            self._batch = pb.TelemetryBatch()
 
 
 class ServoOutput:
@@ -61,11 +90,14 @@ class SimBackend:
         self._gait = Gait.TRI_GATE
         self._style = Style()  # the posture and stride every command carries: set_height's height, then each goal's
         self._sticks = speed_model.CENTRED
+        self._observers: list[Callable[[], None]] = []
+        self._telemetry: TelemetryStream | None = None
 
     def connect(self) -> None:
         self.sim.reset_to_stand()
         self._servos = ServoOutput(self.sim, FACTORY, self._servo_scale)
         self._loop = FirmwareLoop(self._servos, self._gait)
+        self._loop.observers = self._observers
         self.set_mode(self._mode)
         if self._show:
             import mujoco.viewer
@@ -134,6 +166,28 @@ class SimBackend:
 
     def servo_calibration(self) -> ServoCalibration:
         return FACTORY
+
+    def on_tick(self, observer: Callable[[], None]) -> None:
+        """Calls `observer` after every firmware tick from now, with the physics stepped to the tick's end."""
+        self._observers.append(observer)
+
+    def features(self) -> dict:
+        return {"firmwareName": "Hexapod", "firmwareVersion": firmware_version(), "imu": True, "servo": True,
+                "backend": "simulation"}
+
+    def stream_telemetry(self, sink) -> None:
+        if self._telemetry is not None:
+            self._observers.remove(self._telemetry)
+            self._telemetry = None
+        if sink is not None:
+            self._telemetry = TelemetryStream(self._loop, sink)
+            self.on_tick(self._telemetry)
+
+    def set_joint(self, servo: int, degrees: float) -> None:
+        """MotionService::setJoint, on the next tick; in IDLE alone, so in any other mode it moves nothing."""
+        if not 0 <= servo < NUM_SERVOS:
+            raise RobotError(f"no servo {servo} (0-{NUM_SERVOS - 1})")
+        self._loop.robot.set_joint(servo, degrees)
 
     def supports_goals(self) -> bool:
         return True

@@ -15,8 +15,10 @@ class VirtualRobot {
   public:
     static constexpr int64_t TICK_US = 5000;
 
+    // Starts over from a level, still IMU as well, which the stand-in otherwise keeps from the robot before.
     VirtualRobot() {
         ServoController::reset();
+        Peripherals::setImu({});
         _robot.initialize();
         host_bus::drainAll();
     }
@@ -64,6 +66,9 @@ class VirtualRobot {
         _robot.fillTelemetry(_sample);
     }
 
+    // The last tick's telemetry as Hexapod::fillTelemetry fills it; the control loop's seq, t_us, period_us and
+    // compute_us (main.cpp) are left at 0.
+    const socket_message_TickSample &sample() const { return _sample; }
     // The joint angles the motion produced on the last tick, in degrees, three per leg in leg order.
     const float *angles() const { return _sample.angles; }
     MOTION_STATE mode() const { return static_cast<MOTION_STATE>(_sample.mode); }

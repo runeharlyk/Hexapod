@@ -44,9 +44,11 @@ import time
 from dataclasses import replace
 
 import websockets
+from google.protobuf import json_format
 from google.protobuf.message import DecodeError
 
 from .. import speed_model
+from ..servos import NUM_SERVOS, ServoCalibration
 from .base import (Gait, Goal, GoalStatus, Mode, Odometry, RobotDisconnected, RobotError, RobotState, RobotTimeout,
                    Style, Velocity)
 from .messages import pb
@@ -67,6 +69,9 @@ ODOMETRY_ZERO = 1e-4  # m and rad: what a reset pose reads, a still robot's tick
 # The DMP yaw (mpu6050.h dmpGetYawPitchRoll) is atan2(2(xy - wz), 2(w^2 + x^2) - 1), clockwise-positive about the
 # chip's Z axis, and the chip's Z points up (its gravity vector reads world-up at rest, peripherals.h).
 IMU_YAW_SIGN = -1.0
+# The DMP's pitch is about the body's x axis, and a right side 17.7 deg down read -17.7 deg (docs/conventions.md, IMU
+# angles); REP-103's roll is left side up, which is right side down, so it is the pitch negated.
+IMU_ROLL_FROM_PITCH = -1.0
 
 
 def _tag(name: str) -> int:
@@ -83,8 +88,12 @@ class WebSocketTransport:
         self.name = f"the robot at {self._url}"
         self._socket = None
 
+    # A host that answers HTTP but no WebSocket there (a wrong address on the network) fails the handshake.
     async def open(self) -> None:
-        self._socket = await websockets.connect(self._url, open_timeout=REPLY_TIMEOUT_S, close_timeout=1)
+        try:
+            self._socket = await websockets.connect(self._url, open_timeout=REPLY_TIMEOUT_S, close_timeout=1)
+        except websockets.exceptions.WebSocketException as error:
+            raise RobotDisconnected(f"{self.name} opened no WebSocket: {error}") from error
 
     async def send(self, message: pb.Message) -> None:
         try:
@@ -137,6 +146,11 @@ class SerialTransport:
             self._link.close()
 
 
+def _check_servo(servo: int) -> None:
+    if not 0 <= servo < NUM_SERVOS:
+        raise RobotError(f"no servo {servo} (0-{NUM_SERVOS - 1})")
+
+
 def _known_mode(value: int) -> Mode | None:
     """The mode a reported value is, or None for one this facade has none of, such as POSE's 2 from older firmware:
     unknown, so no heartbeat keeps a walk alive in it."""
@@ -160,6 +174,10 @@ class RealBackend:
         self._mode: Mode | None = None
         self._gait: Gait | None = None
         self._yaw: float | None = None
+        self._roll: float | None = None
+        self._features: dict = {}
+        # Where each telemetry batch goes while a recording runs (stream_telemetry); called on the loop's thread.
+        self._telemetry = None
         self._sticks = speed_model.CENTRED
         self._handheld = False
         self._snapshots = False  # the firmware answers a subscribe with the current value and an ack
@@ -185,6 +203,7 @@ class RealBackend:
             acks = self._run(self._open(), READY_TIMEOUT_S + 1)
             features = self._run(self._ask(pb.CorrelationRequest(features_data_request=pb.FeaturesDataRequest())))
             self._imu = features.features_data_response.imu
+            self._features = json_format.MessageToDict(features.features_data_response)
             mode_acked = self._run(self._acked(acks["mode"])) is not None
             # A firmware from before the snapshots acks none of these; one ack lost on the way is no such firmware.
             self._snapshots = mode_acked or any(ack.done() for ack in acks.values())
@@ -279,6 +298,11 @@ class RealBackend:
                 self._gait = Gait(message.gait.gait)
             elif kind == "imu":
                 self._yaw = IMU_YAW_SIGN * math.degrees(message.imu.z)
+                self._roll = IMU_ROLL_FROM_PITCH * math.degrees(message.imu.y)
+            elif kind == "telemetry_batch":
+                if self._telemetry is not None:
+                    self._telemetry(message.SerializeToString(), round(arrived * 1e6))
+                return
             elif kind == "pongmsg" and self._pings:
                 previous = self._pings.popleft()
                 if previous is not None and previous[1] and arrived - previous[0] > STEERING_TIMEOUT_S:
@@ -426,7 +450,8 @@ class RealBackend:
             if self._error is not None:
                 raise self._error
             return RobotState(t=time.monotonic(), mode=self._mode, gait=self._gait,
-                              yaw=self._yaw if self._imu else None, link_drops=self._drops, handheld=self._handheld)
+                              yaw=self._yaw if self._imu else None, link_drops=self._drops,
+                              roll=self._roll if self._imu else None, handheld=self._handheld)
 
     # Subscribes to the mode again, for its snapshot. A firmware from before the snapshots answers nothing but pushes
     # every change, so the mode last heard is then as current as any. From a firmware that answers subscribes, an ack
@@ -444,6 +469,37 @@ class RealBackend:
 
     def now(self) -> float:
         return time.monotonic()
+
+    def features(self) -> dict:
+        return dict(self._features)
+
+    # The robot streams a batch every 25 ms while anyone subscribes, and stops recording once nobody does.
+    def stream_telemetry(self, sink) -> None:
+        with self._changed:
+            self._telemetry = sink
+        tag = _tag("telemetry_batch")
+        if sink is None:
+            self._run(self._send(pb.Message(unsub_notif=pb.UnsubscribeNotification(tag=tag))))
+        else:
+            self._run(self._send(pb.Message(sub_notif=pb.SubscribeNotification(tag=tag))))
+
+    def servo_calibration(self) -> ServoCalibration:
+        servos = self._run(self._ask(pb.CorrelationRequest(servo_settings_get={}))).servo_settings.servos
+        if len(servos) != NUM_SERVOS:
+            raise RobotError(f"the robot's servo settings hold {len(servos)} servos, not {NUM_SERVOS}")
+        return ServoCalibration(center_pwm=tuple(s.center_pwm for s in servos),
+                                direction=tuple(s.direction for s in servos),
+                                center_angle=tuple(s.center_angle for s in servos),
+                                conversion=tuple(s.conversion for s in servos))
+
+    # main.cpp hands it to ServoController, which writes it in any mode; only IDLE leaves it in place.
+    def set_servo_pwm(self, servo: int, pwm: int) -> None:
+        _check_servo(servo)
+        self._run(self._send(pb.Message(servo_pwm=pb.ServoPWMData(servo_id=servo, servo_pwm=pwm))))
+
+    def set_joint(self, servo: int, degrees: float) -> None:
+        _check_servo(servo)
+        self._run(self._send(pb.Message(joint_angle=pb.JointAngleData(servo=servo, degrees=degrees))))
 
     def supports_goals(self) -> bool:
         return self._goals

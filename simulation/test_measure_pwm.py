@@ -117,12 +117,3 @@ def test_the_measurement_refuses_a_robot_that_does_not_stand_still():
         measurement.measure(robot)
     assert backend.state().mode is Mode.STAND
 
-
-def test_a_backend_without_raw_servo_access_is_refused_by_name():
-    class NoServos:
-        def servo_calibration(self):
-            raise AssertionError("not called")
-
-    with pytest.raises(measurement.Refused, match="NoServos has no set_servo_pwm,"):
-        measurement.require_servo_access(NoServos())
-    measurement.require_servo_access(SimBackend())

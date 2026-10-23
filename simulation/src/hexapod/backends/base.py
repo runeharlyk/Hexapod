@@ -6,6 +6,7 @@ REP x = body Y, REP y = -body X, REP yaw = yaw about body Z (both frames are rig
 Goals and the odometry cross it the same way, with their angles in degrees on this side and radians on the robot's.
 """
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Protocol
@@ -186,6 +187,14 @@ class Backend(Protocol):
     def sleep(self, seconds: float) -> None: ...
     def servo_calibration(self) -> ServoCalibration: ...
     def set_servo_pwm(self, servo: int, pwm: int) -> None: ...  # ServoPWMData: one servo's raw PCA9685 counts
+    # JointAngleData: one joint to an angle in degrees as the telemetry reports its angles; taken in IDLE alone.
+    def set_joint(self, servo: int, degrees: float) -> None: ...
+    # The robot's FeaturesDataResponse in protobuf's JSON names (firmwareVersion, firmwareElfSha256), as a recording's
+    # header keeps it.
+    def features(self) -> dict: ...
+    # Hands every TelemetryBatch to sink(frame, host_us), the encoded Message and its arrival in microseconds, until
+    # called with None, after which the sink is not called again.
+    def stream_telemetry(self, sink: Callable[[bytes, int], None] | None) -> None: ...
     def supports_goals(self) -> bool: ...
     # Centres the sticks, which the goal takes over, and keeps the style's posture in every input after it; raises
     # RobotError when the robot refuses the goal.
