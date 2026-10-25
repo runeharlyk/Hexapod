@@ -12,6 +12,7 @@
   import { HexapodSim } from '$lib/simulation/hexapod-sim'
   import type { VirtualRobot } from '$lib/simulation/virtual-robot'
   import { mountModel } from '$lib/simulation/model-mount'
+  import { notifications } from '$lib/components/toasts/notifications'
 
   // The 3D view draws 12 mm per scene unit.
   const SCENE_UNITS_PER_METRE = 1000 / 12
@@ -31,11 +32,14 @@
   let lastFrame = 0
   let destroyed = false
   let unsubscribers: (() => void)[] = []
+  let pendingAnimation: (() => void) | undefined
   const followed = new Vector3()
   const robotWorld = new Vector3()
 
   async function start() {
     status = 'loading'
+    simulation.player.set(null)
+    simulation.animationStatus.set(null)
     try {
       const [{ mujoco, robot: loaded, sceneXml }, urdf] = await Promise.all([
         loadSimulation(),
@@ -48,11 +52,22 @@
       ;[model, jointNames] = urdf.inner
       placeModel(model)
       unsubscribers = [
-        simulation.mode.subscribe(m => robot?.setMode(modeToWire(m))),
+        simulation.mode.subscribe(m => {
+          pendingAnimation = undefined
+          robot?.setMode(modeToWire(m))
+        }),
         simulation.gait.subscribe(g => robot?.setGait(Object.values(GaitType).indexOf(g)))
       ]
       lastFrame = performance.now()
       status = 'running'
+      simulation.player.set({
+        playAnimation: (name, values) => {
+          pendingAnimation = () => loaded.playAnimation(name, values)
+        },
+        stopAnimation: () => {
+          pendingAnimation = () => loaded.stopAnimation()
+        }
+      })
     } catch (cause) {
       if (destroyed) return
       error = cause instanceof Error ? cause.message : String(cause)
@@ -101,7 +116,27 @@
     if (!sim || !robot) return
     const now = performance.now()
     robot.command(get(simulation.command))
+    const before = sim.controlTicks
     sim.step((now - lastFrame) / 1000)
+    if (sim.controlTicks > before && pendingAnimation) {
+      const action = pendingAnimation
+      pendingAnimation = undefined
+      try {
+        action()
+      } catch (cause) {
+        notifications.error(cause instanceof Error ? cause.message : String(cause))
+      }
+    }
+    const next = robot.animationStatus()
+    const previous = get(simulation.animationStatus)
+    if (
+      !previous ||
+      next.name !== previous.name ||
+      next.state !== previous.state ||
+      next.t !== previous.t ||
+      next.clampedMask !== previous.clampedMask
+    )
+      simulation.animationStatus.set(next)
     lastFrame = now
     update()
     followRobot()
@@ -119,6 +154,8 @@
   }
 
   const reset = () => {
+    pendingAnimation = undefined
+    simulation.animationStatus.set(null)
     sim?.reset()
     robot?.setMode(modeToWire(get(simulation.mode)))
     lastFrame = performance.now()
@@ -147,6 +184,9 @@
 
   onDestroy(() => {
     destroyed = true
+    pendingAnimation = undefined
+    simulation.player.set(null)
+    simulation.animationStatus.set(null)
     unsubscribers.forEach(unsubscribe => unsubscribe())
     sceneManager.dispose()
     resize?.disconnect()

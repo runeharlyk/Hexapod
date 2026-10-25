@@ -1,15 +1,19 @@
 <script lang="ts">
   import { resolve } from '$app/paths'
   import { builtIn } from '$lib/animation/library'
-  import { playAnimation, stopAnimation } from '$lib/control'
   import { AnimationState } from '$lib/platform_shared/message'
   import type { ParamId } from '$lib/platform_shared/animation'
   import { animationStatus } from '$lib/robot/state'
-  import { drivesSimulation } from '$lib/stores/drive'
+  import {
+    drivesSimulation,
+    simulation,
+    playDrivenAnimation,
+    stopDrivenAnimation
+  } from '$lib/stores/drive'
   import { isLinked } from '$lib/stores/link'
 
-  // ANIMATE's controls: a bundled animation played on the robot at its default parameters, the stop, what plays now,
-  // and the animations page for the rest. The simulation view's robot plays none, so they drive the real robot only.
+  const simulationPlayer = simulation.player
+  const simulationStatus = simulation.animationStatus
   let name = $state(builtIn[0]?.name ?? '')
 
   const defaults = (chosen: string) =>
@@ -17,12 +21,9 @@
       builtIn.find(a => a.name === chosen)?.params.map(p => [p.id, p.defaultValue]) ?? []
     )
 
-  const usable = $derived($isLinked && !$drivesSimulation)
-  const playing = $derived(
-    $animationStatus && $animationStatus.state !== AnimationState.ANIM_IDLE ?
-      $animationStatus.name
-    : null
-  )
+  const usable = $derived($drivesSimulation ? $simulationPlayer !== null : $isLinked)
+  const status = $derived($drivesSimulation ? $simulationStatus : $animationStatus)
+  const playing = $derived(status && status.state !== AnimationState.ANIM_IDLE ? status.name : null)
 </script>
 
 <div class="flex flex-wrap items-center gap-2">
@@ -38,11 +39,15 @@
   <button
     class="btn btn-primary btn-sm lg:btn-md"
     disabled={!usable}
-    onclick={() => playAnimation(name, defaults(name))}
+    onclick={() => playDrivenAnimation(name, defaults(name))}
   >
     Play
   </button>
-  <button class="btn btn-sm lg:btn-md" disabled={!usable} onclick={stopAnimation}>Stop</button>
+  <button class="btn btn-sm lg:btn-md" disabled={!usable} onclick={stopDrivenAnimation}>Stop</button
+  >
+  {#if $drivesSimulation && !usable}
+    <span class="text-xs opacity-70">Waiting for the simulator</span>
+  {/if}
   {#if playing}
     <span class="badge badge-info badge-sm" aria-live="polite">Playing {playing}</span>
   {/if}

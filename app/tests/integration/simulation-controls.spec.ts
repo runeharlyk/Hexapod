@@ -72,3 +72,25 @@ test('simulation keeps its mode separate from the connected robot across view ch
   await expect(page.getByRole('combobox', { name: 'Gait', exact: true })).toHaveValue('Wave')
   expect(robot.received.filter(frame => frame.mode)).toHaveLength(0)
 })
+
+test('offline Simulation plays and stops bundled animations', async ({ page }) => {
+  await page.unroute('**/mujoco.wasm')
+  await page.setViewportSize({ width: 390, height: 700 })
+  await page.routeWebSocket('**/api/ws', socket => socket.close())
+  await page.addInitScript(() =>
+    localStorage.setItem('selected_view', JSON.stringify('Simulation'))
+  )
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  await page.goto(`${base}/controller`)
+  await page.getByRole('combobox', { name: 'Mode', exact: true }).selectOption('animate')
+  await page.getByRole('combobox', { name: 'Animation', exact: true }).selectOption('wave')
+  const play = page.getByRole('button', { name: 'Play', exact: true })
+  await expect(play).toBeEnabled({ timeout: 15000 })
+  await play.click()
+  await expect(page.getByText('Playing wave', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Stop', exact: true }).click()
+  await expect(page.getByText('Playing wave', { exact: true })).toHaveCount(0)
+  await expect(page.getByText(/not connected/)).toHaveCount(0)
+  expect(errors).toEqual([])
+})

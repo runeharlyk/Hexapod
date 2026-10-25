@@ -8,6 +8,8 @@
 #include <host_api.h>
 #include <motion_state_wire.h>
 #include <pb_encode.h>
+#include <pb_decode.h>
+#include <vector>
 #include <virtual_robot.h>
 
 namespace {
@@ -15,6 +17,7 @@ namespace {
 // Never destroyed at exit: its destructor drains the EventBus, whose static queues may already be gone by then, so
 // a library unloaded at process exit would crash. reset() replaces it while they are all alive.
 VirtualRobot *robot = nullptr;
+std::vector<uint8_t> animationBytes;
 
 VirtualRobot &instance() {
     if (!robot) robot = new VirtualRobot();
@@ -31,6 +34,7 @@ API void reset() {
     robot = nullptr;
     host_clock::nowUs() = 1;
     instance();
+    EventBus<socket_message_AnimationStatus>::store(socket_message_AnimationStatus_init_zero);
 }
 
 // A mode by its ModesEnum value; one the robot has no mode for, POSE's reserved 2 among them, is ignored.
@@ -39,6 +43,41 @@ API void setMode(int mode) {
 }
 
 API void setGait(int gait) { instance().setGait(static_cast<GaitType>(gait)); }
+
+// The input buffer carries the same protobuf play message as a real transport.
+API uint8_t *animationBuffer(int size) {
+    if (size > 0) animationBytes.resize(static_cast<size_t>(size));
+    return animationBytes.data();
+}
+
+API bool playAnimation(int size) {
+    if (size <= 0 || static_cast<size_t>(size) > animationBytes.size()) return false;
+    socket_message_AnimationPlay play = socket_message_AnimationPlay_init_zero;
+    pb_istream_t stream = pb_istream_from_buffer(animationBytes.data(), static_cast<size_t>(size));
+    if (!pb_decode(&stream, socket_message_AnimationPlay_fields, &play) || !anim::validName(play.name)) return false;
+    const auto mode = instance().mode();
+    if (mode == MOTION_STATE::DEACTIVATED || mode == MOTION_STATE::IDLE) return false;
+    AnimationCommandMsg command {};
+    strncpy(command.name, play.name, sizeof(command.name) - 1);
+    command.paramCount = std::min(static_cast<int>(play.params_count), 10);
+    for (int i = 0; i < command.paramCount; ++i) {
+        if (!std::isfinite(play.params[i].value)) return false;
+        command.params[i] = {static_cast<int>(play.params[i].id), play.params[i].value};
+    }
+    instance().animationPlay(command);
+    return true;
+}
+
+API void stopAnimation() { instance().animationStop(); }
+
+API int animationStatus() {
+    socket_message_AnimationStatus status = socket_message_AnimationStatus_init_zero;
+    EventBus<socket_message_AnimationStatus>::peek(status);
+    animationBytes.resize(socket_message_AnimationStatus_size);
+    pb_ostream_t stream = pb_ostream_from_buffer(animationBytes.data(), animationBytes.size());
+    return pb_encode(&stream, socket_message_AnimationStatus_fields, &status) ? static_cast<int>(stream.bytes_written) : 0;
+}
+
 
 // A ControllerInputData message, as a client sends it.
 API void command(float lx, float ly, float rx, float ry, float h, float s, float s1, float fd, float stride) {

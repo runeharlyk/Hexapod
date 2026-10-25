@@ -1,6 +1,9 @@
 // The firmware's Hexapod compiled to WebAssembly (firmware/host/virtual_robot.h, built by
 // scripts/build_virtual_robot.js): the robot's own motion code, run on the simulation's clock.
 
+import type { ParamId } from '$lib/platform_shared/animation'
+import { AnimationPlay, AnimationStatus } from '$lib/platform_shared/message'
+
 /** One pass of the firmware's control loop. */
 export const TICK_SECONDS = 0.005
 
@@ -20,6 +23,9 @@ export type Command = [number, number, number, number, number, number, number, n
 export interface VirtualRobot {
   setMode(mode: number): void
   setGait(gait: number): void
+  playAnimation(name: string, values: ReadonlyMap<ParamId, number>): void
+  stopAnimation(): void
+  animationStatus(): AnimationStatus
   command(command: Command): void
   setImu(imu: SimImu): void
   tick(): void
@@ -41,6 +47,22 @@ export async function loadVirtualRobot(): Promise<VirtualRobot> {
   return {
     setMode: mode => m._setMode(mode),
     setGait: gait => m._setGait(gait),
+    playAnimation: (name, values) => {
+      const bytes = AnimationPlay.encode({
+        name,
+        params: [...values].map(([id, value]) => ({ id, value }))
+      }).finish()
+      const pointer = m._animationBuffer(bytes.length)
+      m.HEAPU8.set(bytes, pointer)
+      if (!m._playAnimation(bytes.length))
+        throw new Error('The simulation could not start the animation')
+    },
+    stopAnimation: () => m._stopAnimation(),
+    animationStatus: () => {
+      const size = m._animationStatus()
+      const pointer = m._animationBuffer(0)
+      return AnimationStatus.decode(m.HEAPU8.subarray(pointer, pointer + size))
+    },
     command: c => m._command(...c),
     setImu: ({ rpyRad, gravityUp, gyroRad }) => m._setImu(...rpyRad, ...gravityUp, ...gyroRad),
     tick: () => m._tick(),

@@ -8,6 +8,10 @@ export interface VirtualRobotModule {
   _reset(): void
   _setMode(mode: number): void
   _setGait(gait: number): void
+  _animationBuffer(size: number): number
+  _playAnimation(size: number): number
+  _stopAnimation(): void
+  _animationStatus(): number
   _command(
     lx: number,
     ly: number,

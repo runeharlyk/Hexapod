@@ -12,6 +12,8 @@ import {
   drive,
   driveGait,
   driveMode,
+  playDrivenAnimation,
+  stopDrivenAnimation,
   driveSimulation,
   drivenGait,
   drivenGoal,
@@ -63,6 +65,7 @@ describe('the controls', () => {
 
   afterEach(() => {
     driveSimulation(false)
+    simulation.player.set(null)
     emit.mockRestore()
   })
 
@@ -79,6 +82,26 @@ describe('the controls', () => {
     expect(get(simulation.mode)).toBe(MotionModes.WALK)
     expect(get(simulation.gait)).toBe(GaitType.WAVE)
     expect([get(drivenMode), get(drivenGait)]).toEqual([MotionModes.WALK, GaitType.WAVE])
+  })
+
+  it('route animation playback and stop to the simulator without sending robot commands', () => {
+    const player = { playAnimation: vi.fn(), stopAnimation: vi.fn() }
+    simulation.player.set(player)
+    driveSimulation(true)
+    const values = new Map()
+    playDrivenAnimation('wave', values)
+    stopDrivenAnimation()
+    expect(player.playAnimation).toHaveBeenCalledWith('wave', values)
+    expect(player.stopAnimation).toHaveBeenCalledOnce()
+    expect(emit).not.toHaveBeenCalled()
+  })
+
+  it('never route simulation playback to the robot while the physics engine is loading', () => {
+    simulation.player.set(null)
+    driveSimulation(true)
+    playDrivenAnimation('wave', new Map())
+    stopDrivenAnimation()
+    expect(emit).not.toHaveBeenCalled()
   })
 
   it("leave the simulation's mode where it is when the robot reports another", async () => {

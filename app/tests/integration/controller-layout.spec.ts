@@ -101,3 +101,42 @@ test('mode selection sends a request and displays the confirmed state; deactivat
     .poll(() => robot.received.flatMap(frame => (frame.mode ? [frame.mode.mode] : [])))
     .toEqual([modeToWire(MotionModes.STAND), modeToWire(MotionModes.DEACTIVATED)])
 })
+
+test('labelled joystick rings remain centred and send a movement followed by a stop', async ({
+  page
+}, testInfo) => {
+  const robot = new FakeRobot()
+  robot.set(ModeData, ModeData.create({ mode: modeToWire(MotionModes.STAND) }))
+  robot.set(AnglesData, AnglesData.create({ angles: Array(18).fill(0) }))
+  await serveRobot(page, robot)
+  await page.setViewportSize({ width: 390, height: 700 })
+  await page.goto(`${base}/controller`)
+  await expect(page.locator('#left .joystick-label')).toHaveText('Shift')
+  await expect(page.locator('#right .joystick-label')).toHaveText('Tilt')
+  for (const side of ['left', 'right']) {
+    const ring = page.locator(`#${side} .front`)
+    await expect(ring).toBeInViewport({ ratio: 1 })
+    const box = await ring.boundingBox()
+    expect(box!.y + box!.height / 2).toBe(350)
+  }
+  for (const theme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: theme })
+    await page.screenshot({ path: testInfo.outputPath(`joystick-rings-${theme}.png`) })
+  }
+  robot.set(ModeData, ModeData.create({ mode: modeToWire(MotionModes.WALK) }))
+  await expect(page.locator('#left .joystick-label')).toHaveText('Move')
+  await expect(page.locator('#right .joystick-label')).toHaveText('Turn')
+  const box = await page.locator('#left .front').boundingBox()
+  const x = box!.x + box!.width / 2
+  const y = box!.y + box!.height / 2
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(x, y - 45, { steps: 2 })
+  await expect
+    .poll(() => robot.received.some(frame => (frame.input?.left?.y ?? 0) > 0.5))
+    .toBe(true)
+  await page.mouse.up()
+  await expect
+    .poll(() => robot.received.filter(frame => frame.input).at(-1)?.input?.left?.y)
+    .toBe(0)
+})

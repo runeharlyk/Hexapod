@@ -76,6 +76,10 @@ export class HexapodSim {
     this.ticks = this.steps = this.pending = 0
   }
 
+  get controlTicks(): number {
+    return this.ticks
+  }
+
   /** Advances by whole control ticks, carrying the remainder to the next call. */
   step(seconds: number) {
     this.pending += Math.min(seconds, MAX_FRAME_SECONDS)

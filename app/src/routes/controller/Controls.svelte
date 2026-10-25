@@ -31,6 +31,8 @@
   let left: nipplejs.JoystickManager
   let right: nipplejs.JoystickManager
   let adjustmentsOpen = $state(false)
+  let leftActive = $state(false)
+  let rightActive = $state(false)
 
   // While the simulation view is shown, the controls drive its robot and never the real one (stores/drive.ts).
   const syncCommand = (i: ControllerInput) => drive(commandOf(i))
@@ -73,7 +75,8 @@
 
   onMount(() => {
     const options = {
-      color: '#15191e80',
+      color: 'transparent',
+      size: 104,
       dynamicPage: true,
       mode: 'static' as const,
       restOpacity: 1
@@ -82,10 +85,18 @@
     left = nipplejs.create({ zone: document.getElementById('left') as HTMLElement, ...options })
     right = nipplejs.create({ zone: document.getElementById('right') as HTMLElement, ...options })
 
+    left.on('start', () => (leftActive = true))
+    right.on('start', () => (rightActive = true))
     left.on('move', (_, d) => handleJoyMove('left', shapeStick(d.vector)))
-    left.on('end', () => handleJoyMove('left', { x: 0, y: 0 }))
+    left.on('end', () => {
+      leftActive = false
+      handleJoyMove('left', { x: 0, y: 0 })
+    })
     right.on('move', (_, d) => handleJoyMove('right', shapeStick(d.vector)))
-    right.on('end', () => handleJoyMove('right', { x: 0, y: 0 }))
+    right.on('end', () => {
+      rightActive = false
+      handleJoyMove('right', { x: 0, y: 0 })
+    })
   })
 
   onDestroy(() => {
@@ -174,15 +185,25 @@
     <!-- The sticks are created once and hidden, not removed, in the modes that read none. -->
     <div
       id="left"
-      class="flex w-40 shrink-0 items-center justify-center lg:w-60 lg:justify-end"
+      class="joystick-zone relative flex w-40 shrink-0 items-center justify-center lg:w-60 lg:justify-end"
       class:invisible={!controls.sticks}
-    ></div>
+      data-active={leftActive}
+    >
+      <span class="joystick-label">
+        {$drivenMode === MotionModes.STAND ? 'Shift' : 'Move'}
+      </span>
+    </div>
     <div class="flex-1"></div>
     <div
       id="right"
-      class="flex w-40 shrink-0 items-center justify-center lg:w-60 lg:justify-start"
+      class="joystick-zone relative flex w-40 shrink-0 items-center justify-center lg:w-60 lg:justify-start"
       class:invisible={!controls.sticks}
-    ></div>
+      data-active={rightActive}
+    >
+      <span class="joystick-label">
+        {$drivenMode === MotionModes.STAND ? 'Tilt' : 'Turn'}
+      </span>
+    </div>
   </div>
 
   {#if controls.sticks}
@@ -344,3 +365,54 @@
 
 <svelte:window onkeyup={handleKeyUp} onkeydown={handleKeyDown} onblur={releaseAllKeys} />
 <svelte:document onvisibilitychange={handleVisibilityChange} />
+
+<style>
+  .joystick-zone :global(.back) {
+    opacity: 1 !important;
+    border: 2px solid rgb(255 255 255 / 75%);
+    box-shadow:
+      0 0 0 1px rgb(10 18 30 / 35%),
+      0 2px 8px rgb(0 0 0 / 20%);
+  }
+
+  .joystick-zone :global(.front) {
+    opacity: 1 !important;
+    border: 2px solid rgb(255 255 255 / 85%);
+    box-shadow:
+      0 0 0 1px rgb(10 18 30 / 35%),
+      0 1px 5px rgb(0 0 0 / 20%);
+  }
+
+  .joystick-zone[data-active='true'] :global(.front) {
+    border-color: white;
+    border-width: 3px;
+  }
+
+  .joystick-label {
+    position: absolute;
+    top: calc(50% + 64px);
+    left: 50%;
+    z-index: 10;
+    transform: translateX(-50%);
+    pointer-events: none;
+    border: 1px solid rgb(255 255 255 / 20%);
+    border-radius: 999px;
+    background: rgb(10 18 30 / 55%);
+    padding: 2px 8px;
+    color: white;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  @media (min-width: 1024px) {
+    #left .joystick-label {
+      left: 100%;
+    }
+
+    #right .joystick-label {
+      left: 0;
+    }
+  }
+</style>
