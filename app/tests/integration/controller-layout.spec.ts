@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { MotionModes, modeToWire } from '../../src/lib/motion'
-import { ModeData } from '../../src/lib/platform_shared/message'
+import { AnglesData, ModeData } from '../../src/lib/platform_shared/message'
 import { FakeRobot, serveRobot } from '../fake-robot/playwright'
 
 const base = process.env.BASE_PATH ?? ''
@@ -31,37 +31,35 @@ const expectControlsInViewport = async (page: Page) => {
   ).toEqual({ width: 0, height: 0 })
 }
 
-test('phone controls stay beside the top bar through mode changes and viewport resizing', async ({
-  page
-}, testInfo) => {
-  const robot = new FakeRobot()
-  await serveRobot(page, robot)
-  await page.setViewportSize({ width: 390, height: 700 })
-  await page.goto(`${base}/controller`)
-
-  for (const viewport of [
-    { width: 390, height: 700 },
-    { width: 320, height: 480 },
-    { width: 700, height: 320 }
-  ]) {
+for (const viewport of [
+  { width: 390, height: 700 },
+  { width: 320, height: 480 },
+  { width: 700, height: 320 }
+]) {
+  test(`phone controls stay visible at ${viewport.width}x${viewport.height} through mode changes`, async ({
+    page
+  }) => {
+    const robot = new FakeRobot()
+    robot.set(AnglesData, AnglesData.create({ angles: Array(18).fill(0) }))
+    await serveRobot(page, robot)
+    await page.setViewportSize({ width: 390, height: 700 })
+    await page.goto(`${base}/controller`)
+    await expect(page.getByRole('combobox', { name: 'Mode', exact: true })).toBeVisible()
     await page.setViewportSize(viewport)
+
     for (const mode of Object.values(MotionModes)) {
       robot.set(ModeData, ModeData.create({ mode: modeToWire(mode) }))
       await expect(page.getByRole('combobox', { name: 'Mode', exact: true })).toHaveValue(mode)
       await expectControlsInViewport(page)
-      if (mode === MotionModes.STAND && viewport.width === 390)
-        await page.screenshot({ path: testInfo.outputPath('controller-phone-collapsed.png') })
       if (mode === MotionModes.WALK || mode === MotionModes.STAND) {
-        await page.getByText('Adjustments', { exact: true }).click()
+        await page.getByRole('button', { name: 'Adjustments', exact: true }).click()
         await expect(page.getByLabel('Body height', { exact: true })).toBeInViewport({ ratio: 1 })
         await expectControlsInViewport(page)
-        if (mode === MotionModes.STAND && viewport.width === 390)
-          await page.screenshot({ path: testInfo.outputPath('controller-phone-expanded.png') })
-        await page.getByText('Adjustments', { exact: true }).click()
+        await page.getByRole('button', { name: 'Adjustments', exact: true }).click()
       }
     }
-  }
-})
+  })
+}
 
 test('walking keeps speed and gait available while other sliders expand on demand', async ({
   page
