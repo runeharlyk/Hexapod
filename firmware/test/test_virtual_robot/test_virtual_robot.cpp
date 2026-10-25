@@ -2506,6 +2506,54 @@ void test_a_classic_walk_after_a_shifted_stand_stays_in_travel() {
     }
 }
 
+void test_stand_stick_reaches_eighteen_degrees_without_exceeding_joint_travel() {
+    constexpr float LIMIT = 18.f * static_cast<float>(M_PI) / 180.f;
+    Kinematics kin;
+    for (int direction = 0; direction < 8; ++direction) {
+        const float angle = direction * static_cast<float>(M_PI) / 4.f;
+        const CommandMsg command {0, 0, std::cos(angle), std::sin(angle), 0, 0, 0, 0, 0};
+        VirtualRobot robot;
+        standUp(robot);
+        largestStep(robot, ticksFor(1.f), &command);
+        const auto &body = robot.bodyState();
+        TEST_ASSERT_FLOAT_WITHIN(0.001f, -command.rx * LIMIT, body.phi);
+        TEST_ASSERT_FLOAT_WITHIN(0.001f, command.ry * LIMIT, body.omega);
+        for (int leg = 0; leg < 6; ++leg) TEST_ASSERT_TRUE(kin.footReachable(body, leg));
+        for (int joint = 0; joint < 18; ++joint) {
+            TEST_ASSERT_TRUE(std::isfinite(robot.angles()[joint]));
+            TEST_ASSERT_FLOAT_WITHIN(0.001f, withinTravel(robot.angles()[joint], joint % 3), robot.angles()[joint]);
+        }
+    }
+}
+
+void test_stand_translation_and_walking_tilt_keep_their_ranges() {
+    VirtualRobot robot;
+    standUp(robot);
+    const CommandMsg shift {1, -1, 0, 0, 0, 0, 0, 0, 0};
+    largestStep(robot, ticksFor(1.f), &shift);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, -50.f, robot.bodyState().xm);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 50.f, robot.bodyState().ym);
+
+    robot.setMode(MOTION_STATE::WALK);
+    const CommandMsg tilt {0, 0, 0, 1, 0, 0, 0, 0, 0};
+    largestStep(robot, ticksFor(2.f), &tilt);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.f, robot.bodyState().omega);
+    robot.setImu({{1.f, 0, 0}, {0, 0, 1}, {0, 0, 0}});
+    largestStep(robot, ticksFor(1.f), &tilt);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.254f, std::fabs(robot.bodyState().omega));
+}
+
+void test_stand_self_levelling_keeps_the_larger_tilt_bounded() {
+    VirtualRobot robot;
+    standUp(robot);
+    robot.setImu({{1.f, -1.f, 0}, {0, 0, 1}, {0, 0, 0}});
+    const CommandMsg tilt {0, 0, -1, 1, 0, 0, 0, 0, 0};
+    largestStep(robot, ticksFor(1.f), &tilt);
+    constexpr float LIMIT = 18.f * static_cast<float>(M_PI) / 180.f;
+    TEST_ASSERT_TRUE(std::fabs(robot.bodyState().phi) <= LIMIT + 0.001f);
+    TEST_ASSERT_TRUE(std::fabs(robot.bodyState().omega) <= LIMIT + 0.001f);
+}
+
 // Self-levelling on the IMU readings measured on the robot on 2026-10-16 (imu_frame.h): with its right side 10 deg
 // down the DMP's pitch reads -10 deg, and nose down its roll reads -10 deg. Levelling raises the low side, so the
 // low side's legs reach down: a smaller femur angle than the high side's.
@@ -2619,6 +2667,9 @@ int main(int, char **) {
     RUN_TEST(test_a_dead_man_stop_in_a_stand_waits_for_the_feet);
     RUN_TEST(test_a_classic_walk_ignores_the_tilt_stick);
     RUN_TEST(test_a_classic_walk_after_a_shifted_stand_stays_in_travel);
+    RUN_TEST(test_stand_stick_reaches_eighteen_degrees_without_exceeding_joint_travel);
+    RUN_TEST(test_stand_translation_and_walking_tilt_keep_their_ranges);
+    RUN_TEST(test_stand_self_levelling_keeps_the_larger_tilt_bounded);
     RUN_TEST(test_self_levelling_reaches_down_with_the_low_side);
     return UNITY_END();
 }

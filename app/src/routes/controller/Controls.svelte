@@ -220,13 +220,15 @@
           <option value={modeValue}>{capitalize(modeValue)}</option>
         {/each}
       </select>
-      <button
-        class="btn btn-sm lg:btn-md shrink-0"
-        class:btn-error={$drivenMode === MotionModes.DEACTIVATED}
-        onclick={() => driveMode(MotionModes.DEACTIVATED)}
-      >
-        Deactivate
-      </button>
+      {#if $isLinked && !$drivesSimulation}
+        <button
+          class="btn btn-sm lg:btn-md shrink-0"
+          class:btn-error={$drivenMode === MotionModes.DEACTIVATED}
+          onclick={() => driveMode(MotionModes.DEACTIVATED)}
+        >
+          Deactivate
+        </button>
+      {/if}
       {#if controls.height || controls.feetDistance || controls.walk}
         <button
           class="btn btn-sm lg:btn-md shrink-0"
@@ -236,6 +238,11 @@
         >
           Adjustments
         </button>
+      {/if}
+      {#if $drivesSimulation}
+        <span class="badge badge-info badge-sm shrink-0">Simulation only</span>
+      {:else if !$isLinked}
+        <span class="badge badge-warning badge-sm shrink-0">Preview</span>
       {/if}
     </div>
 
@@ -305,12 +312,6 @@
 
     {#if controls.animation}
       <AnimationControls />
-    {/if}
-
-    {#if $drivesSimulation}
-      <span class="badge badge-info badge-sm">Simulation only</span>
-    {:else if !$isLinked}
-      <span class="badge badge-warning badge-sm">Preview</span>
     {/if}
 
     {#if goalText}

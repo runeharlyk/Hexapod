@@ -77,7 +77,8 @@ test('cached shell opens every route with the network blocked', async ({ page, c
   const controller = await page.goto(`${base}/controller`)
   expect(controller?.fromServiceWorker()).toBe(true)
   await expect(page).toHaveTitle('Controller')
-  await expect(page.getByRole('button', { name: 'Deactivate', exact: true })).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Mode', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Deactivate', exact: true })).toHaveCount(0)
 
   const reloaded = await page.reload()
   expect(reloaded?.fromServiceWorker()).toBe(true)

@@ -4,7 +4,7 @@
   import { Box3, Group, Mesh, Object3D, Quaternion, Vector3 } from 'three'
   import type { URDFRobot } from 'urdf-loader'
   import SceneBuilder from '$lib/sceneBuilder'
-  import { driveSimulation, simulation } from '$lib/stores/drive'
+  import { simulation } from '$lib/stores/drive'
   import { loadModel } from '$lib/utilities/model-utilities'
   import { modeToWire, urdfJointOrder } from '$lib/motion'
   import { GaitType } from '$lib/gait'
@@ -125,8 +125,6 @@
   }
 
   onMount(() => {
-    // The view is a robot of its own: while it is shown the controls drive it, and never the real robot.
-    driveSimulation(true)
     sceneManager
       .addRenderer({ antialias: true, canvas, alpha: true })
       .addPerspectiveCamera({ x: -30, y: 25, z: 40 })
@@ -149,7 +147,6 @@
 
   onDestroy(() => {
     destroyed = true
-    driveSimulation(false)
     unsubscribers.forEach(unsubscribe => unsubscribe())
     sceneManager.dispose()
     resize?.disconnect()

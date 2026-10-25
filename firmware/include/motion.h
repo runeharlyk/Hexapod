@@ -210,14 +210,15 @@ class MotionService {
                 target_body_state.zm = bodyHeightMm(h);
             }
         }
-        target_body_state.omega = c.ry * BODY_TILT_LIMIT_RAD;
+        const float tiltLimit = mode == MOTION_STATE::STAND ? STAND_TILT_LIMIT_RAD : BODY_TILT_LIMIT_RAD;
+        target_body_state.omega = c.ry * tiltLimit;
         switch (mode) {
             case MOTION_STATE::STAND: {
                 // The body moves by the inverse of this pose (docs/conventions.md): +lx shifts it right, +ly forward,
                 // +rx lowers its right side and +ry its nose.
                 target_body_state.xm = -c.lx * 50.f;
                 target_body_state.ym = -c.ly * 50.f;
-                target_body_state.phi = -c.rx * BODY_TILT_LIMIT_RAD;
+                target_body_state.phi = -c.rx * STAND_TILT_LIMIT_RAD;
                 target_gait_state.step_x = 0;
                 target_gait_state.step_y = 0;
                 target_gait_state.step_angle = 0;
@@ -368,7 +369,7 @@ class MotionService {
                 body_state.ym = lerpf(body_state.ym, target_body_state.ym, smoothing_factor);
                 body_state.zm = lerpf(body_state.zm, target_body_state.zm, smoothing_factor);
                 levelAttitude(body_state, target_body_state.phi, target_body_state.omega, _peripherals->angleX(),
-                              _peripherals->angleY());
+                              _peripherals->angleY(), STAND_TILT_LIMIT_RAD);
                 // A walk left for the stand ramps out at its own lift: another lift, a falling one above all, can leave
                 // travel under the stroke still being stepped. The stand steps a stance change at its own lift.
                 if (!gaitIsCommanded(gait_state)) target_gait_state.step_height = DEFAULT_STEP_HEIGHT_MM;
