@@ -88,13 +88,16 @@ test('offline Simulation plays and stops bundled animations', async ({ page }) =
   await page.getByRole('combobox', { name: 'Animation', exact: true }).selectOption('wave')
   const play = page.getByRole('button', { name: 'Play', exact: true })
   await expect(play).toBeEnabled({ timeout: 15000 })
-  // Advance every animation frame explicitly: slow rendering must not stretch the firmware's exit blend.
+  // Run the real physics at 20 rendered frames per simulated second to bound software-rendering work.
+  const advance = async (milliseconds: number) => {
+    for (let elapsed = 0; elapsed < milliseconds; elapsed += 50) await page.clock.fastForward(50)
+  }
   await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000)
   await play.click()
-  await page.clock.runFor(100)
+  await advance(100)
   await expect(page.getByText('Playing wave', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Stop', exact: true }).click()
-  await page.clock.runFor(1000)
+  await advance(700)
   await expect(page.getByText('Playing wave', { exact: true })).toHaveCount(0)
   await expect(page.getByText(/not connected/)).toHaveCount(0)
   expect(errors).toEqual([])
