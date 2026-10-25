@@ -74,6 +74,7 @@ test('simulation keeps its mode separate from the connected robot across view ch
 })
 
 test('offline Simulation plays and stops bundled animations', async ({ page }) => {
+  await page.clock.install()
   await page.unroute('**/mujoco.wasm')
   await page.setViewportSize({ width: 390, height: 700 })
   await page.routeWebSocket('**/api/ws', socket => socket.close())
@@ -87,9 +88,13 @@ test('offline Simulation plays and stops bundled animations', async ({ page }) =
   await page.getByRole('combobox', { name: 'Animation', exact: true }).selectOption('wave')
   const play = page.getByRole('button', { name: 'Play', exact: true })
   await expect(play).toBeEnabled({ timeout: 15000 })
+  // Advance every animation frame explicitly: slow rendering must not stretch the firmware's exit blend.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000)
   await play.click()
+  await page.clock.runFor(100)
   await expect(page.getByText('Playing wave', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Stop', exact: true }).click()
+  await page.clock.runFor(1000)
   await expect(page.getByText('Playing wave', { exact: true })).toHaveCount(0)
   await expect(page.getByText(/not connected/)).toHaveCount(0)
   expect(errors).toEqual([])

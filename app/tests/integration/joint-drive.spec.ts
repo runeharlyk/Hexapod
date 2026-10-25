@@ -28,6 +28,7 @@ const grid = async (canvas: Locator, step: number): Promise<Point[]> => {
 const scanForJoint = async (canvas: Locator, step: number): Promise<Point | undefined> =>
   canvas.evaluate(async (element, step) => {
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
     const box = element.getBoundingClientRect()
     for (let fy = 0.15; fy < 0.9; fy += step) {
       for (let fx = 0.1; fx < 0.9; fx += step) {
@@ -148,6 +149,8 @@ test('in IDLE a limp servo is dragged from the pose the model draws', async ({ p
   await expect(page.getByText(DRIVING)).toBeVisible()
   await expect(page.getByText(/servos limp/)).toHaveCount(0)
   const canvas = page.locator('canvas').first()
+  // The mode badge precedes model loading; let the view receive and draw HELD before making it limp.
+  await findJoint(canvas)
 
   robot.set(AnglesData, AnglesData.create())
   await expect(page.getByText('18 of 18 servos limp')).toBeVisible()
