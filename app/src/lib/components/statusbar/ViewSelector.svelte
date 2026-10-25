@@ -3,4 +3,9 @@
   import Selector from '../widget/Selector.svelte'
 </script>
 
-<Selector bind:selectedOption={$selectedView} options={$views.map(v => v.name)} />
+<Selector
+  bind:selectedOption={$selectedView}
+  options={$views.map(v => v.name)}
+  class="w-auto min-w-0"
+  aria-label="View"
+/>

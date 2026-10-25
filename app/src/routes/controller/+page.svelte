@@ -6,9 +6,9 @@
   let layout = $derived($views.find(v => v.name === $selectedView) ?? $views[0])
 </script>
 
-<div class="absolute top-0 select-none w-screen h-screen">
+<div class="absolute top-0 select-none w-full h-dvh">
   <Controls />
-  <div class="absolute w-full h-screen top-0 overflow-hidden">
+  <div class="absolute w-full h-full top-0 overflow-hidden">
     <WidgetContainer container={layout.content} driveJoints />
   </div>
 </div>

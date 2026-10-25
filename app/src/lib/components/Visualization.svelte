@@ -4,9 +4,8 @@
   import { gait, mode } from '$lib/robot/state'
   import { populateModelCache } from '$lib/utilities'
   import SceneBuilder from '$lib/sceneBuilder'
-  import { GUI } from 'three/addons/libs/lil-gui.module.min.js'
   import type { URDFRobot } from 'urdf-loader'
-  import { degToRad, lerp, radToDeg } from 'three/src/math/MathUtils'
+  import { degToRad, radToDeg } from 'three/src/math/MathUtils'
   import { GaitType } from '$lib/gait'
   import { MotionModes, limpOf, modeToWire, reportedPose, urdfJointOrder } from '$lib/motion'
   import { dataBroker } from '$lib/transport/databroker'
@@ -37,12 +36,11 @@
   import type { URDFJoint } from 'urdf-loader'
 
   // A view of the robot: it reads the robot's angles, mode and gait and never changes the robot's mode, which only the
-  // controller does, and its panel poses the drawn model alone. The controller page's view, given driveJoints, is the
+  // controller does. The controller page's view, given driveJoints, is the
   // one that sends anything: while the robot idles, a joint dragged with the pointer drives that servo (joint-drive.ts).
   interface Props {
     sky?: boolean
     orbit?: boolean
-    panel?: boolean
     ground?: boolean
     // Drives the preview locally instead of following the robot's mode store.
     previewMode?: MotionModes
@@ -55,7 +53,6 @@
   let {
     sky = true,
     orbit = false,
-    panel = true,
     ground = true,
     previewMode,
     handles,
@@ -65,7 +62,6 @@
   let sceneManager = $state(new SceneBuilder())
   let canvas: HTMLCanvasElement | null = $state(null)
 
-  const angles = new Array(18).fill(0)
   const targetAngles = new Array(18).fill(0)
 
   type LegRad = [number, number, number]
@@ -80,16 +76,8 @@
   const MAX_FRAME_SECONDS = 0.05
   const gaitIndex = (g: GaitType) => Object.values(GaitType).indexOf(g)
 
-  let gui_panel: GUI
+  let useInternalKinematics = true
 
-  let settings = {
-    'Internal kinematic': true,
-    'Auto orient robot': true,
-    'Fix camera on robot': true,
-    'Smooth motion': false
-  }
-
-  let jointAngles: Record<string, number> = {}
   let lastRobotPosition = new Vector3()
   let unsubscribers: (() => void)[] = []
   let destroyed = false
@@ -101,10 +89,7 @@
     await populateModelCache()
     if (destroyed) return
 
-    jointAngles = $jointNames.reduce((prev, cur) => ({ ...prev, [cur]: 0 }), {})
-
     createScene()
-    if (panel) createPanel()
     if (driveJoints) {
       jointDrive = new JointDrive(drivingJoints)
       unsubscribers.push(drivingJoints.subscribe(followDriving))
@@ -118,14 +103,14 @@
         if (driveJoints) limpServos.set(limpOf(data))
         const pose = reportedPose(data, drawnPose(), dragged())
         if (!pose) return
-        settings['Internal kinematic'] = false
+        useInternalKinematics = false
         show(pose)
       }),
       dataBroker.on(IMUData, data => shown.measure(data)),
       // Without a link no angles arrive, so the local model has to animate the robot again.
       isLinked.subscribe(linked => {
         shown.link(linked)
-        if (!linked) settings['Internal kinematic'] = true
+        if (!linked) useInternalKinematics = true
       }),
       gait.subscribe(g => virtualRobot?.setGait(gaitIndex(g))),
       animationPreview.subscribe(value => (preview = value)),
@@ -138,7 +123,7 @@
           if (destroyed) return
           // Until the firmware sends a pose, the model rests in its stand rather than with its legs out straight; a pose
           // the robot reported, or one set by hand, while this loaded stays.
-          if (settings['Internal kinematic']) show(robot.standPose())
+          if (useInternalKinematics) show(robot.standPose())
           const shownMode = previewMode ?? $mode
           if (shownMode) robot.setMode(modeToWire(shownMode))
           robot.setGait(gaitIndex($gait))
@@ -157,46 +142,7 @@
     jointDrive?.dispose()
     sceneManager.dispose()
     canvas?.remove()
-    gui_panel?.destroy()
   })
-
-  const createPanel = () => {
-    gui_panel = new GUI({ width: 310 })
-    gui_panel.close()
-    gui_panel.domElement.id = 'three-gui-panel'
-
-    const general = gui_panel.addFolder('General')
-    general.add(settings, 'Internal kinematic').listen()
-    general.add(settings, 'Auto orient robot')
-
-    const limbs = gui_panel.addFolder('Limbs')
-    limbs.add({ center: centerLimbs }, 'center')
-    for (const name of $jointNames) {
-      limbs
-        .add(jointAngles, name, -Math.PI / 1.2, Math.PI / 1.2)
-        .onChange(poseByHand)
-        .listen()
-    }
-
-    const visualization = gui_panel.addFolder('Visualization')
-    visualization.add(settings, 'Smooth motion')
-  }
-
-  const centerLimbs = () => {
-    for (const name of $jointNames) {
-      jointAngles[name] = 0
-    }
-    poseByHand()
-  }
-
-  // The virtual robot stops, so the pose holds until 'Internal kinematic' is ticked again; angles the robot sends
-  // still replace it, since they are the truth.
-  const poseByHand = () => {
-    settings['Internal kinematic'] = false
-    for (let i = 0; i < $jointNames.length; i++) {
-      targetAngles[i] = jointAngles[$jointNames[i]]
-    }
-  }
 
   // Dragging a joint takes effect only while the robot idles over a link; leaving IDLE or losing the link ends it.
   const followDriving = (driving: boolean) => {
@@ -213,15 +159,13 @@
     }
   }
 
-  // The model shows the joint where the drag put it, within the servo's travel and the model's limits, as the panel's
-  // pose by hand does, and the robot is sent that angle.
+  // The model shows the dragged joint within the servo's travel and the model's limits, and sends the robot that angle.
   const turnJoint = (joint: URDFJoint, angle: number) => {
     const index = $jointNames.indexOf(joint.urdfName)
     if (index < 0) return
     joint.setJointValue(withinTravel(index, angle))
-    settings['Internal kinematic'] = false
+    useInternalKinematics = false
     targetAngles[index] = joint.angle
-    jointAngles[joint.urdfName] = joint.angle
     sceneManager.invalidate()
     jointDrive?.drag(index, joint.angle)
   }
@@ -267,7 +211,6 @@
   const setTargetAngles = (angles: number[]) => {
     for (let i = 0; i < angles.length; i++) {
       targetAngles[i] = angles[i]
-      jointAngles[$jointNames[i]] = targetAngles[i]
     }
   }
 
@@ -317,37 +260,24 @@
     })
   }
 
-  const smooth = (start: number, end: number, amount: number) => {
-    return settings['Smooth motion'] ? lerp(start, end, amount) : end
-  }
-
   const update_camera = (robot: URDFRobot) => {
-    if (!settings['Fix camera on robot']) return
     const delta = robot.position.clone().sub(lastRobotPosition)
     sceneManager.orbit.target.add(delta)
     sceneManager.camera.position.add(delta)
     lastRobotPosition.copy(robot.position)
   }
 
-  const ORIENT_SMOOTH = 0.1
-
   const placedQuaternion = new Quaternion()
   const placedPosition = new Vector3()
 
   const placeRobot = (robot: URDFRobot) => {
-    if (!settings['Auto orient robot']) return
     const { orientation, position } = shown.placement(
       preview && { legs: legsOf(preview.angles), yaw: -preview.body.psi }
     )
     placedQuaternion.copy(robot.quaternion)
     placedPosition.copy(robot.position)
-    if (settings['Smooth motion']) {
-      robot.quaternion.slerp(orientation, ORIENT_SMOOTH)
-      robot.position.lerp(position, ORIENT_SMOOTH)
-    } else {
-      robot.quaternion.copy(orientation)
-      robot.position.copy(position)
-    }
+    robot.quaternion.copy(orientation)
+    robot.position.copy(position)
     if (!robot.quaternion.equals(placedQuaternion) || !robot.position.equals(placedPosition))
       sceneManager.invalidate()
   }
@@ -357,7 +287,7 @@
     if (!robot) return
     if (preview) {
       setTargetAngles(urdfJointOrder(preview.angles))
-    } else if (settings['Internal kinematic'] && virtualRobot) {
+    } else if (useInternalKinematics && virtualRobot) {
       stepVirtualRobot(virtualRobot)
     }
     update_camera(robot)
@@ -365,8 +295,7 @@
     if (handles) updateHandles()
 
     for (let i = 0; i < $jointNames.length; i++) {
-      angles[i] = smooth(robot.joints[$jointNames[i]].angle as number, targetAngles[i], 0.1)
-      if (robot.joints[$jointNames[i]].setJointValue(angles[i])) sceneManager.invalidate()
+      if (robot.joints[$jointNames[i]].setJointValue(targetAngles[i])) sceneManager.invalidate()
     }
   }
 </script>

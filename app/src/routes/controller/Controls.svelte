@@ -15,7 +15,6 @@
   import { isLinked } from '$lib/stores/link'
   import { goalLine } from '$lib/stores/goal'
   import type { ControllerInput, vector } from '$lib/types/models'
-  import { VerticalSlider } from '$lib/components/input'
   import { MotionModes, UNKNOWN_MODE_HINT, servoCount } from '$lib/motion'
   import { GaitType, strideApplies } from '$lib/gait'
   import { notifications } from '$lib/components/toasts/notifications'
@@ -31,6 +30,7 @@
 
   let left: nipplejs.JoystickManager
   let right: nipplejs.JoystickManager
+  let adjustmentsOpen = $state(false)
 
   // While the simulation view is shown, the controls drive its robot and never the real one (stores/drive.ts).
   const syncCommand = (i: ControllerInput) => drive(commandOf(i))
@@ -165,13 +165,12 @@
 
   const goalText = $derived($drivenGoal ? goalLine($drivenGoal) : null)
 
-  // Each mode shows only the controls it reads, beside the mode buttons (lib/mode-controls.ts).
+  // Each mode shows only the controls it reads, beside the mode selector (lib/mode-controls.ts).
   const controls = $derived(controlsFor($drivenMode))
 </script>
 
-<div class="absolute top-0 left-0 h-screen w-screen">
-  <!-- pb keeps the sticks clear of the control cluster on short screens; lg has room to spare -->
-  <div class="absolute top-0 left-0 flex h-full w-full pb-40 lg:pb-0">
+<div class="absolute top-0 left-0 h-full w-full">
+  <div class="absolute top-0 left-0 flex h-full w-full">
     <!-- The sticks are created once and hidden, not removed, in the modes that read none. -->
     <div
       id="left"
@@ -199,170 +198,148 @@
     </div>
   {/if}
 
-  <div class="absolute bottom-0 left-0 z-10 flex max-w-full items-end overflow-x-auto">
-    {#if controls.height}
-      <div class="bg-base-300/70 flex shrink-0 flex-col items-center gap-1 p-3 pb-2">
-        <VerticalSlider
-          id="height"
-          min={-1}
-          step={0.01}
-          max={1}
-          value={$input.height}
-          oninput={(e: Event) => handleRange(e, 'height')}
-        />
-        <span class="font-mono text-xs tabular-nums">{$input.height.toFixed(2)}</span>
-        <label for="height" class="text-xs">Ht</label>
-      </div>
-    {/if}
-
-    {#if controls.feetDistance}
-      <div class="bg-base-300/70 flex shrink-0 flex-col items-center gap-1 rounded-tr-xl p-3 pb-2">
-        <VerticalSlider
-          id="feetDistance"
-          min={-1}
-          step={0.01}
-          max={1}
-          value={$input.feetDistance}
-          oninput={(e: Event) => handleRange(e, 'feetDistance')}
-        />
-        <span class="font-mono text-xs tabular-nums">{$input.feetDistance.toFixed(2)}</span>
-        <label for="feetDistance" class="text-xs">Dist</label>
-      </div>
-    {/if}
-
-    <div
-      class="bg-base-300/70 flex h-min shrink-0 flex-wrap items-end gap-4 rounded-tr-xl p-3 pl-0"
-    >
-      <div class="join">
+  <div
+    class="bg-base-300/50 border-base-content/10 absolute bottom-0 left-0 z-10 flex max-h-[calc(100%-4rem)] w-full flex-col gap-2 overflow-y-auto border-t p-3 backdrop-blur-md lg:w-auto lg:max-w-3xl lg:rounded-tr-xl"
+    style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom))"
+  >
+    <div class="flex items-center gap-2">
+      <select
+        class="select select-primary select-sm lg:select-md w-auto min-w-0"
+        aria-label="Mode"
+        value={$drivenMode ?? ''}
+        onchange={e => {
+          const select = e.target as HTMLSelectElement
+          driveMode(select.value as MotionModes)
+          select.value = $drivenMode ?? ''
+        }}
+      >
+        {#if $drivenMode === null}
+          <option value="" disabled>Unknown mode</option>
+        {/if}
         {#each Object.values(MotionModes) as modeValue}
-          <button
-            class="btn join-item btn-sm lg:btn-md"
-            class:btn-primary={$drivenMode === modeValue && modeValue !== MotionModes.DEACTIVATED}
-            class:btn-error={$drivenMode === modeValue && modeValue === MotionModes.DEACTIVATED}
-            onclick={() => driveMode(modeValue)}
-          >
-            {capitalize(modeValue)}
-          </button>
+          <option value={modeValue}>{capitalize(modeValue)}</option>
         {/each}
+      </select>
+      <button
+        class="btn btn-sm lg:btn-md shrink-0"
+        class:btn-error={$drivenMode === MotionModes.DEACTIVATED}
+        onclick={() => driveMode(MotionModes.DEACTIVATED)}
+      >
+        Deactivate
+      </button>
+      {#if controls.height || controls.feetDistance || controls.walk}
+        <button
+          class="btn btn-sm lg:btn-md shrink-0"
+          aria-expanded={adjustmentsOpen}
+          aria-controls="controller-adjustments"
+          onclick={() => (adjustmentsOpen = !adjustmentsOpen)}
+        >
+          Adjustments
+        </button>
+      {/if}
+    </div>
+
+    {#if $drivenMode === null}
+      <span class="text-warning max-w-sm text-xs" role="status">{UNKNOWN_MODE_HINT}</span>
+    {/if}
+
+    {#if controls.gait || controls.walk}
+      <div class="flex items-end gap-3">
         {#if controls.gait}
           <select
-            class="select select-primary select-sm lg:select-md w-auto"
+            class="select select-primary select-sm lg:select-md w-auto max-w-1/2"
             aria-label="Gait"
             value={$drivenGait}
             onchange={e => driveGait((e.target as HTMLSelectElement).value as GaitType)}
           >
             {#each Object.values(GaitType) as gaitValue}
-              <option value={gaitValue}>
-                {capitalize(gaitValue.toString())}
-              </option>
+              <option value={gaitValue}>{capitalize(gaitValue.toString())}</option>
             {/each}
           </select>
         {/if}
-      </div>
-
-      {#if $drivenMode === null}
-        <span class="text-warning max-w-sm text-xs" role="status">{UNKNOWN_MODE_HINT}</span>
-      {/if}
-
-      {#if controls.walk}
-        <div class="flex gap-4">
-          <div>
-            <div class="flex items-baseline justify-between gap-2">
-              <label for="s1" class="text-xs">Step height</label>
-              <span class="font-mono text-xs tabular-nums">{$input.s1.toFixed(2)}</span>
-            </div>
-            <input
-              id="s1"
-              type="range"
-              name="s1"
-              min="-1"
-              step="0.01"
-              max="1"
-              value={$input.s1}
-              oninput={e => handleRange(e, 's1')}
-              class="range range-sm range-primary"
-            />
+        {#if controls.walk}
+          <div class="min-w-0 flex-1">
+            {@render slider('speed', 'Speed')}
           </div>
-          <div>
-            <div class="flex items-baseline justify-between gap-2">
-              <label for="stride" class="text-xs">Stride</label>
-              <span class="font-mono text-xs tabular-nums">{$input.stride.toFixed(2)}</span>
-            </div>
-            <input
-              id="stride"
-              type="range"
-              name="stride"
-              min="-1"
-              step="0.01"
-              max="1"
-              value={$input.stride}
-              disabled={!strideApplies($drivenGait)}
-              oninput={e => handleRange(e, 'stride')}
-              class="range range-sm range-primary"
-            />
-          </div>
-          <div>
-            <div class="flex items-baseline justify-between gap-2">
-              <label for="speed" class="text-xs">Speed</label>
-              <span class="font-mono text-xs tabular-nums">{$input.speed.toFixed(2)}</span>
-            </div>
-            <input
-              id="speed"
-              type="range"
-              name="speed"
-              min="-1"
-              step="0.01"
-              max="1"
-              value={$input.speed}
-              oninput={e => handleRange(e, 'speed')}
-              class="range range-sm range-primary"
-            />
-          </div>
-        </div>
-      {/if}
-
-      {#if controls.joints}
-        <div class="flex flex-wrap items-center gap-2">
-          {#if $drivingJoints}
-            <span class="badge badge-warning badge-sm shrink-0" aria-live="polite"
-              >Driving the robot's joints</span
-            >
-            {#if $limpServos}
-              <span class="badge badge-ghost badge-sm shrink-0" aria-live="polite"
-                >{servoCount($limpServos)} of 18 servos limp</span
-              >
-            {/if}
-            <span class="text-xs">Drag a leg of the 3D model to move its servo</span>
-          {:else if !$drivesSimulation}
-            <span class="text-xs">Connect to the robot to drive its joints from the 3D model</span>
-          {/if}
-          <a class="link text-xs" href={resolve('/peripherals/servo')}>Servos</a>
-        </div>
-      {/if}
-
-      {#if controls.animation}
-        <AnimationControls />
-      {/if}
-    </div>
-
-    {#if $drivesSimulation}
-      <div class="bg-base-300/70 flex shrink-0 items-center gap-2 rounded-tr-xl p-3">
-        <span class="badge badge-info badge-sm shrink-0">Simulation only</span>
-      </div>
-    {:else if !$isLinked}
-      <div class="bg-base-300/70 flex shrink-0 items-center gap-2 rounded-tr-xl p-3">
-        <span class="badge badge-warning badge-sm shrink-0">Preview</span>
+        {/if}
       </div>
     {/if}
 
+    {#if controls.height || controls.feetDistance || controls.walk}
+      <div id="controller-adjustments" hidden={!adjustmentsOpen}>
+        <div class="grid grid-cols-2 gap-3">
+          {#if controls.height}
+            <div class="min-w-0">{@render slider('height', 'Body height')}</div>
+          {/if}
+          {#if controls.feetDistance}
+            <div class="min-w-0">{@render slider('feetDistance', 'Feet distance')}</div>
+          {/if}
+          {#if controls.walk}
+            <div class="min-w-0">{@render slider('s1', 'Step height')}</div>
+            <div class="min-w-0">
+              {@render slider('stride', 'Stride', !strideApplies($drivenGait))}
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
+    {#if controls.joints}
+      <div class="flex flex-wrap items-center gap-2">
+        {#if $drivingJoints}
+          <span class="badge badge-warning badge-sm" aria-live="polite"
+            >Driving the robot's joints</span
+          >
+          {#if $limpServos}
+            <span class="badge badge-ghost badge-sm" aria-live="polite">
+              {servoCount($limpServos)} of 18 servos limp
+            </span>
+          {/if}
+          <span class="text-xs">Drag a leg of the 3D model to move its servo</span>
+        {:else if !$drivesSimulation}
+          <span class="text-xs">Connect to the robot to drive its joints from the 3D model</span>
+        {/if}
+        <a class="link text-xs" href={resolve('/peripherals/servo')}>Servos</a>
+      </div>
+    {/if}
+
+    {#if controls.animation}
+      <AnimationControls />
+    {/if}
+
+    {#if $drivesSimulation}
+      <span class="badge badge-info badge-sm">Simulation only</span>
+    {:else if !$isLinked}
+      <span class="badge badge-warning badge-sm">Preview</span>
+    {/if}
+
     {#if goalText}
-      <div class="bg-base-300/70 flex shrink-0 items-center gap-2 rounded-tr-xl p-3">
-        <span class="badge badge-info badge-sm shrink-0">Goal</span>
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="badge badge-info badge-sm">Goal</span>
         <span class="font-mono text-xs tabular-nums" aria-live="polite">{goalText}</span>
       </div>
     {/if}
   </div>
 </div>
+
+{#snippet slider(key: SliderKey, label: string, disabled = false)}
+  <div class="flex items-baseline justify-between gap-2">
+    <label for={key} class="text-xs">{label}</label>
+    <span class="font-mono text-xs tabular-nums">{$input[key].toFixed(2)}</span>
+  </div>
+  <input
+    id={key}
+    type="range"
+    name={key}
+    min="-1"
+    step="0.01"
+    max="1"
+    value={$input[key]}
+    {disabled}
+    oninput={e => handleRange(e, key)}
+    class="range range-sm range-primary"
+  />
+{/snippet}
 
 <svelte:window onkeyup={handleKeyUp} onkeydown={handleKeyDown} onblur={releaseAllKeys} />
 <svelte:document onvisibilitychange={handleVisibilityChange} />

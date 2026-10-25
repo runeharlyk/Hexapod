@@ -1,12 +1,13 @@
 import { expect, test, type Page } from '@playwright/test'
-import { Message } from '../../src/lib/platform_shared/message'
+import { AnglesData, Message, ModeData, ModesEnum } from '../../src/lib/platform_shared/message'
 import { MotionModes, modeToWire } from '../../src/lib/motion'
+import { FakeRobot, serveRobot } from '../fake-robot/playwright'
 
 const base = process.env.BASE_PATH ?? ''
 
 // The preview origin is http, so the layout opens ws://<host>/api/ws by itself; the route stands in for the robot and
 // keeps every mode the app sends it.
-test("the 3D view's panel leaves the robot's mode to the controller", async ({ page }) => {
+test('the 3D view has no GUI panel and mode changes use the controller', async ({ page }) => {
   const sentModes: number[] = []
   await page.routeWebSocket('**/api/ws', socket => {
     socket.onMessage(frame => {
@@ -20,11 +21,9 @@ test("the 3D view's panel leaves the robot's mode to the controller", async ({ p
   )
 
   await page.goto(`${base}/controller`)
-  const panel = page.locator('#three-gui-panel')
-  await panel.getByText('Controls', { exact: true }).click()
-  await panel.getByRole('button', { name: 'center', exact: true }).click()
-  // The controller's own mode button, sent after the panel's: the first mode the robot hears must be this one.
-  await page.getByRole('button', { name: 'Stand', exact: true }).click()
+  await expect(page.locator('canvas').first()).toBeVisible()
+  await expect(page.locator('.lil-gui')).toHaveCount(0)
+  await page.getByRole('combobox', { name: 'Mode', exact: true }).selectOption('stand')
 
   await expect.poll(() => sentModes).toEqual([modeToWire(MotionModes.STAND)])
 })
@@ -63,20 +62,22 @@ const drawsWithin = (page: Page, ms: number) =>
 // A software-rendered frame of this scene holds the page's main thread for hundreds of milliseconds, so a view that
 // redraws an unchanged scene every frame leaves the page too busy to answer a click.
 test('the 3D view draws only while what it shows changes', async ({ page }) => {
-  await page.routeWebSocket('**/api/ws', () => {})
+  const robot = new FakeRobot()
+  robot.set(ModeData, ModeData.create({ mode: ModesEnum.STAND }))
+  robot.set(AnglesData, AnglesData.create({ angles: Array(18).fill(0) }))
+  await serveRobot(page, robot)
   await countDraws(page)
   await page.addInitScript(() =>
     localStorage.setItem('selected_view', JSON.stringify('3D representation'))
   )
 
   await page.goto(`${base}/controller`)
-  const panel = page.locator('#three-gui-panel')
-  await panel.getByText('Controls', { exact: true }).click()
+  await expect.poll(() => draws(page)).toBeGreaterThan(0)
   await expect.poll(() => drawsWithin(page, 1000), { timeout: 15_000 }).toBe(0)
 
-  // Straightening the legs moves the model, so the view draws it, and settles again once the pose holds.
+  // A new reported pose moves the model, which draws again and then settles.
   const settled = await draws(page)
-  await panel.getByRole('button', { name: 'center', exact: true }).click()
+  robot.set(AnglesData, AnglesData.create({ angles: Array(18).fill(30) }))
   await expect.poll(() => draws(page)).toBeGreaterThan(settled)
   await expect.poll(() => drawsWithin(page, 1000), { timeout: 15_000 }).toBe(0)
 })

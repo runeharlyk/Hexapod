@@ -171,7 +171,6 @@
       <Visualization
         sky={false}
         orbit={anythingOnline}
-        panel={false}
         ground={false}
         previewMode={MotionModes.STAND}
       />

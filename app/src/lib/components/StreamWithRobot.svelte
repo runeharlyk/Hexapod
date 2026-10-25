@@ -10,6 +10,6 @@
 <div class="relative w-full h-full">
   <Stream />
   <div class="absolute bottom-4 lg:bottom-28 right-4 w-[28%] min-w-48 max-w-md aspect-4/3">
-    <Visualization sky={false} ground={false} panel={false} {driveJoints} />
+    <Visualization sky={false} ground={false} {driveJoints} />
   </div>
 </div>

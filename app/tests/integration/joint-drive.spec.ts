@@ -104,6 +104,7 @@ test("in IDLE a drag of the controller's 3D model sends its joint, and in STAND 
 
   robot.set(ModeData, ModeData.create({ mode: ModesEnum.STAND }))
   await expect(page.getByText(DRIVING)).toHaveCount(0)
+  await page.getByText('Adjustments', { exact: true }).click()
   await expect(page.locator('#height')).toBeVisible()
   const sent = jointFrames(robot).length
   await page.mouse.move(point!.x, point!.y)

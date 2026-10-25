@@ -31,10 +31,10 @@ test('the controller names a mode it does not know as unknown, not as DEACTIVATE
   await page.goto(`${base}/controller`)
 
   await expect(page.getByText(UNKNOWN_MODE_HINT, { exact: true })).toBeVisible()
-  const deactivated = page.getByRole('button', { name: 'Deactivated', exact: true })
+  const deactivated = page.getByRole('button', { name: 'Deactivate', exact: true })
   await expect(deactivated).toBeVisible()
   await expect(deactivated).not.toHaveClass(/btn-error/)
-  await expect(page.locator('.join .btn-primary')).toHaveCount(0)
+  await expect(page.getByRole('combobox', { name: 'Mode', exact: true })).toHaveValue('')
 })
 
 test('the Wi-Fi page shows the status the robot answers the subscribe with, and its changes', async ({

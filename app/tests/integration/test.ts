@@ -15,7 +15,8 @@ test('controller page renders its mode controls without a robot', async ({ page 
 
   await page.goto(`${base}/controller`)
   await expect(page).toHaveTitle('Controller')
-  await expect(page.getByRole('button', { name: 'Deactivated' })).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Mode', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Deactivate', exact: true })).toBeVisible()
   await expect(page.getByText('Preview')).toBeVisible()
   expect(errors).toEqual([])
 })

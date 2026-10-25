@@ -287,7 +287,7 @@
 
 <div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
   <div class="rounded-box bg-base-200 h-80 overflow-hidden lg:sticky lg:top-4 lg:h-[36rem]">
-    <Visualization sky={false} panel={false} previewMode={MotionModes.STAND} {handles} />
+    <Visualization sky={false} previewMode={MotionModes.STAND} {handles} />
   </div>
   <div class="flex flex-col gap-4">
     <PosePanel />
