@@ -431,7 +431,8 @@ def robot(target, monkeypatch):
 
 def test_connecting_subscribes_sets_the_gait_and_reads_the_imu(robot, fake):
     assert {_tag("mode"), _tag("gait"), _tag("imu")} <= fake.subscribed
-    assert [m.gait.gait for _, m in fake.received if m.WhichOneof("message") == "gait"] == [pb.TRI_GATE]
+    # The fake takes the gait the client sets on connect on its own thread.
+    _eventually(lambda: [m.gait.gait for _, m in fake.received if m.WhichOneof("message") == "gait"] == [pb.TRI_GATE])
     state = robot.state()
     assert state.mode is Mode.DEACTIVATED and state.gait is Gait.TRI_GATE  # the mode from the subscribe's snapshot
     assert state.yaw == pytest.approx(-math.degrees(0.3))  # the DMP yaw is clockwise-positive
