@@ -1,6 +1,9 @@
 import { dataBroker } from '$lib/transport/databroker'
 import { PeripheralSettings, ServoSettings } from '$lib/platform_shared/api'
-import { ask, RequestFailed, type RequestPayload } from '$lib/transport/reply'
+import { ask, describeFailure, RequestFailed, type RequestPayload } from '$lib/transport/reply'
+import { snapshotOnce } from '$lib/robot/snapshot-once'
+import { settingsTopicsServed } from '$lib/robot/settings-sources'
+import type { StateTopic, ValueOf } from '$lib/transport/topics'
 
 const FORMAT = 'hexapod-robot-config'
 const VERSION = 1
@@ -37,30 +40,43 @@ async function askOr(payload: RequestPayload, feature: string, refusal: string) 
   }
 }
 
-async function robotServos(): Promise<ServoSettings> {
-  const { servoSettings } = await askOr(
-    { servoSettingsGet: {} },
-    'the servo calibration',
-    'The robot did not send its servo calibration'
-  )
-  if (!servoSettings) throw new Error('The robot did not send its servo calibration')
-  return servoSettings
+// What the robot holds now, from the topic's snapshot; a robot that cannot send one is named after this module's sentence.
+// With no link it fails at once, rather than after the feature flags' read has waited for one.
+async function robotHolds<F extends StateTopic>(
+  topic: F,
+  feature: string,
+  refusal: string
+): Promise<ValueOf<F>> {
+  try {
+    if (!dataBroker.linked()) throw new RequestFailed({ kind: 'disconnected' })
+    await settingsTopicsServed()
+    return await snapshotOnce(topic)
+  } catch (error) {
+    if (error instanceof RequestFailed)
+      throw new Error(`${refusal}: ${describeFailure(error.failure, feature)}`)
+    throw error
+  }
 }
 
-export async function exportConfig(now = new Date()): Promise<RobotConfig> {
-  const servo = await robotServos()
-  const { peripheralSettings } = await askOr(
-    { peripheralSettingsGet: {} },
+const robotServos = () =>
+  robotHolds(ServoSettings, 'the servo calibration', 'The robot did not send its servo calibration')
+
+const robotPeripherals = () =>
+  robotHolds(
+    PeripheralSettings,
     'the peripheral settings',
     'The robot did not send its peripheral settings'
   )
-  if (!peripheralSettings) throw new Error('The robot did not send its peripheral settings')
+
+export async function exportConfig(now = new Date()): Promise<RobotConfig> {
+  const servo = await robotServos()
+  const peripherals = await robotPeripherals()
   return {
     format: FORMAT,
     version: VERSION,
     exportedAt: now.toISOString(),
     servo,
-    peripherals: peripheralSettings
+    peripherals
   }
 }
 
@@ -143,12 +159,6 @@ export async function applyConfig(config: RobotConfig) {
 // written to JSON), and restoring it must not wipe the offset the robot has fitted since.
 async function keepingCompassOffset(saved: PeripheralSettings): Promise<PeripheralSettings> {
   if (saved.magOffsetX || saved.magOffsetY || saved.magOffsetZ) return saved
-  const { peripheralSettings } = await askOr(
-    { peripheralSettingsGet: {} },
-    'the peripheral settings',
-    'The robot did not send its peripheral settings'
-  )
-  if (!peripheralSettings) throw new Error('The robot did not send its peripheral settings')
-  const { magOffsetX, magOffsetY, magOffsetZ } = peripheralSettings
+  const { magOffsetX, magOffsetY, magOffsetZ } = await robotPeripherals()
   return { ...saved, magOffsetX, magOffsetY, magOffsetZ }
 }

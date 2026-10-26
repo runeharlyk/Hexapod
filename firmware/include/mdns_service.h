@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <esp_http_server.h>
 #include <mdns.h>
 #include <mdns_scan.h>
@@ -15,11 +16,14 @@ class MDNSService : public StatefulService<MDNSSettings> {
 
     void begin();
 
-    void statusProto(api_MDNSStatus &status);
+    // The service task, on every pass: restarts mDNS under the stored settings once an update changed them and no scan
+    // holds it. An update runs on the requesting transport's task, and mDNS starts and stops on this task only.
+    void applyPendingReconfigure(bool scanRunning);
 
   private:
     FSPersistencePB<MDNSSettings> _persistence;
     bool _started {false};
+    std::atomic<bool> _reconfigurePending {false};
 
     void reconfigureMDNS();
     void startMDNS();

@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import {
   advertisedLabel,
+  MDNS_LIMITS,
   localName,
   scanTypes,
   serviceTypeLabel,
@@ -66,5 +69,30 @@ describe('sortScanResults', () => {
     ]
     sortScanResults(results)
     expect(results[0].name).toBe('z')
+  })
+})
+
+// The editor's caps are the wire's: a string's max_size less its terminator, a list's max_count.
+describe('MDNS_LIMITS', () => {
+  const options = readFileSync(resolve(__dirname, '../../../platform_shared/api.options'), 'utf8')
+  const limit = (field: string, kind: 'max_size' | 'max_count') => {
+    const escaped = field.replaceAll('.', String.raw`\.`)
+    const found = options.match(new RegExp(String.raw`^api\.${escaped}\s+${kind}:(\d+)`, 'm'))
+    if (!found) throw new Error(`api.options has no ${kind} for ${field}`)
+    return Number(found[1])
+  }
+
+  it('match the sizes platform_shared/api.options gives the mDNS settings', () => {
+    expect(MDNS_LIMITS).toEqual({
+      hostname: limit('MDNSSettings.hostname', 'max_size') - 1,
+      instance: limit('MDNSSettings.instance', 'max_size') - 1,
+      serviceType: limit('MDNSServiceDef.service', 'max_size') - 1,
+      protocol: limit('MDNSServiceDef.protocol', 'max_size') - 1,
+      txtKey: limit('MDNSTxtRecord.key', 'max_size') - 1,
+      txtValue: limit('MDNSTxtRecord.value', 'max_size') - 1,
+      services: limit('MDNSSettings.services', 'max_count'),
+      txtPerService: limit('MDNSServiceDef.txt_records', 'max_count'),
+      globalTxt: limit('MDNSSettings.global_txt_records', 'max_count')
+    })
   })
 })

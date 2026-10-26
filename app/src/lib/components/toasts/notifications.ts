@@ -2,18 +2,21 @@ import { writable } from 'svelte/store'
 
 type StateType = 'info' | 'success' | 'warning' | 'error'
 
+type Link = { href: string; label: string }
+
 type State = {
   id: string
   type: StateType
   message: string
+  link?: Link
 }
 
 function createNotificationStore() {
   const { subscribe, update } = writable<State[]>([])
 
-  function send(message: string, type: StateType = 'info', timeout: number) {
+  function send(message: string, type: StateType = 'info', timeout: number, link?: Link) {
     const id = generateId()
-    update(s => [...s, { id, type, message }])
+    update(s => [...s, { id, type, message, link }])
     if (timeout > 0) setTimeout(() => update(s => s.filter(n => n.id !== id)), timeout)
     return id
   }
@@ -23,7 +26,7 @@ function createNotificationStore() {
     send,
     error: (msg: string, timeout: number = 4000) => send(msg, 'error', timeout),
     warning: (msg: string, timeout: number = 4000) => send(msg, 'warning', timeout),
-    info: (msg: string, timeout: number = 4000) => send(msg, 'info', timeout),
+    info: (msg: string, timeout: number = 4000, link?: Link) => send(msg, 'info', timeout, link),
     success: (msg: string, timeout: number = 4000) => send(msg, 'success', timeout)
   }
 }

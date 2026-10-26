@@ -89,6 +89,24 @@ describe('refreshFeatureFlags', () => {
     expect(httpFeatures).not.toHaveBeenCalled()
   })
 
+  it('reads the settings-topics flag and the robot id, which firmware without them leaves false and empty', async () => {
+    robot.features = FeaturesDataResponse.create({
+      ...featuresOf(true),
+      settingsTopics: true,
+      robotId: '240ac4129f3c'
+    })
+    await expect(flags.refreshFeatureFlags()).resolves.toMatchObject({
+      settings_topics: true,
+      robot_id: '240ac4129f3c'
+    })
+
+    robot.features = featuresOf(true)
+    await expect(flags.refreshFeatureFlags()).resolves.toMatchObject({
+      settings_topics: false,
+      robot_id: ''
+    })
+  })
+
   it("takes no features from a reply the robot refused, and says why in the robot's words", async () => {
     robot.statusCode = 500
     robot.errorMessage = 'Busy'

@@ -7,7 +7,7 @@ static const char *TAG = "MDNSService";
 MDNSService::MDNSService()
     : _persistence(MDNSSettings_read, MDNSSettings_update, this, MDNS_SETTINGS_FILE, api_MDNSSettings_fields,
                    api_MDNSSettings_size, MDNSSettings_defaults()) {
-    addUpdateHandler([&](const std::string &originId) { reconfigureMDNS(); }, false);
+    addUpdateHandler([&](const std::string &originId) { _reconfigurePending = true; }, false);
 }
 
 MDNSService::~MDNSService() {
@@ -19,6 +19,10 @@ MDNSService::~MDNSService() {
 void MDNSService::begin() {
     _persistence.readFromFS();
     startMDNS();
+}
+
+void MDNSService::applyPendingReconfigure(bool scanRunning) {
+    if (!scanRunning && _reconfigurePending.exchange(false)) reconfigureMDNS();
 }
 
 void MDNSService::reconfigureMDNS() {
@@ -85,28 +89,6 @@ void MDNSService::addServices() {
             mdns_service_txt_item_set(service.service, service.protocol, txt.key, txt.value);
         }
         mdns_service_txt_item_set(service.service, service.protocol, MDNS_FIRMWARE_VERSION_KEY, APP_VERSION);
-    }
-}
-
-void MDNSService::statusProto(api_MDNSStatus &status) {
-    status.started = _started;
-    strncpy(status.hostname, state().hostname, sizeof(status.hostname) - 1);
-    strncpy(status.instance, state().instance, sizeof(status.instance) - 1);
-
-    status.services_count = state().services_count;
-    for (size_t i = 0; i < state().services_count; i++) {
-        status.services[i] = state().services[i];
-    }
-
-    status.global_txt_records_count = state().global_txt_records_count;
-    for (size_t i = 0; i < state().global_txt_records_count; i++) {
-        status.global_txt_records[i] = state().global_txt_records[i];
-    }
-    constexpr size_t txtCapacity = sizeof(status.global_txt_records) / sizeof(status.global_txt_records[0]);
-    if (status.global_txt_records_count < txtCapacity) {
-        auto &version = status.global_txt_records[status.global_txt_records_count++];
-        strncpy(version.key, MDNS_FIRMWARE_VERSION_KEY, sizeof(version.key) - 1);
-        strncpy(version.value, APP_VERSION, sizeof(version.value) - 1);
     }
 }
 

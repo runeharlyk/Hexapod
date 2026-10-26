@@ -33,8 +33,18 @@ describe('parseFirmwareReport', () => {
     expect(parseFirmwareReport({ ...answerOf011, servos_calibrated: false })).toEqual({
       version: '0.1.1',
       build: answerOf011.firmware_elf_sha256,
-      servosCalibrated: false
+      servosCalibrated: false,
+      robotId: null
     })
+  })
+
+  it('reads the robot id a robot reports, and none from firmware that does not', () => {
+    expect(parseFirmwareReport({ ...answerOf011, robot_id: 'a0b1c2d3e4f5' })?.robotId).toBe(
+      'a0b1c2d3e4f5'
+    )
+    expect(parseFirmwareReport(answerOf011)?.robotId).toBeNull()
+    expect(parseFirmwareReport({ ...answerOf011, robot_id: '' })?.robotId).toBeNull()
+    expect(parseFirmwareReport({ ...answerOf011, robot_id: 7 })?.robotId).toBeNull()
   })
 
   it('leaves the calibration unknown, not false, for firmware that does not report it', () => {
@@ -131,7 +141,8 @@ describe('the saved robots', () => {
   const report = {
     version: '0.1.1',
     build: answerOf011.firmware_elf_sha256,
-    servosCalibrated: true
+    servosCalibrated: true,
+    robotId: null
   }
 
   beforeEach(() => {
@@ -173,7 +184,12 @@ describe('the saved robots', () => {
   it('replaces the whole report, so a value the new firmware leaves out becomes unknown', async () => {
     const { robots, addRobot, recordFirmware, firmwareLabel } = await loadRobots()
     addRobot('192.168.1.151')
-    recordFirmware('192.168.1.151', { version: '0.2.0', build: 'aa', servosCalibrated: true })
+    recordFirmware('192.168.1.151', {
+      version: '0.2.0',
+      build: 'aa',
+      servosCalibrated: true,
+      robotId: null
+    })
 
     recordFirmware('192.168.1.151', { ...report, servosCalibrated: null })
 

@@ -18,6 +18,7 @@
 #include <gait_speed.h>
 #include <imu_frame.h>
 #include <virtual_robot.h>
+#include <event_bus.h>
 
 namespace {
 
@@ -192,7 +193,7 @@ void assertSameWalk(const GoalRun &expected, const GoalRun &actual) {
 
 } // namespace
 
-void setUp() {}
+void setUp() { host_bus::resetAll(); }
 // The rig and the IMU stand-in are process-wide, so a test must not hand them on, even when it fails.
 void tearDown() {
     currentRig.reset();

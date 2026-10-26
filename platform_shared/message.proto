@@ -179,6 +179,11 @@ message FeaturesDataResponse {
   // SHA-256 of the running firmware's ELF, from its app descriptor, as 64 hex digits. An update
   // that rolled back reports the previous image's hash, which is how the app tells the two apart.
   string firmware_elf_sha256 = 8;
+  // True when the robot serves the servo, peripheral, WiFi, AP and mDNS settings as state topics: a subscribe is
+  // answered with the current value, and a write is pushed to every client.
+  bool settings_topics = 9;
+  // The robot's base MAC as 12 hex digits, which names it across address changes; empty on a robot that has none.
+  string robot_id = 10;
 }
 
 // Calibrates the MPU6050 on a robot lying still and level: the gyro bias goes to zero and the
@@ -352,26 +357,23 @@ message CoreDumpReport {
 }
 
 message CorrelationRequest {
-  // The current mode, goal status, WiFi status and AP status come as the snapshot a subscribe to their topic is
-  // answered with (platform_shared/topics.json).
-  reserved 53, 62, 133, 134;
-  reserved "wifi_status_get", "ap_status_get", "goal_status_get", "mode_get";
+  // The current mode, goal status, WiFi status, AP status and the five settings come as the snapshot a subscribe to
+  // their topic is answered with (platform_shared/topics.json); the settings are written by the update requests.
+  reserved 50, 53, 60, 62, 70, 80, 90, 133, 134;
+  reserved "wifi_settings_get", "wifi_status_get", "ap_settings_get", "ap_status_get", "mdns_status_get",
+      "servo_settings_get", "peripheral_settings_get", "goal_status_get", "mode_get";
   uint32 correlation_id = 1;
   oneof request {
     FeaturesDataRequest features_data_request = 10;
     I2CScanDataRequest i2c_scan_data_request = 20;
     SystemInformationRequest system_information_request = 40;
-    api.WifiSettingsRequest wifi_settings_get = 50;
     api.WifiSettings wifi_settings_update = 51;
     api.WifiNetworksRequest wifi_networks_get = 52;
-    api.APSettingsRequest ap_settings_get = 60;
     api.APSettings ap_settings_update = 61;
-    api.MDNSStatusRequest mdns_status_get = 70;
     api.MDNSQueryRequest mdns_query = 71;
-    api.ServoSettingsRequest servo_settings_get = 80;
+    api.MDNSSettings mdns_settings_update = 72;
     api.ServoSettings servo_settings_update = 81;
     ServoCentreRequest servo_centre = 82;
-    api.PeripheralSettingsRequest peripheral_settings_get = 90;
     api.PeripheralSettings peripheral_settings_update = 91;
     ImuCalibrateRequest imu_calibrate = 92;
     OtaStart ota_start = 120;
@@ -393,9 +395,9 @@ message CorrelationRequest {
 }
 
 message CorrelationResponse {
-  // The replies to the requests the snapshots replaced (CorrelationRequest).
-  reserved 53, 62, 132;
-  reserved "wifi_status", "ap_status", "mode";
+  // The replies to the requests the snapshots replaced, and the mDNS status, which nothing read (CorrelationRequest).
+  reserved 53, 62, 70, 132;
+  reserved "wifi_status", "ap_status", "mdns_status", "mode";
   uint32 correlation_id = 1;
   uint32 status_code = 2;
   // Why a request was refused, for the app to show; empty on success.
@@ -407,8 +409,8 @@ message CorrelationResponse {
     api.WifiSettings wifi_settings = 50;
     api.WifiNetworkList wifi_network_list = 52;
     api.APSettings ap_settings = 60;
-    api.MDNSStatus mdns_status = 70;
     api.MDNSQueryResponse mdns_query_response = 71;
+    api.MDNSSettings mdns_settings = 72;
     api.ServoSettings servo_settings = 80;
     api.PeripheralSettings peripheral_settings = 90;
     api.EmptyMessage empty = 5;
@@ -523,5 +525,10 @@ message Message {
     AnimationStatus animation_status = 283;  // observable status: pushed while an animation runs
     TelemetryBatch telemetry_batch = 290;    // stream: every control tick while subscribed
     GoalStatus goal_status = 300;            // observable status: pushed while a goal runs
+    api.ServoSettings servo_settings = 310;            // observable settings: pushed on every write
+    api.PeripheralSettings peripheral_settings = 311;  // observable settings: pushed on every write
+    api.WifiSettings wifi_settings = 312;              // observable settings: pushed on every write
+    api.APSettings ap_settings = 313;                  // observable settings: pushed on every write
+    api.MDNSSettings mdns_settings = 314;              // observable settings: pushed on every write
   }
 }

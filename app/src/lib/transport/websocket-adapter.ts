@@ -1,6 +1,8 @@
 import { derived, get, writable } from 'svelte/store'
 import { type ITransport, type LinkStatus } from '../interfaces/transport.interface'
 import { canReachRobot, location } from '$lib/stores/location-store'
+import { fallbackHost, robotHost } from '$lib/stores/robot-host'
+import { robots } from '$lib/stores/robots'
 import { LatestFrames } from './latest-frames'
 
 const RECONNECT_MIN_MS = 1000
@@ -59,6 +61,13 @@ function createWebSocketAdapter(): ITransport {
     }, delay)
   }
 
+  // A saved robot's name that does not open may have moved (a rename, or a mDNS that does not resolve): the IP it last
+  // reported is tried in its turn, and the name again when that fails, for as long as the session lasts.
+  const tryOtherHost = () => {
+    const lastIp = get(robots).find(r => r.address === get(location))?.lastIp
+    if (lastIp) fallbackHost.update(host => (host === null ? lastIp : null))
+  }
+
   // The link's end, once per socket: a frame waiting for this socket was for it alone.
   const lose = (socket: WebSocket) => {
     if (ws !== socket) return false
@@ -74,7 +83,7 @@ function createWebSocketAdapter(): ITransport {
     // A socket still closing ends here, since its close event will find another in its place.
     if (ws) lose(ws)
 
-    const host = get(location) ? get(location) : window.location.host
+    const host = get(robotHost)
     status.set('connecting')
 
     let socket: WebSocket
@@ -95,15 +104,19 @@ function createWebSocketAdapter(): ITransport {
 
     ws = socket
     socket.binaryType = 'arraybuffer'
+    let opened = false
 
     socket.onopen = () => {
+      opened = true
       reconnectDelay = RECONNECT_MIN_MS
       status.set('connected')
       connectCallbacks.forEach(cb => cb())
     }
 
     socket.onclose = () => {
-      if (lose(socket)) scheduleReconnect()
+      if (!lose(socket)) return
+      if (!opened) tryOtherHost()
+      scheduleReconnect()
     }
 
     socket.onmessage = frame => {

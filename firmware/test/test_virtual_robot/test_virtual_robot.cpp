@@ -18,6 +18,7 @@
 #include <pb_encode.h>
 #include <servo_angles_wire.h>
 #include <virtual_robot.h>
+#include <event_bus.h>
 
 namespace {
 
@@ -59,7 +60,7 @@ controller_packet_t handheldFrame(float lx, float ly, float rx = 0, float ry = 0
 
 }  // namespace
 
-void setUp() {}
+void setUp() { host_bus::resetAll(); }
 // The IMU stand-in is process-wide, so a test that tilts it must not hand the tilt on, even when it fails.
 void tearDown() { Peripherals::setImu({}); }
 

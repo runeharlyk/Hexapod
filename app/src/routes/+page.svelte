@@ -10,17 +10,14 @@
     agoLabel,
     firmwareLabel,
     forgetRobot,
-    markSeen,
-    recordFirmware,
     robots,
     subnetPrefix,
     type Robot
   } from '$lib/stores/robots'
-  import { readFirmwareReport } from '$lib/services/firmware-report'
+  import { refreshSavedRobot } from '$lib/services/saved-robot-refresh'
   import {
     normalizeRobotAddress,
     normalizeSubnetPrefix,
-    probeAddress,
     probeCandidates,
     sweepSubnet,
     type CandidateStatus
@@ -77,14 +74,9 @@
 
   const refresh = async (address: string) => {
     reachability[address] = 'probing'
-    const isReachable = await probeAddress(address)
-    reachability[address] = isReachable ? 'online' : 'offline'
-    if (!isReachable) return
-    markSeen(address)
-    const report = await readFirmwareReport(address, reports.signal)
-    if (!report) return
-    recordFirmware(address, report)
-    reported[address] = true
+    const { online, reported: gotReport } = await refreshSavedRobot(address, reports.signal)
+    reachability[address] = online ? 'online' : 'offline'
+    if (gotReport) reported[address] = true
   }
 
   const refreshSaved = () => Promise.all($robots.map(robot => refresh(robot.address)))
