@@ -1,4 +1,4 @@
-// The stock fake robot serves the five settings topics as the firmware does (firmware/test/test_settings_topics): the
+// The stock fake robot serves the six settings topics as the firmware does (firmware/test/test_settings_topics): the
 // stored group, redacted, as the snapshot; a push to every subscribed client when an update changes what is stored;
 // none for an update that leaves it as it was or one the robot refuses.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,7 +7,13 @@ import { DataBroker } from '$lib/transport/databroker'
 import { RequestFailed } from '$lib/transport/reply'
 import { snapshotOnce } from '$lib/robot/snapshot-once'
 import { writeSettings } from '$lib/robot/settings-write'
-import { APSettings, MDNSSettings, ServoSettings, WifiSettings } from '$lib/platform_shared/api'
+import {
+  APSettings,
+  CameraSettings,
+  MDNSSettings,
+  ServoSettings,
+  WifiSettings
+} from '$lib/platform_shared/api'
 import { fakeLink } from '../fake-robot/transport'
 import { stockRobot, type StockRobot } from '../fake-robot/stock'
 
@@ -117,6 +123,27 @@ describe('the stock robot', () => {
     expect(servos).toHaveLength(0)
     expect(mdns).toHaveLength(0)
     expect(robot.held.mdnsSettings.hostname).toBe('hexapod')
+  })
+
+  // firmware/src/main.cpp asks the fitted sensor first and the range second, and gives each refusal its reason.
+  it('refuses a camera value the sensor lacks before one out of range, and says why for either', async () => {
+    const broker = await join()
+    const stored = robot.held.cameraSettings
+    const update = (change: Partial<CameraSettings>) =>
+      writeSettings(
+        CameraSettings,
+        { cameraSettingsUpdate: { ...robot.shown('cameraSettings'), ...change } },
+        'the camera settings',
+        broker
+      )
+
+    await expect(update({ quality: 64 })).rejects.toThrow(
+      "a camera setting is out of the sensor's range"
+    )
+    await expect(update({ sharpness: 4 })).rejects.toThrow(
+      'this camera has no sharpness setting; leave it at 0'
+    )
+    expect(robot.held.cameraSettings).toBe(stored)
   })
 
   it('refuses an mDNS host name longer than the 32 characters the wire carries', async () => {
