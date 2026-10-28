@@ -29,7 +29,7 @@ import {
 } from '../../src/lib/platform_shared/api'
 import type { StateTopic } from '../../src/lib/transport/topics'
 import { FakeRobot, serveRobot } from './playwright'
-import { FACTORY_MDNS_SETTINGS, type RequestKey } from './robot'
+import { FACTORY_CAMERA_SETTINGS, FACTORY_MDNS_SETTINGS, type RequestKey } from './robot'
 
 // The firmware's IPAddress packing, as proto-api's ipToU32, which cannot load outside the app for its store imports.
 const ip = (dotted: string) =>
@@ -351,7 +351,8 @@ export const stockRobot = () => {
     apStatus: STOCK.apStatus,
     otaStatus: OtaStatusData.create(),
     animationStatus: AnimationStatus.create(),
-    goalStatus: GoalStatus.create()
+    goalStatus: GoalStatus.create(),
+    cameraSettings: FACTORY_CAMERA_SETTINGS
   })
   robot.respond('featuresDataRequest', () => ({ featuresDataResponse: STOCK.features }))
   robot.respond('i2cScanDataRequest', () => ({

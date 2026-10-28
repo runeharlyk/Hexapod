@@ -36,6 +36,7 @@ inline constexpr TopicKindEntry TOPIC_KINDS[] = {
     {socket_message_Message_wifi_settings_tag, TopicKind::STATE},
     {socket_message_Message_ap_settings_tag, TopicKind::STATE},
     {socket_message_Message_mdns_settings_tag, TopicKind::STATE},
+    {socket_message_Message_camera_settings_tag, TopicKind::STATE},
 };
 
 // A topic as an adapter serves it: a state topic's snapshot reads its owner's current value and puts it into the sink,

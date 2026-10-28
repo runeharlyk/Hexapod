@@ -357,7 +357,7 @@ message CoreDumpReport {
 }
 
 message CorrelationRequest {
-  // The current mode, goal status, WiFi status, AP status and the five settings come as the snapshot a subscribe to
+  // The current mode, goal status, WiFi status, AP status and the six settings come as the snapshot a subscribe to
   // their topic is answered with (platform_shared/topics.json); the settings are written by the update requests.
   reserved 50, 53, 60, 62, 70, 80, 90, 133, 134;
   reserved "wifi_settings_get", "wifi_status_get", "ap_settings_get", "ap_status_get", "mdns_status_get",
