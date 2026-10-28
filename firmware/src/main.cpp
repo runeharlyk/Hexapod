@@ -51,7 +51,7 @@
 #include <peripherals/status_led.h>
 #include <cpu_stats.h>
 #include <task_stats.h>
-#include <filesystem_service.h>
+#include <file_transfer.h>
 #include <camera_service.h>
 #include <servo_settings_service.h>
 #include <settings/camera_settings_service.h>
@@ -62,7 +62,6 @@
 #include <platform_shared/message.pb.h>
 #include <animation/animation.h>
 #include <animation/animation_store.h>
-#include <file_transfer.h>
 #include <core_dump_flash.h>
 
 static const char *TAG = "main";
@@ -613,7 +612,7 @@ static void registerHandlers(CommAdapterBase &c) {
                 const api_FileWriteChunk &w = req.request.file_write_chunk;
                 std::string full;
                 res.which_response = socket_message_CorrelationResponse_empty_tag;
-                res.status_code = fs_api::resolve(w.path, full)
+                res.status_code = file_transfer::resolve(w.path, full)
                                       ? file_transfer::write(full.c_str(), w.offset, w.total_size, w.content.bytes,
                                                              w.content.size)
                                       : 400;
@@ -625,7 +624,7 @@ static void registerHandlers(CommAdapterBase &c) {
                 auto &chunk = res.response.file_chunk;
                 res.which_response = socket_message_CorrelationResponse_file_chunk_tag;
                 size_t n = 0;
-                res.status_code = fs_api::resolve(r.path, full)
+                res.status_code = file_transfer::resolve(r.path, full)
                                       ? file_transfer::read(full.c_str(), r.offset, r.length, chunk.content.bytes, n,
                                                             chunk.total_size)
                                       : 400;
@@ -636,7 +635,21 @@ static void registerHandlers(CommAdapterBase &c) {
                 std::string full;
                 res.which_response = socket_message_CorrelationResponse_empty_tag;
                 res.status_code =
-                    fs_api::resolve(req.request.file_delete.path, full) && unlink(full.c_str()) == 0 ? 200 : 400;
+                    file_transfer::resolve(req.request.file_delete.path, full) && unlink(full.c_str()) == 0 ? 200 : 400;
+                break;
+            }
+            case socket_message_CorrelationRequest_file_list_tag: {
+                const api_FileListRequest &l = req.request.file_list;
+                res.which_response = socket_message_CorrelationResponse_file_list_tag;
+                res.status_code = file_transfer::list(l.path, l.offset, res.response.file_list);
+                // Firmware up to v0.1.1 answers this request, which it does not know, with a bare 400; this one gives
+                // its reason, so the app tells the two apart (app/src/lib/transport/reply.ts).
+                if (res.status_code == 400) strncpy(res.error_message, "bad path", sizeof(res.error_message) - 1);
+                break;
+            }
+            case socket_message_CorrelationRequest_file_mkdir_tag: {
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                res.status_code = file_transfer::mkdir(req.request.file_mkdir.path);
                 break;
             }
             case socket_message_CorrelationRequest_animation_validate_tag: {
@@ -962,7 +975,6 @@ static void setupServer() {
 
     server.on("/api/coredump", HTTP_GET, [](httpd_req_t *r) { return core_dump::serveDownload(r, coreDumpStore); });
 
-    fs_api::registerRoutes(server);
     ota_service::registerRoutes(server);
 #if USE_CAMERA
     camera_service::registerRoutes(server);

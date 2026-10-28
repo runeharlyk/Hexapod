@@ -38,7 +38,7 @@ Paths are relative to `firmware/` unless they start at the repository root.
 | Embedded web app | `include/www_mount.hpp`, `src/www_mount.cpp` |
 | Per-tick telemetry | `include/telemetry/telemetry.h`, `include/telemetry/spsc_ring.h` |
 | Firmware update (OTA) | `include/ota_service.h`, `include/ota_session.h`, `include/ota_flash.h`, `include/ota_image.h` |
-| Filesystem and file transfer | `include/filesystem.h`, `src/filesystem.cpp`, `include/filesystem_service.h`, `include/file_transfer.h` |
+| Filesystem and file transfer | `include/filesystem.h`, `src/filesystem.cpp`, `include/file_transfer.h` |
 | Camera | `include/camera_service.h` |
 | Core-dump readout (status page, `GET /api/coredump`) | `include/core_dump.h`, `include/core_dump_flash.h` |
 | Persisted settings | `include/template/` (`stateful_service.h`, `stateful_persistence.h`), `include/settings/`, `include/*_settings_service.h`, `include/imu_calibration_service.h` |
@@ -430,7 +430,7 @@ Which transport a browser may use depends on the page's origin, not on the firmw
 ## HTTP server
 
 `WebServer` (`include/communication/webserver.h`) wraps `esp_http_server`.
-It serves the WebSocket, `/api/features`, the stored core dump (`/api/coredump`), the file API (`/api/files*`, `include/filesystem_service.h`), firmware upload and download (`/api/firmware*`), the camera's MJPEG stream and settings (`/api/camera/*`), and, when built with `EMBED_WEBAPP=1`, the web app itself (`include/www_mount.hpp`).
+It serves the WebSocket, `/api/features`, the stored core dump (`/api/coredump`), firmware upload and download (`/api/firmware*`), the camera's MJPEG stream and settings (`/api/camera/*`), and, when built with `EMBED_WEBAPP=1`, the web app itself (`include/www_mount.hpp`).
 The origin check in `include/communication/origin_policy.h` allows pages from the local network, the hosted app, and clients that send no `Origin`.
 A WebSocket opened by any other page is closed before it carries a frame, and an HTTP answer to one carries no CORS header, so the browser withholds it and refuses its preflighted requests.
 

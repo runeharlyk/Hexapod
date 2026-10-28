@@ -1,14 +1,24 @@
-// Host tests for the chunked file writer the app uses over BLE and serial, where there is no HTTP.
+// Host tests for the file transfer the app uses over BLE, serial and WebSocket: chunked read and write, listing, mkdir.
 
 #include <unity.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <string>
 #include <vector>
+#include <dirent.h>
+// The Windows C runtime's dirent has no d_type and its headers name no DT_ values; these are newlib's (the ESP-IDF's
+// sys/dirent.h), so the header's d_type branch builds on that host too and is tested on an entry that carries one.
+#ifndef DT_UNKNOWN
+#define DT_UNKNOWN 0
+#define DT_REG 1
+#define DT_DIR 2
+#endif
 #include <file_transfer.h>
 #include <filesystem.h>
+#include <platform_shared/api.pb.h>
 
 namespace {
 
@@ -31,9 +41,41 @@ std::vector<uint8_t> contents(const std::string &path) {
     return out;
 }
 
+// A directory tree standing in for the mounted file system, emptied before every test.
+const char *const ROOT = ".pio/test_file_transfer_root";
+
+void touch(const std::string &rel, size_t bytes = 0) {
+    const std::filesystem::path path = std::string(ROOT) + rel;
+    std::filesystem::create_directories(path.parent_path());
+    FILE *f = fopen(path.string().c_str(), "wb");
+    const std::vector<uint8_t> data(bytes, 0xAB);
+    if (bytes) fwrite(data.data(), 1, bytes, f);
+    fclose(f);
+}
+
+void makeDirectory(const std::string &rel) { std::filesystem::create_directories(std::string(ROOT) + rel); }
+
+bool exists(const std::string &rel) { return std::filesystem::exists(std::string(ROOT) + rel); }
+
+bool isDirectory(const std::string &rel) { return std::filesystem::is_directory(std::string(ROOT) + rel); }
+
+std::vector<std::string> names(const api_FileList &list) {
+    std::vector<std::string> out;
+    for (pb_size_t i = 0; i < list.entries_count; ++i) out.push_back(list.entries[i].name);
+    return out;
+}
+
+constexpr size_t PAGE = sizeof(api_FileList::entries) / sizeof(api_FileEntry);
+
 }  // namespace
 
 namespace FileSystem {
+
+bool mkdirRecursive(const char *path) {
+    std::error_code error;
+    std::filesystem::create_directories(path, error);
+    return !error;
+}
 
 // Moves over an existing destination, as LittleFS does; the Windows C runtime's rename refuses to.
 bool replaceFile(const char *from, const char *to) {
@@ -45,7 +87,11 @@ bool replaceFile(const char *from, const char *to) {
 
 }  // namespace FileSystem
 
-void setUp() { moveRefused = false; }
+void setUp() {
+    moveRefused = false;
+    std::filesystem::remove_all(ROOT);
+    std::filesystem::create_directories(ROOT);
+}
 void tearDown() {}
 
 void test_paths_must_be_absolute_inside_the_mount() {
@@ -168,6 +214,204 @@ void test_read_returns_the_window_and_the_total() {
     remove(path.c_str());
 }
 
+void test_a_listing_is_sorted_directories_first() {
+    touch("/b.txt", 7);
+    touch("/A.txt");
+    makeDirectory("/zoo");
+    makeDirectory("/animations");
+    api_FileList list = api_FileList_init_zero;
+    TEST_ASSERT_EQUAL(200, file_transfer::list("/", 0, list, ROOT));
+    // Byte order within each group: "A.txt" sorts before "b.txt".
+    const std::vector<std::string> expected = {"animations", "zoo", "A.txt", "b.txt"};
+    TEST_ASSERT_TRUE(expected == names(list));
+    TEST_ASSERT_EQUAL_UINT32(4, list.total);
+    TEST_ASSERT_TRUE(list.entries[0].is_directory);
+    TEST_ASSERT_EQUAL_UINT32(0, list.entries[0].size);
+    TEST_ASSERT_FALSE(list.entries[3].is_directory);
+    TEST_ASSERT_EQUAL_UINT32(7, list.entries[3].size);
+}
+
+void test_a_subdirectory_lists_only_its_own_entries() {
+    touch("/animations/wave.pb", 12);
+    touch("/top.txt");
+    api_FileList list = api_FileList_init_zero;
+    TEST_ASSERT_EQUAL(200, file_transfer::list("/animations", 0, list, ROOT));
+    TEST_ASSERT_EQUAL(1, list.entries_count);
+    TEST_ASSERT_EQUAL_STRING("wave.pb", list.entries[0].name);
+    TEST_ASSERT_EQUAL_UINT32(12, list.entries[0].size);
+    TEST_ASSERT_EQUAL_UINT32(1, list.total);
+}
+
+void test_a_large_directory_is_listed_in_pages_each_entry_once() {
+    const size_t count = 2 * PAGE + 5;
+    for (size_t i = 0; i < count; ++i) {
+        char name[16];
+        snprintf(name, sizeof(name), "/f%03u", (unsigned)i);
+        touch(name);
+    }
+    std::vector<std::string> seen;
+    for (uint32_t offset = 0; offset < count; offset += PAGE) {
+        api_FileList list = api_FileList_init_zero;
+        TEST_ASSERT_EQUAL(200, file_transfer::list("/", offset, list, ROOT));
+        TEST_ASSERT_EQUAL_UINT32(count, list.total);
+        TEST_ASSERT_EQUAL(std::min(PAGE, count - offset), list.entries_count);
+        for (const std::string &name : names(list)) seen.push_back(name);
+    }
+    TEST_ASSERT_EQUAL(count, seen.size());
+    TEST_ASSERT_TRUE(std::is_sorted(seen.begin(), seen.end()));
+    TEST_ASSERT_TRUE(std::adjacent_find(seen.begin(), seen.end()) == seen.end());
+}
+
+// Refactor guard (the first implementation was correct, only unbounded in memory, and the next read every entry's size
+// on every scan): every window of a directory many pages long, at offsets on and off the page boundaries, equals the
+// same window of the independently sorted whole, sizes included.
+void test_every_page_of_a_mixed_directory_matches_the_sorted_listing_at_any_offset() {
+    const size_t count = 4 * PAGE + 11;
+    struct Expected {
+        std::string name;
+        bool directory;
+        uint32_t size;
+    };
+    std::vector<Expected> expected;  // in listing order once sorted
+    for (size_t i = 0; i < count; ++i) {
+        const size_t shuffled = (i * 37) % count;  // 37 is coprime with 115: a permutation, not creation order
+        const bool directory = shuffled % 3 == 0;
+        char name[16];
+        snprintf(name, sizeof(name), "%c%03u", shuffled % 2 ? 'a' : 'B', (unsigned)shuffled);
+        if (directory) makeDirectory(std::string("/") + name);
+        else touch(std::string("/") + name, shuffled);
+        expected.push_back({name, directory, directory ? 0u : (uint32_t)shuffled});
+    }
+    std::sort(expected.begin(), expected.end(), [](const Expected &a, const Expected &b) {
+        return a.directory != b.directory ? a.directory : a.name < b.name;
+    });
+    for (uint32_t offset = 0; offset <= count + PAGE; offset += 7) {
+        api_FileList list = api_FileList_init_zero;
+        TEST_ASSERT_EQUAL(200, file_transfer::list("/", offset, list, ROOT));
+        TEST_ASSERT_EQUAL_UINT32(count, list.total);
+        const size_t first = std::min<size_t>(offset, count);
+        TEST_ASSERT_EQUAL(std::min(PAGE, count - first), list.entries_count);
+        for (size_t i = 0; i < list.entries_count; ++i) {
+            TEST_ASSERT_EQUAL_STRING(expected[first + i].name.c_str(), list.entries[i].name);
+            TEST_ASSERT_EQUAL(expected[first + i].directory, list.entries[i].is_directory);
+            TEST_ASSERT_EQUAL_UINT32(expected[first + i].size, list.entries[i].size);
+        }
+    }
+}
+
+// esp_littlefs fills d_type, which spares a stat() per entry of every scan; a dirent without it (the Windows C
+// runtime's, which the listings above run on) or one left DT_UNKNOWN is asked of stat() instead.
+struct TypedEntry {
+    unsigned char d_type;
+};
+
+void test_an_entry_is_a_directory_by_its_d_type_or_else_by_stat() {
+    makeDirectory("/dir");
+    touch("/file");
+    const std::string dir = std::string(ROOT) + "/dir", file = std::string(ROOT) + "/file",
+                      missing = std::string(ROOT) + "/missing";
+    // A d_type is taken as it is, without a stat(), which would contradict it here or find nothing.
+    TEST_ASSERT_TRUE(file_transfer::detail::isDirectory(TypedEntry{DT_DIR}, missing.c_str()));
+    TEST_ASSERT_FALSE(file_transfer::detail::isDirectory(TypedEntry{DT_REG}, dir.c_str()));
+    TEST_ASSERT_TRUE(file_transfer::detail::isDirectory(TypedEntry{DT_UNKNOWN}, dir.c_str()));
+    TEST_ASSERT_FALSE(file_transfer::detail::isDirectory(TypedEntry{DT_UNKNOWN}, file.c_str()));
+    const dirent untyped{};
+    TEST_ASSERT_TRUE(file_transfer::detail::isDirectory(untyped, dir.c_str()));
+    TEST_ASSERT_FALSE(file_transfer::detail::isDirectory(untyped, file.c_str()));
+}
+
+void test_an_offset_past_the_end_is_an_empty_page_with_the_total() {
+    touch("/a");
+    touch("/b");
+    api_FileList list = api_FileList_init_zero;
+    TEST_ASSERT_EQUAL(200, file_transfer::list("/", 2, list, ROOT));
+    TEST_ASSERT_EQUAL(0, list.entries_count);
+    TEST_ASSERT_EQUAL_UINT32(2, list.total);
+    TEST_ASSERT_EQUAL(200, file_transfer::list("/", 1000, list, ROOT));
+    TEST_ASSERT_EQUAL(0, list.entries_count);
+}
+
+void test_a_missing_directory_is_404() {
+    touch("/file.txt");
+    api_FileList list = api_FileList_init_zero;
+    TEST_ASSERT_EQUAL(404, file_transfer::list("/nowhere", 0, list, ROOT));
+    TEST_ASSERT_EQUAL(404, file_transfer::list("/file.txt", 0, list, ROOT));
+    TEST_ASSERT_EQUAL(0, list.entries_count);
+}
+
+void test_the_config_directory_is_refused() {
+    touch("/config/wifiSettings.json", 9);
+    api_FileList list = api_FileList_init_zero;
+    TEST_ASSERT_EQUAL(400, file_transfer::list("/config", 0, list, ROOT));
+    TEST_ASSERT_EQUAL(400, file_transfer::list("/config/", 0, list, ROOT));
+    TEST_ASSERT_EQUAL(400, file_transfer::list("/animations/../config", 0, list, ROOT));
+    TEST_ASSERT_EQUAL(400, file_transfer::list("/..", 0, list, ROOT));
+    TEST_ASSERT_EQUAL(400, file_transfer::list("relative", 0, list, ROOT));
+    TEST_ASSERT_EQUAL(400, file_transfer::list(nullptr, 0, list, ROOT));
+    TEST_ASSERT_EQUAL(400, file_transfer::mkdir("/config", ROOT));
+    TEST_ASSERT_EQUAL(400, file_transfer::mkdir("/config/sub", ROOT));
+    TEST_ASSERT_EQUAL(400, file_transfer::mkdir("/x/../config/sub", ROOT));
+    TEST_ASSERT_FALSE(exists("/config/sub"));
+    TEST_ASSERT_FALSE(exists("/x"));
+}
+
+void test_the_root_listing_hides_config_but_not_lookalikes() {
+    makeDirectory("/config");
+    makeDirectory("/configs");
+    touch("/config.json");
+    makeDirectory("/animations/config");
+    api_FileList list = api_FileList_init_zero;
+    TEST_ASSERT_EQUAL(200, file_transfer::list("/", 0, list, ROOT));
+    const std::vector<std::string> expected = {"animations", "configs", "config.json"};
+    TEST_ASSERT_TRUE(expected == names(list));
+    TEST_ASSERT_EQUAL_UINT32(3, list.total);
+    TEST_ASSERT_EQUAL(200, file_transfer::list("/animations", 0, list, ROOT));
+    TEST_ASSERT_EQUAL(1, list.entries_count);
+}
+
+void test_an_upload_in_progress_is_listed_as_its_part_file() {
+    const std::string path = std::string(ROOT) + "/wave.pb";
+    const uint8_t a[3] = {1, 2, 3};
+    TEST_ASSERT_EQUAL(200, file_transfer::write(path.c_str(), 0, 6, a, 3));
+    api_FileList list = api_FileList_init_zero;
+    TEST_ASSERT_EQUAL(200, file_transfer::list("/", 0, list, ROOT));
+    TEST_ASSERT_EQUAL(1, list.entries_count);
+    TEST_ASSERT_EQUAL_STRING("wave.pb.part", list.entries[0].name);
+    TEST_ASSERT_EQUAL_UINT32(3, list.entries[0].size);
+}
+
+void test_a_name_longer_than_the_cap_is_skipped_and_not_counted() {
+    const size_t cap = sizeof(api_FileEntry::name) - 1;
+    const std::string fits(cap, 'a'), tooLong(cap + 1, 'b');
+    touch("/" + fits);
+    touch("/" + tooLong);
+    touch("/short");
+    api_FileList list = api_FileList_init_zero;
+    TEST_ASSERT_EQUAL(200, file_transfer::list("/", 0, list, ROOT));
+    const std::vector<std::string> expected = {fits, "short"};
+    TEST_ASSERT_TRUE(expected == names(list));
+    TEST_ASSERT_EQUAL_UINT32(2, list.total);
+}
+
+void test_mkdir_creates_and_accepts_an_existing_directory() {
+    TEST_ASSERT_EQUAL(200, file_transfer::mkdir("/logs", ROOT));
+    TEST_ASSERT_TRUE(isDirectory("/logs"));
+    touch("/logs/a.txt");
+    TEST_ASSERT_EQUAL(200, file_transfer::mkdir("/logs", ROOT));
+    TEST_ASSERT_TRUE(exists("/logs/a.txt"));
+    TEST_ASSERT_EQUAL(200, file_transfer::mkdir("/deep/er/still", ROOT));
+    TEST_ASSERT_TRUE(isDirectory("/deep/er/still"));
+    TEST_ASSERT_EQUAL(200, file_transfer::mkdir("/", ROOT));
+}
+
+void test_mkdir_over_a_file_is_409() {
+    touch("/taken", 3);
+    TEST_ASSERT_EQUAL(409, file_transfer::mkdir("/taken", ROOT));
+    TEST_ASSERT_FALSE(isDirectory("/taken"));
+    TEST_ASSERT_EQUAL(400, file_transfer::mkdir("taken", ROOT));
+    TEST_ASSERT_EQUAL(400, file_transfer::mkdir(nullptr, ROOT));
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_paths_must_be_absolute_inside_the_mount);
@@ -179,5 +423,18 @@ int main(int, char **) {
     RUN_TEST(test_a_chunk_past_the_total_or_past_the_end_is_refused);
     RUN_TEST(test_a_refused_chunk_touches_no_file);
     RUN_TEST(test_read_returns_the_window_and_the_total);
+    RUN_TEST(test_a_listing_is_sorted_directories_first);
+    RUN_TEST(test_a_subdirectory_lists_only_its_own_entries);
+    RUN_TEST(test_a_large_directory_is_listed_in_pages_each_entry_once);
+    RUN_TEST(test_every_page_of_a_mixed_directory_matches_the_sorted_listing_at_any_offset);
+    RUN_TEST(test_an_entry_is_a_directory_by_its_d_type_or_else_by_stat);
+    RUN_TEST(test_an_offset_past_the_end_is_an_empty_page_with_the_total);
+    RUN_TEST(test_a_missing_directory_is_404);
+    RUN_TEST(test_the_config_directory_is_refused);
+    RUN_TEST(test_the_root_listing_hides_config_but_not_lookalikes);
+    RUN_TEST(test_an_upload_in_progress_is_listed_as_its_part_file);
+    RUN_TEST(test_a_name_longer_than_the_cap_is_skipped_and_not_counted);
+    RUN_TEST(test_mkdir_creates_and_accepts_an_existing_directory);
+    RUN_TEST(test_mkdir_over_a_file_is_409);
     return UNITY_END();
 }

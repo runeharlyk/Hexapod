@@ -114,7 +114,7 @@ esp_err_t WebServer::httpHandler(httpd_req_t* req) {
     }
 
     // req->uri still carries the query string, so match on the path portion only -- otherwise every
-    // endpoint taking a query parameter (e.g. /api/files/content?path=...) falls through to the 404.
+    // endpoint taking a query parameter falls through to the 404.
     const char* queryStart = strchr(req->uri, '?');
     const size_t pathLen = queryStart ? static_cast<size_t>(queryStart - req->uri) : strlen(req->uri);
 
