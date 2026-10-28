@@ -14,7 +14,7 @@ import {
 import { encodeMessage, tagOf } from '../../src/lib/transport/message-codec'
 import { serveStockRobot, stockRobot, STOCK, type StockRobot } from '../fake-robot/stock'
 
-// The shared settings form (lib/components/layout), as the I2C page uses it against the stock robot, and the five
+// The shared settings form (lib/components/layout), as the I2C page uses it against the stock robot, and the six
 // settings pages following their topics.
 
 const base = process.env.BASE_PATH ?? ''

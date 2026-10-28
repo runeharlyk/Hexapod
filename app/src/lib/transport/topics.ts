@@ -10,6 +10,7 @@ import {
 import {
   APSettings,
   APStatus,
+  CameraSettings,
   MDNSSettings,
   PeripheralSettings,
   ServoSettings,
@@ -24,7 +25,8 @@ export const SETTINGS_TOPICS = [
   PeripheralSettings,
   WifiSettings,
   APSettings,
-  MDNSSettings
+  MDNSSettings,
+  CameraSettings
 ] as const
 
 export type SettingsTopic = (typeof SETTINGS_TOPICS)[number]

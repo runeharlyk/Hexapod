@@ -16,6 +16,7 @@
     { "name": "peripheral_settings", "tag": 311, "kind": "state" },
     { "name": "wifi_settings", "tag": 312, "kind": "state" },
     { "name": "ap_settings", "tag": 313, "kind": "state" },
-    { "name": "mdns_settings", "tag": 314, "kind": "state" }
+    { "name": "mdns_settings", "tag": 314, "kind": "state" },
+    { "name": "camera_settings", "tag": 315, "kind": "state" }
   ]
 }

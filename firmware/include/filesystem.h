@@ -13,6 +13,7 @@
 #define MDNS_SETTINGS_FILE FS_CONFIG_DIRECTORY "/mdnsSettings.json"
 #define PERIPHERAL_SETTINGS_FILE FS_CONFIG_DIRECTORY "/peripheralSettings.json"
 #define IMU_CALIBRATION_FILE FS_CONFIG_DIRECTORY "/imuCalibration.pb"
+#define CAMERA_SETTINGS_FILE FS_CONFIG_DIRECTORY "/cameraSettings.pb"
 
 namespace FileSystem {
 

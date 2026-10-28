@@ -24,9 +24,9 @@ const UNKNOWN_REQUEST = 501
 
 // Firmware up to v0.1.1, the current release, answers a request it does not know with a bare 400 instead, which it also
 // answers to a malformed one. A request whose message declares no field has nothing to be malformed, so for these
-// requests alone a bare 400 is read as firmware too old; for any other it stays a refusal. The set is read from the
-// schema rather than listed by hand, so a request that gains a field leaves it by itself. This fallback serves robots
-// that run those releases and can go once none does.
+// requests, and those of NEWER_THAN_V0_1_1, a bare 400 is read as firmware too old; for any other it stays a refusal.
+// The set is read from the schema rather than listed by hand, so a request that gains a field leaves it by itself. This
+// fallback serves robots that run those releases and can go once none does.
 const FIELDLESS_REQUESTS: ReadonlySet<string> = (() => {
   const fieldCounts = new Map<string, number>()
   for (const file of [protoMetadata.fileDescriptor, apiProtoMetadata.fileDescriptor])
@@ -42,11 +42,18 @@ const FIELDLESS_REQUESTS: ReadonlySet<string> = (() => {
   )
 })()
 
+// Requests with fields that firmware up to v0.1.1 does not know and that later firmware never refuses with a bare 400
+// (firmware/src/main.cpp gives each such refusal its reason): a bare 400 to these, too, is read as firmware too old.
+const NEWER_THAN_V0_1_1: ReadonlySet<string> = new Set(['fileList'])
+
 const requestKey = (payload: object) =>
   Object.entries(payload).find(([, value]) => value !== undefined)?.[0]
 
-/** Whether a bare 400 to this request, from firmware up to v0.1.1, can only mean that the firmware does not know it. */
+/** Whether the request's message declares no field, so that a bare 400 to it can only mean firmware too old. */
 export const isFieldless = (payload: object) => FIELDLESS_REQUESTS.has(requestKey(payload) ?? '')
+
+const bareRefusalIsTooOld = (payload: object) =>
+  isFieldless(payload) || NEWER_THAN_V0_1_1.has(requestKey(payload) ?? '')
 
 const isSuccess = (status: number) => status >= 200 && status < 300
 
@@ -61,7 +68,7 @@ export const interpret = <R extends Reply>(
 ): Outcome<R> => {
   if (isSuccess(reply.statusCode) || accept.includes(reply.statusCode)) return { kind: 'ok', reply }
   if (reply.statusCode === UNKNOWN_REQUEST) return { kind: 'too-old' }
-  if (reply.statusCode === 400 && !reply.errorMessage && isFieldless(payload))
+  if (reply.statusCode === 400 && !reply.errorMessage && bareRefusalIsTooOld(payload))
     return { kind: 'too-old' }
   return { kind: 'refused', status: reply.statusCode, message: reply.errorMessage }
 }

@@ -92,11 +92,57 @@ void test_the_largest_mdns_update_fits_one_ble_frame() {
     TEST_ASSERT_LESS_OR_EQUAL(PROTO_BUFFER_SIZE - 64, encodedSize(msg));
 }
 
+// A listing page goes out as one reply, in one frame, with every entry at the name cap and every number at its largest.
+// The page holds as many entries as fit: one more, of the same size, would not.
+void test_the_largest_file_list_reply_fits_one_frame_and_holds_as_many_entries_as_fit() {
+    static socket_message_Message msg = socket_message_Message_init_zero;
+    msg.which_message = socket_message_Message_correlation_response_tag;
+    auto &res = msg.message.correlation_response;
+    res.correlation_id = UINT32_MAX;
+    res.status_code = UINT32_MAX;
+    res.which_response = socket_message_CorrelationResponse_file_list_tag;
+    auto &list = res.response.file_list;
+    list.total = UINT32_MAX;
+    list.entries_count = std::size(list.entries);
+    for (auto &entry : list.entries) {
+        fillText(entry.name);
+        entry.is_directory = true;
+        entry.size = UINT32_MAX;
+    }
+    const size_t full = encodedSize(msg);
+    TEST_ASSERT_LESS_OR_EQUAL(PROTO_BUFFER_SIZE - 64, full);
+
+    list.entries_count--;
+    const size_t oneEntry = full - encodedSize(msg);
+    TEST_ASSERT_GREATER_THAN(PROTO_BUFFER_SIZE - 64, full + oneEntry);
+}
+
+// Every value at the encoding of its widest: a negative int32 takes ten bytes.
+void test_a_camera_settings_push_fits_one_frame() {
+    static socket_message_Message msg = socket_message_Message_init_zero;
+    msg.which_message = MessageTraits<api_CameraSettings>::tag;
+    auto &camera = msg.message.camera_settings;
+    camera.framesize = UINT32_MAX;
+    camera.quality = INT32_MIN;
+    camera.brightness = INT32_MIN;
+    camera.contrast = INT32_MIN;
+    camera.saturation = INT32_MIN;
+    camera.sharpness = INT32_MIN;
+    camera.denoise = INT32_MIN;
+    camera.special_effect = INT32_MIN;
+    camera.wb_mode = INT32_MIN;
+    camera.vflip = true;
+    camera.hmirror = true;
+    TEST_ASSERT_LESS_OR_EQUAL(PROTO_BUFFER_SIZE - 64, encodedSize(msg));
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_the_protocol_structs_stay_small);
     RUN_TEST(test_an_i2c_scan_reply_holds_every_address_and_fits_the_encode_buffer);
     RUN_TEST(test_the_largest_mdns_settings_push_fits_the_encode_buffer);
     RUN_TEST(test_the_largest_mdns_update_fits_one_ble_frame);
+    RUN_TEST(test_the_largest_file_list_reply_fits_one_frame_and_holds_as_many_entries_as_fit);
+    RUN_TEST(test_a_camera_settings_push_fits_one_frame);
     return UNITY_END();
 }

@@ -51,9 +51,10 @@
 #include <peripherals/status_led.h>
 #include <cpu_stats.h>
 #include <task_stats.h>
-#include <filesystem_service.h>
+#include <file_transfer.h>
 #include <camera_service.h>
 #include <servo_settings_service.h>
+#include <settings/camera_settings_service.h>
 #include <settings/settings_topics.h>
 #include <event_bus.h>
 #include <message_types.h>
@@ -61,7 +62,6 @@
 #include <platform_shared/message.pb.h>
 #include <animation/animation.h>
 #include <animation/animation_store.h>
-#include <file_transfer.h>
 #include <core_dump_flash.h>
 
 static const char *TAG = "main";
@@ -82,6 +82,7 @@ EspMdnsBrowser mdnsBrowser;
 MdnsScan mdnsScan {mdnsBrowser};
 ServoSettingsService servoSettingsService;
 PeripheralSettingsService peripheralSettingsService;
+CameraSettingsService cameraSettingsService;
 ImuCalibrationService imuCalibrationService;
 EspOtaFlash otaFlash;
 // Some 24 KB: above CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL, so the allocation lands in PSRAM and the
@@ -525,6 +526,31 @@ static void registerHandlers(CommAdapterBase &c) {
                 settings_topics::readRedacted(peripheralSettingsService, res.response.peripheral_settings);
                 break;
             }
+            case socket_message_CorrelationRequest_camera_settings_update_tag: {
+                const CameraSettings &incoming = req.request.camera_settings_update;
+#if USE_CAMERA
+                // A value in range that the sensor fitted still refuses is not stored as if it applied.
+                const char *refusal = camera_service::refuses(incoming);
+#else
+                const char *refusal = nullptr;
+#endif
+                if (refusal) {
+                    res.status_code = 400;
+                    strncpy(res.error_message, refusal, sizeof(res.error_message) - 1);
+                } else {
+                    // Applied to the sensor by the service's update handler, once the update has released its lock.
+                    StateUpdateResult r = cameraSettingsService.update(
+                        [&incoming](CameraSettings &s) { return CameraSettings_update(incoming, s); }, "correlation");
+                    if (r == StateUpdateResult::ERROR) {
+                        res.status_code = 400;
+                        strncpy(res.error_message, "a camera setting is out of the sensor's range",
+                                sizeof(res.error_message) - 1);
+                    }
+                }
+                res.which_response = socket_message_CorrelationResponse_camera_settings_tag;
+                settings_topics::readRedacted(cameraSettingsService, res.response.camera_settings);
+                break;
+            }
             case socket_message_CorrelationRequest_imu_calibrate_tag: {
                 res.which_response = socket_message_CorrelationResponse_empty_tag;
                 if (!robot.imuPresent()) {
@@ -586,7 +612,7 @@ static void registerHandlers(CommAdapterBase &c) {
                 const api_FileWriteChunk &w = req.request.file_write_chunk;
                 std::string full;
                 res.which_response = socket_message_CorrelationResponse_empty_tag;
-                res.status_code = fs_api::resolve(w.path, full)
+                res.status_code = file_transfer::resolve(w.path, full)
                                       ? file_transfer::write(full.c_str(), w.offset, w.total_size, w.content.bytes,
                                                              w.content.size)
                                       : 400;
@@ -598,7 +624,7 @@ static void registerHandlers(CommAdapterBase &c) {
                 auto &chunk = res.response.file_chunk;
                 res.which_response = socket_message_CorrelationResponse_file_chunk_tag;
                 size_t n = 0;
-                res.status_code = fs_api::resolve(r.path, full)
+                res.status_code = file_transfer::resolve(r.path, full)
                                       ? file_transfer::read(full.c_str(), r.offset, r.length, chunk.content.bytes, n,
                                                             chunk.total_size)
                                       : 400;
@@ -609,7 +635,21 @@ static void registerHandlers(CommAdapterBase &c) {
                 std::string full;
                 res.which_response = socket_message_CorrelationResponse_empty_tag;
                 res.status_code =
-                    fs_api::resolve(req.request.file_delete.path, full) && unlink(full.c_str()) == 0 ? 200 : 400;
+                    file_transfer::resolve(req.request.file_delete.path, full) && unlink(full.c_str()) == 0 ? 200 : 400;
+                break;
+            }
+            case socket_message_CorrelationRequest_file_list_tag: {
+                const api_FileListRequest &l = req.request.file_list;
+                res.which_response = socket_message_CorrelationResponse_file_list_tag;
+                res.status_code = file_transfer::list(l.path, l.offset, res.response.file_list);
+                // Firmware up to v0.1.1 answers this request, which it does not know, with a bare 400; this one gives
+                // its reason, so the app tells the two apart (app/src/lib/transport/reply.ts).
+                if (res.status_code == 400) strncpy(res.error_message, "bad path", sizeof(res.error_message) - 1);
+                break;
+            }
+            case socket_message_CorrelationRequest_file_mkdir_tag: {
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                res.status_code = file_transfer::mkdir(req.request.file_mkdir.path);
                 break;
             }
             case socket_message_CorrelationRequest_animation_validate_tag: {
@@ -883,6 +923,8 @@ static constexpr Topic TOPICS[] = {
      [](SnapshotSink &sink) { settings_topics::snapshot(apService, sink); }},
     {MessageTraits<api_MDNSSettings>::tag, TopicKind::STATE,
      [](SnapshotSink &sink) { settings_topics::snapshot(mdnsService, sink); }},
+    {MessageTraits<api_CameraSettings>::tag, TopicKind::STATE,
+     [](SnapshotSink &sink) { settings_topics::snapshot(cameraSettingsService, sink); }},
 };
 static_assert(servesEveryTopic(TOPICS), "TOPICS serves every topic of TOPIC_KINDS, a snapshot for each state");
 
@@ -933,7 +975,6 @@ static void setupServer() {
 
     server.on("/api/coredump", HTTP_GET, [](httpd_req_t *r) { return core_dump::serveDownload(r, coreDumpStore); });
 
-    fs_api::registerRoutes(server);
     ota_service::registerRoutes(server);
 #if USE_CAMERA
     camera_service::registerRoutes(server);
@@ -996,6 +1037,7 @@ static void setupComm() {
     settings_topics::pushOnChange(wifiService, [](const api_WifiSettings &s) { emitAll(s); });
     settings_topics::pushOnChange(apService, [](const api_APSettings &s) { emitAll(s); });
     settings_topics::pushOnChange(mdnsService, [](const api_MDNSSettings &s) { emitAll(s); });
+    settings_topics::pushOnChange(cameraSettingsService, [](const api_CameraSettings &s) { emitAll(s); });
 
     // A client that leaves ends the goal it asked for; losing the last client on every transport stops an animation,
     // so nothing walks or plays unattended.
@@ -1137,7 +1179,7 @@ static void serviceLoop(void *) {
 
     // After BLE so the controller claims its internal DMA first; camera init is non-fatal.
 #if USE_CAMERA
-    camera_service::init();
+    camera_service::init(cameraSettingsService);
     // A download restarts the robot when it succeeds; after a failed one the camera stays off until then.
     ota_service::freeInternalRam = camera_service::release;
     logHeap("camera");
@@ -1194,6 +1236,7 @@ extern "C" void app_main() {
     servoSettingsService.begin();
     peripheralSettingsService.begin();
     imuCalibrationService.begin();  // before the control task applies the offsets
+    cameraSettingsService.begin();  // before the service task starts the camera with them
     checkCoreDump();
 
     xTaskCreate(serviceLoop, "service", 8192, nullptr, 2, nullptr);

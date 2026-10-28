@@ -20,6 +20,7 @@ import {
   APProvisionMode,
   APSettings,
   APStatus,
+  CameraSettings,
   MDNSSettings,
   PeripheralSettings,
   Servo,
@@ -29,6 +30,7 @@ import {
 } from '../../src/lib/platform_shared/api'
 import type { StateTopic } from '../../src/lib/transport/topics'
 import { FakeRobot, serveRobot } from './playwright'
+import { FileTree } from './file-tree'
 import { FACTORY_MDNS_SETTINGS, type RequestKey } from './robot'
 
 // The firmware's IPAddress packing, as proto-api's ipToU32, which cannot load outside the app for its store imports.
@@ -101,6 +103,13 @@ export const STOCK = {
     subnetMask: ip('255.255.255.0')
   }),
   peripheralSettings: PeripheralSettings.create({ sda: 8, scl: 9, frequency: 400000 }),
+  cameraSettings: CameraSettings.create({
+    framesize: 8,
+    quality: 12,
+    brightness: 1,
+    contrast: -1,
+    vflip: true
+  }),
   i2cAddresses: [0x1e, 0x40, 0x41, 0x68],
   servos: Array.from({ length: 18 }, (_, id) =>
     Servo.create({
@@ -159,6 +168,7 @@ interface Held {
   servoSettings: ServoSettings
   peripheralSettings: PeripheralSettings
   mdnsSettings: MDNSSettings
+  cameraSettings: CameraSettings
 }
 
 const HELD_KEYS = [
@@ -166,7 +176,8 @@ const HELD_KEYS = [
   'apSettings',
   'servoSettings',
   'peripheralSettings',
-  'mdnsSettings'
+  'mdnsSettings',
+  'cameraSettings'
 ] as const satisfies readonly (keyof Held)[]
 
 const SETTINGS_TYPES = {
@@ -174,7 +185,8 @@ const SETTINGS_TYPES = {
   apSettings: APSettings,
   servoSettings: ServoSettings,
   peripheralSettings: PeripheralSettings,
-  mdnsSettings: MDNSSettings
+  mdnsSettings: MDNSSettings,
+  cameraSettings: CameraSettings
 } as const satisfies Record<keyof Held, MessageFns<unknown>>
 
 // Each settings update, by the settings it replaces.
@@ -183,7 +195,8 @@ const UPDATES = {
   apSettingsUpdate: 'apSettings',
   servoSettingsUpdate: 'servoSettings',
   peripheralSettingsUpdate: 'peripheralSettings',
-  mdnsSettingsUpdate: 'mdnsSettings'
+  mdnsSettingsUpdate: 'mdnsSettings',
+  cameraSettingsUpdate: 'cameraSettings'
 } as const satisfies Partial<Record<RequestKey, keyof Held>>
 
 export type SettingsUpdate = keyof typeof UPDATES
@@ -200,6 +213,31 @@ const servoIsValid = (servo: Servo) =>
   (servo.direction === 1 || servo.direction === -1) &&
   servo.centerAngle >= -180 &&
   servo.centerAngle <= 180
+
+// firmware/src/main.cpp, the camera settings update.
+const CAMERA_RANGE_REFUSAL = "a camera setting is out of the sensor's range"
+
+// firmware/include/settings/camera_settings.h, CameraSettings_valid.
+const cameraIsValid = (camera: CameraSettings) => {
+  const within = (value: number, min: number, max: number) => value >= min && value <= max
+  return (
+    camera.framesize <= 10 &&
+    within(camera.quality, 0, 63) &&
+    within(camera.brightness, -2, 2) &&
+    within(camera.contrast, -2, 2) &&
+    within(camera.saturation, -2, 2) &&
+    within(camera.sharpness, -3, 3) &&
+    within(camera.denoise, 0, 8) &&
+    within(camera.specialEffect, 0, 6) &&
+    within(camera.wbMode, 0, 4)
+  )
+}
+
+// firmware/include/settings/camera_settings.h, CameraSettings_refusalBy: the stock robot's sensor is an OV2640.
+const cameraRefusal = (camera: CameraSettings) =>
+  camera.sharpness !== 0 ? 'this camera has no sharpness setting; leave it at 0'
+  : camera.denoise !== 0 ? 'this camera has no denoise setting; leave it at 0'
+  : ''
 
 // firmware/include/settings/mdns_settings.h, MDNSSettings_validHostname: one DNS label of at most the 32 characters the
 // wire carries (platform_shared/api.options).
@@ -254,7 +292,8 @@ const STOCK_HELD: Held = {
   apSettings: STOCK.apSettings,
   servoSettings: ServoSettings.create({ servos: STOCK.servos }),
   peripheralSettings: STOCK.peripheralSettings,
-  mdnsSettings: FACTORY_MDNS_SETTINGS
+  mdnsSettings: FACTORY_MDNS_SETTINGS,
+  cameraSettings: STOCK.cameraSettings
 }
 
 /**
@@ -267,6 +306,8 @@ const STOCK_HELD: Held = {
  */
 export class StockRobot extends FakeRobot {
   held: Held
+  /** The files the robot's LittleFS holds, which the file requests read and change. */
+  readonly files = new FileTree(STOCK_FILES)
 
   constructor(boot: Record<string, unknown>, held: Held = STOCK_HELD) {
     super({
@@ -333,6 +374,13 @@ export class StockRobot extends FakeRobot {
         this.hold(key, mdnsStored(mdns))
         break
       }
+      case 'cameraSettings': {
+        const camera = request.cameraSettingsUpdate!
+        const refusal = cameraRefusal(camera) || (cameraIsValid(camera) ? '' : CAMERA_RANGE_REFUSAL)
+        if (refusal) return { statusCode: 400, errorMessage: refusal, [key]: this.shown(key) }
+        this.hold(key, camera)
+        break
+      }
     }
     return { [key]: this.shown(key) }
   }
@@ -359,6 +407,15 @@ export const stockRobot = () => {
   }))
   for (const update of Object.keys(UPDATES) as SettingsUpdate[])
     robot.respond(update, request => robot.store(update, request))
+  robot.respond('fileList', ({ fileList }) => robot.files.list(fileList!.path, fileList!.offset))
+  robot.respond('fileMkdir', ({ fileMkdir }) => robot.files.mkdir(fileMkdir!.path))
+  robot.respond('fileReadChunk', ({ fileReadChunk: r }) =>
+    robot.files.read(r!.path, r!.offset, r!.length)
+  )
+  robot.respond('fileWriteChunk', ({ fileWriteChunk: w }) =>
+    robot.files.write(w!.path, w!.offset, w!.totalSize, w!.content)
+  )
+  robot.respond('fileDelete', ({ fileDelete }) => robot.files.delete(fileDelete!.path))
   robot.respond('mdnsQuery', () => ({
     mdnsQueryResponse: {
       services: [
@@ -399,26 +456,16 @@ export const stockRobot = () => {
   return robot
 }
 
-export const CAMERA_SETTINGS = {
-  framesize: 6,
-  quality: 12,
-  brightness: 0,
-  contrast: 0,
-  saturation: 0,
-  sharpness: 0,
-  denoise: 0,
-  special_effect: 0,
-  wb_mode: 0,
-  vflip: false,
-  hmirror: false
-}
-
-const FILES = {
-  root: {
-    config: { 'wifiSettings.pb': 112, 'servoSettings.pb': 540, 'peripheralSettings.pb': 24 },
-    animations: { 'wave.pb': 2210, 'stretch.pb': 1830 }
-  }
-}
+// The sizes of the files the robot's LittleFS holds at boot; the animations are named for the library's.
+const STOCK_FILES = Object.fromEntries(
+  Object.entries({
+    '/config/wifiSettings.pb': 112,
+    '/config/servoSettings.pb': 540,
+    '/config/peripheralSettings.pb': 24,
+    '/animations/wave.pb': 2210,
+    '/animations/stretch.pb': 1830
+  }).map(([path, size]) => [path, new Uint8Array(size)])
+)
 
 // A 1x1 grey PNG for the camera stream, which a real robot serves as MJPEG.
 const GREY_PIXEL = Buffer.from(
@@ -428,14 +475,12 @@ const GREY_PIXEL = Buffer.from(
 
 /**
  * Serves the stock robot to the page: the protobuf link through the WebSocket the layout opens on an http origin, and
- * the robot's HTTP endpoints (camera, files) and GitHub's release list through routes, so no page reaches the network.
+ * the robot's HTTP camera endpoint and GitHub's release list through routes, so no page reaches the network.
  */
 export const serveStockRobot = async (page: Page, robot = stockRobot()) => {
-  await page.route('**/api/camera/settings', route => route.fulfill({ json: CAMERA_SETTINGS }))
   await page.route('**/api/camera/stream', route =>
     route.fulfill({ body: GREY_PIXEL, contentType: 'image/png' })
   )
-  await page.route('**/api/files', route => route.fulfill({ json: FILES }))
   await page.route('https://api.github.com/**', route =>
     route.fulfill({
       json: [

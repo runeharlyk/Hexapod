@@ -122,26 +122,6 @@ export type PeripheralsConfiguration = {
   pins: PinConfig[]
 }
 
-export type CameraSettings = {
-  framesize: number
-  quality: number
-  brightness: number
-  contrast: number
-  saturation: number
-  sharpness: number
-  denoise: number
-  special_effect: number
-  wb_mode: number
-  vflip: boolean
-  hmirror: boolean
-}
-
-export type File = number
-
-export interface Directory {
-  [key: string]: File | Directory
-}
-
 export type Servo = {
   name: string
   channel: number

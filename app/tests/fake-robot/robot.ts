@@ -14,6 +14,7 @@ import {
 import {
   APSettings,
   APStatus,
+  CameraSettings,
   MDNSSettings,
   PeripheralSettings,
   ServoSettings,
@@ -47,8 +48,15 @@ export const FACTORY_MDNS_SETTINGS = MDNSSettings.create({
   ]
 })
 
-// Each state topic's value at boot, keyed by its field in the Message oneof: empty, but for the mDNS settings, which
-// are the factory's. A robot that holds settings of its own (StockRobot) passes its values for the other four.
+/**
+ * The camera settings of a robot fresh from the factory (firmware/include/settings/camera_settings.h,
+ * CameraSettings_defaults): VGA at quality 12.
+ */
+export const FACTORY_CAMERA_SETTINGS = CameraSettings.create({ framesize: 10, quality: 12 })
+
+// Each state topic's value at boot, keyed by its field in the Message oneof: empty, but for the mDNS and camera
+// settings, which are the factory's. A robot that holds settings of its own (StockRobot) passes its values for the
+// other four.
 const BOOT_VALUES: Record<string, unknown> = {
   mode: ModeData.create(),
   angles: AnglesData.create(),
@@ -62,7 +70,8 @@ const BOOT_VALUES: Record<string, unknown> = {
   peripheralSettings: PeripheralSettings.create(),
   wifiSettings: WifiSettings.create(),
   apSettings: APSettings.create(),
-  mdnsSettings: FACTORY_MDNS_SETTINGS
+  mdnsSettings: FACTORY_MDNS_SETTINGS,
+  cameraSettings: FACTORY_CAMERA_SETTINGS
 }
 
 const requestKeyOf = (request: CorrelationRequest) =>

@@ -157,6 +157,8 @@ Correlation requests, answered on the same correlation id:
 | `file_write_chunk` (`path`, `offset`, `total_size`, `content`) | 100 | status code only | |
 | `file_read_chunk` (`path`, `offset`, `length`) | 101 | `file_chunk` (`content`, `total_size`) | 101 |
 | `file_delete` | 102 | status code only | |
+| `file_list` (`path`, `offset`) | 103 | `file_list` (`entries` of `name`, `is_directory`, `size`; `total`) | 103 |
+| `file_mkdir` (`path`) | 104 | status code only | |
 | `animation_validate` (`name`) | 110 | `animation_report` (`ok`, `error`, `clamped_mask`) | 110 |
 | `animation_list_request` | 111 | `animation_list` (`entries` of `name`, `size`) | 111 |
 
@@ -166,6 +168,9 @@ A write is refused with 400 when the chunk is larger than 512 bytes, runs past `
 Offset 0 truncates.
 Any status other than 200 on a chunk means the client restarts the file from offset 0, or reads the size back with `file_read_chunk` and continues from there.
 A failed `fwrite` can leave a partial chunk in the file, so the size read back, not the last acknowledged offset, is where a continuation starts.
+`file_list` answers one directory, directories first and each group in byte order of the name, at most 26 entries from `offset`, with `total` the directory's entry count; it answers 404 for a missing directory.
+The `config` directory is refused and never listed, and a name longer than 63 characters is neither listed nor counted.
+`file_mkdir` creates the directory with its parents and answers 200 for one that exists, 409 when a file has its path, or 500 when a file is in the way of a parent.
 Validation decodes the file, checks the structural rules, and evaluates every keyframe and 32 intermediate times per segment on the file's `ride_height`, or on both slider ends (`-50` and `+50` mm) when it has none, returning the first structural error or the union of clamped joints.
 An invalid file is answered with status 422 and the report filled in (`ok` false and the `error`).
 A clamped joint is a warning, not a refusal.

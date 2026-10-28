@@ -1,13 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { APSettings, ServoSettings, WifiSettings } from '../../src/lib/platform_shared/api'
 import type { FakeRobot } from '../fake-robot/playwright'
-import {
-  CAMERA_SETTINGS,
-  serveStockRobot,
-  STOCK,
-  stockRobot,
-  type SettingsUpdate
-} from '../fake-robot/stock'
+import { serveStockRobot, STOCK, stockRobot, type SettingsUpdate } from '../fake-robot/stock'
 
 // Each settings page against the stock robot: it shows what the robot holds, saves only a change, withholds an invalid
 // value from the robot, sends the edit, and keeps the edit when the robot refuses it.
@@ -281,56 +275,104 @@ test('a network edited in its dialog waits for Save, which sends it', async ({ p
   ).toEqual([[...STOCK.wifiSettings.wifiNetworks.map(n => n.ssid), 'garage']])
 })
 
-// The camera's settings travel over the robot's HTTP API; its sliders hold no value outside their range.
-const serveCamera = async (page: Page, status: number) => {
-  const posted: unknown[] = []
-  await page.route('**/api/camera/settings', route => {
-    if (route.request().method() !== 'POST') return route.fulfill({ json: CAMERA_SETTINGS })
-    const body = route.request().postDataJSON()
-    posted.push(body)
-    return status >= 400 ? route.fulfill({ status }) : route.fulfill({ json: body })
-  })
-  return posted
-}
+// The camera's settings are a topic like the others: the page follows the robot's snapshot and pushes, and no HTTP route
+// carries them. Its sliders hold no value outside their range; the folded numbers are held to the firmware's.
+const camera = (page: Page) => ({
+  brightness: page.getByLabel('Brightness'),
+  contrast: page.getByLabel('Contrast'),
+  vflip: page.getByLabel('Vertical flip'),
+  quality: page.getByLabel('Quality'),
+  sharpness: page.getByLabel('Sharpness'),
+  more: page.getByText('More camera settings', { exact: true })
+})
 
-test('the camera page shows its settings and saves a change', async ({ page }) => {
-  await serveStockRobot(page)
-  const posted = await serveCamera(page, 200)
+test("the camera page shows the robot's settings over the link and saves one", async ({ page }) => {
+  const { robot } = await serveStockRobot(page)
   await page.goto(`${base}/peripherals/camera`)
-  const brightness = page.getByLabel('Brightness')
-  await expect(brightness).toHaveValue(String(CAMERA_SETTINGS.brightness))
+  const { brightness, contrast, vflip } = camera(page)
+  await expect(brightness).toHaveValue('1')
+  await expect(contrast).toHaveValue('-1')
+  await expect(vflip).toBeChecked()
   await expect(save(page)).toBeDisabled()
+  expect(robot.requests('cameraSettingsUpdate')).toEqual([])
 
-  await brightness.fill('1')
+  await brightness.fill('2')
   await save(page).click()
 
   await expect(page.getByText('Camera settings updated.')).toBeVisible()
-  expect(posted).toEqual([{ ...CAMERA_SETTINGS, brightness: 1 }])
+  expect(robot.requests('cameraSettingsUpdate').map(r => r.cameraSettingsUpdate)).toEqual([
+    { ...STOCK.cameraSettings, brightness: 2 }
+  ])
+  expect(robot.held.cameraSettings.brightness).toBe(2)
   await expect(save(page)).toBeDisabled()
 })
 
-test('the camera page reports a reply that carries no settings', async ({ page }) => {
-  await serveStockRobot(page)
-  await page.route('**/api/camera/settings', route =>
-    route.fulfill({ body: 'ok', contentType: 'text/plain' })
-  )
+test("a second client's camera change shows in an untouched field", async ({ page }) => {
+  const { robot } = await serveStockRobot(page)
   await page.goto(`${base}/peripherals/camera`)
+  const { brightness, contrast } = camera(page)
+  await expect(contrast).toHaveValue('-1')
+  await brightness.fill('2')
 
-  await expect(page.getByRole('alert')).toContainText(
-    'Could not read the camera settings: the reply carried no settings'
-  )
+  robot.hold('cameraSettings', { ...robot.held.cameraSettings, contrast: 1, brightness: -2 })
+
+  await expect(contrast).toHaveValue('1')
+  await expect(brightness).toHaveValue('2')
+  await expect(page.getByText('changed on the robot: -2')).toBeVisible()
+  await expect(page.getByText('changed on the robot')).toHaveCount(1)
 })
 
-test('the camera page keeps the edit when the robot refuses it', async ({ page }) => {
-  await serveStockRobot(page)
-  await serveCamera(page, 500)
+test('an out-of-range camera value is refused and the draft kept', async ({ page }) => {
+  const { robot } = await serveStockRobot(page)
   await page.goto(`${base}/peripherals/camera`)
-  await page.getByLabel('Brightness').fill('1')
+  const { quality, more } = camera(page)
+  await more.click()
+  await quality.fill('64')
+  await save(page).click()
+
+  // The browser refuses the submit before the robot is asked.
+  await expect(quality).toBeFocused()
+  expect(await quality.evaluate(field => (field as HTMLInputElement).validity.valid)).toBe(false)
+  expect(robot.requests('cameraSettingsUpdate')).toEqual([])
+  await expect(quality).toHaveValue('64')
+  await expect(save(page)).toBeEnabled()
+})
+
+test("the camera page says why the robot's sensor refuses a value, and keeps the draft", async ({
+  page
+}) => {
+  const { robot } = await serveStockRobot(page)
+  await page.goto(`${base}/peripherals/camera`)
+  const { sharpness, more } = camera(page)
+  await more.click()
+  await sharpness.fill('2')
   await save(page).click()
 
   await expect(
-    page.getByText('Not saved: Request failed with status 500', { exact: true })
+    page.getByText('Not saved: this camera has no sharpness setting; leave it at 0', {
+      exact: true
+    })
   ).toBeVisible()
-  await expect(page.getByLabel('Brightness')).toHaveValue('1')
+  await expect(sharpness).toHaveValue('2')
   await expect(save(page)).toBeEnabled()
+  expect(robot.held.cameraSettings).toEqual(STOCK.cameraSettings)
+})
+
+test('the camera page works with no HTTP route served', async ({ page }) => {
+  const { robot } = await serveStockRobot(page)
+  const http: string[] = []
+  page.on('request', request => {
+    const { pathname } = new URL(request.url())
+    if (pathname.includes('/api/') && !/\/api\/(ws|camera\/stream)$/.test(pathname))
+      http.push(pathname)
+  })
+  await page.goto(`${base}/peripherals/camera`)
+  const { brightness } = camera(page)
+  await expect(brightness).toHaveValue('1')
+  await brightness.fill('0')
+  await save(page).click()
+
+  await expect(page.getByText('Camera settings updated.')).toBeVisible()
+  expect(robot.held.cameraSettings.brightness).toBe(0)
+  expect(http).toEqual([])
 })

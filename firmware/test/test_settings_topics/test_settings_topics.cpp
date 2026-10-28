@@ -13,20 +13,23 @@
 #include <thread>
 #include <vector>
 #include <communication/fake_adapter.h>
+#include <settings/camera_settings.h>
 #include <settings/settings_topics.h>
 
 namespace {
 
 constexpr int32_t WIFI_TAG = socket_message_Message_wifi_settings_tag;
 constexpr int32_t AP_TAG = socket_message_Message_ap_settings_tag;
+constexpr int32_t CAMERA_TAG = socket_message_Message_camera_settings_tag;
 
-// The robot's five settings services, one robot per test; the topic table reaches them through `robot`.
+// The robot's six settings services, one robot per test; the topic table reaches them through `robot`.
 struct Robot {
     StatefulService<api_ServoSettings> servo;
     StatefulService<api_PeripheralSettings> peripheral;
     StatefulService<api_WifiSettings> wifi;
     StatefulService<api_APSettings> ap;
     StatefulService<api_MDNSSettings> mdns;
+    StatefulService<CameraSettings> camera {CameraSettings_defaults()};
 };
 Robot* robot = nullptr;
 
@@ -39,6 +42,7 @@ constexpr Topic TOPICS[] = {
     {AP_TAG, TopicKind::STATE, [](SnapshotSink& sink) { settings_topics::snapshot(robot->ap, sink); }},
     {socket_message_Message_mdns_settings_tag, TopicKind::STATE,
      [](SnapshotSink& sink) { settings_topics::snapshot(robot->mdns, sink); }},
+    {CAMERA_TAG, TopicKind::STATE, [](SnapshotSink& sink) { settings_topics::snapshot(robot->camera, sink); }},
 };
 
 void addNetwork(api_WifiSettings& settings, const char* ssid, const char* password) {
@@ -210,6 +214,48 @@ void test_an_unchanged_or_refused_update_pushes_nothing() {
     TEST_ASSERT_EQUAL(0, adapter.sentCount());
 }
 
+void test_a_subscribe_to_camera_settings_gets_them_then_the_ack() {
+    Robot r;
+    robot = &r;
+    FakeAdapter adapter(TOPICS);
+
+    adapter.subscribeTo(CAMERA_TAG, 3);
+
+    const std::vector<Frame> frames = adapter.to(3);
+    const std::string expected = "tag " + std::to_string(CAMERA_TAG) + "; ack " + std::to_string(CAMERA_TAG) + "; ";
+    TEST_ASSERT_EQUAL_STRING(expected.c_str(), tags(frames).c_str());
+    const api_CameraSettings& sent = frames[0].message.message.camera_settings;
+    TEST_ASSERT_EQUAL_UINT32(CameraSettings_defaults().framesize, sent.framesize);
+    TEST_ASSERT_EQUAL_INT32(CameraSettings_defaults().quality, sent.quality);
+}
+
+// Stored through CameraSettings_update, as the update request does: a change is pushed once, an equal or refused
+// update not at all.
+void test_a_changed_camera_update_pushes_once() {
+    Robot r;
+    robot = &r;
+    FakeAdapter adapter(TOPICS);
+    settings_topics::pushOnChange(r.camera, [&adapter](const api_CameraSettings& s) { adapter.emit(s); });
+    adapter.subscribeTo(CAMERA_TAG, 3);
+    adapter.forget();
+    CameraSettings flipped = CameraSettings_defaults();
+    flipped.vflip = true;
+    CameraSettings outOfRange = flipped;
+    outOfRange.brightness = 3;
+    const auto store = [&r](const CameraSettings& incoming) {
+        return r.camera.update([&incoming](CameraSettings& s) { return CameraSettings_update(incoming, s); }, "test");
+    };
+
+    TEST_ASSERT_TRUE(store(flipped) == StateUpdateResult::CHANGED);
+    TEST_ASSERT_TRUE(store(flipped) == StateUpdateResult::UNCHANGED);
+    TEST_ASSERT_TRUE(store(outOfRange) == StateUpdateResult::ERROR);
+
+    const std::vector<Frame> frames = adapter.to(3);
+    TEST_ASSERT_EQUAL_STRING(("tag " + std::to_string(CAMERA_TAG) + "; ").c_str(), tags(frames).c_str());
+    TEST_ASSERT_TRUE(frames[0].message.message.camera_settings.vflip);
+    TEST_ASSERT_EQUAL_INT32(0, frames[0].message.message.camera_settings.brightness);
+}
+
 // A push sends under the adapter's encode lock, which a subscribe holds while its snapshot waits for the service lock:
 // a push that sent with the service lock held would deadlock against it. Another task must be able to read the service
 // while the push sends.
@@ -279,6 +325,8 @@ int main(int, char**) {
     RUN_TEST(test_each_other_group_is_answered_with_its_stored_value_then_the_ack);
     RUN_TEST(test_a_changed_update_pushes_the_redacted_group_once_to_every_subscriber);
     RUN_TEST(test_an_unchanged_or_refused_update_pushes_nothing);
+    RUN_TEST(test_a_subscribe_to_camera_settings_gets_them_then_the_ack);
+    RUN_TEST(test_a_changed_camera_update_pushes_once);
     RUN_TEST(test_a_push_holds_no_service_lock);
     RUN_TEST(test_a_push_from_a_correlation_handler_reaches_its_own_client);
     return UNITY_END();

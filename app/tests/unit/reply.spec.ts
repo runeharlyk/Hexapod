@@ -55,6 +55,19 @@ describe('interpret', () => {
     )
   })
 
+  // The listing came after v0.1.1, and the firmware that knows it gives its own 400 a reason: only a firmware that
+  // does not know it answers a bare one.
+  it('reads a bare 400 to a file listing as firmware that does not know it', () => {
+    expect(interpret({ fileList: { path: '/', offset: 0 } }, reply(400))).toEqual({
+      kind: 'too-old'
+    })
+    expect(interpret({ fileList: { path: '/', offset: 0 } }, reply(400, 'bad path'))).toEqual({
+      kind: 'refused',
+      status: 400,
+      message: 'bad path'
+    })
+  })
+
   // fileDelete with an empty path encodes to no bytes at all: the message type decides, not the values sent.
   it('decides by the request type, not by whether the values sent are defaults', () => {
     expect(interpret({ fileDelete: { path: '' } }, reply(400)).kind).toBe('refused')

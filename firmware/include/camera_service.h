@@ -8,21 +8,71 @@
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
-#include <cJSON.h>
 #include <atomic>
 #include <cstdio>
-#include <cstring>
-#include <string>
 
 #include <communication/webserver.h>
+#include <settings/camera_settings.h>
+#include <template/stateful_service.h>
 
 // ESP32-S3-EYE pin map, JPEG in PSRAM, streamed as MJPEG over HTTP. Init is non-fatal.
 namespace camera_service {
 
 inline const char *TAG = "Camera";
 
-inline bool init() {
+static_assert(CAMERA_FRAMESIZE_VGA == FRAMESIZE_VGA, "settings/camera_settings.h names framesize_t's values");
+static_assert(CAMERA_OV2640_PID == OV2640_PID && CAMERA_MEGA_CCM_PID == MEGA_CCM_PID,
+              "settings/camera_settings.h names camera_pid_t's values");
+
+// Serialises the sensor's users: a settings update on a transport's task, and the release for an update on the OTA
+// task, which frees the sensor. Taken before the settings service's lock, never after it.
+inline SemaphoreHandle_t sensorMutex = xSemaphoreCreateMutex();
+
+// Why the sensor up now would refuse `settings` (CameraSettings_refusalBy), or nullptr. With no sensor up nothing is
+// refused: the settings are stored for init() to apply.
+inline const char *refuses(const CameraSettings &settings) {
+    xSemaphoreTake(sensorMutex, portMAX_DELAY);
+    const sensor_t *s = esp_camera_sensor_get();
+    const char *refusal = s ? CameraSettings_refusalBy(s->id.PID, settings) : nullptr;
+    xSemaphoreGive(sensorMutex);
+    return refusal;
+}
+
+// Sets each value the sensor does not hold already (sensor_t::status, which every setter updates when it succeeds), so
+// an unchanged frame size does not reset the sensor's window. Without a sensor (none found, or released) it does
+// nothing; a value the sensor refuses is logged, as the OV2640 refuses every sharpness and denoise.
+inline void applyHoldingSensor(const CameraSettings &settings) {
+    sensor_t *s = esp_camera_sensor_get();
+    if (!s) return;
+    const auto refused = [](const char *name, int value) { ESP_LOGW(TAG, "The sensor refused %s %d", name, value); };
+    const auto set = [&](const char *name, int held, int wanted, int (*setter)(sensor_t *, int)) {
+        if (held != wanted && setter(s, wanted) != 0) refused(name, wanted);
+    };
+    const framesize_t framesize = static_cast<framesize_t>(settings.framesize);
+    if (s->status.framesize != framesize && s->set_framesize(s, framesize) != 0) refused("framesize", framesize);
+    set("quality", s->status.quality, settings.quality, s->set_quality);
+    set("brightness", s->status.brightness, settings.brightness, s->set_brightness);
+    set("contrast", s->status.contrast, settings.contrast, s->set_contrast);
+    set("saturation", s->status.saturation, settings.saturation, s->set_saturation);
+    set("sharpness", s->status.sharpness, settings.sharpness, s->set_sharpness);
+    set("denoise", s->status.denoise, settings.denoise, s->set_denoise);
+    set("special_effect", s->status.special_effect, settings.special_effect, s->set_special_effect);
+    set("wb_mode", s->status.wb_mode, settings.wb_mode, s->set_wb_mode);
+    set("vflip", s->status.vflip, settings.vflip, s->set_vflip);
+    set("hmirror", s->status.hmirror, settings.hmirror, s->set_hmirror);
+}
+
+// Applies the stored settings to the sensor; while the camera is not up they stay stored, for init() to apply. They
+// are read once the sensor is held, so of two updates applying at once the later one's settings end on the sensor.
+inline void apply(StatefulService<CameraSettings> &stored) {
+    xSemaphoreTake(sensorMutex, portMAX_DELAY);
+    stored.read([](const CameraSettings &settings) { applyHoldingSensor(settings); });
+    xSemaphoreGive(sensorMutex);
+}
+
+inline bool init(StatefulService<CameraSettings> &stored) {
     camera_config_t config = {};
     config.pin_pwdn = -1;
     config.pin_reset = -1;
@@ -44,14 +94,18 @@ inline bool init() {
     config.ledc_timer = LEDC_TIMER_0;
     config.ledc_channel = LEDC_CHANNEL_0;
     config.pixel_format = PIXFORMAT_JPEG;
-    config.frame_size = FRAMESIZE_VGA;
-    config.jpeg_quality = 12;
+    // The frame buffers are sized for this frame size, which bounds every stored one (CameraSettings_valid).
+    config.frame_size = static_cast<framesize_t>(CAMERA_BUFFER_FRAMESIZE);
+    config.jpeg_quality = CAMERA_DEFAULT_QUALITY;
     config.fb_count = 2;
     config.fb_location = CAMERA_FB_IN_PSRAM;
     config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
     config.sccb_i2c_port = 1;  // main peripheral bus owns I2C_NUM_0; keep SCCB on port 1
 
-    esp_err_t err = esp_camera_init(&config);
+    xSemaphoreTake(sensorMutex, portMAX_DELAY);
+    const esp_err_t err = esp_camera_init(&config);
+    if (err == ESP_OK) stored.read([](const CameraSettings &settings) { applyHoldingSensor(settings); });
+    xSemaphoreGive(sensorMutex);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Camera init failed: 0x%x (video disabled)", err);
         return false;
@@ -61,9 +115,12 @@ inline bool init() {
 }
 
 // Gives back the camera's internal DMA buffer, the largest block of internal RAM the robot holds, to
-// work that needs it more; the handlers below find no frame and no sensor afterwards and say so.
+// work that needs it more; the stream below finds no frame afterwards and says so, and apply() finds no sensor.
 inline void release() {
-    if (esp_camera_deinit() == ESP_OK) ESP_LOGI(TAG, "Camera released");
+    xSemaphoreTake(sensorMutex, portMAX_DELAY);
+    const esp_err_t err = esp_camera_deinit();
+    xSemaphoreGive(sensorMutex);
+    if (err == ESP_OK) ESP_LOGI(TAG, "Camera released");
 }
 
 #define CAMERA_STREAM_BOUNDARY "hexapodframe"
@@ -151,70 +208,9 @@ inline esp_err_t stream(httpd_req_t *req) {
     return ESP_OK;
 }
 
-inline esp_err_t settingsGet(httpd_req_t *req) {
-    sensor_t *s = esp_camera_sensor_get();
-    if (!s) return WebServer::sendError(req, 500, "no sensor");
-    cJSON *j = cJSON_CreateObject();
-    cJSON_AddNumberToObject(j, "framesize", s->status.framesize);
-    cJSON_AddNumberToObject(j, "quality", s->status.quality);
-    cJSON_AddNumberToObject(j, "brightness", s->status.brightness);
-    cJSON_AddNumberToObject(j, "contrast", s->status.contrast);
-    cJSON_AddNumberToObject(j, "saturation", s->status.saturation);
-    cJSON_AddNumberToObject(j, "sharpness", s->status.sharpness);
-    cJSON_AddNumberToObject(j, "denoise", s->status.denoise);
-    cJSON_AddNumberToObject(j, "special_effect", s->status.special_effect);
-    cJSON_AddNumberToObject(j, "wb_mode", s->status.wb_mode);
-    cJSON_AddBoolToObject(j, "vflip", s->status.vflip);
-    cJSON_AddBoolToObject(j, "hmirror", s->status.hmirror);
-    char *out = cJSON_PrintUnformatted(j);
-    httpd_resp_set_type(req, "application/json");
-    esp_err_t r = httpd_resp_sendstr(req, out ? out : "{}");
-    cJSON_free(out);
-    cJSON_Delete(j);
-    return r;
-}
-
-inline esp_err_t settingsPost(httpd_req_t *req) {
-    int len = req->content_len;
-    if (len <= 0 || len > 1024) return WebServer::sendError(req, 400, "bad body");
-    std::string raw(len, '\0');
-    int got = 0;
-    while (got < len) {
-        int r = httpd_req_recv(req, &raw[got], len - got);
-        if (r <= 0) return WebServer::sendError(req, 400, "recv failed");
-        got += r;
-    }
-    cJSON *j = cJSON_Parse(raw.c_str());
-    sensor_t *s = esp_camera_sensor_get();
-    if (!j || !s) {
-        if (j) cJSON_Delete(j);
-        return WebServer::sendError(req, 400, "bad request");
-    }
-    auto num = [&](const char *k, auto setter) {
-        cJSON *v = cJSON_GetObjectItem(j, k);
-        if (cJSON_IsNumber(v)) setter(s, v->valueint);
-        else if (cJSON_IsBool(v)) setter(s, cJSON_IsTrue(v) ? 1 : 0);
-    };
-    num("framesize", [](sensor_t *s, int v) { s->set_framesize(s, (framesize_t)v); });
-    num("quality", [](sensor_t *s, int v) { s->set_quality(s, v); });
-    num("brightness", [](sensor_t *s, int v) { s->set_brightness(s, v); });
-    num("contrast", [](sensor_t *s, int v) { s->set_contrast(s, v); });
-    num("saturation", [](sensor_t *s, int v) { s->set_saturation(s, v); });
-    num("sharpness", [](sensor_t *s, int v) { s->set_sharpness(s, v); });
-    num("denoise", [](sensor_t *s, int v) { s->set_denoise(s, v); });
-    num("special_effect", [](sensor_t *s, int v) { s->set_special_effect(s, v); });
-    num("wb_mode", [](sensor_t *s, int v) { s->set_wb_mode(s, v); });
-    num("vflip", [](sensor_t *s, int v) { s->set_vflip(s, v); });
-    num("hmirror", [](sensor_t *s, int v) { s->set_hmirror(s, v); });
-    cJSON_Delete(j);
-    return settingsGet(req);
-}
-
 inline void registerRoutes(WebServer &server) {
     startStreamWorker();
     server.on("/api/camera/stream", HTTP_GET, stream);
-    server.on("/api/camera/settings", HTTP_GET, settingsGet);
-    server.on("/api/camera/settings", HTTP_POST, settingsPost);
 }
 
 } // namespace camera_service

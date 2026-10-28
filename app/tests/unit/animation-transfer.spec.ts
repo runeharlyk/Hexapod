@@ -9,8 +9,8 @@ import { dataBroker } from '$lib/transport/databroker'
 import { FakeRobot, fakeLink } from '../fake-robot/transport'
 import type { Responder } from '../fake-robot/robot'
 import { Animation, ParamId } from '$lib/platform_shared/animation'
+import { CHUNK } from '$lib/files'
 import {
-  CHUNK,
   animationPath,
   deleteAnimation,
   downloadAnimation,
@@ -148,7 +148,9 @@ describe('deleteAnimation', () => {
   // A path the robot cannot resolve or unlink is a bare 400 to a request with fields: a refusal.
   it('reports a refused delete with its name', async () => {
     responder = () => ({ statusCode: 400 })
-    await expect(deleteAnimation('wave')).rejects.toThrow('the robot refused deleting wave')
+    await expect(deleteAnimation('wave')).rejects.toThrow(
+      'the robot refused deleting /animations/wave.pb'
+    )
   })
 })
 
