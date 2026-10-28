@@ -174,10 +174,48 @@ message PeripheralSettings {
 }
 
 // =============================================================================
+// Camera Settings - the sensor's image controls
+// =============================================================================
+
+// The values as the esp32-camera sensor_t holds them: framesize is a framesize_t, the rest are its ints and flags.
+message CameraSettings {
+    uint32 framesize = 1;
+    int32 quality = 2;
+    int32 brightness = 3;
+    int32 contrast = 4;
+    int32 saturation = 5;
+    int32 sharpness = 6;
+    int32 denoise = 7;
+    int32 special_effect = 8;
+    int32 wb_mode = 9;
+    bool vflip = 10;
+    bool hmirror = 11;
+}
+
+// =============================================================================
 // File System - shared data types
 // =============================================================================
 
 message FileDeleteRequest {
+    string path = 1;
+}
+
+// One directory's entries, paged: the first page is offset 0, the next begins at offset plus the entries received.
+message FileListRequest {
+    string path = 1;
+    uint32 offset = 2;
+}
+message FileEntry {
+    string name = 1;
+    bool is_directory = 2;
+    uint32 size = 3;  // bytes; zero for a directory
+}
+message FileList {
+    repeated FileEntry entries = 1;
+    uint32 total = 2;  // the entries the directory has, not the page's
+}
+
+message FileMkdirRequest {
     string path = 1;
 }
 

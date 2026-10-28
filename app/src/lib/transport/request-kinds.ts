@@ -35,6 +35,9 @@ export const REQUEST_KINDS: Record<RequestKey, RequestKind> = {
   fileWriteChunk: 'setting',
   fileReadChunk: 'read',
   fileDelete: 'setting',
+  fileList: 'read',
+  fileMkdir: 'setting',
+  cameraSettingsUpdate: 'setting',
   animationValidate: 'read',
   animationListRequest: 'read',
   // With `reset` it zeroes the pose, which moves nothing; the robot refuses it while a goal runs.

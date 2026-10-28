@@ -101,6 +101,15 @@ struct MessageTraits<api_MDNSSettings> {
     static const api_MDNSSettings& access(const socket_message_Message& msg) { return msg.message.mdns_settings; }
 };
 
+template <>
+struct MessageTraits<api_CameraSettings> {
+    static constexpr pb_size_t tag = socket_message_Message_camera_settings_tag;
+    static void assign(socket_message_Message& msg, const api_CameraSettings& data) {
+        msg.message.camera_settings = data;
+    }
+    static const api_CameraSettings& access(const socket_message_Message& msg) { return msg.message.camera_settings; }
+};
+
 class ProtoDecoder {
   public:
     using SubscribeHandler = std::function<void(int32_t tag, int clientId)>;

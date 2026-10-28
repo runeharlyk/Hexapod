@@ -53,3 +53,10 @@ api.FileWriteChunk.path max_size:128
 api.FileWriteChunk.content max_size:512
 api.FileReadChunk.path max_size:128
 api.FileChunk.content max_size:512
+
+# A listing page is the most entries whose largest encoding, every name at its cap, still fits one frame
+# (PROTO_BUFFER_SIZE - 64) and keeps a CorrelationResponse within its struct guard (test_protocol_size).
+api.FileEntry.name max_size:64
+api.FileListRequest.path max_size:128
+api.FileList.entries max_count:26
+api.FileMkdirRequest.path max_size:128

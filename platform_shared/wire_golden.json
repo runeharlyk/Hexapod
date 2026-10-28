@@ -168,12 +168,41 @@
    "mac_address": "3 string",
    "station_num": "4 uint32"
   },
+  "api.CameraSettings": {
+   "framesize": "1 uint32",
+   "quality": "2 int32",
+   "brightness": "3 int32",
+   "contrast": "4 int32",
+   "saturation": "5 int32",
+   "sharpness": "6 int32",
+   "denoise": "7 int32",
+   "special_effect": "8 int32",
+   "wb_mode": "9 int32",
+   "vflip": "10 bool",
+   "hmirror": "11 bool"
+  },
   "api.EmptyMessage": {},
   "api.FileChunk": {
    "content": "1 bytes",
    "total_size": "2 uint32"
   },
   "api.FileDeleteRequest": {
+   "path": "1 string"
+  },
+  "api.FileEntry": {
+   "name": "1 string",
+   "is_directory": "2 bool",
+   "size": "3 uint32"
+  },
+  "api.FileList": {
+   "entries": "1 repeated api.FileEntry",
+   "total": "2 uint32"
+  },
+  "api.FileListRequest": {
+   "path": "1 string",
+   "offset": "2 uint32"
+  },
+  "api.FileMkdirRequest": {
    "path": "1 string"
   },
   "api.FileReadChunk": {
@@ -380,6 +409,9 @@
    "file_write_chunk": "100 api.FileWriteChunk",
    "file_read_chunk": "101 api.FileReadChunk",
    "file_delete": "102 api.FileDeleteRequest",
+   "file_list": "103 api.FileListRequest",
+   "file_mkdir": "104 api.FileMkdirRequest",
+   "camera_settings_update": "160 api.CameraSettings",
    "animation_validate": "110 socket_message.AnimationValidate",
    "animation_list_request": "111 socket_message.AnimationListRequest",
    "odometry_get": "130 socket_message.OdometryGet",
@@ -406,6 +438,8 @@
    "peripheral_settings": "90 api.PeripheralSettings",
    "empty": "5 api.EmptyMessage",
    "file_chunk": "101 api.FileChunk",
+   "file_list": "103 api.FileList",
+   "camera_settings": "160 api.CameraSettings",
    "animation_report": "110 socket_message.AnimationReport",
    "animation_list": "111 socket_message.AnimationList",
    "odometry": "130 socket_message.OdometryData",
@@ -510,7 +544,8 @@
    "peripheral_settings": "311 api.PeripheralSettings",
    "wifi_settings": "312 api.WifiSettings",
    "ap_settings": "313 api.APSettings",
-   "mdns_settings": "314 api.MDNSSettings"
+   "mdns_settings": "314 api.MDNSSettings",
+   "camera_settings": "315 api.CameraSettings"
   },
   "socket_message.ModeData": {
    "mode": "1 socket_message.ModesEnum",

@@ -382,6 +382,9 @@ message CorrelationRequest {
     api.FileWriteChunk file_write_chunk = 100;
     api.FileReadChunk file_read_chunk = 101;
     api.FileDeleteRequest file_delete = 102;
+    api.FileListRequest file_list = 103;
+    api.FileMkdirRequest file_mkdir = 104;
+    api.CameraSettings camera_settings_update = 160;
     AnimationValidate animation_validate = 110;
     AnimationListRequest animation_list_request = 111;
     OdometryGet odometry_get = 130;
@@ -415,6 +418,8 @@ message CorrelationResponse {
     api.PeripheralSettings peripheral_settings = 90;
     api.EmptyMessage empty = 5;
     api.FileChunk file_chunk = 101;
+    api.FileList file_list = 103;
+    api.CameraSettings camera_settings = 160;
     AnimationReport animation_report = 110;
     AnimationList animation_list = 111;
     OdometryData odometry = 130;
@@ -530,5 +535,6 @@ message Message {
     api.WifiSettings wifi_settings = 312;              // observable settings: pushed on every write
     api.APSettings ap_settings = 313;                  // observable settings: pushed on every write
     api.MDNSSettings mdns_settings = 314;              // observable settings: pushed on every write
+    api.CameraSettings camera_settings = 315;          // observable settings: pushed on every write
   }
 }
