@@ -1,22 +1,28 @@
 <script lang="ts">
   import Folder from './Folder.svelte'
   import File from './File.svelte'
+  import type { DirectoryTree } from './tree.svelte'
+  import { childPath } from '$lib/files'
   import { FolderIcon, FolderOpenOutline } from '$lib/components/icons'
-  import type { Directory } from '$lib/types/models'
+  import LoadFailure from '$lib/components/layout/LoadFailure.svelte'
+  import Loading from '$lib/components/layout/Loading.svelte'
 
   interface Props {
     expanded?: boolean
     name: string
-    path?: string
-    files: Directory
+    path: string
+    tree: DirectoryTree
     selected: (path: string) => void
     onDelete: (path: string) => void
   }
 
-  let { expanded = $bindable(false), name, path = '', files, selected, onDelete }: Props = $props()
+  let { expanded = $bindable(false), name, path, tree, selected, onDelete }: Props = $props()
+
+  const listing = $derived(tree.listings[path])
 
   function toggle() {
     expanded = !expanded
+    if (expanded) tree.load(path)
   }
 </script>
 
@@ -32,20 +38,34 @@
 
   {#if expanded}
     <ul class="border-base-300 mt-1 ml-4 border-l">
-      {#each Object.entries(files) as [itemName, content] (itemName)}
+      {#if listing?.error}
+        <li class="py-1 pl-2">
+          <LoadFailure
+            message="Could not list {path}: {listing.error}"
+            retry={() => tree.load(path)}
+          />
+        </li>
+      {/if}
+      {#each listing?.entries ?? [] as entry (entry.name)}
         <li class="py-1">
-          {#if typeof content === 'object'}
+          {#if entry.isDirectory}
             <Folder
-              name={itemName}
-              path={`${path}/${itemName}`}
-              files={content}
+              name={entry.name}
+              path={childPath(path, entry.name)}
+              {tree}
               {selected}
               {onDelete}
             />
           {:else}
-            <File name={itemName} path={`${path}/${itemName}`} {selected} {onDelete} />
+            <File name={entry.name} path={childPath(path, entry.name)} {selected} {onDelete} />
           {/if}
         </li>
+      {:else}
+        {#if !listing || listing.loading}
+          <li class="py-1 pl-2"><Loading label="Reading {path}" rows={1} /></li>
+        {:else if !listing.error}
+          <li class="text-base-content/70 py-1 pl-2 text-sm">Empty</li>
+        {/if}
       {/each}
     </ul>
   {/if}

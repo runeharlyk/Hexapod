@@ -1,11 +1,9 @@
 <script lang="ts" generics="T extends object">
   import { onMount, type Snippet } from 'svelte'
-  import { beforeNavigate, goto } from '$app/navigation'
-  import { modals } from 'svelte-modals'
-  import ConfirmDialog from '$lib/components/ConfirmDialog.svelte'
-  import { Cancel, Check, type IconComponent } from '$lib/components/icons'
+  import type { IconComponent } from '$lib/components/icons'
   import LoadFailure from './LoadFailure.svelte'
   import Section from './Section.svelte'
+  import { guardUnsaved } from './unsaved-guard'
   import type { Settings } from './settings.svelte'
 
   interface Props {
@@ -58,36 +56,7 @@
 
   const unsaved = $derived(settings.dirty || pending)
 
-  // Moving on inside the app asks first while changes are unsaved; leaving goes on to where the person was headed.
-  let leaving = false
-  beforeNavigate(navigation => {
-    const { to, from, type, delta, willUnload } = navigation
-    // A reload, a closed tab or another site is the browser's to ask about (guardUnload).
-    if (leaving || !unsaved || willUnload || !to) return
-    if (to.url.pathname === from?.url.pathname) return
-    navigation.cancel()
-    modals.open(ConfirmDialog, {
-      title: 'Unsaved changes',
-      message: 'This page has changes that are not saved. Leave it and lose them?',
-      labels: {
-        cancel: { label: 'Stay', icon: Cancel },
-        confirm: { label: 'Leave', icon: Check }
-      },
-      onConfirm: () => {
-        leaving = true
-        modals.closeAll()
-        if (type === 'popstate' && delta) history.go(delta)
-        else goto(to.url)
-      }
-    })
-  })
-
-  const guardUnload = (event: BeforeUnloadEvent) => {
-    if (!unsaved) return
-    event.preventDefault()
-    // Older Chromium and Safari prompt only when returnValue is set.
-    event.returnValue = ''
-  }
+  guardUnsaved(() => unsaved)
 
   // The browser has checked every field against its constraints before this runs.
   const submit = (event: SubmitEvent) => {
@@ -96,8 +65,6 @@
     else save()
   }
 </script>
-
-<svelte:window onbeforeunload={guardUnload} />
 
 {#snippet commit()}
   <button

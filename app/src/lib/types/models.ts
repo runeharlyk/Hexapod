@@ -122,12 +122,6 @@ export type PeripheralsConfiguration = {
   pins: PinConfig[]
 }
 
-export type File = number
-
-export interface Directory {
-  [key: string]: File | Directory
-}
-
 export type Servo = {
   name: string
   channel: number

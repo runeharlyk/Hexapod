@@ -30,6 +30,7 @@ import {
 } from '../../src/lib/platform_shared/api'
 import type { StateTopic } from '../../src/lib/transport/topics'
 import { FakeRobot, serveRobot } from './playwright'
+import { FileTree } from './file-tree'
 import { FACTORY_MDNS_SETTINGS, type RequestKey } from './robot'
 
 // The firmware's IPAddress packing, as proto-api's ipToU32, which cannot load outside the app for its store imports.
@@ -305,6 +306,8 @@ const STOCK_HELD: Held = {
  */
 export class StockRobot extends FakeRobot {
   held: Held
+  /** The files the robot's LittleFS holds, which the file requests read and change. */
+  readonly files = new FileTree(STOCK_FILES)
 
   constructor(boot: Record<string, unknown>, held: Held = STOCK_HELD) {
     super({
@@ -404,6 +407,15 @@ export const stockRobot = () => {
   }))
   for (const update of Object.keys(UPDATES) as SettingsUpdate[])
     robot.respond(update, request => robot.store(update, request))
+  robot.respond('fileList', ({ fileList }) => robot.files.list(fileList!.path, fileList!.offset))
+  robot.respond('fileMkdir', ({ fileMkdir }) => robot.files.mkdir(fileMkdir!.path))
+  robot.respond('fileReadChunk', ({ fileReadChunk: r }) =>
+    robot.files.read(r!.path, r!.offset, r!.length)
+  )
+  robot.respond('fileWriteChunk', ({ fileWriteChunk: w }) =>
+    robot.files.write(w!.path, w!.offset, w!.totalSize, w!.content)
+  )
+  robot.respond('fileDelete', ({ fileDelete }) => robot.files.delete(fileDelete!.path))
   robot.respond('mdnsQuery', () => ({
     mdnsQueryResponse: {
       services: [
@@ -444,12 +456,16 @@ export const stockRobot = () => {
   return robot
 }
 
-const FILES = {
-  root: {
-    config: { 'wifiSettings.pb': 112, 'servoSettings.pb': 540, 'peripheralSettings.pb': 24 },
-    animations: { 'wave.pb': 2210, 'stretch.pb': 1830 }
-  }
-}
+// The sizes of the files the robot's LittleFS holds at boot; the animations are named for the library's.
+const STOCK_FILES = Object.fromEntries(
+  Object.entries({
+    '/config/wifiSettings.pb': 112,
+    '/config/servoSettings.pb': 540,
+    '/config/peripheralSettings.pb': 24,
+    '/animations/wave.pb': 2210,
+    '/animations/stretch.pb': 1830
+  }).map(([path, size]) => [path, new Uint8Array(size)])
+)
 
 // A 1x1 grey PNG for the camera stream, which a real robot serves as MJPEG.
 const GREY_PIXEL = Buffer.from(
@@ -459,13 +475,12 @@ const GREY_PIXEL = Buffer.from(
 
 /**
  * Serves the stock robot to the page: the protobuf link through the WebSocket the layout opens on an http origin, and
- * the robot's HTTP endpoints (camera, files) and GitHub's release list through routes, so no page reaches the network.
+ * the robot's HTTP camera endpoint and GitHub's release list through routes, so no page reaches the network.
  */
 export const serveStockRobot = async (page: Page, robot = stockRobot()) => {
   await page.route('**/api/camera/stream', route =>
     route.fulfill({ body: GREY_PIXEL, contentType: 'image/png' })
   )
-  await page.route('**/api/files', route => route.fulfill({ json: FILES }))
   await page.route('https://api.github.com/**', route =>
     route.fulfill({
       json: [
