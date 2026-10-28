@@ -79,7 +79,7 @@ Read it before changing the firmware; what follows is only what an agent needs o
 - New dynamic state for the app follows the observable-state pattern: the producer publishes on change, `observeStatus<T>()` in `main.cpp` bridges it, its entry in `main.cpp`'s `TOPICS` (and in `platform_shared/topics.json`) answers a subscribe with the current value and an ack, and the app follows that snapshot and the pushes.
   An owner never pushes while holding a lock its snapshot reads under.
   Never a timer push.
-  The five settings groups are state topics too, written by their update request; a push replaces the whole group (`firmware/include/settings/settings_topics.h`).
+  The six settings groups are state topics too, written by their update request; a push replaces the whole group (`firmware/include/settings/settings_topics.h`).
 - `MOTION_STATE` crosses the wire as its `ModesEnum` value and `GaitType` as its position, so firmware and app must be deployed together when those enums change.
   `MOTION_STATE`'s values are explicit because the proto reserves POSE's 2 (`firmware/include/motion_state_wire.h`, the app's `modeToWire`/`modeFromWire` in `app/src/lib/motion.ts`); never reuse 2 or close the gap.
   `simulation/test_wire_golden.py` fails on any renumbered enum value or field until `simulation/gen_wire_golden.py` regenerates `platform_shared/wire_golden.json`.

@@ -366,7 +366,7 @@ Its `ProtoDecoder` dispatches each decoded message to the handler registered for
 `emit` encodes a message once and sends it to the clients subscribed to its tag, or to one client for a reply; with no subscriber it returns before encoding.
 
 `registerHandlers` in `src/main.cpp` registers the same handlers on every adapter.
-Commands, modes, gaits and raw servo signals are validated and republished onto the EventBus; animation requests and dragged joints call into `Hexapod`; a `CorrelationRequest` is answered with a `CorrelationResponse` carrying the same correlation id (system information, features, I2C scan, the WiFi networks scan, the updates of the WiFi, AP, mDNS, servo and peripheral settings, the mDNS scan, servo centring, IMU calibration, OTA chunks, file chunks, animation listing and validation).
+Commands, modes, gaits and raw servo signals are validated and republished onto the EventBus; animation requests and dragged joints call into `Hexapod`; a `CorrelationRequest` is answered with a `CorrelationResponse` carrying the same correlation id (system information, features, I2C scan, the WiFi networks scan, the updates of the WiFi, AP, mDNS, servo, peripheral and camera settings, the mDNS scan, servo centring, IMU calibration, OTA chunks, file chunks, directory listing and creation, animation listing and validation).
 A request the firmware does not know is answered 501 without a message, and no other reply is a 501, so the app reads it as firmware too old for the request (`app/src/lib/transport/reply.ts`).
 Firmware up to v0.1.1 answered a bare 400 there, the status of a malformed request too, so the app reads that as too old only for a request without fields.
 The mDNS scan is answered later: its query collects answers for 3 s, and a transport task that waited them out took no other message from its client meanwhile, sticks, modes and pings included.
@@ -380,7 +380,7 @@ Outgoing data takes one of four shapes, chosen by the kind of data:
 - **Streams** (servo angles, IMU, analytics, per-tick telemetry) are emitted at their own rate while a client subscribes.
 - **Observable state** (mode, gait, WiFi status, AP status, OTA progress, animation status, goal status) is published on the EventBus by its producer when it changes and pushed to every subscribed client; a subscribe is answered with the current value, so a client that joins late needs no request.
   State is never sent on a timer.
-- **Settings** (servo, peripheral, WiFi, AP and mDNS) are state topics written by an update request, which is answered with the stored group; there is no get request.
+- **Settings** (servo, peripheral, camera, WiFi, AP and mDNS) are state topics written by an update request, which is answered with the stored group; there is no get request.
   A push carries the whole group, which the app's form folds into a draft field by field, so a push never overwrites a field being edited.
 - **Commands** (sticks, mode, dragged joints, restart, sleep) are fire-and-forget.
 
@@ -390,7 +390,7 @@ A bridge holds its EventBus subscription only while some client on some transpor
 
 `platform_shared/topics.json` names each topic's kind, state or stream, and `include/communication/topics.h` and the app's `src/lib/transport/topics.ts` are checked against it (`test/test_topic_snapshot/`, `app/tests/unit/topics.spec.ts`).
 `main.cpp`'s `TOPICS` gives each state topic a snapshot function that reads its owner, as the replies do: `MotionInbox` for the mode and the goal, `EventBus::peek` for the gait, the joint angles, the OTA and the animation status, and the WiFi and AP services for theirs.
-The five settings groups are state topics whose snapshot and push read the group under its service's lock and redact the passwords and the merge fingerprint (`include/settings/settings_topics.h`); each copy lives in PSRAM, since internal RAM is the binding limit, and a push is sent after the update has released the service's lock.
+The six settings groups are state topics whose snapshot and push read the group under its service's lock and redact the passwords and the merge fingerprint (`include/settings/settings_topics.h`); each copy lives in PSRAM, since internal RAM is the binding limit, and a push is sent after the update has released the service's lock.
 The joint angles are a state topic so that a client subscribing while the robot idles gets the angles its servos hold, which IDLE publishes only on change; before the motion first publishes any, the snapshot is an empty `AnglesData`, which the app reads as no pose.
 A status nobody has published yet is its idle value, so every state topic has a value from boot; a `static_assert` holds `TOPICS` to `TOPIC_KINDS` in `topics.h`, which `test/test_topic_snapshot/` holds to the shared table.
 `CommAdapterBase::subscribe` adds the client unless it already subscribes, attaches the bridge on the tag's first subscriber, and then, under the adapter's `encodeMutex_`, sends a state topic's snapshot and then the `sub_notif` echoed to that client as the ack; a stream, and a tag that is no topic, get the ack alone.
@@ -430,7 +430,7 @@ Which transport a browser may use depends on the page's origin, not on the firmw
 ## HTTP server
 
 `WebServer` (`include/communication/webserver.h`) wraps `esp_http_server`.
-It serves the WebSocket, `/api/features`, the stored core dump (`/api/coredump`), firmware upload and download (`/api/firmware*`), the camera's MJPEG stream and settings (`/api/camera/*`), and, when built with `EMBED_WEBAPP=1`, the web app itself (`include/www_mount.hpp`).
+It serves the WebSocket, `/api/features`, the stored core dump (`/api/coredump`), firmware upload and download (`/api/firmware*`), the camera's MJPEG stream (`/api/camera/stream`), and, when built with `EMBED_WEBAPP=1`, the web app itself (`include/www_mount.hpp`).
 The origin check in `include/communication/origin_policy.h` allows pages from the local network, the hosted app, and clients that send no `Origin`.
 A WebSocket opened by any other page is closed before it carries a frame, and an HTTP answer to one carries no CORS header, so the browser withholds it and refuses its preflighted requests.
 
@@ -444,6 +444,8 @@ A move that fails leaves the stored file alone and removes the `.tmp`; removing 
 A `.tmp` that a reset leaves behind is never read, and the next save writes over it.
 `test/test_settings_persistence/` checks these cases on the host, with a `replaceFile` that can fail or cut the power at the move.
 Servo calibration, peripheral settings and IMU calibration are also published on their own EventBus types, so the servo and sensor code picks them up with `peek` at start and by subscription afterwards.
+The camera's settings are stored by `CameraSettingsService` (`include/settings/camera_settings_service.h`), since the sensor forgets them at every reset, and `camera_service::init` (`include/camera_service.h`) sets them on the sensor once the camera starts, through `applyHoldingSensor`, and `camera_service::apply` after every stored change.
+An update is refused with 400 for a value out of range or, on an OV2640 or MEGA_CCM sensor, for a nonzero sharpness or denoise, which those sensors do not have.
 Factory defaults (app name and version, WiFi, AP, `NUM_SERVO`) come from `factory_settings.ini`.
 
 ## Flash layout and firmware update
