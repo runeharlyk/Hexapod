@@ -42,9 +42,9 @@ BodyStateMsg restingStance(GaitController &gait, gait_state_t still) {
 
 constexpr int SAMPLE_TICKS = 5; // the gyro's 40 Hz in the 200 Hz control loop
 
-// A tripod walked by the gait alone at one cycle per second, its feet and stance flags fed to the odometries as
-// MotionService feeds them, after each step; when `gyro` is set, the DMP's yaw turns at it and the fused one gets a
-// packet on every fifth tick.
+// A gait, the tripod unless named, walked alone at one cycle per second, its feet and stance flags fed to the
+// odometries as MotionService feeds them, after each step; when `gyro` is set, the DMP's yaw turns at it and the fused
+// one gets a packet on every fifth tick.
 struct GaitWalk {
     GaitController gait;
     gait_state_t state {};
@@ -55,8 +55,8 @@ struct GaitWalk {
     float dmpYaw = 0;
     int ticksRun = 0;
 
-    GaitWalk(float stepX, float stepY, float stepAngle) {
-        state.gait_type = GaitType::TRI_GATE;
+    GaitWalk(float stepX, float stepY, float stepAngle, GaitType type = GaitType::TRI_GATE) {
+        state.gait_type = type;
         state.step_speed = 1;
         state.step_height = 15;
         state.step_depth = 0.002f;
@@ -359,30 +359,89 @@ void test_feet_moving_on_the_floor_teach_no_bias() {
     TEST_ASSERT_FLOAT_WITHIN(0.1f * GYRO_BIAS, 0, learnedBias(odometry, dmpYaw));
 }
 
+namespace {
+
+constexpr float REST_MM = 0.5f, REST_RAD = 0.005f;
+constexpr std::array<std::array<float, 3>, 3> STROKES {
+    std::array<float, 3> {0, STEP_MM, 0}, {0, 0, STEP_ANGLE_RAD}, {0, STEP_MM, STEP_ANGLE_RAD}};
+
+void assertSettlesAt(const OdometryEstimate &predicted, const OdometryEstimate &settled, const char *msg) {
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(REST_MM / 1000, predicted.x, settled.x, msg);
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(REST_MM / 1000, predicted.y, settled.y, msg);
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(REST_RAD, predicted.yaw, settled.yaw, msg);
+}
+
+} // namespace
+
 // A gait stopped at any phase eases its planted feet home and lowers the lifted ones; the robot settles where restStep
-// says the feet carry it, for a walk, a turn and an arc. The ease is fitted tick by tick on the feet down in each,
-// which one fit over the whole ease matches to within 2 mm and 0.015 rad (measured: 1.7 mm and 0.012 rad at worst).
+// says the feet carry it, for a walk, a turn and an arc, on every classic gait. The ease is fitted tick by tick on the
+// feet down in each, which restStep's fits from one foot's joining to the next match to within 0.5 mm and 0.005 rad
+// (measured over 200 stop phases of every classic gait: 0.27 mm and 0.002 rad at worst). One fit over the whole ease
+// missed by 2.9 mm.
 void test_the_rest_step_predicts_where_a_stopped_gait_settles() {
-    constexpr float HOME_MM = 2.0f, HOME_RAD = 0.015f;
-    constexpr std::array<bool, 6> STAY = ALL_DOWN;
-    const BodyStateMsg HOME = GaitWalk(0, 0, 0).body; // the stance the gait eases home to
-    for (const std::array<float, 3> stroke :
-         {std::array<float, 3> {0, STEP_MM, 0}, {0, 0, STEP_ANGLE_RAD}, {0, STEP_MM, STEP_ANGLE_RAD}}) {
+    for (const GaitType type : {GaitType::TRI_GATE, GaitType::BI_GATE, GaitType::WAVE, GaitType::RIPPLE}) {
+        const BodyStateMsg HOME = GaitWalk(0, 0, 0, type).body; // the stance the gait eases home to
+        for (const std::array<float, 3> &stroke : STROKES) {
+            for (int k = 1; k <= 8; ++k) {
+                GaitWalk walk(stroke[0], stroke[1], stroke[2], type);
+                walk.run(ticksFor(1.0f) + k * TICKS_PER_SECOND / 8);
+                std::array<bool, 6> stance;
+                for (int leg = 0; leg < 6; ++leg) stance[leg] = walk.gait.inStance(walk.state, leg);
+                const OdometryEstimate predicted = KinematicOdometry::advance(
+                    walk.odometry.estimate(), KinematicOdometry::restStep(walk.body, stance, HOME.feet, ALL_DOWN));
+                walk.state.step_x = walk.state.step_y = walk.state.step_angle = 0;
+                walk.run(ticksFor(FEET_EASE_S + 0.1f));
+                char msg[80];
+                std::snprintf(msg, sizeof(msg), "gait %d stroke %.0f %.2f, stopped at %d/8 of a cycle", (int)type,
+                              stroke[1], stroke[2], k);
+                assertSettlesAt(predicted, walk.odometry.estimate(), msg);
+            }
+        }
+    }
+}
+
+// A planted foot the stop lifts first holds the body where it stands, and a foot in its swing that the stop does not
+// set down carries nothing. Here the ease moves the other feet home along the gait's minimum-jerk blend, lowering the
+// lifted ones, while the planted foot that does not stay keeps its place and the swinging one keeps its height, and the
+// odometry fits the motion tick by tick.
+void test_the_rest_step_holds_on_a_foot_that_does_not_stay_and_not_on_a_swinging_one() {
+    const BodyStateMsg HOME = GaitWalk(0, 0, 0).body;
+    for (const std::array<float, 3> &stroke : STROKES) {
         for (int k = 1; k <= 8; ++k) {
             GaitWalk walk(stroke[0], stroke[1], stroke[2]);
             walk.run(ticksFor(1.0f) + k * TICKS_PER_SECOND / 8);
-            std::array<bool, 6> stance;
-            for (int leg = 0; leg < 6; ++leg) stance[leg] = walk.gait.inStance(walk.state, leg);
-            const OdometryEstimate predicted = KinematicOdometry::advance(
-                walk.odometry.estimate(), KinematicOdometry::restStep(walk.body, stance, HOME.feet, STAY));
-            walk.state.step_x = walk.state.step_y = walk.state.step_angle = 0;
-            walk.run(ticksFor(FEET_EASE_S + 0.1f));
-            const OdometryEstimate settled = walk.odometry.estimate();
-            char msg[64];
-            std::snprintf(msg, sizeof(msg), "stroke %.0f %.2f, stopped at %d/8 of a cycle", stroke[1], stroke[2], k);
-            TEST_ASSERT_FLOAT_WITHIN_MESSAGE(HOME_MM / 1000, predicted.x, settled.x, msg);
-            TEST_ASSERT_FLOAT_WITHIN_MESSAGE(HOME_MM / 1000, predicted.y, settled.y, msg);
-            TEST_ASSERT_FLOAT_WITHIN_MESSAGE(HOME_RAD, predicted.yaw, settled.yaw, msg);
+            std::array<bool, 6> stance, stays;
+            int held = -1, swinging = -1;
+            for (int leg = 0; leg < 6; ++leg) {
+                stance[leg] = walk.gait.inStance(walk.state, leg);
+                stays[leg] = true;
+                if (stance[leg] && held < 0) held = leg;
+                if (!stance[leg] && swinging < 0) swinging = leg;
+            }
+            TEST_ASSERT_TRUE(held >= 0 && swinging >= 0); // each stop tested has a planted foot and a swinging one
+            stays[held] = stays[swinging] = false;
+            const BodyStateMsg from = walk.body;
+            KinematicOdometry odometry;
+            odometry.update(from, stance);
+            const OdometryEstimate predicted =
+                KinematicOdometry::advance({}, KinematicOdometry::restStep(from, stance, HOME.feet, stays));
+            BodyStateMsg body = from;
+            for (int t = 1; t <= ticksFor(FEET_EASE_S); ++t) {
+                const float s = static_cast<float>(t) / ticksFor(FEET_EASE_S);
+                const float blend = s * s * s * (10 - 15 * s + 6 * s * s);
+                for (int leg = 0; leg < 6; ++leg) {
+                    if (!stays[leg]) continue;
+                    for (int j = 0; j < 3; ++j)
+                        body.feet[leg][j] = from.feet[leg][j] + (HOME.feet[leg][j] - from.feet[leg][j]) * blend;
+                }
+                std::array<bool, 6> down = ALL_DOWN;
+                down[swinging] = false;
+                odometry.update(body, down);
+            }
+            char msg[80];
+            std::snprintf(msg, sizeof(msg), "stroke %.0f %.2f, stopped at %d/8, holding %d, swinging %d", stroke[1],
+                          stroke[2], k, held, swinging);
+            assertSettlesAt(predicted, odometry.estimate(), msg);
         }
     }
 }
@@ -655,6 +714,7 @@ int main(int, char **) {
     RUN_TEST(test_an_easing_body_yaw_is_not_learned_as_bias);
     RUN_TEST(test_feet_moving_on_the_floor_teach_no_bias);
     RUN_TEST(test_the_rest_step_predicts_where_a_stopped_gait_settles);
+    RUN_TEST(test_the_rest_step_holds_on_a_foot_that_does_not_stay_and_not_on_a_swinging_one);
     RUN_TEST(test_a_pause_restarts_the_stillness_the_bias_waits_for);
     RUN_TEST(test_a_slow_walk_teaches_no_bias);
     RUN_TEST(test_a_tripod_walk_forward_moves_the_odometry_forward_and_straight);

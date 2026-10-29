@@ -105,13 +105,9 @@ void test_tripod_keeps_three_feet_loaded() {
     GaitController controller;
     controller.setGait(gait);
 
-    // The tripod table is hand-staggered (offsets 0, .52, .08, .58, .16, .66 against a .5167 stand
-    // fraction) rather than two exact groups of three, so it is not a perfect tripod: measured over
-    // the cycle it holds 3 feet down 89.3% of the time, 4 feet down 10.3%, and drops to 2 for a
-    // 0.33% sliver where four legs overlap in swing. Bound that sliver instead of pretending it is
-    // zero -- a table or stand_frac edit that opens a real 2-foot window fails here.
+    // Two exact groups of three half a cycle apart, against a .5167 stand fraction: never more than
+    // three legs in swing, so a table or stand_frac edit that opens a 2-foot window fails here.
     constexpr int SAMPLES = 100000;
-    int underSupported = 0;
     int swingSamples[6] = {0, 0, 0, 0, 0, 0};
 
     for (int s = 0; s < SAMPLES; ++s) {
@@ -123,17 +119,39 @@ void test_tripod_keeps_three_feet_loaded() {
                 ++swingSamples[i];
             }
         }
-        TEST_ASSERT_LESS_OR_EQUAL_INT(4, swinging);
-        if (swinging > 3) ++underSupported;
+        TEST_ASSERT_LESS_OR_EQUAL_INT(3, swinging);
     }
-
-    TEST_ASSERT_LESS_THAN_FLOAT(0.01f, static_cast<float>(underSupported) / SAMPLES);
 
     for (int i = 0; i < 6; ++i) {
         // Duty: every leg spends the same fraction of the cycle in swing, 1 - stand_frac.
         TEST_ASSERT_FLOAT_WITHIN(0.01f, 1.0f - gait.stand_frac,
                                  static_cast<float>(swingSamples[i]) / SAMPLES);
     }
+}
+
+// A schedule that is not its own mirror image yaws the body on every cycle: the tripod's old in-group
+// stagger turned it about 16 deg/min in the simulation. The bipod is left out: its pairs only mirror onto
+// the same schedule run backwards, and the symmetric tetrapod pairing drifted far more in the simulation.
+void test_every_schedule_but_the_bipod_is_its_own_mirror_half_a_cycle_on() {
+    for (const GaitType type : {GaitType::TRI_GATE, GaitType::WAVE, GaitType::RIPPLE}) {
+        gait_state_t gait = makeGait(type, 0, 0, 0);
+        GaitController controller;
+        controller.setGait(gait);
+        for (int leg = 0; leg < 3; ++leg) {
+            const float lag = std::fmod(gait.offset[leg + 3] - gait.offset[leg] + 1.0f, 1.0f);
+            TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.5f, lag);
+        }
+    }
+}
+
+void test_a_tripod_lifts_and_lands_its_three_legs_together() {
+    gait_state_t gait = makeGait(GaitType::TRI_GATE, 0, 0, 0);
+    GaitController controller;
+    controller.setGait(gait);
+    TEST_ASSERT_EQUAL_FLOAT(gait.offset[0], gait.offset[2]);
+    TEST_ASSERT_EQUAL_FLOAT(gait.offset[0], gait.offset[4]);
+    TEST_ASSERT_EQUAL_FLOAT(gait.offset[1], gait.offset[3]);
+    TEST_ASSERT_EQUAL_FLOAT(gait.offset[1], gait.offset[5]);
 }
 
 void test_idle_command_settles_on_the_default_stance() {
@@ -259,16 +277,19 @@ void test_stance_sweeps_the_foot_against_the_commanded_direction() {
     float startX[6];
     for (int i = 0; i < 6; ++i) startX[i] = body.feet[i][0];
 
-    controller.setPhase(gait.stand_frac * 0.98f);
+    const float sweep = gait.stand_frac * 0.98f;
+    controller.setPhase(sweep);
     controller.generateFeet(gait, body);
 
+    int compared = 0;
     for (int i = 0; i < 6; ++i) {
-        // Only legs that are in stance across both samples are comparable.
-        const bool inStanceAtStart = std::fmod(0.0f + gait.offset[i], 1.0f) < gait.stand_frac;
-        const bool inStanceAtEnd = std::fmod(gait.stand_frac * 0.98f + gait.offset[i], 1.0f) < gait.stand_frac;
-        if (!inStanceAtStart || !inStanceAtEnd) continue;
+        // Only legs in stance all the way between the samples are comparable: one that swings between them, and is in
+        // stance again at the end, has stepped forward meanwhile.
+        if (std::fmod(gait.offset[i], 1.0f) + sweep >= gait.stand_frac) continue;
         TEST_ASSERT_LESS_THAN_FLOAT(startX[i], body.feet[i][0]);
+        ++compared;
     }
+    TEST_ASSERT_EQUAL_INT(3, compared); // a whole tripod
 }
 
 // The stance presses the foot by step_depth mid-stance and levels it at both ends, along the stroke whatever its
@@ -300,22 +321,24 @@ void test_stance_levels_the_foot_at_lift_off_in_every_direction() {
 
 void test_yaw_command_sweeps_feet_tangentially() {
     // A pure in-place turn must move each foot perpendicular to its own radius, in a consistent
-    // rotational sense: the cross product radius x displacement has the same sign for all six.
+    // rotational sense: the cross product radius x displacement over its stance has the same sign for all six.
     gait_state_t gait = makeGait(GaitType::TRI_GATE, 0.0f, 0.0f, 0.35f);
     GaitController controller;
     controller.setGait(gait);
     controller.snapDefaultFootTarget(STAND);
 
     BodyStateMsg body = makeBody();
-    controller.setPhase(0.0f);
-    controller.generateFeet(gait, body);
-
     float sign = 0.0f;
     for (int i = 0; i < 6; ++i) {
-        const bool inStance = std::fmod(gait.offset[i], 1.0f) < gait.stand_frac;
-        if (!inStance) continue;
-        const float dx = body.feet[i][0] - STAND[i][0];
-        const float dy = body.feet[i][1] - STAND[i][1];
+        float foot[2][2];
+        for (int end = 0; end < 2; ++end) {
+            controller.setPhase(std::fmod(gait.stand_frac * (end == 0 ? 0.1f : 0.9f) - gait.offset[i] + 1.0f, 1.0f));
+            controller.generateFeet(gait, body);
+            foot[end][0] = body.feet[i][0];
+            foot[end][1] = body.feet[i][1];
+        }
+        const float dx = foot[1][0] - foot[0][0];
+        const float dy = foot[1][1] - foot[0][1];
         const float cross = STAND[i][0] * dy - STAND[i][1] * dx;
         TEST_ASSERT_TRUE(std::fabs(cross) > 1.0f);
         if (sign == 0.0f) sign = cross > 0 ? 1.0f : -1.0f;
@@ -387,7 +410,7 @@ void test_inverse_kinematics_holds_the_nominal_stance() {
 
 namespace {
 gait_state_t rampState() {
-    return {15, 0, 0, 0, 1, 0.002f, default_stand_frac, GaitType::TRI_GATE, {0, 0.52f, 0.08f, 0.58f, 0.16f, 0.66f}, 0};
+    return {15, 0, 0, 0, 1, 0.002f, default_stand_frac, GaitType::TRI_GATE, {0, 0.5f, 0, 0.5f, 0, 0.5f}, 0};
 }
 }  // namespace
 
@@ -465,7 +488,7 @@ void test_command_ramp_leaves_the_gait_schedule_alone() {
 
     TEST_ASSERT_EQUAL_INT((int)GaitType::TRI_GATE, (int)cur.gait_type);
     TEST_ASSERT_EQUAL_FLOAT(default_stand_frac, cur.stand_frac);
-    TEST_ASSERT_EQUAL_FLOAT(0.52f, cur.offset[1]);
+    TEST_ASSERT_EQUAL_FLOAT(0.5f, cur.offset[1]);
 }
 
 
@@ -1280,6 +1303,8 @@ void test_gait_trace_ends_at_rest_on_the_stance() {
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_tripod_keeps_three_feet_loaded);
+    RUN_TEST(test_every_schedule_but_the_bipod_is_its_own_mirror_half_a_cycle_on);
+    RUN_TEST(test_a_tripod_lifts_and_lands_its_three_legs_together);
     RUN_TEST(test_idle_command_settles_on_the_default_stance);
     RUN_TEST(test_command_below_deadband_does_not_start_the_cycle);
     RUN_TEST(test_phase_stays_normalized_over_a_long_walk);

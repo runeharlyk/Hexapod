@@ -1,6 +1,8 @@
 """score_track.py on a synthetic course: sticks a script would send, recorded as the robot's telemetry, a floor path a
 robot with known errors would walk for them, and a camera's track of that path on a clock of its own."""
 import math
+import re
+import sys
 
 import numpy as np
 import pytest
@@ -141,6 +143,37 @@ def test_odometry_in_the_recording_is_scored_beside_the_commanded_motion(tmp_pat
     assert exact.position_rms < 0.003 and exact.yaw_rms < 0.5
     assert exact.path_scale == pytest.approx(1.0, abs=0.01)
     assert commanded.position_rms > 10 * exact.position_rms
+
+
+def test_a_start_motion_the_track_repeats_is_refused_unless_the_offset_is_known_near(tmp_path):
+    modes, sticks = course_ticks()
+    floor = walk(modes, sticks, 1.0, 1.0, START)
+    write_recording(tmp_path / "run.hexrec", modes, sticks)
+    # The camera saw the course twice, the second time right after the first; the recording is of the first.
+    twice = np.concatenate([floor, floor + [*(floor[-1, :2] - floor[0, :2]), 0.0]])
+    write_track(tmp_path / "track.csv", twice, 0.4, np.random.default_rng(3))
+    track = Track.load(tmp_path / "track.csv")
+    telemetry = Telemetry.from_recording(recording.load(tmp_path / "run.hexrec"))
+    with pytest.raises(score_track.AlignmentRefused, match="repeats"):
+        score_track.score(track, telemetry)
+    course_s = len(floor) * TICK_S
+    assert score_track.score(track, telemetry, near=0.4 + 1.5).offset == pytest.approx(0.4, abs=0.008)
+    assert score_track.score(track, telemetry, near=0.4 + course_s - 1.5).offset == pytest.approx(0.4 + course_s,
+                                                                                                    abs=0.008)
+
+
+def test_the_command_line_reports_a_refusal_as_a_message(tmp_path, monkeypatch, capsys):
+    modes, sticks = course_ticks()
+    floor = walk(modes, sticks, 1.0, 1.0, START)
+    write_recording(tmp_path / "run.hexrec", modes, sticks)
+    write_track(tmp_path / "track.csv", np.concatenate([floor, floor]), 0.4, np.random.default_rng(3))
+    monkeypatch.setattr("sys.argv", ["score_track.py", str(tmp_path / "run.hexrec"), str(tmp_path / "track.csv")])
+    assert score_track.main() == 1
+    assert capsys.readouterr().err.startswith("not scored: the start motion repeats in the track")
+    monkeypatch.setattr("sys.argv", [*sys.argv, "--near", "0.4"])
+    assert score_track.main() == 0
+    offset = float(re.search(r"clock offset ([-+0-9.]+) s", capsys.readouterr().out).group(1))
+    assert offset == pytest.approx(0.4, abs=0.008)
 
 
 def test_a_run_of_goals_whose_command_never_moves_is_aligned_on_its_odometry(tmp_path):

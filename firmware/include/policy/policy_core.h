@@ -181,7 +181,6 @@ class PolicyCore {
     float cmd[3] = {0.0f, 0.0f, 0.0f};
     // The filtered action: what was applied, and what the next observation reports.
     float action[MAX_ACTION] = {};
-    gait_state_t gaitState = {
-        15, 0, 0, 0, 1, 0.002f, default_stand_frac, GaitType::TRI_GATE, {0, 0.52f, 0.08f, 0.58f, 0.16f, 0.66f}};
+    gait_state_t gaitState = {15, 0, 0, 0, 1, 0.002f, default_stand_frac, GaitType::TRI_GATE, {}};
     Applied last = {};
 };

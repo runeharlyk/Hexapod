@@ -53,11 +53,14 @@ def joint_commands(stand_s: float, walk_s: float, stick, s: float) -> np.ndarray
 
 
 def write(path, *, stall, hold, kp, noload, deadband, lag_ms, gyro_bias, gyro_noise, rpy_noise_deg, gravity_noise,
-          stand_s, walk_s, stick=(0.0, 0.6, -0.3), s=1.0, seed=0, deactivate_at_s=None):
-    # The turn is counter-clockwise (rx < 0 since the operator mapping): its mirror image pins the stall only to sigma
-    # 0.0535 on Linux CI, past the half-range limit, though it passes on Windows.
+          stand_s, walk_s, stick=(0.0, 1.0, -0.3), s=1.0, seed=0, deactivate_at_s=None):
+    # The turn is counter-clockwise (rx < 0 since the operator mapping): at a 0.6 stick its mirror image pinned the stall
+    # only to sigma 0.0535 on Linux CI, past the half-range limit, and at the full stick it puts the deadband at
+    # 0.0130 +- 0.0002 rad on Windows, past 4 sigma of the truth. This walk is not yet measured on Linux.
     # The stick walks at the top of the classic gait's speed range: at the default speed it strides 31 mm instead of
-    # 40, and that walk loads the servos too little to pin the stall (sigma 0.097, measured).
+    # 40, and that walk loads the servos too little to pin the stall (sigma 0.097, measured). The tripod that lands its
+    # three feet together loads them less than the staggered one did: at a 0.6 stick it no longer stalls them at all,
+    # and the full stick pins the stall to sigma 0.024 (measured 2026-10-29).
     rng = np.random.default_rng(seed)
     angles = joint_commands(stand_s, walk_s, stick, s)
     n = len(angles)
