@@ -352,15 +352,101 @@ def odometry_closure(ticks) -> tuple[float, float]:
     return float(math.hypot(ticks["odom_x"][-1], ticks["odom_y"][-1])), (yaw + 180.0) % 360.0 - 180.0
 
 
-def camera(rec: recording.Recording, track: score_track.Track | None) -> score_track.Stretch | str | None:
-    """The odometry scored against the camera's track, or why it could not be."""
+# The routines whose start motion the session's track holds once: each velocity run walks its own stick. The goal runs
+# open alike, on a goal walk from standing, and the metre runs repeat one another and the square its own sides.
+UNIQUE_START = ("turn", "tri")
+
+
+@dataclass
+class SessionClock:
+    """The camera's clock less the robot's over the session (s), and how it was found."""
+
+    offset: float | None
+    voters: dict[str, float] = field(default_factory=dict)  # run file -> its own offset, the ones the offset is from
+    outliers: dict[str, float] = field(default_factory=dict)  # too far from the median of them all to vote
+    refused: dict[str, str] = field(default_factory=dict)  # run file -> why it could not vote
+    reason: str | None = None  # why there is no offset
+    given: bool = False  # the operator's (--near)
+
+
+def session_clock(runs, track: score_track.Track) -> SessionClock:
+    """The session's offset from its (run file, routine, recording) triples. Both clocks run on from run to run, as the
+    robot is only deactivated between them, so it is one offset: the median of the runs of UNIQUE_START routines within
+    half of DISTINCT_S of the median of them all, which keeps any two of them within DISTINCT_S of each other, and only
+    where two runs or more agree so. A robot that reboots
+    during the session restarts its boot clock (the ticks' t_us), and one offset no longer fits the runs after it."""
+    own, refused = {}, {}
+    for file, routine, rec in runs:
+        if routine not in UNIQUE_START:
+            continue
+        try:
+            own[file] = score_track.clock_offset(track, score_track.Telemetry.from_recording(rec))[0]
+        except (score_track.RecordingRefused, score_track.AlignmentRefused) as refusal:
+            refused[file] = str(refusal)
+    if len(own) < 2:
+        return SessionClock(None, refused=refused, reason=f"only {len(own)} of the runs with a unique start motion "
+                            "aligned, and the session's offset needs two that agree")
+    middle = float(np.median(list(own.values())))
+    voters = {file: offset for file, offset in own.items() if abs(offset - middle) <= score_track.DISTINCT_S / 2}
+    outliers = {file: offset for file, offset in own.items() if file not in voters}
+    if len(voters) < 2:
+        return SessionClock(None, outliers=outliers, refused=refused,
+                            reason="no two runs with a unique start motion agree on the offset")
+    return SessionClock(float(np.median(list(voters.values()))), voters, outliers, refused)
+
+
+def camera(rec: recording.Recording, track: score_track.Track | None,
+           near: float | None = None) -> score_track.Stretch | str | None:
+    """The odometry scored against the camera's track, its clocks placed near `near` when it is given, or why it could
+    not be."""
     if track is None:
         return None
     try:
-        result = score_track.score(track, score_track.Telemetry.from_recording(rec))
-    except ValueError as error:
-        return str(error)
+        result = score_track.score(track, score_track.Telemetry.from_recording(rec), near=near)
+    except (score_track.RecordingRefused, score_track.AlignmentRefused) as refusal:
+        return str(refusal)
     return result.stretches.get("odometry", "the track does not see the recording's start")
+
+
+def camera_in_session(routine: str, rec: recording.Recording, track: score_track.Track | None,
+                      clock: SessionClock | None) -> score_track.Stretch | str | None:
+    """A run scored against the session's track: on its own start motion where the session holds it once, otherwise
+    near the session's offset."""
+    if track is None:
+        return None
+    if routine in UNIQUE_START:
+        return camera(rec, track)
+    if clock is None or clock.offset is None:
+        reason = clock.reason if clock is not None else "none was found"
+        return f"its start motion repeats in the session and there is no session offset ({reason}); give one (--near)"
+    return camera(rec, track, clock.offset)
+
+
+def clock_lines(session: Session, clock: SessionClock) -> list[str]:
+    """summary.md's account of the session's clock offset: what it is, which runs gave it, and which did not."""
+    label = {run.file: run.label for run in session.runs}
+
+    def runs(offsets: dict[str, float]) -> str:
+        return ", ".join(f"{label[file]} ({offset:+.3f} s)" for file, offset in offsets.items())
+
+    lines = ["## Camera clock", ""]
+    if clock.offset is None:
+        lines += [f"No session offset: {clock.reason}; the runs whose start motion repeats are not scored.", ""]
+    elif clock.given:
+        lines += [f"Offset {clock.offset:+.3f} s (track less robot), given with --near.", ""]
+    else:
+        lines += [f"Offset {clock.offset:+.3f} s (track less robot), the median of {runs(clock.voters)}.", ""]
+    if clock.outliers:
+        far = "the given offset" if clock.given else "the others"
+        lines += [f"Left out, too far from {far}: {runs(clock.outliers)}.", ""]
+    for file, why in clock.refused.items():
+        lines += [f"Could not vote: {label[file]}: {why}.", ""]
+    if clock.offset is not None:
+        disagree = {file: offset for file, offset in {**clock.voters, **clock.outliers}.items()
+                    if abs(offset - clock.offset) > score_track.DISTINCT_S / 2}
+        if disagree:
+            lines += [f"Scored on their own start motion, away from the session's offset: {runs(disagree)}.", ""]
+    return lines
 
 
 def _f(value, digits: int = 3) -> str:
@@ -390,7 +476,8 @@ def _health(rec: recording.Recording) -> list[str]:
 HEALTH = "Period p99 (us) | Overruns | Dead-man stops | Failed writes"
 
 
-def summary(directory: Path, session: Session, track: score_track.Track | None = None) -> str:
+def summary(directory: Path, session: Session, track: score_track.Track | None = None,
+            near: float | None = None) -> str:
     fw = firmware(session)
     lines = [f"# Floor session {session.started}", "",
              f"Target `{session.target}`, firmware {fw}; battery measured at the pack before each run.",
@@ -403,8 +490,13 @@ def summary(directory: Path, session: Session, track: score_track.Track | None =
             loaded[run.file] = rec
     battery = lambda run: _f(run.battery_v, 2)  # noqa: E731
     # A run standing still has no start motion to align a track on.
-    scores = {run.file: camera(loaded[run.file], track) for run in session.runs
-              if run.file in loaded and run.routine != "rest"}
+    moving = [run for run in session.runs if run.file in loaded and run.routine != "rest"]
+    clock = None
+    if track is not None:
+        clock = session_clock([(run.file, run.routine, loaded[run.file]) for run in moving], track)
+        if near is not None:
+            clock.offset, clock.given, clock.reason = near, True, None
+    scores = {run.file: camera_in_session(run.routine, loaded[run.file], track, clock) for run in moving}
 
     speed_rows, turn_rows, walk_rows, closure_rows, invalid = [], [], [], [], []
     for run in session.runs:
@@ -478,6 +570,8 @@ def summary(directory: Path, session: Session, track: score_track.Track | None =
         lines += ["Invalid runs: the robot did not walk the script's stick alone, so their speeds and rates are not "
                   "measurements; run them again with every app closed and the handheld off.", "", *invalid, ""]
     lines += _rest_table(session, loaded)
+    if clock is not None:
+        lines += clock_lines(session, clock)
     unscored = [f"- {run.label}: {scores[run.file]}" for run in session.runs
                 if isinstance(scores.get(run.file), str)]
     if unscored:
@@ -513,9 +607,10 @@ def _rest_table(session: Session, loaded: dict) -> list[str]:
             "| Quantity | Measured | Simulation |", "|---|---|---|", *rows, ""]
 
 
-def write_summary(directory: Path, session: Session, track: score_track.Track | None = None) -> Path:
+def write_summary(directory: Path, session: Session, track: score_track.Track | None = None,
+                  near: float | None = None) -> Path:
     path = directory / "summary.md"
-    path.write_text(summary(directory, session, track) + "\n")
+    path.write_text(summary(directory, session, track, near) + "\n")
     return path
 
 
@@ -534,11 +629,13 @@ def main() -> int:
     report = commands.add_parser("report", help="write summary.md again from a session directory")
     report.add_argument("directory", type=Path)
     report.add_argument("--track", help="an overhead camera's track of the session (ground_truth.py)")
+    report.add_argument("--near", type=float, help="the camera's clock less the robot's (s), for a session whose own "
+                        "runs do not give it")
     args = parser.parse_args()
 
     if args.command == "report":
         track = score_track.Track.load(args.track) if args.track else None
-        print(f"wrote {write_summary(args.directory, Session.load(args.directory), track)}")
+        print(f"wrote {write_summary(args.directory, Session.load(args.directory), track, args.near)}")
         return 0
     target = "simulation" if args.sim else args.port or args.host
     directory = args.out or Path(f"floor-{datetime.now():%Y%m%d-%H%M%S}")

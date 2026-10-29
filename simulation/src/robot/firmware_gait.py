@@ -53,13 +53,14 @@ DEFAULT_FEET = np.array(
 STAND_HEIGHT_MM = 66.0  # |z| of resting feet; expected body clearance
 
 # --- gait constants (firmware/include/gait.h) ---
-DEFAULT_OFFSET = np.array([0.0, 0.52, 0.08, 0.58, 0.16, 0.66])
+DEFAULT_OFFSET = np.array([0.0, 0.5, 0.0, 0.5, 0.0, 0.5])
 DEFAULT_STAND_FRAC = 3.1 / 6.0
 
 # Coordination patterns for continuous gait blending: tripod (stable/slow, 50% duty) <-> bipod
 # (dynamic/fast, ~35% duty). A gait_blend in [0,1] lerps between them so the policy can pick a
 # more tripod-like gait when slow and a more bipod-like gait when fast.
-TRI_OFFSET = DEFAULT_OFFSET
+# hexapod_policy.h was trained on this staggered tripod; kept until a retrain (the classic gait's is DEFAULT_OFFSET).
+TRI_OFFSET = np.array([0.0, 0.52, 0.08, 0.58, 0.16, 0.66])
 TRI_STAND_FRAC = DEFAULT_STAND_FRAC
 BI_OFFSET = np.array([0.0, 1.0 / 3, 2.0 / 3, 2.0 / 3, 1.0 / 3, 0.0])
 BI_STAND_FRAC = 2.1 / 6.0
@@ -231,16 +232,16 @@ class ReflexConfig:
 def set_gait(gait: GaitState) -> None:
     """Port of GaitController::setGait — fills offset/stand_frac for the gait type."""
     if gait.gait_type == TRI_GATE:
-        gait.offset = np.array([0.0, 0.52, 0.08, 0.58, 0.16, 0.66])
+        gait.offset = np.array([0.0, 0.5, 0.0, 0.5, 0.0, 0.5])
         gait.stand_frac = 3.1 / 6.0
     elif gait.gait_type == BI_GATE:
         gait.offset = np.array([0.0, 1 / 3, 2 / 3, 2 / 3, 1 / 3, 0.0])
         gait.stand_frac = 2.1 / 6.0
     elif gait.gait_type == WAVE:
-        gait.offset = np.array([0.0, 1 / 6, 2 / 6, 5 / 6, 4 / 6, 3 / 6])
+        gait.offset = np.array([0.0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6])  # each side rear to front
         gait.stand_frac = 5.0 / 6.0
     elif gait.gait_type == RIPPLE:
-        gait.offset = np.array([0.0, 4 / 6, 2 / 6, 1 / 6, 5 / 6, 3 / 6])
+        gait.offset = np.array([0.0, 4 / 6, 2 / 6, 3 / 6, 1 / 6, 5 / 6])  # each side front to rear
         gait.stand_frac = 5.0 / 6.0
     elif gait.gait_type == TUNED:
         tuned = load_tuned_gait()

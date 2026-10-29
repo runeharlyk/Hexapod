@@ -78,24 +78,44 @@ class KinematicOdometry {
      * their rigid motion, and a lowered foot joins them once it is within LIFTED_MM of the floor, for the rest of its
      * way. A foot on the floor that does not `stay`, as the stop lifts it first, holds the body where it stands; one in
      * its swing that does not carries nothing.
+     *
+     * The ease is fitted in parts, from one foot's joining to the next, on the feet down in each: one fit over the
+     * whole ease counted the feet down before the others joined at the share of the whole set, so a tripod stopped with
+     * its three lifted feet high missed where the feet carried it by up to 3 mm.
      */
     static BodyStep restStep(const BodyStateMsg &body, const std::array<bool, 6> &stance, const float home[6][4],
                              const std::array<bool, 6> &stays) {
-        float feet[6][2], from[6][2], to[6][2];
+        float feet[6][2], to[6][2], joins[6];
         bool contact[6], carries[6];
         floorFeet(body, stance, feet, contact);
         for (int leg = 0; leg < 6; leg++) {
             const float above = body.feet[leg][2] - home[leg][2];
-            // The share of the ease left when the foot comes within LIFTED_MM of the floor.
-            const float joins = contact[leg] || above <= LIFTED_MM ? 0.0f : 1.0f - LIFTED_MM / above;
+            // The share of the ease gone when the foot comes within LIFTED_MM of the floor.
+            joins[leg] = contact[leg] || above <= LIFTED_MM ? 0.0f : 1.0f - LIFTED_MM / above;
             carries[leg] = contact[leg] || stays[leg];
-            for (int axis = 0; axis < 2; axis++) {
+            for (int axis = 0; axis < 2; axis++)
                 to[leg][axis] = stays[leg] ? home[leg][axis] / 1000.f : feet[leg][axis];
-                from[leg][axis] = feet[leg][axis] + joins * (to[leg][axis] - feet[leg][axis]);
-            }
         }
-        int count;
-        return fit(from, to, carries, count);
+        OdometryEstimate rest;
+        for (float start = 0; start < 1;) {
+            float end = 1;
+            for (int leg = 0; leg < 6; leg++)
+                if (carries[leg] && joins[leg] > start) end = std::min(end, joins[leg]);
+            float from[6][2], until[6][2];
+            bool down[6];
+            for (int leg = 0; leg < 6; leg++) {
+                down[leg] = carries[leg] && joins[leg] <= start;
+                for (int axis = 0; axis < 2; axis++) {
+                    const float way = to[leg][axis] - feet[leg][axis];
+                    from[leg][axis] = feet[leg][axis] + start * way;
+                    until[leg][axis] = feet[leg][axis] + end * way;
+                }
+            }
+            int count;
+            rest = advance(rest, fit(from, until, down, count));
+            start = end;
+        }
+        return {rest.x, rest.y, rest.yaw};
     }
 
     /** `pose` advanced by `step`, which is in the frame `pose` faces. */

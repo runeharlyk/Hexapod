@@ -15,6 +15,9 @@ the host's monotonic time or a video's own, the ticks the robot's. The offset be
 body's velocity and yaw rate, from the commanded motion and from the track, are correlated over the start motion, from
 SYNC_LEAD_S before the commanded motion's first move to SYNC_S after it, at every offset that keeps it inside the
 track. A course should therefore open with a distinct start motion from standing, such as a quarter turn in place.
+A start motion the track repeats (a session's identical goal walks) cannot place the clocks on its own and is refused,
+unless the offset is known near enough (`near`, within DISTINCT_S): a session's robot and camera clocks both run on,
+so one run whose start motion is unique places the others.
 A run of goal moves commands no motion this way, since the firmware writes a goal's sticks itself and the telemetry's
 command does not carry them; where the commanded motion never moves, the odometry's motion stands in for it.
 
@@ -52,6 +55,25 @@ GRID_S = 0.01
 SMOOTH_S = 0.2
 SYNC_S = 10.0
 SYNC_LEAD_S = 1.0
+# Two offsets this far apart align different stretches of the track, and one that correlates within AMBIGUOUS of the
+# best is as good a match: the start motion repeats in the track. On the simulated floor session (2026-10-29) the
+# repeats of one goal walk (the three metre runs, the square's four sides) peaked within 4e-4 of each other, and the
+# next-best different motion at least 0.048 below the best.
+DISTINCT_S = 2.0
+AMBIGUOUS = 0.01
+# A start motion placed near a given offset must correlate there within NEAR_SHORTFALL of its best anywhere in the
+# track. The repeats a given offset is for sat within 4e-4 of one another on the simulated session, and the closest
+# different motion 0.048 below the best, so 0.04 refuses a window that holds another motion, or none.
+# Provisional: both figures come from a noise-free simulated track; set it again from the first real camera session.
+NEAR_SHORTFALL = 0.04
+
+
+class RecordingRefused(ValueError):
+    """The recording cannot be scored at all: its sticks or its stride are not ones the speed model describes."""
+
+
+class AlignmentRefused(ValueError):
+    """The track cannot be placed on the recording's clock."""
 SIGNAL_SCALES = (0.05, 0.05, 0.5)  # m/s, m/s, rad/s: a walk's and a turn's typical speeds weigh alike
 MOVE_M, MOVE_RAD = 0.01, np.radians(3.0)  # what counts as the commanded motion's first move
 ALIGN_S = 0.5
@@ -99,7 +121,8 @@ def commanded_path(ticks: dict[str, np.ndarray]) -> np.ndarray:
     t = ticks["t_us"] / 1e6
     command = ticks["command"]
     if command.ndim == 2 and command.shape[1] > STRIDE and np.any(command[ticks["mode"] == Mode.WALK, STRIDE] != 0.0):
-        raise ValueError("the recording walked at a nonzero stride, which the stride-0 speed model does not describe")
+        raise RecordingRefused("the recording walked at a nonzero stride, which the stride-0 speed model does not "
+                               "describe")
     velocities = {}
     velocity = np.zeros(3)  # forward, left, counter-clockwise
     poses = np.zeros((len(t), 3))
@@ -124,8 +147,9 @@ def check_stick_mapping(features: dict) -> None:
     version = str(features.get("firmwareVersion", ""))
     parts = version.split(".")
     if len(parts) != 3 or not all(part.isdigit() for part in parts) or tuple(map(int, parts)) < STICK_MAPPING_VERSION:
-        raise ValueError(f"the recording's firmware version {version!r} does not have the current stick mapping, or "
-                         "does not say whether it does, so its strafes and turns would be read mirrored")
+        raise RecordingRefused(f"the recording's firmware version {version!r} does not have the current stick "
+                               "mapping, or does not say whether it does, so its strafes and turns would be read "
+                               "mirrored")
 
 
 @dataclass(frozen=True)
@@ -167,7 +191,7 @@ def moved(poses: np.ndarray) -> np.ndarray:
 def first_move(t: np.ndarray, poses: np.ndarray) -> float:
     moved_at = moved(poses)
     if not moved_at.any():
-        raise ValueError("the commanded motion never moves: there is no start motion to align the clocks on")
+        raise AlignmentRefused("the commanded motion never moves: there is no start motion to align the clocks on")
     return float(t[np.argmax(moved_at)])
 
 
@@ -179,8 +203,11 @@ def sync_estimate(telemetry: Telemetry) -> str:
     return "commanded"
 
 
-def clock_offset(track: Track, telemetry: Telemetry, sync_s: float = SYNC_S) -> tuple[float, float]:
-    """The offset to add to robot time for track time, and the correlation it reaches (1 at best)."""
+def clock_offset(track: Track, telemetry: Telemetry, sync_s: float = SYNC_S,
+                 near: float | None = None) -> tuple[float, float]:
+    """The offset to add to robot time for track time, and the correlation it reaches (1 at best). With `near`, the
+    best within DISTINCT_S of it, refused when it falls NEAR_SHORTFALL short of the best anywhere; without, the best,
+    refused when the start motion repeats in the track."""
     name = sync_estimate(telemetry)
     start = first_move(telemetry.t, telemetry.estimates[name]) - SYNC_LEAD_S
     window_t = start + np.arange(round((SYNC_LEAD_S + sync_s) / GRID_S)) * GRID_S
@@ -188,7 +215,7 @@ def clock_offset(track: Track, telemetry: Telemetry, sync_s: float = SYNC_S) -> 
     track_t = np.arange(track.t[0], track.t[-1], GRID_S)
     n = len(window_t)
     if len(track_t) < n:
-        raise ValueError("the track is shorter than the start motion's window")
+        raise AlignmentRefused("the track is shorter than the start motion's window")
     signals = motion_signals(*(np.interp(track_t, track.t, v) for v in (track.x, track.y, track.yaw)))
     numerator = np.zeros(len(track_t) - n + 1)
     track_power, window_power = np.zeros_like(numerator), 0.0
@@ -199,7 +226,26 @@ def clock_offset(track: Track, telemetry: Telemetry, sync_s: float = SYNC_S) -> 
         track_power += (squares[n:] - squares[:-n]) - (sums[n:] - sums[:-n]) ** 2 / n
         window_power += float(w @ w)
     correlation = numerator / np.sqrt(window_power * np.maximum(track_power, 1e-12))
-    best = int(np.argmax(correlation))
+    offsets = track_t[0] + np.arange(len(correlation)) * GRID_S - window_t[0]
+    if near is not None:
+        allowed = np.abs(offsets - near) <= DISTINCT_S
+        if not allowed.any():
+            raise AlignmentRefused(f"the track does not cover the start motion at the offset {near:+.2f} s")
+        best = int(np.argmax(np.where(allowed, correlation, -np.inf)))
+        anywhere = int(np.argmax(correlation))
+        if correlation[best] < correlation[anywhere] - NEAR_SHORTFALL:
+            raise AlignmentRefused(f"the start motion correlates {correlation[best]:.4f} near {near:+.2f} s against "
+                                   f"{correlation[anywhere]:.4f} at {offsets[anywhere]:+.2f} s: the offset given does "
+                                   "not place it")
+    else:
+        best = int(np.argmax(correlation))
+        rivals = (np.abs(offsets - offsets[best]) > DISTINCT_S) & (correlation >= correlation[best] - AMBIGUOUS)
+        if rivals.any():
+            rival = int(np.argmax(np.where(rivals, correlation, -np.inf)))
+            raise AlignmentRefused(f"the start motion repeats in the track: it correlates {correlation[best]:.4f} at "
+                                   f"{offsets[best]:+.2f} s and {correlation[rival]:.4f} at {offsets[rival]:+.2f} s, "
+                                   "so the clocks cannot be placed on it; give the offset another run of the session "
+                                   "found (--near)")
     shift = 0.0
     if 0 < best < len(correlation) - 1:
         before, peak, after = correlation[best - 1 : best + 2]
@@ -267,8 +313,8 @@ class Score:
     aligned_on: str  # the estimate whose start motion the clocks were aligned on
 
 
-def score(track: Track, telemetry: Telemetry, sync_s: float = SYNC_S) -> Score:
-    offset, correlation = clock_offset(track, telemetry, sync_s)
+def score(track: Track, telemetry: Telemetry, sync_s: float = SYNC_S, near: float | None = None) -> Score:
+    offset, correlation = clock_offset(track, telemetry, sync_s, near)
     stretches = {name: score_estimate(track, telemetry, name, offset) for name in telemetry.estimates}
     return Score(offset, correlation, {name: s for name, s in stretches.items() if s is not None},
                  sync_estimate(telemetry))
@@ -289,8 +335,16 @@ def main() -> int:
     parser.add_argument("recording", help="the .hexrec telemetry recording (record.py)")
     parser.add_argument("track", help="the track file (ground_truth.py)")
     parser.add_argument("--sync-s", type=float, default=SYNC_S, help="how long the start motion lasts (s)")
+    parser.add_argument("--near", type=float, help="the clock offset (s, track less robot) known to within 2 s, as "
+                        "another run of the session found it, for a start motion the track repeats")
     args = parser.parse_args()
-    report(score(Track.load(args.track), Telemetry.from_recording(recording.load(args.recording)), args.sync_s))
+    try:
+        result = score(Track.load(args.track), Telemetry.from_recording(recording.load(args.recording)), args.sync_s,
+                       args.near)
+    except (RecordingRefused, AlignmentRefused) as refusal:
+        print(f"not scored: {refusal}", file=sys.stderr)
+        return 1
+    report(result)
     return 0
 
 

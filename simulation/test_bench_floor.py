@@ -24,7 +24,8 @@ TURN_DEG = 180.0
 
 class TrueTrack:
     """An overhead camera that sees the model's true pose: a ground_truth.py track file, a row every 6 ticks (33 fps),
-    on the simulation's clock, which score_track.py aligns with each recording on its own."""
+    on the simulation's clock, which score_track.py aligns with each recording, those that repeat a start motion
+    near the session's offset."""
 
     def __init__(self, backend: SimBackend, path):
         self._backend, self._file, self._ticks = backend, open(path, "w"), 0
@@ -113,11 +114,19 @@ def test_the_goal_routines_close_on_the_odometry_and_report_each_goal(session_di
 def test_the_camera_scores_every_run_against_the_floor(session_dir):
     directory, session, _ = session_dir
     track = score_track.Track.load(directory / "track.csv")
-    for run in session.runs:
-        if run.routine == "rest":
-            continue
-        rec = recording.load(directory / run.file)
-        scored = bench_floor.camera(rec, track)
+    moving = [run for run in session.runs if run.routine != "rest"]
+    recs = {run.file: recording.load(directory / run.file) for run in moving}
+    clock = bench_floor.session_clock([(run.file, run.routine, recs[run.file]) for run in moving], track)
+    # The camera and the simulation share one clock; the turn and the three tri walks give it, and agree.
+    assert clock.offset == pytest.approx(0.0, abs=0.1)
+    assert sorted(clock.voters) == sorted(run.file for run in moving if run.routine in ("turn", "tri"))
+    assert not clock.outliers and not clock.refused
+    for run in moving:
+        rec = recs[run.file]
+        if run.routine in ("metre", "square"):  # each repeats a start motion the track holds elsewhere
+            with pytest.raises(score_track.AlignmentRefused, match="repeats"):
+                score_track.clock_offset(track, score_track.Telemetry.from_recording(rec))
+        scored = bench_floor.camera_in_session(run.routine, rec, track, clock)
         assert isinstance(scored, score_track.Stretch), scored
         if run.routine == "tri":
             # The track is the true pose, so the camera sees what the odometry does, less the feet's slip.
@@ -129,11 +138,59 @@ def test_the_camera_scores_every_run_against_the_floor(session_dir):
             assert scored.track_made_good < 0.15 and scored.position_end < 0.15
 
 
+def _later(rec: recording.Recording, seconds: float) -> recording.Recording:
+    """The recording as a robot whose clock ran `seconds` ahead would have made it."""
+    ticks = dict(rec.ticks, t_us=rec.ticks["t_us"] + round(seconds * 1e6))
+    return dataclasses.replace(rec, ticks=ticks)
+
+
+def test_a_session_offset_needs_two_runs_with_a_unique_start_that_agree(session_dir):
+    directory, session, _ = session_dir
+    track = score_track.Track.load(directory / "track.csv")
+    runs = {run.file: (run.file, run.routine, recording.load(directory / run.file)) for run in session.runs
+            if run.routine != "rest"}
+    turn, *tri = (runs[run.file] for run in session.runs if run.routine in ("turn", "tri"))
+    # The goal runs repeat their start motions, so however many there are, none gives the offset.
+    goals = [runs[run.file] for run in session.runs if run.routine in ("metre", "square", "circle")]
+    alone = bench_floor.session_clock(goals + [turn], track)
+    assert alone.offset is None and "only 1" in alone.reason and not alone.voters
+    # A run whose clock is off is left out, and the others still agree on the offset.
+    shifted = (tri[1][0], "tri", _later(tri[1][2], 10.0))
+    clock = bench_floor.session_clock([turn, tri[0], shifted, tri[2]], track)
+    assert clock.offset == pytest.approx(0.0, abs=0.1)
+    assert list(clock.outliers) == [tri[1][0]] and clock.outliers[tri[1][0]] == pytest.approx(-10.0, abs=0.1)
+    # Two runs that disagree give none: their mean would match neither.
+    split = bench_floor.session_clock([turn, shifted], track)
+    assert split.offset is None and "agree" in split.reason and len(split.outliers) == 2
+    # The summary says which runs gave the offset, which were left out, and that the left-out run was scored on its
+    # own start motion.
+    lines = "\n".join(bench_floor.clock_lines(session, clock))
+    labels = {run.file: run.label for run in session.runs}
+    assert "the median of" in lines and labels[turn[0]] in lines
+    assert f"Left out, too far from the others: {labels[tri[1][0]]}" in lines
+    assert "Scored on their own start motion, away from the session's offset" in lines
+    # Without an offset the repeating runs are not scored, and say why.
+    square = runs[next(run.file for run in session.runs if run.routine == "square")]
+    assert "no session offset" in bench_floor.camera_in_session("square", square[2], track, split)
+
+
+def test_a_given_offset_that_does_not_place_the_start_motion_is_refused(session_dir):
+    directory, session, _ = session_dir
+    track = score_track.Track.load(directory / "track.csv")
+    square = recording.load(directory / next(run.file for run in session.runs if run.routine == "square"))
+    telemetry = score_track.Telemetry.from_recording(square)
+    # 6 s in, the square is halfway along a side: no turn, no start from standing, to match the window.
+    with pytest.raises(score_track.AlignmentRefused, match="does not place it"):
+        score_track.clock_offset(track, telemetry, near=6.0)
+    assert score_track.clock_offset(track, telemetry, near=0.5)[0] == pytest.approx(0.0, abs=0.1)
+
+
 def test_the_summary_carries_the_operators_figures_the_firmware_and_every_recording(session_dir):
     directory, session, operator = session_dir
     track = score_track.Track.load(directory / "track.csv")
     text = bench_floor.summary(directory, bench_floor.Session.load(directory), track)
     assert "firmware simulation 0.1.1" in text
+    assert "## Camera clock" in text and "the median of" in text and "Left out" not in text
     tri = next(run for run in session.runs if run.routine == "tri")
     assert tri.floor == {"metres": FLOOR["distance walked"]} and tri.battery_v == FLOOR["battery"]
     floor_speed = FLOOR["distance walked"] / bench_floor.held_seconds(recording.load(directory / tri.file).ticks)
