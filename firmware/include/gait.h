@@ -203,7 +203,7 @@ class GaitController {
 
         if (length != 0.0f) {
             // Pressed most mid-stance and level at both ends, along the stroke whatever its direction.
-            point[2] = *depth * std::cos((M_PI * step) / (2.f * length));
+            point[2] = *depth * std::cos(static_cast<float>(M_PI) * step / (2.f * length));
         }
     }
 
@@ -479,7 +479,7 @@ class GaitController {
         const float speed =
             isRepositioning ? gait.step_speed
             : gait.phase_rate > 0.f ? gait.phase_rate
-                                    : gait.step_speed * CLIP(speed_factor, 0.75, 1.5f);
+                                    : gait.step_speed * CLIP(speed_factor, 0.75f, 1.5f);
 
         advancePhase(dt, speed);
         if (cycleRunning) {
