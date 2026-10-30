@@ -710,8 +710,11 @@ void test_a_crab_goal_walks_the_crabs_envelope() {
     TEST_ASSERT_FLOAT_WITHIN(0.001f * crab, crab, topSpeed * 1000.0f);
     TEST_ASSERT_GREATER_THAN_INT(0, capped);
     TEST_ASSERT_LESS_THAN_FLOAT(1e-4f, worst);
-    // The two stances' tables cap this walk apart, so the walk shows which it read.
-    TEST_ASSERT_GREATER_THAN_FLOAT(0.05f, apart);
+    // The two stances' tables cap this walk apart, so the walk shows which it read. They part only where the cap first
+    // bites just under the crab's 89 mm stroke: the goal steers every fourth tick on its predicted rest, whose first
+    // cap there, 85.5 mm, gives cadences 3.1 % apart (2026-11-03), where the cap of a goal steered every tick on a
+    // predicted coast first bit at 88.3 mm, 7.2 % apart. Either is hundreds of times the 1e-4 the walk is held to.
+    TEST_ASSERT_GREATER_THAN_FLOAT(0.02f, apart);
 }
 
 int main(int, char **) {

@@ -326,7 +326,7 @@ robot.state().odometry               # the pose in the frame the robot faced at 
 - Goals take TRI, BI, WAVE, RIPPLE and AUTO.
   `move_forward`, `move_sideways` and `rotate` fall back to the timed motions above for TUNED, which has no speed envelope, and for a firmware that answers the subscribe to the goal status with no status, as one from before goals or before the snapshots does; `walk`, `turn` and `arc` refuse there.
   The speed model converts the speeds those three take (m/s and rad/s) to the share a goal asks for.
-- An arc's drift correction changes its length as well as its end heading.
+- An arc steers toward its tangent at its position's angle about the centre and ends on its end point, within 3 cm in the robot's own odometry.
 - `set_stance(Stance.CRAB)` stands every leg straight out to its side, and `set_stance(Stance.DEFAULT)` back; it stops, and returns once the feet stand on the stance: one cycle of the gait a second, one cycle in TRI and two in the others, after a walk's stop and its lift lowered (`stance_step_seconds`); a walk's lift may still be rising back for up to 0.32 s.
   A stance or a gait the robot refuses raises `RobotError`.
   Goals walk the stance in force; the robot refuses AUTO, TUNED and WALK_NN in the crab and switches a selected AUTO or TUNED to TRI_GATE, which the style follows.
@@ -337,15 +337,14 @@ robot.state().odometry               # the pose in the frame the robot faced at 
 
 Measured in MuJoCo on its true pose:
 
-- The odometry reads about 5 % off the distance the robot truly walks, by foot slip; there is no calibration, by decision, and the floor tests decide whether one is needed.
+- The odometry reads about 5 % off the distance the robot truly walks on TRI, and up to 2 % on BI, by foot slip; there is no calibration, by decision, and the floor tests decide whether one is needed.
 - The heading is the DMP's yaw fused with the feet's: it ends within 0.2 deg of the true yaw over a 1 m walk and within 0.4 deg over a 90 deg turn, on TRI and BI.
-- The 1 x 1 m square closes within 2.9 to 4.0 cm and 2.6 deg on TRI.
-- On BI a 90 deg turn ends 2.6 to 3.2 deg short of the true yaw, and 2.5 to 2.8 deg short on its own odometry.
-  The shortfall is the firmware's, not the simulation's: without physics, where the odometry is the truth, the stop prediction ends 90 deg turns between 2.2 deg short and 1.5 deg over (TRI and BI at speeds 0.25 to 1.0), and a turn is accepted within 3 deg.
-  The tolerance stays at 3 deg, as a corrective pass of 1 to 3 deg is a tiny goal that can time out (below); the intended heading keeps the shortfall from adding up over a sequence of turns.
-- BI's square still ends 0.8 to 11.6 cm and up to 9.8 deg off: each turn's corrective pass starts with a yaw of about 2 deg that the feet do not command, and the fused heading, which trusts the feet while they barely move, misses it.
-  Whether the robot's feet slip so at a pass's start is unmeasured.
-- Tiny goals, about 10 to 15 mm or a few degrees, at speeds 0.25 and 1.0 can end `TIMED_OUT`: the settled pose falls outside the tolerance and the passes run out.
+- The 1 x 1 m square closes within 0.1 to 1.0 cm and 0.3 deg on TRI.
+- On BI a 90 deg turn ends 1.2 to 1.5 deg past the true yaw, and 1.1 to 1.5 deg past on its own odometry.
+  The overshoot is the firmware's, not the simulation's: without physics, where the odometry is the truth, the rest prediction ends 90 deg turns between 0.4 deg short and 1.4 deg over (TRI and BI at speeds 0.25 to 1.0), and a turn is accepted within 3 deg.
+  The tolerance stays at 3 deg; the intended heading keeps the error from adding up over a sequence of turns.
+- BI's square closes within 3.6 to 6.0 cm and 2.3 deg, every goal in one pass.
+- Tiny goals, about 10 to 15 mm or a few degrees, at speeds 0.25 and 1.0 end in one pass.
 
 ## Floor benchmark
 
@@ -385,6 +384,6 @@ Their tests (`test_bench_floor.py`, `test_servo_envelope.py`) run every routine 
 
 `Robot.recording(path)` writes the telemetry to a `.hexrec` while its block runs, from the robot over the facade's own link, and from the simulation as the firmware's own `TickSample` of every tick, which the host's servo stand-in leaves without PWM and write time.
 `score_track.py` aligns a run of goal moves on its odometry, as a goal's sticks are written by the firmware and the telemetry's command does not carry them.
-A start motion the track repeats elsewhere (the metre runs repeat one another, and the square its own sides) cannot place the clocks, and `score_track.py` refuses it unless `--near` gives the offset to within 2 s.
+A start motion the track repeats elsewhere (the metre runs repeat one another) cannot place the clocks, and `score_track.py` refuses it unless `--near` gives the offset to within 2 s.
 `bench_floor.py report` takes that offset from the session's velocity runs (turn and tri), which hold their start motion once, as the robot's and the camera's clocks both run on through a session; it needs two of them within a second of their median, scores each of them on its own start motion, and records the offset and its voters in `summary.md`.
 `bench_floor.py report --near <s>` gives the offset where the session's own runs do not; a robot that rebooted mid-session restarted its clock, and no single offset fits it.
