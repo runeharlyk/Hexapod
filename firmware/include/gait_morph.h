@@ -212,16 +212,6 @@ class GaitMorph {
     // Whether the leg's foot is on the floor; every foot is while the morph is not walking.
     bool inStance(int leg) const { return !_running || _legs[leg].stance; }
 
-    // The phase of the cycle left before the leg's foot lifts on the current plan: 0 in its swing, never while the
-    // morph is not walking.
-    float phaseToLift(int leg) const {
-        if (!_running) return INFINITY;
-        const Leg& l = _legs[leg];
-        return l.stance
-                   ? std::max(0.0f, std::min(patternLiftIn(leg, l), _plan.duty + auto_morph::STANCE_RUN_ON - l.elapsed))
-                   : 0.0f;
-    }
-
     // `neutral` are the feet's resting places, which the strokes are about.
     void step(const gait_state_t& g, BodyStateMsg& body, const float (&neutral)[6][4], float dt) {
         using namespace auto_morph;
