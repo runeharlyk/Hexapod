@@ -457,12 +457,6 @@ class GaitController {
         return !cycleRunning || legPhase(gait, leg) < gait.stand_frac;
     }
 
-    // The phase of the cycle left before the leg's foot lifts: 0 for a foot in its swing, and never for a gait that is
-    // not cycling.
-    float phaseToLift(const gait_state_t& gait, int leg) const {
-        return cycleRunning ? std::max(gait.stand_frac - legPhase(gait, leg), 0.0f) : INFINITY;
-    }
-
     void step(gait_state_t& gait, BodyStateMsg& body, float dt) {
         const bool isMoving = gaitIsCommanded(gait);
         const bool isRepositioning = !isMoving && hasPendingStanceChange();

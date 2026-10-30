@@ -1,5 +1,5 @@
-// Host tests of the goal controller: scripted poses for the stick laws, and a simple body that walks the sticks for
-// the reach, the settle and the corrective passes.
+// Host tests of the goal controller: scripted rest poses for the stick laws, and a simple body that walks the sticks
+// for the reach, the settle and the corrective passes, whose rest pose is predicted as MotionService predicts it.
 
 #include <unity.h>
 #include <algorithm>
@@ -26,6 +26,33 @@ Goal arc(float radius, float angle, float speed) { return {GoalKind::ARC, 0, ang
 OdometryEstimate at(float x, float y, float yaw, float distance = 0) {
     return {.x = x, .y = y, .yaw = std::remainder(yaw, TWO_PI), .kinematicYaw = 0, .distance = distance};
 }
+
+// A pose `swept` rad around a left arc of `radius` from a start at the origin facing +y, its arc length walked.
+OdometryEstimate onLeftArc(float radius, float swept, float yaw) {
+    return at(-radius + radius * std::cos(swept), radius * std::sin(swept), yaw, radius * swept);
+}
+
+// Feeds a goal rest poses that move as a walk's rest does, a millimetre or a tenth of a degree a tick, so no tick
+// arrives on the size of a scripted jump alone; `to` returns the sticks of the tick that reaches its pose.
+struct Feed {
+    GoalController& goal;
+    OdometryEstimate last;
+
+    GoalSticks to(const OdometryEstimate& p) {
+        const float dyaw = std::remainder(p.yaw - last.yaw, TWO_PI);
+        const float way = std::max(std::hypot(p.x - last.x, p.y - last.y) / 0.001f, std::fabs(dyaw) / (0.1f * DEG));
+        const int steps = std::max(1, static_cast<int>(std::ceil(way)));
+        GoalSticks sticks;
+        for (int i = 1; i <= steps; ++i) {
+            const float t = static_cast<float>(i) / steps;
+            sticks = goal.update(at(last.x + t * (p.x - last.x), last.y + t * (p.y - last.y), last.yaw + t * dyaw,
+                                    last.distance + t * (p.distance - last.distance)),
+                                 false, DT);
+        }
+        last = p;
+        return sticks;
+    }
+};
 
 bool centred(const GoalSticks& sticks) { return sticks.lx == 0 && sticks.ly == 0 && sticks.rx == 0; }
 
@@ -69,6 +96,15 @@ struct Body {
     Body(float x = 0, float y = 0, float yaw = 0) : pose(at(x, y, yaw)), heading(yaw) {}
 
     bool atRest() const { return !walking; }
+
+    // Where the body would come to rest if its sticks centred now, as MotionService predicts it by running the stop
+    // ahead on a copy: the stop it knows, without the extra coast a stop may still surprise it with.
+    OdometryEstimate rest() const {
+        Body copy = *this;
+        copy.extraCoast.clear();
+        while (!copy.atRest()) copy.step({});
+        return copy.pose;
+    }
 
     void step(const GoalSticks& sticks) {
         if (!centred(sticks)) {
@@ -129,7 +165,7 @@ Run drive(GoalController& goal, Body& body, float maxSeconds = 300, const Local*
     GoalState last = goal.state();
     for (int tick = 0; tick < maxSeconds / DT; tick++) {
         const bool atRest = body.atRest();
-        const GoalSticks sticks = goal.update(body.pose, atRest, DT);
+        const GoalSticks sticks = goal.update(body.rest(), atRest, DT);
         run.seconds = (tick + 1) * DT;
         if (tick == 0) {
             run.firstLx = sticks.lx;
@@ -282,59 +318,90 @@ void test_a_tight_arc_slows_its_forward_stick_to_keep_its_curvature() {
 void test_it_slows_over_the_last_stretch_down_to_a_floor() {
     GoalController goal;
     goal.start(forward(0.2f, 0.8f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
-    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.8f, goal.update(at(0, 0.1f, 0), false, DT).ly);
-    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.48f, goal.update(at(0, 0.17f, 0), false, DT).ly);   // 30 mm left
-    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.192f, goal.update(at(0, 0.188f, 0), false, DT).ly); // 12 mm left
-    const GoalSticks floor = goal.update(at(0, 0.192f, 0), false, DT);                    // 8 mm left
+    Feed feed {goal, at(0, 0, 0)};
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.8f, feed.to(at(0, 0.1f, 0)).ly);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.48f, feed.to(at(0, 0.17f, 0)).ly);   // 30 mm left
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.192f, feed.to(at(0, 0.188f, 0)).ly); // 12 mm left
+    const GoalSticks floor = feed.to(at(0, 0.192f, 0));                    // 8 mm left
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.16f, floor.ly);
     TEST_ASSERT_EQUAL_FLOAT(0, floor.lx);
     TEST_ASSERT_EQUAL_FLOAT(0, floor.rx);
-    TEST_ASSERT_TRUE(centred(goal.update(at(0, 0.202f, 0), false, DT))); // 2 mm past
+    TEST_ASSERT_TRUE(centred(feed.to(at(0, 0.202f, 0)))); // 2 mm past
     TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
 
     goal.start(turn(90 * DEG, 0.8f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
-    TEST_ASSERT_FLOAT_WITHIN(1e-6f, -0.8f, goal.update(at(0, 0, 60 * DEG), false, DT).rx);
-    TEST_ASSERT_FLOAT_WITHIN(1e-5f, -0.4f, goal.update(at(0, 0, 75 * DEG), false, DT).rx);
-    TEST_ASSERT_FLOAT_WITHIN(1e-5f, -0.16f, goal.update(at(0, 0, 86 * DEG), false, DT).rx); // 4 deg left
-    TEST_ASSERT_FLOAT_WITHIN(1e-5f, -0.16f, goal.update(at(0, 0, 88 * DEG), false, DT).rx);
-    TEST_ASSERT_TRUE(centred(goal.update(at(0, 0, 91 * DEG), false, DT)));
+    feed.last = at(0, 0, 0);
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, -0.8f, feed.to(at(0, 0, 60 * DEG)).rx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, -0.4f, feed.to(at(0, 0, 75 * DEG)).rx);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, -0.16f, feed.to(at(0, 0, 86 * DEG)).rx); // 4 deg left
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, -0.16f, feed.to(at(0, 0, 88 * DEG)).rx);
+    TEST_ASSERT_TRUE(centred(feed.to(at(0, 0, 91 * DEG))));
     TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
 
     // Past the target by more than the slow zone it walks back at full speed.
     goal.start(forward(0.1f, 0.5f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
-    const GoalSticks back = goal.update(at(0, -0.1f, 0), false, DT);
+    feed.last = at(0, 0, 0);
+    const GoalSticks back = feed.to(at(0, -0.1f, 0));
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.5f, back.ly);
 }
 
 // A fast goal's slowdown zone is the distance its speed covers in two stops' coasts, when that is longer than
-// SLOW_DOWN. It centres its sticks once the remainder is within the coast predicted from the speed its gait walks now,
-// which follows the sticks through the command ramp, so a pass from rest drives even on a remainder shorter than its
-// floor's coast.
-void test_a_fast_goal_slows_early_and_stops_its_coast_short() {
+// SLOW_DOWN, and a pass from rest drives at its floor even on a remainder shorter than that coast.
+void test_a_fast_goal_slows_early() {
     constexpr float FAST_MM = 600; // about BI's top at the default posture
     const float zone = 2 * FAST_MM / 1000 * GoalController::STOP_S;
-    const float coast = FAST_MM / 1000 * GoalController::STOP_S; // after a second at full speed
     TEST_ASSERT_TRUE(zone > 4 * GoalController::SLOW_DOWN_M);
-    const auto atSpeed = [&](GoalController& goal) {
-        goal.start(forward(1, 1), at(0, 0, 0), FAST_MM, TOP_TURN);
-        for (int i = 0; i < 200; i++) TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1, goal.update(at(0, 0, 0), false, DT).ly);
-    };
     GoalController goal;
-    atSpeed(goal);
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.6f, goal.update(at(0, 1 - 0.6f * zone, 0), false, DT).ly);
-    TEST_ASSERT_TRUE(centred(goal.update(at(0, 1 - 0.9f * coast, 0), false, DT)));
-    TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
-
-    atSpeed(goal);
-    const float remaining = 1.1f * coast;
-    TEST_ASSERT_FLOAT_WITHIN(1e-4f, remaining / zone, goal.update(at(0, 1 - remaining, 0), false, DT).ly);
+    goal.start(forward(1, 1), at(0, 0, 0), FAST_MM, TOP_TURN);
+    Feed feed {goal, at(0, 0, 0)};
+    TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1, goal.update(at(0, 0, 0), false, DT).ly);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.6f, feed.to(at(0, 1 - 0.6f * zone, 0)).ly);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0.5f, feed.to(at(0, 1 - 0.5f * zone, 0)).ly);
     TEST_ASSERT_EQUAL(GoalState::RUNNING, goal.state());
 
     // From rest, 20 mm is less than the floor's coast at speed, but nothing has started to coast yet.
     goal.start(forward(0.02f, 1), at(0, 0, 0), FAST_MM, TOP_TURN);
-    TEST_ASSERT_TRUE(GoalController::MIN_FRACTION * coast > 0.02f);
+    TEST_ASSERT_TRUE(GoalController::MIN_FRACTION * FAST_MM / 1000 * GoalController::STOP_S > 0.02f);
     TEST_ASSERT_FLOAT_WITHIN(1e-6f, GoalController::MIN_FRACTION, goal.update(at(0, 0, 0), false, DT).ly);
     TEST_ASSERT_EQUAL(GoalState::RUNNING, goal.state());
+}
+
+// A goal walks on while the rest pose falls short of the target by more than half of what the last tick moved it, and
+// centres its sticks on the tick that stopping lands nearest: of 2.1 mm short then 0.9 mm past it stops on the past
+// tick, and of 0.9 mm short then 2.1 mm past on the short one.
+void test_a_goal_on_its_predicted_rest_stops_where_stopping_now_lands_nearest() {
+    constexpr float FAST_MM = 600, ADVANCE_M = 0.003f; // the rest moves on 3 mm a tick
+    const auto arrival = [&](float offset) {
+        GoalController goal;
+        goal.start(forward(1, 1), at(0, 0, 0), FAST_MM, TOP_TURN);
+        for (int k = 0;; ++k) {
+            const float remaining = (300 - k) * ADVANCE_M - offset * ADVANCE_M;
+            const GoalSticks sticks = goal.update(at(0, 1 - remaining, 0), false, DT);
+            if (goal.state() != GoalState::RUNNING) {
+                TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
+                TEST_ASSERT_TRUE(centred(sticks));
+                return remaining;
+            }
+            TEST_ASSERT_TRUE(sticks.ly > 0);
+        }
+    };
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, -0.3f * ADVANCE_M, arrival(0.3f));
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.3f * ADVANCE_M, arrival(0.7f));
+}
+
+// Once arrived, a pass stays arrived: the rest falling back as the sticks centre, or a straight walk still off its line
+// walking across it, never drives it on again.
+void test_an_arrived_pass_does_not_drive_again() {
+    GoalController goal;
+    goal.start(forward(0.2f, 0.5f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
+    goal.update(at(0.05f, 0.198f, 0), false, DT); // 2 mm short, 5 cm right of the line: arrived, walks across
+    for (int i = 0; i < 50; ++i) {
+        // The rest falls back as the stop goes on, and edges toward the line.
+        const GoalSticks sticks = goal.update(at(0.05f - 0.0005f * i, 0.197f - 0.0002f * i, 0), false, DT);
+        TEST_ASSERT_EQUAL(GoalState::RUNNING, goal.state());
+        TEST_ASSERT_EQUAL_FLOAT(0, sticks.ly);
+        TEST_ASSERT_TRUE(sticks.lx < 0);
+    }
 }
 
 // The arc's slowdown is on its remaining angle and slows the forward and turn sticks together.
@@ -347,16 +414,17 @@ void test_an_arc_slows_on_its_remaining_angle() {
     };
     GoalController goal;
     goal.start(arc(RADIUS, 90 * DEG, 0.8f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
-    GoalSticks sticks = goal.update(onArc(30 * DEG), false, DT);
+    Feed feed {goal, at(0, 0, 0)};
+    GoalSticks sticks = feed.to(onArc(30 * DEG));
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.8f, sticks.ly);
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, -0.8f * TURN_PER_FORWARD, sticks.rx);
-    sticks = goal.update(onArc(75 * DEG), false, DT); // 15 deg left: half the speed
+    sticks = feed.to(onArc(75 * DEG)); // 15 deg left: half the speed
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.4f, sticks.ly);
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, -0.4f * TURN_PER_FORWARD, sticks.rx);
-    sticks = goal.update(onArc(88 * DEG), false, DT); // the floor
+    sticks = feed.to(onArc(88 * DEG)); // the floor
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.16f, sticks.ly);
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, -0.16f * TURN_PER_FORWARD, sticks.rx);
-    TEST_ASSERT_TRUE(centred(goal.update(onArc(91 * DEG), false, DT)));
+    TEST_ASSERT_TRUE(centred(feed.to(onArc(91 * DEG))));
     TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
     TEST_ASSERT_TRUE(centred(goal.update(onArc(91 * DEG), true, DT)));
     TEST_ASSERT_EQUAL(GoalState::REACHED, goal.state());
@@ -439,19 +507,20 @@ void test_a_pass_walks_the_remaining_cross_track() {
     TEST_ASSERT_EQUAL_FLOAT(1, goal.progress());
 }
 
-// The arc adds the same gain on its heading's error from the ideal heading at the distance travelled, so a gait that
-// turns short of its stick still lands on the arc's end.
+// The arc adds the same gain on its heading's error from the arc's tangent where its position is, so a gait that turns
+// short of its stick still lands on the arc's end.
 void test_the_arc_corrects_its_yaw_toward_the_ideal_heading() {
     constexpr float RADIUS = 0.5f;
     constexpr float TURN_PER_FORWARD = TOP_SPEED_MM / 1000 / RADIUS / TOP_TURN;
     GoalController goal;
     goal.start(arc(RADIUS, 90 * DEG, 0.5f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
-    // 0.2 m along, the ideal heading is 0.4 rad: 0.1 rad short asks 0.2 more.
-    GoalSticks sticks = goal.update(at(0, 0, 0.3f, 0.2f), false, DT);
+    // 0.4 rad around the arc, the tangent's heading is 0.4 rad: 0.1 rad short asks 0.2 more.
+    GoalSticks sticks = goal.update(onLeftArc(RADIUS, 0.4f, 0.3f), false, DT);
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.5f, sticks.ly);
     TEST_ASSERT_FLOAT_WITHIN(1e-4f, -(0.5f * TURN_PER_FORWARD + 0.2f), sticks.rx);
-    // 0.2 rad ahead asks 0.4 less, clipped to 0.3.
-    sticks = goal.update(at(0, 0, 0.6f, 0.2f), false, DT);
+    // 0.2 rad ahead asks 0.4 less, clipped to 0.3; a fresh goal, whose turn has learnt nothing yet.
+    goal.start(arc(RADIUS, 90 * DEG, 0.5f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
+    sticks = goal.update(onLeftArc(RADIUS, 0.4f, 0.6f), false, DT);
     TEST_ASSERT_FLOAT_WITHIN(1e-4f, -(0.5f * TURN_PER_FORWARD - 0.3f), sticks.rx);
 
     struct Case {
@@ -519,12 +588,13 @@ void test_it_times_out_after_max_passes() {
 }
 
 // An arc that coasts past its angle walks back along the arc on its next pass; one that rocks back short walks on.
+// Both miss by more than the 5.7 deg its 3 cm end tolerance allows on 0.3 m, so neither only turns in place.
 void test_an_arc_corrects_an_overshoot_backwards_and_an_undershoot_forwards() {
     struct Case {
         float extraCoast;
         bool over;
     };
-    for (const Case c : {Case {2.0f, true}, Case {-3.0f, false}}) {
+    for (const Case c : {Case {4.0f, true}, Case {-3.0f, false}}) {
         Body body(0.1f, 0.2f, 0.4f);
         body.extraCoast = {c.extraCoast};
         const OdometryEstimate origin = body.pose;
@@ -548,13 +618,84 @@ void test_an_arc_corrects_an_overshoot_backwards_and_an_undershoot_forwards() {
     }
 }
 
-// An arc whose heading lands but whose end does not has no remaining angle for a pass to walk: it fails at once.
+// An arc is judged on its position about its centre, not on its yaw: on BI's arc in the simulation, the yaw lagged
+// its ideal, laid the walk outside the circle and caught up as the arc slowed, to end 2 deg ahead of the position.
+void test_an_arc_whose_yaw_leads_its_position_walks_on_to_its_end() {
+    GoalController goal;
+    goal.start(arc(0.5f, 90 * DEG, 0.5f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
+    const auto onArc = [](float swept, float yaw) { return onLeftArc(0.5f, swept, yaw); };
+    Feed feed {goal, at(0, 0, 0)};
+    TEST_ASSERT_FALSE(centred(feed.to(onArc(87 * DEG, 90 * DEG))));
+    TEST_ASSERT_EQUAL(GoalState::RUNNING, goal.state());
+    feed.to(onArc(90.5f * DEG, 92 * DEG));
+    TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
+    goal.update(onArc(90.5f * DEG, 92 * DEG), true, DT);
+    TEST_ASSERT_EQUAL(GoalState::REACHED, goal.state());
+}
+
+// A settled arc on its end point whose heading misses by more than REACHED_RAD turns in place by the rest of it.
+void test_an_arc_on_its_end_with_its_heading_off_turns_it_in_place() {
+    GoalController goal;
+    goal.start(arc(0.5f, 90 * DEG, 0.5f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
+    goal.update(onLeftArc(0.5f, 90.5f * DEG, 95 * DEG), false, DT);
+    TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
+    const GoalSticks sticks = goal.update(onLeftArc(0.5f, 90.5f * DEG, 95 * DEG), true, DT);
+    TEST_ASSERT_EQUAL(GoalState::RUNNING, goal.state());
+    TEST_ASSERT_EQUAL(2, goal.passes());
+    TEST_ASSERT_EQUAL_FLOAT(0, sticks.lx);
+    TEST_ASSERT_EQUAL_FLOAT(0, sticks.ly);
+    TEST_ASSERT_TRUE(sticks.rx > 0); // clockwise, back toward 90 deg
+    goal.update(onLeftArc(0.5f, 90.5f * DEG, 90.2f * DEG), false, DT);
+    TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
+    goal.update(onLeftArc(0.5f, 90.5f * DEG, 90.2f * DEG), true, DT);
+    TEST_ASSERT_EQUAL(GoalState::REACHED, goal.state());
+}
+
+// A tight arc's swept angle is held only as closely as ARC_REACHED_M of its end needs: 6 deg short on 0.2 m is 2.1 cm.
+void test_a_tight_arc_is_held_to_its_end_point_not_to_3_degrees() {
+    GoalController goal;
+    goal.start(arc(0.2f, 90 * DEG, 0.5f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
+    goal.update(onLeftArc(0.2f, 84 * DEG, 90 * DEG), false, DT);
+    TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
+    goal.update(onLeftArc(0.2f, 84 * DEG, 90 * DEG), true, DT);
+    TEST_ASSERT_EQUAL(GoalState::REACHED, goal.state());
+    TEST_ASSERT_EQUAL(1, goal.passes());
+}
+
+// The arc's turn stick learns its gain from the heading's lag behind the tangent, at TURN_GAIN_RATE per rad a second,
+// within MIN_TURN_GAIN and MAX_TURN_GAIN, and each goal starts it afresh at 1.
+void test_the_arc_learns_its_turn_within_its_clamp_and_afresh_each_goal() {
+    constexpr float RADIUS = 0.5f;
+    constexpr float TURN_PER_FORWARD = TOP_SPEED_MM / 1000 / RADIUS / TOP_TURN;
+    const auto heldFor = [&](GoalController& goal, float yaw, float seconds) {
+        goal.start(arc(RADIUS, 90 * DEG, 0.5f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
+        GoalSticks sticks;
+        for (int i = 0; i < seconds / DT; ++i) sticks = goal.update(onLeftArc(RADIUS, 0.4f, yaw), false, DT);
+        TEST_ASSERT_EQUAL(GoalState::RUNNING, goal.state());
+        return sticks.rx;
+    };
+    GoalController goal;
+    // 0.1 rad behind grows the gain by 0.5 a second, from 1 to 2 in 2 s, where it stays.
+    TEST_ASSERT_FLOAT_WITHIN(2e-3f, -(0.5f * TURN_PER_FORWARD * 1.5f + 0.2f), heldFor(goal, 0.3f, 1));
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, -(0.5f * TURN_PER_FORWARD * GoalController::MAX_TURN_GAIN + 0.2f),
+                             heldFor(goal, 0.3f, 5));
+    // 0.1 rad ahead shrinks it to 0.5 in 1 s.
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, -(0.5f * TURN_PER_FORWARD * GoalController::MIN_TURN_GAIN - 0.2f),
+                             heldFor(goal, 0.5f, 5));
+    // A new goal's first tick asks the turn its radius implies, whatever the last one learnt.
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, -(0.5f * TURN_PER_FORWARD + 0.2f), heldFor(goal, 0.3f, DT));
+}
+
+// An arc whose position has swept its angle off its circle, so its end does not land, has no remaining angle for a
+// pass to walk: it fails at once.
 void test_an_arc_off_its_end_with_its_angle_reached_fails() {
     GoalController goal;
     goal.start(arc(0.5f, 90 * DEG, 0.5f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
-    goal.update(at(0, 0, 91 * DEG, 0.8f), false, DT);
+    // 91 deg about the arc's centre, 0.5 m left of the start, on a circle of 0.6 m.
+    const OdometryEstimate wide = at(-0.5f + 0.6f * std::cos(91 * DEG), 0.6f * std::sin(91 * DEG), 91 * DEG, 0.9f);
+    goal.update(wide, false, DT);
     TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
-    TEST_ASSERT_TRUE(centred(goal.update(at(0, 0, 91 * DEG, 0.8f), true, DT)));
+    TEST_ASSERT_TRUE(centred(goal.update(wide, true, DT)));
     TEST_ASSERT_EQUAL(GoalState::TIMED_OUT, goal.state());
     TEST_ASSERT_EQUAL(1, goal.passes());
 }
@@ -697,6 +838,8 @@ void test_valid_refuses_malformed_goals_and_start_reports_refused() {
 }
 
 // Progress is the share of the target covered, from 0 to 1, whatever the sign of the target.
+// The progress is the furthest the judged pose has come: a step the wrong way leaves it where it was.
+// The app's status line draws it as a bar, which must only grow; the predicted rest wobbles within each step.
 void test_progress_runs_from_zero_to_one() {
     GoalController goal;
     TEST_ASSERT_EQUAL_FLOAT(0, goal.progress());
@@ -705,12 +848,15 @@ void test_progress_runs_from_zero_to_one() {
     goal.update(at(0.1f, 0, PI / 2), false, DT); // facing -x, a step backwards is +x
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.25f, goal.progress());
     goal.update(at(-0.1f, 0, PI / 2), false, DT); // the wrong way
-    TEST_ASSERT_EQUAL_FLOAT(0, goal.progress());
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.25f, goal.progress());
+    goal.update(at(0.2f, 0, PI / 2), false, DT);
+    TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.5f, goal.progress());
     goal.update(at(0.41f, 0, PI / 2), false, DT); // past
     TEST_ASSERT_EQUAL_FLOAT(1, goal.progress());
 
     goal.start(arc(0.3f, -180 * DEG, 0.5f), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
-    goal.update(at(0, 0, -45 * DEG, 0.3f * PI / 4), false, DT);
+    // A quarter of the way about the arc's centre, 0.3 m right of the start.
+    goal.update(at(0.3f - 0.3f * std::cos(45 * DEG), 0.3f * std::sin(45 * DEG), -45 * DEG, 0.3f * PI / 4), false, DT);
     TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.25f, goal.progress());
 }
 
@@ -722,7 +868,9 @@ int main(int, char**) {
     RUN_TEST(test_arcs_land_on_their_end_pose_and_follow_their_circle);
     RUN_TEST(test_a_tight_arc_slows_its_forward_stick_to_keep_its_curvature);
     RUN_TEST(test_it_slows_over_the_last_stretch_down_to_a_floor);
-    RUN_TEST(test_a_fast_goal_slows_early_and_stops_its_coast_short);
+    RUN_TEST(test_a_fast_goal_slows_early);
+    RUN_TEST(test_a_goal_on_its_predicted_rest_stops_where_stopping_now_lands_nearest);
+    RUN_TEST(test_an_arrived_pass_does_not_drive_again);
     RUN_TEST(test_an_arc_slows_on_its_remaining_angle);
     RUN_TEST(test_heading_hold_steers_against_a_drifting_yaw);
     RUN_TEST(test_straight_walks_hold_their_line_with_signs_by_the_stick_convention);
@@ -732,6 +880,10 @@ int main(int, char**) {
     RUN_TEST(test_a_settled_overshoot_gets_a_corrective_pass);
     RUN_TEST(test_it_times_out_after_max_passes);
     RUN_TEST(test_an_arc_corrects_an_overshoot_backwards_and_an_undershoot_forwards);
+    RUN_TEST(test_an_arc_whose_yaw_leads_its_position_walks_on_to_its_end);
+    RUN_TEST(test_an_arc_on_its_end_with_its_heading_off_turns_it_in_place);
+    RUN_TEST(test_a_tight_arc_is_held_to_its_end_point_not_to_3_degrees);
+    RUN_TEST(test_the_arc_learns_its_turn_within_its_clamp_and_afresh_each_goal);
     RUN_TEST(test_an_arc_off_its_end_with_its_angle_reached_fails);
     RUN_TEST(test_a_goal_that_gets_nowhere_times_out);
     RUN_TEST(test_cancel_ends_only_an_active_goal);

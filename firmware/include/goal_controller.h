@@ -29,20 +29,21 @@ struct GoalSticks {
 };
 
 /**
- * Drives one goal to its target on the odometry, called every control tick. The remaining distance along the goal's
- * axis in the frame it started in, or the remaining turn on the unwrapped fused yaw, sets the driving stick: the asked
- * speed, slowed in proportion over the slowdown zone, never below MIN_FRACTION of it. The zone is SLOW_DOWN, or the
- * distance the asked speed covers in two stops' coasts when that is longer, so a fast walk has room to slow. Once the
- * remainder is within the coast the stop is predicted to take from the speed the gait walks now, it centres its sticks
- * and waits for the robot to come to rest, since the stop coasts on by an amount that also depends on the gait's
- * phase. The settled pose is judged: within the tolerance it has REACHED; otherwise a corrective pass walks the
- * remainder, up to MAX_PASSES passes in all, and then it has TIMED_OUT. So has a pass that takes longer than twice its
- * expected time plus TIMEOUT_MARGIN_S.
+ * Drives one goal to its target, called every time the caller predicts where the robot would come to rest if its sticks
+ * centred now: the goal is judged on that rest pose, never on where the robot is. The remaining distance along the
+ * goal's axis in the frame it started in, or the remaining turn on the unwrapped fused yaw, sets the driving stick: the
+ * asked speed, slowed in proportion over the slowdown zone, never below MIN_FRACTION of it. The zone is SLOW_DOWN, or
+ * the distance the asked speed covers in two stops' coasts when that is longer, so a fast walk has room to slow. Once
+ * stopping now lands nearer the target than stopping on the next call would, the pass has arrived for good: its sticks
+ * centre and it waits for the robot to come to rest. The settled pose is judged: within the tolerance it has REACHED;
+ * otherwise a corrective pass walks the remainder, up to MAX_PASSES passes in all, and then it has TIMED_OUT. So has a
+ * pass that takes longer than twice its expected time plus TIMEOUT_MARGIN_S.
  *
  * A straight walk holds the start heading with its turn stick and its start line with the stick across it, and is
  * judged on its cross-track as well; a settled pose on the target but off the line gets a pass that walks only across.
- * An arc walks forward with the turn stick its radius implies, slows on its remaining angle and steers its heading
- * toward the arc's heading at the distance travelled.
+ * An arc walks forward with the turn stick its radius implies, scaled by what it learns of the gait's turn, slows on
+ * the angle its position has left to sweep about the arc's centre and steers its heading toward the arc's tangent
+ * there. A settled arc on its end point whose heading misses gets a pass that turns in place.
  */
 class GoalController {
   public:
@@ -55,16 +56,21 @@ class GoalController {
     static constexpr int MAX_PASSES = 3;
     static constexpr float HEADING_GAIN = 2.0f; // turn stick per rad of heading error
     static constexpr float HEADING_STICK_MAX = 0.3f;
+    // An arc's turn stick learns the gait's turn against what it asks, at this rate per rad of heading lag a second:
+    // BI's feet slip in a turn on the simulation's arc, where its kinematic yaw turns 13-19 % more than the IMU's, and
+    // the heading hold alone holds a lag that lays the walk outside the circle.
+    static constexpr float TURN_GAIN_RATE = 5.0f;
+    static constexpr float MIN_TURN_GAIN = 0.5f, MAX_TURN_GAIN = 2.0f;
     static constexpr float CROSS_GAIN = 10.0f; // stick across the line per m off it
     static constexpr float CROSS_STICK_MAX = 0.3f;
     static constexpr float CROSS_REACHED_M = 0.02f;
     static constexpr float TIMEOUT_MARGIN_S = 2.0f;
     // MotionService's GAIT_COMMAND_TAU_S: the gait follows a stick's speed through a first-order lag of this time.
     static constexpr float RAMP_TAU_S = 0.15f;
-    // How far the robot walks on once its sticks centre, as a time at the speed it walked. The stop ramp (gait.h
-    // GaitCommandRamp) eases the stroke out through two first-order stages of RAMP_TAU_S, leaving the share
-    // s = (1 + t / tau) exp(-t / tau), and slows the cadence with it, so the speed falls as s^2: its integral is
-    // 1.25 tau. The virtual robot coasts 0.19 s of its speed at full speed, measured on TRI and BI.
+    // How far the robot walks on once its sticks centre, as a time at the speed it walked, which sizes the slowdown
+    // zone. The stop ramp (gait.h GaitCommandRamp) eases the stroke out through two first-order stages of RAMP_TAU_S,
+    // leaving the share s = (1 + t / tau) exp(-t / tau), and slows the cadence with it, so the speed falls as s^2: its
+    // integral is 1.25 tau. The virtual robot coasts 0.19 s of its speed at full speed, measured on TRI and BI.
     static constexpr float STOP_S = 1.25f * RAMP_TAU_S;
 
     /** A finite goal with a nonzero target, a positive radius for an arc, at a speed in (0, 1]. */
@@ -82,10 +88,10 @@ class GoalController {
     }
 
     /**
-     * Starts `goal` from `pose`; `topSpeed` (mm/s) and `topTurn` (rad/s) are what a full stick gives at the posture. An
-     * unwalkable posture's empty envelope is refused: its goal could never time out.
+     * Starts `goal` from the rest pose `rest`; `topSpeed` (mm/s) and `topTurn` (rad/s) are what a full stick gives at
+     * the posture. An unwalkable posture's empty envelope is refused: its goal could never time out.
      */
-    void start(const Goal& goal, const OdometryEstimate& pose, float topSpeed, float topTurn) {
+    void start(const Goal& goal, const OdometryEstimate& rest, float topSpeed, float topTurn) {
         const auto positive = [](float top) { return std::isfinite(top) && top > 0; };
         if (!valid(goal) || !positive(topSpeed) || !positive(topTurn)) {
             current = GoalState::REFUSED;
@@ -93,23 +99,36 @@ class GoalController {
             return;
         }
         target = goal;
-        origin = pose;
-        lastYaw = pose.yaw;
+        origin = rest;
+        lastYaw = rest.yaw;
         turned = 0;
-        remaining = aim();
+        lastSwept = swept = 0;
+        furthest = 0;
+        turnGain = 1;
         topSpeedMs = topSpeed / 1000.0f;
         topTurnRads = topTurn;
         passCount = 0;
-        beginPass(pose);
+        beginPass(rest, false);
     }
 
-    /** One control tick: the odometry and whether the robot is at rest. Returns the sticks, centred unless running. */
-    GoalSticks update(const OdometryEstimate& pose, bool atRest, float dt) {
+    /**
+     * One call: where the robot would come to rest if its sticks centred now, whether it is at rest, and the time since
+     * the last call. Returns the sticks, centred unless running.
+     */
+    GoalSticks update(const OdometryEstimate& rest, bool atRest, float dt) {
         if (!active()) return {};
         // The odometry's yaw wraps at pi; a turn of any size is followed on the sum of its wrapped changes.
-        turned += std::remainder(pose.yaw - lastYaw, 2.0f * static_cast<float>(M_PI));
-        lastYaw = pose.yaw;
-        remaining = aim() - covered(pose);
+        turned += std::remainder(rest.yaw - lastYaw, 2.0f * static_cast<float>(M_PI));
+        lastYaw = rest.yaw;
+        if (target.kind == GoalKind::ARC) {
+            const float around = aroundCentre(rest);
+            swept += std::remainder(around - lastSwept, 2.0f * static_cast<float>(M_PI));
+            lastSwept = around;
+        }
+        const float before = remaining;
+        remaining = aim() - covered(rest);
+        restAdvance = std::max((before - remaining) * direction, 0.0f);
+        furthest = std::max(furthest, 1 - remaining / aim());
         elapsed += dt;
         if (elapsed > deadline) {
             current = GoalState::TIMED_OUT;
@@ -117,24 +136,36 @@ class GoalController {
         }
         if (current == GoalState::SETTLING) {
             if (!atRest) return {};
-            if (within(pose)) {
+            if (within(rest)) {
                 current = GoalState::REACHED;
                 return {};
             }
-            // An arc whose angle is reached but whose end is not has no remainder for a pass to walk.
-            if (passCount == MAX_PASSES || (target.kind == GoalKind::ARC && std::fabs(remaining) <= REACHED_RAD)) {
+            if (passCount == MAX_PASSES) {
                 current = GoalState::TIMED_OUT;
                 return {};
             }
-            beginPass(pose);
+            if (target.kind != GoalKind::ARC || std::fabs(target.angle - swept) > sweptTolerance()) {
+                beginPass(rest, false);
+            } else if (endMiss(rest) <= ARC_REACHED_M) {
+                beginPass(rest, true);
+            } else {
+                // An arc whose angle is swept off its circle has no remainder for a pass to walk.
+                current = GoalState::TIMED_OUT;
+                return {};
+            }
         }
-        if (arriving() && std::fabs(cross(pose)) <= CROSS_REACHED_M) {
+        // It arrives once that rest is nearer the target than one more call's would be, by how far the last call moved
+        // it, and stays arrived: the rest moves back as the sticks centre, and a pass driving again would pulse.
+        if (!arrived) arrived = remaining * direction <= 0.5f * restAdvance;
+        if (arrived && std::fabs(cross(rest)) <= CROSS_REACHED_M) {
             current = GoalState::SETTLING;
             return {};
         }
-        const float commanded = arriving() ? 0 : share() * pace();
-        walked += (commanded - walked) * (1 - std::exp(-dt / RAMP_TAU_S));
-        return sticks(pose);
+        const GoalSticks out = sticks(rest);
+        if (passKind() == GoalKind::ARC && !arrived)
+            turnGain = std::clamp(turnGain + TURN_GAIN_RATE * direction * (idealHeading() - turned) * dt, MIN_TURN_GAIN,
+                                  MAX_TURN_GAIN);
+        return out;
     }
 
     void cancel() {
@@ -142,11 +173,15 @@ class GoalController {
     }
 
     GoalState state() const { return current; }
-    /** The share of the target covered, from 0 to 1. */
+    /**
+     * The share of the target covered, from 0 to 1, by the furthest the judged pose has come: where a stop would come
+     * to rest moves back and forth by a few millimetres within each step, which is no going back. So it reads 1 from an
+     * overshoot on, through a corrective pass back and a goal that then TIMED_OUT.
+     */
     float progress() const {
         if (current == GoalState::REACHED) return 1;
         const bool started = current != GoalState::IDLE && current != GoalState::REFUSED;
-        return started ? std::clamp(1 - remaining / aim(), 0.0f, 1.0f) : 0;
+        return started ? std::clamp(furthest, 0.0f, 1.0f) : 0;
     }
     /** The passes started, the first included. */
     int passes() const { return passCount; }
@@ -155,25 +190,31 @@ class GoalController {
     Goal target;
     GoalState current = GoalState::IDLE;
     OdometryEstimate origin;
-    float lastYaw = 0, turned = 0; // the fused yaw turned since the start, unwrapped
-    float remaining = 0;           // of the target, signed as it
+    float lastYaw = 0, turned = 0;  // the fused yaw turned since the start, unwrapped
+    float lastSwept = 0, swept = 0; // an arc's position swept about its centre since the start, unwrapped
+    float remaining = 0;            // of the pass's axis, signed as the target
+    float furthest = 0;             // the most of the target covered, as a share of it
     float topSpeedMs = 0, topTurnRads = 0;
+    float turnGain = 1; // what an arc's turn stick is scaled by, learnt from the heading's lag behind its ideal
     int passCount = 0;
-    // The pass in progress: the sign of the remainder it walks (0 for a pass only across the line), where it began and
-    // its clock.
-    float direction = 0, passTurned = 0, passDistance = 0, elapsed = 0, deadline = 0;
-    float walked = 0; // the axis's speed the gait walks now, as its ramp follows the sticks: m/s, or rad/s
+    // The pass in progress: the sign of the remainder it walks (0 for a pass only across the line), whether it only
+    // turns an arc's heading in place, whether it has arrived, how far the rest moved toward the target on the last
+    // call, and its clock.
+    float direction = 0;
+    bool turnInPlace = false, arrived = false;
+    float restAdvance = 0, elapsed = 0, deadline = 0;
 
     bool active() const { return current == GoalState::RUNNING || current == GoalState::SETTLING; }
     bool linear() const { return target.kind == GoalKind::FORWARD || target.kind == GoalKind::SIDEWAYS; }
+    // What the pass walks: the goal's own kind, or a turn for an arc's pass on its heading.
+    GoalKind passKind() const { return turnInPlace ? GoalKind::TURN : target.kind; }
     float aim() const { return linear() ? target.distance : target.angle; }
     float zone() const { return std::max(linear() ? SLOW_DOWN_M : SLOW_DOWN_RAD, 2 * pace() * STOP_S); }
     // The share of the asked speed the remainder drives at.
     float share() const { return std::clamp(std::fabs(remaining) / zone(), MIN_FRACTION, 1.0f); }
-    float axisTolerance() const { return linear() ? REACHED_M : REACHED_RAD; }
     float turnPerForward() const { return topSpeedMs / target.radius / topTurnRads; }
-    // Within the stop's coast of the target, or past it; a pass only across the line has no axis to walk.
-    bool arriving() const { return remaining * direction <= walked * STOP_S; }
+    // An arc's swept angle is held to REACHED_RAD, or on a tight arc to what ARC_REACHED_M of its end allows.
+    float sweptTolerance() const { return std::max(REACHED_RAD, ARC_REACHED_M / target.radius); }
 
     // The pose relative to the start: x right and y forward of the heading it started on.
     float startRight(const OdometryEstimate& p) const {
@@ -184,11 +225,32 @@ class GoalController {
     }
 
     float covered(const OdometryEstimate& p) const {
-        switch (target.kind) {
+        switch (passKind()) {
             case GoalKind::FORWARD: return startForward(p);
             case GoalKind::SIDEWAYS: return startRight(p);
-            default: return turned;
+            case GoalKind::TURN: return turned;
+            case GoalKind::ARC: return swept;
         }
+        return 0;
+    }
+
+    // The heading an arc steers toward: the arc's tangent at the angle its position has swept. The path distance over
+    // the radius would count the gait's sway and any way walked outside the circle: on BI's arc in the simulation it
+    // ran 3 deg past the swept angle, and a heading steered toward it caught up with it as the arc slowed.
+    float idealHeading() const { return swept; }
+
+    // An arc's position as an angle about its centre, signed as the arc's angle and 0 at the start. An arc is judged on
+    // it rather than on its yaw, so that it ends on its end point.
+    float aroundCentre(const OdometryEstimate& p) const {
+        const float side = std::copysign(1.0f, target.angle);
+        return side * std::atan2(startForward(p), target.radius + side * startRight(p));
+    }
+
+    // How far an arc's pose is from its end point.
+    float endMiss(const OdometryEstimate& p) const {
+        const float endRight = -std::copysign(target.radius * (1 - std::cos(target.angle)), target.angle);
+        const float endForward = target.radius * std::sin(std::fabs(target.angle));
+        return std::hypot(startRight(p) - endRight, startForward(p) - endForward);
     }
 
     // How far off the start line a straight walk is: right of it for a forward walk, ahead of it for a sideways one.
@@ -201,12 +263,15 @@ class GoalController {
     }
 
     bool within(const OdometryEstimate& p) const {
-        if (std::fabs(remaining) > axisTolerance()) return false;
-        if (linear()) return std::fabs(cross(p)) <= CROSS_REACHED_M;
-        if (target.kind == GoalKind::TURN) return true;
-        const float endRight = -std::copysign(target.radius * (1 - std::cos(target.angle)), target.angle);
-        const float endForward = target.radius * std::sin(std::fabs(target.angle));
-        return std::hypot(startRight(p) - endRight, startForward(p) - endForward) <= ARC_REACHED_M;
+        switch (target.kind) {
+            case GoalKind::FORWARD:
+            case GoalKind::SIDEWAYS: return std::fabs(remaining) <= REACHED_M && std::fabs(cross(p)) <= CROSS_REACHED_M;
+            case GoalKind::TURN: return std::fabs(remaining) <= REACHED_RAD;
+            case GoalKind::ARC:
+                return std::fabs(target.angle - swept) <= sweptTolerance() &&
+                       std::fabs(target.angle - turned) <= REACHED_RAD && endMiss(p) <= ARC_REACHED_M;
+        }
+        return false;
     }
 
     float headingStick(float error) const {
@@ -226,7 +291,7 @@ class GoalController {
 
     // The rate the pass's axis moves at with a full share of the asked speed: m/s, or rad/s for a turn or an arc.
     float pace() const {
-        switch (target.kind) {
+        switch (passKind()) {
             case GoalKind::TURN: return target.speed * topTurnRads;
             case GoalKind::ARC: {
                 // MotionService shares a combined stick out over its L1 norm, which slows the turn with the walk.
@@ -237,33 +302,34 @@ class GoalController {
         }
     }
 
-    void beginPass(const OdometryEstimate& pose) {
+    // A pass from the rest pose `rest`: on the goal's own axis, or on an arc's heading alone when `turnOnly`.
+    void beginPass(const OdometryEstimate& rest, bool turnOnly) {
         passCount++;
+        turnInPlace = turnOnly;
+        remaining = aim() - covered(rest);
         direction = linear() && std::fabs(remaining) <= REACHED_M ? 0 : std::copysign(1.0f, remaining);
-        passTurned = turned;
-        passDistance = pose.distance;
+        arrived = false;
+        restAdvance = 0;
         elapsed = 0;
-        walked = 0;
         const float d = std::fabs(remaining);
         const float expected = (std::max(d - zone(), 0.0f) + std::min(d, zone()) / MIN_FRACTION) / pace();
         deadline = 2 * expected + TIMEOUT_MARGIN_S;
         current = GoalState::RUNNING;
     }
 
-    GoalSticks sticks(const OdometryEstimate& pose) const {
-        // Arriving, a straight walk still off its line walks only across it.
-        const float drive = arriving() ? 0 : std::copysign(target.speed * share(), remaining);
-        const float across = std::clamp(CROSS_GAIN * cross(pose), -CROSS_STICK_MAX, CROSS_STICK_MAX);
-        switch (target.kind) {
+    GoalSticks sticks(const OdometryEstimate& rest) const {
+        // Arrived, a straight walk still off its line walks only across it.
+        const float drive = arrived ? 0 : std::copysign(target.speed * share(), remaining);
+        const float across = std::clamp(CROSS_GAIN * cross(rest), -CROSS_STICK_MAX, CROSS_STICK_MAX);
+        switch (passKind()) {
             // Right of the line walks left; ahead of a sideways walk's line walks back.
             case GoalKind::FORWARD: return walk(-across, drive, headingStick(-turned));
             case GoalKind::SIDEWAYS: return walk(drive, -across, headingStick(-turned));
             case GoalKind::TURN: return walk(0, 0, drive);
             case GoalKind::ARC: {
                 // Forward along the arc turns its way; turning back walks back along it.
-                const float ideal = passTurned + direction * (pose.distance - passDistance) / target.radius;
                 return arcSticks(std::copysign(1.0f, target.angle) * drive,
-                                 drive * turnPerForward() + headingStick(ideal - turned));
+                                 drive * turnPerForward() * turnGain + headingStick(idealHeading() - turned));
             }
         }
         return {};
