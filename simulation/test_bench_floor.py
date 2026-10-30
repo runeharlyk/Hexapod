@@ -123,7 +123,7 @@ def test_the_camera_scores_every_run_against_the_floor(session_dir):
     assert not clock.outliers and not clock.refused
     for run in moving:
         rec = recs[run.file]
-        if run.routine in ("metre", "square"):  # each repeats a start motion the track holds elsewhere
+        if run.routine == "metre":  # each repeats the others' start motion
             with pytest.raises(score_track.AlignmentRefused, match="repeats"):
                 score_track.clock_offset(track, score_track.Telemetry.from_recording(rec))
         scored = bench_floor.camera_in_session(run.routine, rec, track, clock)

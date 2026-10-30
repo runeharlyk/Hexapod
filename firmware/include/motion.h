@@ -5,6 +5,7 @@
 #include <iterator>
 #include <utility>
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <kinematics.h>
 #include <peripherals/servo_controller.h>
 #include <peripherals/peripherals.h>
@@ -441,6 +442,9 @@ class MotionService {
                                                        : "");
         }
         if (_gaitTaken) ESP_LOGI("MotionService", "Gait %d", (int)*_gaitTaken);
+        if (std::exchange(_predictionLogDue, false))
+            ESP_LOGI("MotionService", "goal %u: rest prediction worst %lld us of %d", (unsigned)_predictionLog.id,
+                     (long long)_predictionLog.worstUs, _predictionLog.count);
         if (std::exchange(_tunedLogDue, false)) logTunedCommand(_tunedVelocity, target_gait_state);
     }
 
@@ -566,15 +570,32 @@ class MotionService {
     static constexpr int GOAL_STATUS_STEPS = 20; // a push every 5 % of progress
     // A goal takes its posture and gait in a few seconds; one still waiting after this never will.
     static constexpr unsigned long GOAL_START_TIMEOUT_MS = 10000;
-    // The period a stop is stepped ahead at to predict it, four control ticks, which predicts as well as one on the
-    // virtual robot's goal matrix at a quarter of the cost, and the longest stop it follows.
+    // The period a stop is stepped ahead at to predict where it comes to rest, four control ticks, and the longest stop
+    // it follows. Stepped at the control period the prediction is exact on the virtual robot (within 0.01 mm when the
+    // sticks centre) at four times the cost; at four ticks it is within 3.3 mm, and each of 21 forward goals and 21
+    // turns per gait at full and half speed still ends in one pass. A prediction costs 13-15 us on the host built with
+    // -O2, and 39-50 us in the native tests' unoptimised build; the ESP32-S3's is logged as each goal ends.
     static constexpr float STOP_PREDICTION_DT_S = 0.02f;
     static constexpr int STOP_PREDICTION_STEPS = 100;
-    // A foot that lifts in the stop's tail still sets down off its stance, so the stop is taken to step a little
-    // further than its ramp. On the virtual robot's TRI and BI goals, 1.05 to 1.15 reach a metre at full speed in one
-    // pass and every centimetre and few-degree goal at half speed; 1.0 needs a second pass at full speed, 1.2 misses
-    // 5 deg turns, and above 1.05 a TRI metre's predicted progress steps back more often.
-    static constexpr float STOP_TAIL = 1.05f;
+    // A goal predicts its rest and steers every GOAL_PERIOD_TICKS control ticks, the period the stop is stepped at. On
+    // the virtual robot's 21+21 sweep every goal still ends in one pass, within 7.9 mm and 2.8 deg against 6.5 mm and
+    // 2.2 deg steered every tick; steered every tick on the last rest carried along by the odometry, two turns took a
+    // second pass, as each new prediction jumps the carried rest by its error.
+    static constexpr int GOAL_PERIOD_TICKS = 4;
+    int _goalTicks = 0;
+    float _goalDt = 0;
+    // The worst rest prediction of the goal in progress and how many it made, logged once after the servo write of
+    // the tick it ends on. They are latched with the goal's id as it ends, since a goal that replaces it is taken on
+    // the same tick, before the log.
+    struct PredictionLog {
+        uint32_t id = 0;
+        int64_t worstUs = 0;
+        int count = 0;
+    };
+    int64_t _predictionWorstUs = 0;
+    int _predictions = 0;
+    bool _predictionPending = false, _predictionLogDue = false;
+    PredictionLog _predictionLog;
 
     static constexpr float smoothing_factor = BODY_SMOOTHING;
     // Ramp time constant for the locomotion command: ~0.45 s to settle. Slow enough that a slammed
@@ -895,8 +916,8 @@ class MotionService {
     }
 
     // Control task, WALK, after the odometry. The goal hands its style to the walk, starts once the walk has taken its
-    // posture and gait, and then walks its sticks, judging rest as the stop ramp leaves it: no stroke and the feet
-    // home.
+    // posture and gait, and then every GOAL_PERIOD_TICKS predicts its rest and walks its sticks, judging rest as the
+    // stop ramp leaves it: no stroke and the feet home.
     void stepGoal(float dt) {
         if (!goalActive()) return;
         if (!_goalStyleTaken) {
@@ -910,8 +931,20 @@ class MotionService {
                 goalTops(_goalTaken.goal.kind, _goalTaken.gait, _walkPosture, _goalTaken.style.stride);
             _goal.start(_goalTaken.goal, restPose(), tops.speed, tops.turn);
             _goalStarted = true;
+            _goalTicks = 0;
+            _goalDt = 0;
+            _predictionWorstUs = 0;
+            _predictions = 0;
+            _predictionPending = true;
         } else {
-            const GoalSticks sticks = _goal.update(restPose(), !gaitIsCommanded(gait_state) && feetAtRest(), dt);
+            _goalDt += dt;
+            if (++_goalTicks % GOAL_PERIOD_TICKS != 0) return;
+            const int64_t startUs = esp_timer_get_time();
+            const OdometryEstimate rest = restPose();
+            _predictionWorstUs = std::max(_predictionWorstUs, esp_timer_get_time() - startUs);
+            ++_predictions;
+            const GoalSticks sticks =
+                _goal.update(rest, !gaitIsCommanded(gait_state) && feetAtRest(), std::exchange(_goalDt, 0.f));
             if (_inbox.goalDrives()) {
                 lastWalkCommand_.lx = sticks.lx;
                 lastWalkCommand_.ly = sticks.ly;
@@ -942,6 +975,11 @@ class MotionService {
 
     // Control task: pushes the status on a change of goal or state, or a step of progress.
     void reportGoal() {
+        if (_predictionPending && !goalActive()) {
+            _predictionPending = false;
+            _predictionLogDue = true;
+            _predictionLog = {_goalTaken.id, _predictionWorstUs, _predictions};
+        }
         socket_message_GoalStatus s =
             goalStatusOf(_goalTaken.id, _goalState, _goalTaken.goal, _goalStarted ? _goal.progress() : 0.f,
                          _goalStarted ? _goal.passes() : 0);
@@ -982,33 +1020,27 @@ class MotionService {
         return stance;
     }
 
-    // Control task: where the robot will stand once a stop's ease home has set its planted feet on their places. A goal
-    // judges this pose rather than the odometry's: feet that only slid within their stance carry the body back as they
-    // ease home, so a walk too short for any foot to swing has gone nowhere. A planted foot the stop still lifts before
-    // the gait comes to rest steps on instead, as the coast the goal predicts.
+    // Control task: where the robot comes to rest if its sticks centre now. The stop is walked ahead on copies of the
+    // command ramp, the gait and the odometry, with the code the control task runs, until the gait stops cycling; the
+    // ease home that follows moves the feet along one blend, which restStep fits. A stop already under way goes on
+    // from where it is, and a gait that is not cycling has only its ease left.
     OdometryEstimate restPose() const {
-        const float phase = stopPhase();
-        std::array<bool, 6> stays;
-        for (int leg = 0; leg < 6; ++leg) stays[leg] = gait.phaseToLift(gait_state, leg) > phase;
-        return KinematicOdometry::advance(
-            _odometry.estimate(), KinematicOdometry::restStep(body_state, stanceFlags(), default_feet_pos, stays));
-    }
-
-    // Control task: the phase a stop from now still steps, from the stop ramp run ahead on a copy of it and of the
-    // gait, so a stop already under way goes on from where it is. Its cadence follows the stroke left, and the gait
-    // stops cycling once the stroke is under its deadband, so a stop from a stroke near the deadband steps almost none.
-    float stopPhase() const {
         GaitCommandRamp ramp = _commandRamp;
         gait_state_t live = gait_state, stopped = target_gait_state;
         stopped.step_x = stopped.step_y = stopped.step_angle = stopped.phase_rate = 0;
+        GaitController walk = gait;
+        BodyStateMsg body = body_state;
+        FusedOdometry odometry = _odometry;
         const float a = easeShare(STOP_PREDICTION_DT_S, GAIT_COMMAND_TAU_S);
-        float phase = 0;
-        for (int t = 0; t < STOP_PREDICTION_STEPS; ++t) {
+        for (int step = 0; step < STOP_PREDICTION_STEPS; ++step) {
             ramp.stepBy(live, stopped, a);
             if (!gaitIsCommanded(live)) break;
-            phase += live.phase_rate * STOP_PREDICTION_DT_S;
+            walk.step(live, body, STOP_PREDICTION_DT_S);
+            std::array<bool, 6> stance;
+            for (int leg = 0; leg < 6; ++leg) stance[leg] = walk.inStance(live, leg);
+            odometry.update(body, stance, std::nullopt, STOP_PREDICTION_DT_S);
         }
-        return phase * STOP_TAIL;
+        return KinematicOdometry::advance(odometry.estimate(), KinematicOdometry::restStep(body, default_feet_pos));
     }
 
     // Control task, at the end of a STAND tick. A stand that has taken its posture and holds still is one a walk can

@@ -379,6 +379,6 @@ Their tests (`test_bench_floor.py`, `test_servo_envelope.py`) run every routine 
 
 `Robot.recording(path)` writes the telemetry to a `.hexrec` while its block runs, from the robot over the facade's own link, and from the simulation as the firmware's own `TickSample` of every tick, which the host's servo stand-in leaves without PWM and write time.
 `score_track.py` aligns a run of goal moves on its odometry, as a goal's sticks are written by the firmware and the telemetry's command does not carry them.
-A start motion the track repeats elsewhere (the metre runs repeat one another, and the square its own sides) cannot place the clocks, and `score_track.py` refuses it unless `--near` gives the offset to within 2 s.
+A start motion the track repeats elsewhere (the metre runs repeat one another) cannot place the clocks, and `score_track.py` refuses it unless `--near` gives the offset to within 2 s.
 `bench_floor.py report` takes that offset from the session's velocity runs (turn and tri), which hold their start motion once, as the robot's and the camera's clocks both run on through a session; it needs two of them within a second of their median, scores each of them on its own start motion, and records the offset and its voters in `summary.md`.
 `bench_floor.py report --near <s>` gives the offset where the session's own runs do not; a robot that rebooted mid-session restarted its clock, and no single offset fits it.

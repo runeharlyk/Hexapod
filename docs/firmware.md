@@ -233,7 +233,7 @@ Both are ports of SpotMicroESP32-Leika's, to six legs and the body frame of `doc
 `KinematicOdometry` takes the six foot targets the gait placed, before the body's tilt and shift, since those move the body over the planted feet and the robot travels only as far as the gait strokes them.
 A foot is on the floor when its gait phase is in stance and it is within `LIFTED_MM` (3 mm) of the lowest foot, which keeps a foot a stopped walk is lowering from counting.
 The robot's step each tick is the inverse of the least-squares rigid motion of the feet that were on the floor in both this tick and the last; the yaw comes from the fit only when at least two feet were down in both.
-The stop's ease home is credited tick by tick through the same fit, as the feet that stay carry the body while the lifted ones come down; `restStep` predicts where that ease will leave the robot, for the goal's rest pose only.
+The stop's ease home is credited tick by tick through the same fit, as the feet that stay carry the body while the lifted ones come down; `restStep` predicts where that ease will leave the robot, fitted in parts from one foot's joining to the next, for the goal's rest pose only.
 It knows only what the gait commanded: servo lag, slip and short steps make the robot travel otherwise.
 
 `FusedOdometry` corrects the heading with the gyro's yaw rate, taken from the DMP's yaw: its change between two packets over the time between them, in the body frame through `imu_frame.h`'s `YAW_SIGN`.
@@ -261,18 +261,27 @@ A goal asked for while the ESP-NOW handheld drives is answered 423 (Handheld pri
 A goal accepted while a `DEACTIVATED` is queued is answered 202, and is then refused at the take with the status `REFUSED`, since the robot is deactivated by then.
 A goal accepted while another runs replaces it.
 A posture that is not walkable is clamped as the sliders' is.
-On acceptance the goal takes the style's posture and gait through the existing WALK posture paths (the settle) and the gait swap, enters `WALK` from `STAND`, and then writes the walk's sticks itself every tick, through the path the app's commands take.
+On acceptance the goal takes the style's posture and gait through the existing WALK posture paths (the settle) and the gait swap, enters `WALK` from `STAND`, and then writes the walk's sticks itself every `GOAL_PERIOD_TICKS` (4) control ticks, through the path the app's commands take.
 An AUTO swap at rest is not a gait change and does not cancel.
 
-Each tick `GoalController` compares the odometry with the target in the frame the goal started in:
+Every four control ticks `GoalController` compares the rest pose with the target in the frame the goal started in.
+The rest pose is where the robot would come to rest if its sticks centred now: `MotionService::restPose` walks that stop ahead on copies of the command ramp, the gait and the fused odometry, in steps of four control ticks (`STOP_PREDICTION_DT_S`, 20 ms) until the gait stops cycling, and adds the ease home through `restStep`.
+On the virtual robot it is within 3.3 mm of where the robot settles; stepped at the control period it is exact to 0.01 mm at four times the cost.
+A prediction costs 13-15 us on average and at most 52 us on the host built with `-O2`, and 39-50 us and at most 160 us in the native test env's unoptimised build; its cost on the ESP32-S3 is not measured yet.
+Each goal's worst prediction is logged at INFO once the goal ends, after that tick's servo write (`goal <id>: rest prediction worst <us> us of <count>`):
 
 - **Distance:** the remaining distance along the axis sets the stick: the asked speed, slowed in proportion over the last `SLOW_DOWN_M` (50 mm), or over the distance two stops' coasts cover at that speed when longer, and never below `MIN_FRACTION` (0.2) of the asked speed.
   The start heading is held with a turn stick of `HEADING_GAIN` (2.0 per rad of fused heading error) clipped to 0.3, and the start line with a stick across it.
 - **Turn:** the remaining angle on the unwrapped fused yaw, slowed over `SLOW_DOWN_RAD` (30 deg) to the same floor.
-- **Arc:** a forward stick with the turn stick its radius implies, slowed on the remaining angle; the same heading gain steers the heading toward the arc's ideal heading at the distance travelled.
-  That drift correction changes the arc's length as well as its end heading.
+- **Arc:** a forward stick with the turn stick its radius implies, slowed on the angle its position has left to sweep about the arc's centre; the same heading gain steers the heading toward the arc's tangent at that position.
+  The turn stick is scaled by a gain learnt from the heading's lag behind that tangent (`TURN_GAIN_RATE`), as BI's feet slip in a turn and the heading hold alone keeps a lag that lays the walk outside the circle.
+  A settled arc is reached when the fused yaw is within 3 deg of the arc's angle, the swept angle within 3 deg or, on a tight arc, within what 30 mm of its end allows, and the position within `ARC_REACHED_M` (30 mm) of its end.
+  One on its end point whose heading misses gets a pass that turns in place; one whose angle is swept off its circle has no remainder to walk and ends `TIMED_OUT`.
 
-Once the remainder is within the coast the stop is predicted to take (the live command ramp stepped ahead, with `STOP_TAIL` for a foot that sets down off its stance), the sticks centre and the controller waits until the gait is not commanded and the feet are at rest, then judges the settled pose.
+Once stopping now lands nearer the target than stopping at the next prediction would (the rest pose within half of what it moved since the last), the pass has arrived for good: the sticks centre, or a straight walk off its line walks only across it, and the controller waits until the gait is not commanded and the feet are at rest, then judges the settled pose.
+Each of 21 forward goals (0.90 to 1.10 m) and 21 turns (70 to 110 deg) on TRI and BI, at full and half speed, ends in one pass on the virtual robot, within 7.9 mm and 2.8 deg.
+The progress is the furthest the rest pose has come toward the target: within each step it moves back and forth by a few millimetres, which is not reported as going back.
+So it reads 100 % from an overshoot on, through a corrective pass back and a goal that then ends `TIMED_OUT`.
 The tolerances are 10 mm and 3 deg, an arc's end within 30 mm and 3 deg, and a straight walk's cross-track within 20 mm.
 Outside them it runs a corrective pass on the remainder, `MAX_PASSES` (3) passes in all, and then ends `TIMED_OUT`; so does a pass longer than twice its expected time plus 2 s.
 

@@ -152,12 +152,27 @@ def test_a_goal_turns_90_degrees_to_within_3(standing):
     assert yaw == pytest.approx(90, abs=3)
 
 
-def test_a_goal_arc_ends_within_5_cm_and_5_degrees(standing):
+# The firmware's ARC_REACHED_M (firmware/include/goal_controller.h): how far a reached arc ends from its end point.
+ARC_REACHED_M = 0.03
+# How far MuJoCo's true pose ends from the odometry's, per metre of the odometry's path: the feet slip, by 4.2-5.0 %
+# on TRI's arc of 0.5 m through 90 deg and 4.2-5.6 % on BI's (measured 2026-10-30 over 8 clock phases), held to 7 %.
+SLIP_PER_M = 0.07
+
+
+# The arc is held in two parts: the firmware ends it on its end point in its own odometry, and the odometry's slip
+# against the true pose grows with the path. A single bound on the true pose mixed them, and sat 4 mm from TRI's worst.
+def test_a_goal_arc_ends_on_its_end_point_and_slips_with_its_path(standing):
     robot, backend = standing
+    robot.reset_odometry()
+    robot.sleep(0.1)
     start = _pose(backend)
     robot.arc(0.5, 90)
     position, yaw = _moved(start, _pose(backend))
-    assert np.linalg.norm(position - (0.5, 0.5)) < 0.05 and yaw == pytest.approx(90, abs=5)
+    odometry = robot.state().odometry
+    estimate = np.array([odometry.x, odometry.y])
+    assert np.linalg.norm(estimate - (0.5, 0.5)) <= ARC_REACHED_M
+    assert np.linalg.norm(position - estimate) <= SLIP_PER_M * odometry.distance
+    assert yaw == pytest.approx(90, abs=5)
 
 
 # Each turn takes up the heading its walk drifted (Robot.turn). Without, the per-goal tolerances add up, as each walk
@@ -188,8 +203,8 @@ def test_a_bi_goal_walks_a_metre_to_within_6_cm(standing_bi):
     test_a_goal_walks_a_metre_to_within_6_cm(standing_bi)
 
 
-def test_a_bi_goal_arc_ends_within_5_cm_and_5_degrees(standing_bi):
-    test_a_goal_arc_ends_within_5_cm_and_5_degrees(standing_bi)
+def test_a_bi_goal_arc_ends_on_its_end_point_and_slips_with_its_path(standing_bi):
+    test_a_goal_arc_ends_on_its_end_point_and_slips_with_its_path(standing_bi)
 
 
 # The fused heading integrates the DMP's yaw between packets, into which the walk's yaw rocking does not alias: a 1 m
