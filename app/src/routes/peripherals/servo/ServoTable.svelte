@@ -1,6 +1,7 @@
 <script lang="ts">
   import { RotateCcw, RotateCw, Settings as SettingsIcon } from '$lib/components/icons'
   import LegDiagram from '$lib/components/LegDiagram.svelte'
+  import { COXA_SAFE_PULSE } from '$lib/calibration/leg-pose'
   import Section from '$lib/components/layout/Section.svelte'
   import SettingsForm from '$lib/components/layout/SettingsForm.svelte'
   import ChangedNote from '$lib/components/layout/ChangedNote.svelte'
@@ -93,10 +94,10 @@
                   name="servos.{index}.centerPwm"
                   aria-label="Servo {index} centre PWM"
                   aria-describedby="servo-limits"
-                  title="80 to 600"
+                  title={index % 3 === 0 ? COXA_SAFE_PULSE.join(' to ') : '80 to 600'}
                   required
-                  min="80"
-                  max="600"
+                  min={index % 3 === 0 ? COXA_SAFE_PULSE[0] : 80}
+                  max={index % 3 === 0 ? COXA_SAFE_PULSE[1] : 600}
                   step="any"
                   bind:value={servo.centerPwm}
                 />
@@ -157,8 +158,9 @@
       </table>
     </div>
     <p id="servo-limits" class="text-base-content/70 text-xs">
-      Centre PWM 80 to 600: the app's own guard, narrower than the 0 to 4095 the robot accepts.
-      Centre angle -180 to 180. Conversion above 0, up to 100 pulses per degree.
+      Centre PWM 80 to 600: the app's own guard, narrower than the 0 to 4095 the robot accepts; a
+      coxa's 205 to 409, the servo's safe 1000 to 2000 us, which the robot holds it to. Centre angle
+      -180 to 180. Conversion above 0, up to 100 pulses per degree.
     </p>
   {/snippet}
 </SettingsForm>

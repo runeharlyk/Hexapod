@@ -483,12 +483,12 @@ message AnimationStatus {
   string name = 1;
   AnimationState state = 2;
   float t = 3;
-  uint32 clamped_mask = 4;  // bit leg*3+joint for joints pinned at a limit or an unreachable foot
+  uint32 clamped_mask = 4;  // bit leg*3+joint for joints pinned at a limit or an unreachable foot, bit 18 for two legs within the leg clearance
 }
 message AnimationValidate { string name = 1; }
 message AnimationReport {
   bool ok = 1;
-  string error = 2;          // first structural error, empty when ok
+  string error = 2;          // first structural error, or the first frame that brings two legs within the leg clearance; empty when ok
   uint32 clamped_mask = 3;   // union over every keyframe and 32 intermediate times per segment
 }
 message AnimationListRequest {}

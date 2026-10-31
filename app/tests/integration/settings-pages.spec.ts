@@ -185,6 +185,54 @@ test('the servo calibration refuses a conversion of 0, as the robot does', async
   ).toEqual([0.5])
 })
 
+// A coxa's centre is held to the servo's safe 1000 to 2000 us, 205 to 409 counts, which the robot refuses outside; a
+// femur's to the app's own 80 to 600.
+test("the servo calibration holds a coxa's centre to the servo's safe pulses, as the robot does", async ({
+  page
+}) => {
+  const { robot } = await serveStockRobot(page)
+  await page.goto(`${base}/peripherals/servo`)
+  const coxa = page.getByLabel('Servo 3 centre PWM')
+  await coxa.fill('420')
+  await save(page).click()
+
+  await expect(coxa).toBeFocused()
+  expect(await coxa.evaluate(field => (field as HTMLInputElement).validity.valid)).toBe(false)
+
+  await coxa.fill('409')
+  await page.getByLabel('Servo 4 centre PWM').fill('420')
+  await save(page).click()
+  await expect(page.getByText('Servo calibration saved.')).toBeVisible()
+  expect(
+    robot
+      .requests('servoSettingsUpdate')
+      .map(r => [
+        r.servoSettingsUpdate?.servos[3].centerPwm,
+        r.servoSettingsUpdate?.servos[4].centerPwm
+      ])
+  ).toEqual([[409, 420]])
+})
+
+// The slider drives a coxa only within the servo's safe pulses, as the robot holds it, and a femur over the app's own
+// 80 to 600; a pulse beyond the coxa's is pulled in when a coxa is chosen.
+test("the servo page's pulse slider offers a coxa only its safe pulses", async ({ page }) => {
+  await serveStockRobot(page)
+  await page.goto(`${base}/peripherals/servo`)
+  const servo = page.locator('#servo-id')
+  const pulse = page.locator('#servo-pwm')
+
+  await servo.fill('4')
+  await pulse.fill('550')
+  await expect(pulse).toHaveAttribute('min', '80')
+  await expect(pulse).toHaveAttribute('max', '600')
+
+  await servo.fill('3')
+  await expect(pulse).toHaveAttribute('min', '205')
+  await expect(pulse).toHaveAttribute('max', '409')
+  await expect(pulse).toHaveValue('409')
+  await expect(pulse.locator('xpath=following-sibling::p[1]')).toHaveText('409')
+})
+
 test('the access point page holds an address to the IPv4 rule', async ({ page }) => {
   const { robot } = await serveStockRobot(page)
   await page.goto(`${base}/wifi/ap`)

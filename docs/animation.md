@@ -33,6 +33,8 @@ The robot stores the binary encoding in `/littlefs/animations/<name>.pb`.
 
 The reference is `simulation/src/robot/animation.py`; the firmware (`firmware/include/animation/`) and the app mirror it line for line.
 A port must honour these rules.
+The one exception is the firmware's `anim::ClearPose`, which keeps the angles the robot drives apart from a pose that brings two legs within the leg clearance (below): the reference player has no counterpart, since the animation checker refuses such a clip instead.
+The editor's preview runs the firmware's evaluator and player but not the runner, so it shows such a pose as evaluated, not as the robot holds it.
 
 - File values are float32.
   A port that parses JSON rounds every number to float32 before use.
@@ -42,6 +44,7 @@ A port must honour these rules.
 - The joint clamp is symmetric `+-JOINT_LIMIT_DEG` in IK-output space.
   An unreachable foot sets that leg's femur and tibia bits in the clamp mask.
   The mask has bit `leg * 3 + joint`.
+- Bit 18 of the mask, `LEGS_TOUCH`, is set when the angles within travel bring two legs within `LEG_CLEARANCE_MM`, 5 mm (`firmware/include/leg_clearance.h`, the port of `simulation/src/robot/clearance.py`, both checked against `platform_shared/leg_clearance_fixtures.txt`).
 - `REPEAT` is `max(1, floor(x + 0.5))`.
   It is ignored when `loop` is set.
 - Entry and exit default to 0.5 s and run on wall time; `SPEED` scales only the playing clock.
@@ -59,6 +62,10 @@ A port must honour these rules.
 `MOTION_STATE::ANIMATE` is mode 6 (`ModesEnum.ANIMATE`).
 The `MotionService` ANIMATE branch advances the player with the measured `dt`, runs IK with the joint-leg overrides and clamps, and publishes the angles like any other mode.
 IMU self-levelling is off in ANIMATE.
+The player never drives a pose whose mask has `LEGS_TOUCH` (`anim::ClearPose`): from such a pose on, the angles step toward the pose at most 3.75 deg a joint a tick, the servo's top speed, and only by steps that keep the legs apart (`keepsLegsApart`, pair by pair: no pair into the margin, and a pair within it no closer), holding short of the touch, until they have caught up with a clear pose.
+A step of every joint at once that would not keep them apart falls back to each joint's own step, so the legs go around a touch to a clear pose when the joints allow it, and legs taken over inside the margin step apart.
+While the angles are held or catching up, the status reports `LEGS_TOUCH` and the runner is busy, so a borrowed mode is handed back, and a graceful leave ends, only once they have caught up; the status is pushed when `LEGS_TOUCH` comes or goes, also for a puppeteer's pose.
+While the angles are held short of the pose or catch up with it, the body state ANIMATE leaves has the feet of the angles driven, which the IK solves back to them for a leg its IK can reach (not a tibia folded up past square); no mode starts from those feet, since a STAND or walking mode taken then is a graceful leave that eases from the joints and IDLE takes the angles themselves.
 While the player is not idle, `AnimationRunner` logs at INFO, at most every 5 s, the worst tick cost (evaluation, IK and status) in microseconds: `tick max <n> us over the last 5 s of playing`.
 An idle player restarts the window, so a play shorter than 5 s logs nothing; `wiggle` loops and is the one to read it with.
 The command timeout that zeroes WALK does not apply, and it does not zero the ride-height slider while in ANIMATE: its window restarts every tick, so after a hand-back the app has a full window to resume its heartbeat.
@@ -174,6 +181,7 @@ The `config` directory is refused and never listed, and a name longer than 63 ch
 Validation decodes the file, checks the structural rules, and evaluates every keyframe and 32 intermediate times per segment on the file's `ride_height`, or on both slider ends (`-50` and `+50` mm) when it has none, returning the first structural error or the union of clamped joints.
 An invalid file is answered with status 422 and the report filled in (`ok` false and the `error`).
 A clamped joint is a warning, not a refusal.
+A frame of the sweep that brings two legs within `LEG_CLEARANCE_MM` refuses the file as an invalid one is refused, its `error` naming the first such frame and the pair, e.g. `legs RF and RM touch at t=0.375 s on a +0 mm base`, with `LEGS_TOUCH` in the mask; `animation.clearance_error` refuses it in the same words.
 
 ### Storage
 
@@ -196,6 +204,7 @@ Each platform checks itself against it.
 The simulation's test keeps it current, and the firmware's and the app's validator tests read it, so the three validators cannot drift apart unnoticed.
 
 `uv run python check_animation.py` runs every bundled animation through the servo model and reports clamped joints, peak joint speed, tilt and falls.
+It refuses, as invalid, an animation that `animation.clearance_error` finds bringing two legs within `LEG_CLEARANCE_MM` on the validation's sweep, and `test_animation_library.py` holds every bundled animation clear of it.
 Regenerate the fixtures after any behaviour change in `animation.py`.
 
 ## Bench tool

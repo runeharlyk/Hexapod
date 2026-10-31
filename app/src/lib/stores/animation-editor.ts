@@ -26,7 +26,7 @@ import {
   type Stance,
   type Vec3
 } from '$lib/animation/model'
-import { loadAnimationEngine, type AnimationEngine } from '$lib/animation/engine'
+import { LEGS_TOUCH, loadAnimationEngine, type AnimationEngine } from '$lib/animation/engine'
 import type { AnimationPreview } from './animation'
 import type { DraftRef } from '$lib/animation/library'
 
@@ -46,10 +46,13 @@ export const JOINT_NAMES = ['coxa', 'femur', 'tibia'] as const
 // Documents hold float32 values and FK leaves 1e-15 residues; four decimals print them as typed.
 export const shown = (v: number) => Number(v.toFixed(4)) || 0
 
-export const clampedJoints = (mask: number): string[] =>
-  Array.from({ length: 18 }, (_, j) => j)
+/** The joints a clamp mask holds at a limit, by name, and "legs touch" for LEGS_TOUCH. */
+export const clampedJoints = (mask: number): string[] => [
+  ...Array.from({ length: 18 }, (_, j) => j)
     .filter(j => (mask >>> j) & 1)
-    .map(j => `${LEG_NAMES[Math.floor(j / 3)]} ${JOINT_NAMES[j % 3]}`)
+    .map(j => `${LEG_NAMES[Math.floor(j / 3)]} ${JOINT_NAMES[j % 3]}`),
+  ...(mask & LEGS_TOUCH ? ['legs touch'] : [])
+]
 
 // Mirrors MotionService::updateFeetDistanceTarget: the controller's feet distance scales the
 // standing feet on x and y.

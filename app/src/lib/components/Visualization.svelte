@@ -27,6 +27,7 @@
   import { handleColor, legMask, sceneToOffset, stanceToScene } from '$lib/animation/handles'
   import {
     JointDrive,
+    draggedPose,
     drivingJoints,
     limpServos,
     servoOfUrdfJoint,
@@ -70,6 +71,8 @@
   // While no robot sends its angles, the firmware's own motion code animates the model. The robot-hosted build is
   // always linked, and the build-time constant leaves the virtual robot out of it.
   let virtualRobot: VirtualRobot | undefined
+  // Shown on the canvas as data-virtual-robot="ready" once the virtual robot runs, from when a drag is judged here too.
+  let virtualRobotReady = $state(false)
   let sticks: Command = [0, 0, 0, 0, 0, 0, 0, 0, 0]
   let pendingSeconds = 0
   let lastFrame = 0
@@ -128,6 +131,7 @@
           if (shownMode) robot.setMode(modeToWire(shownMode))
           robot.setGait(gaitIndex($gait))
           virtualRobot = robot
+          virtualRobotReady = true
           lastFrame = performance.now()
         })
         .catch(error => console.warn('The 3D view cannot animate the robot on its own:', error))
@@ -159,10 +163,14 @@
     }
   }
 
-  // The model shows the dragged joint within the servo's travel and the model's limits, and sends the robot that angle.
+  // The model shows the dragged joint within the servo's travel and the model's limits, and sends the robot that angle. A
+  // drag that would bring two legs together, judged by the firmware's own check in the virtual robot, leaves the joint
+  // where it is and sends nothing, as the robot would refuse it; before the virtual robot loads, and in the build
+  // the robot hosts, which leaves it out, the robot alone refuses it and reports the pose it holds.
   const turnJoint = (joint: URDFJoint, angle: number) => {
     const index = $jointNames.indexOf(joint.urdfName)
     if (index < 0) return
+    if (virtualRobot && !draggedPose(drawnPose(), index, angle, virtualRobot.keepsLegsApart)) return
     joint.setJointValue(withinTravel(index, angle))
     useInternalKinematics = false
     targetAngles[index] = joint.angle
@@ -302,4 +310,4 @@
 
 <svelte:window onresize={sceneManager.fillParent} />
 
-<canvas bind:this={canvas}></canvas>
+<canvas bind:this={canvas} data-virtual-robot={virtualRobotReady ? 'ready' : undefined}></canvas>

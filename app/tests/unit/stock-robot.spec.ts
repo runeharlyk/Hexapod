@@ -125,6 +125,32 @@ describe('the stock robot', () => {
     expect(robot.held.mdnsSettings.hostname).toBe('hexapod')
   })
 
+  // firmware/include/settings/servo_settings.h: a coxa's centre within the servo's safe 205 to 409 counts.
+  it("refuses a coxa centre outside the servo's safe pulses and takes a femur's", async () => {
+    const broker = await join()
+    const servos = await hear(broker, ServoSettings)
+    const centred = (servo: number, centerPwm: number) =>
+      robot.shown('servoSettings').servos.map((s, id) => (id === servo ? { ...s, centerPwm } : s))
+
+    await expect(
+      writeSettings(
+        ServoSettings,
+        { servoSettingsUpdate: { servos: centred(9, 410) } },
+        'the servo settings',
+        broker
+      )
+    ).rejects.toBeInstanceOf(RequestFailed)
+    expect(servos).toHaveLength(0)
+
+    await writeSettings(
+      ServoSettings,
+      { servoSettingsUpdate: { servos: centred(10, 410) } },
+      'the servo settings',
+      broker
+    )
+    expect(robot.held.servoSettings.servos[10].centerPwm).toBe(410)
+  })
+
   // firmware/src/main.cpp asks the fitted sensor first and the range second, and gives each refusal its reason.
   it('refuses a camera value the sensor lacks before one out of range, and says why for either', async () => {
     const broker = await join()

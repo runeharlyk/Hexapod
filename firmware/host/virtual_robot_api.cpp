@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <iterator>
 #include <gait_speed.h>
+#include <leg_clearance.h>
 #include <host_api.h>
 #include <motion_state_wire.h>
 #include <pb_encode.h>
@@ -166,10 +167,11 @@ API int telemetrySample(uint8_t *out, int size) {
 }
 
 // gait_speed.h on its own, no robot needed, for the simulation's port to be checked against: a classic gait's walk
-// command for a stick at a posture and stride, as step x, step y, step angle and phase rate.
+// command for a stick at a posture and stride in a stance, as step x, step y, step angle and phase rate.
 API void classicWalkTarget(int gait, float lx, float ly, float rx, float s, float s1, float h, float fd, float stride,
-                           float out[4]) {
-    const WalkTarget w = ::classicWalkTarget(static_cast<GaitType>(gait), lx, ly, rx, s, s1, h, fd, stride);
+                           int stance, float out[4]) {
+    const WalkTarget w =
+        ::classicWalkTarget(static_cast<GaitType>(gait), lx, ly, rx, s, s1, h, fd, stride, static_cast<Stance>(stance));
     out[0] = w.stepX;
     out[1] = w.stepY;
     out[2] = w.stepAngle;
@@ -190,6 +192,25 @@ API int autoWalk(int current, float lx, float ly, float rx, float s, float s1, f
     return static_cast<int>(gait);
 }
 
-// The posture s1, h, fd pulled into the walkable region, in place.
-API void clampPosture(float posture[3]) { ::clampPosture(posture[0], posture[1], posture[2]); }
+// The posture s1, h, fd pulled into the stance's walkable region, in place.
+API void clampPosture(float posture[3], int stance) {
+    ::clampPosture(posture[0], posture[1], posture[2], static_cast<Stance>(stance));
+}
+
+// The stance's resting feet at the feet scale, x, y, z and 1 per leg in leg order.
+API void stanceFeet(int stance, float scale, float out[24]) {
+    float feet[6][4];
+    ::stanceFeet(static_cast<Stance>(stance), scale, feet);
+    std::copy(&feet[0][0], &feet[0][0] + 24, out);
+}
+
+// leg_clearance.h on its own, no robot needed, for the app's joint drag to judge a move as the robot judges a dragged
+// joint: two poses of 18 joint angles in degrees, three per leg (coxa, femur, tibia) in leg order, the pose drawn and
+// the pose dragged to, written one after the other into clearanceAngles(), and whether the move keeps the legs apart.
+API float *clearanceAngles() {
+    static float angles[36];
+    return angles;
+}
+
+API bool dragKeepsLegsApart() { return keepsLegsApart(clearanceAngles(), clearanceAngles() + 18); }
 }

@@ -47,7 +47,11 @@ NOLOAD_SPEED = 13.0   # rad/s, no-load speed (~0.08 s/60deg for MG92B @6V)
 ARMATURE = 0.003      # kg.m^2, reflected rotor+gearbox inertia (estimate; DR-scaled)
 DAMPING = 0.02
 FRICTIONLOSS = 0.005
-COXA_RANGE = 0.55     # rad
+# rad, 50.5 deg: the servo's safe pulses, 1000 to 2000 us, about the factory calibration's centre of 306 PCA9685 counts
+# at 2 counts per degree give -50.5 to +51.5 deg (firmware/include/servo_travel.h); the narrower side, as kinematics.h's
+# JOINT_LIMIT_DEG takes it. The robot holds each coxa within its own calibration's, and TUNED's and WALK_NN's within
+# 31.5 deg (kinematics.h TRAINED_COXA_LIMIT_DEG), which the model leaves to the paths that drive them.
+COXA_RANGE = math.radians(50.5)
 # Hinge limits follow the SERVO's travel, since the firmware applies no clamp of its own: a hobby
 # servo covers ~+/-90 deg about its center, and the firmware offsets the tibia command by +90 deg
 # (servo_controller.h), so the tibia's usable IK range is shifted far negative. The old symmetric

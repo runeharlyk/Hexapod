@@ -6,6 +6,7 @@ import { loadAnimationEngine, type AnimationEngine } from '../../src/lib/animati
 import { firmwareInverseKinematics } from './firmware-ik'
 import { config } from '../../src/lib/components/config'
 import {
+  COXA_SAFE_PULSE,
   JOINT_NAMES,
   LEG_NAMES,
   SERVO_ANGLE_OFFSET,
@@ -88,6 +89,27 @@ const fwConfig = firmwareConfig()
 
 const expectClose = (actual: number[], expected: number[]) =>
   expected.forEach((v, i) => expect(actual[i]).toBeCloseTo(v, 6))
+
+// servo_travel.h's safe span, read from the source: its microseconds and the PCA9685's 4096 counts per 50 Hz period,
+// rounded inward as the firmware rounds them.
+const firmwareSafePulse = () => {
+  const header = firmware('servo_travel.h')
+  const constant = (name: string) => {
+    const match = header.match(new RegExp(`${name}\\s*=\\s*(\\d+)`))
+    if (!match) throw new Error(`${name} not found in servo_travel.h`)
+    return Number(match[1])
+  }
+  const frequency = Number(header.match(/#define FACTORY_SERVO_PWM_FREQUENCY (\d+)/)?.[1])
+  const counts = (us: number) => (us * frequency * 4096) / 1e6
+  return [
+    Math.ceil(counts(constant('SERVO_SAFE_PULSE_MIN_US'))),
+    Math.floor(counts(constant('SERVO_SAFE_PULSE_MAX_US')))
+  ]
+}
+
+describe("a coxa's safe pulses", () => {
+  it("are the firmware's", () => expect(COXA_SAFE_PULSE).toEqual(firmwareSafePulse()))
+})
 
 describe('the firmware geometry', () => {
   it('is the geometry the app draws with', () => {

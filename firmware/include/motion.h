@@ -6,6 +6,7 @@
 #include <utility>
 #include <esp_log.h>
 #include <kinematics.h>
+#include <leg_clearance.h>
 #include <peripherals/servo_controller.h>
 #include <peripherals/peripherals.h>
 #include <utils/timing.h>
@@ -30,7 +31,7 @@ class MotionService {
   public:
     MotionService(ServoController *servoController, Peripherals *peripherals)
         : _servoController(servoController), _peripherals(peripherals) {
-        scaleStance(feetScale(_feetDistance), default_feet_pos);
+        stanceFeet(Stance::DEFAULT, feetScale(_feetDistance), default_feet_pos);
     }
 
     void begin() {
@@ -186,7 +187,7 @@ class MotionService {
         const MOTION_STATE mode = motionState;
         steering = isWalkingMode(mode) && (c.lx != 0.f || c.ly != 0.f || c.rx != 0.f);
         CommandMsg clamped = c;
-        clampPosture(clamped.s1, clamped.h, clamped.fd);
+        clampPosture(clamped.s1, clamped.h, clamped.fd, Stance::DEFAULT);
         // The searched gait rides at its own height, outside the grid the envelope was measured on.
         const bool tuned = mode == MOTION_STATE::WALK && gait_state.gait_type == GaitType::TUNED;
         // A classic walk takes its posture between steps only (settleWalkPosture); every other mode takes it now.
@@ -195,7 +196,7 @@ class MotionService {
             if (mode == MOTION_STATE::WALK_NN) {
                 h = clamped.h;
             } else if (!tuned) {
-                clampStandPosture(kinematics, h, fd);
+                clampStandPosture(kinematics, h, fd, Stance::DEFAULT);
             }
             _walkPostureValid = false;
             if (mode == MOTION_STATE::STAND) {
@@ -425,6 +426,12 @@ class MotionService {
                 break;
             }
         }
+        // TUNED's gait, walking or ramping out in a stand, and WALK_NN's policy keep the coxa travel they were searched
+        // and trained in; every other pose takes the servo's own.
+        const bool trained =
+            state == MOTION_STATE::WALK_NN ||
+            (gait_state.gait_type == GaitType::TUNED && (state == MOTION_STATE::WALK || state == MOTION_STATE::STAND));
+        _coxaTravel = trained ? CoxaTravel::TRAINED : CoxaTravel::SERVO;
         return true;
     }
 
@@ -445,6 +452,8 @@ class MotionService {
     }
 
     float *getAngles() { return msgAngles.angles; }
+    // The coxa travel the servos hold the angles of the last pose within, and the angles IDLE then holds.
+    CoxaTravel coxaTravel() const { return _coxaTravel; }
 
     // The locomotion command the gait eases toward, the command it walks now, the body pose the motion eases
     // toward, and the body pose and feet the last tick solved the legs for, for the virtual robot's tests.
@@ -473,7 +482,7 @@ class MotionService {
         // The mode the robot reports: a script waits for the stand it asked for to be reported before it sends a goal.
         const MOTION_STATE mode = _inbox.appliedMode();
         if (mode != MOTION_STATE::STAND && mode != MOTION_STATE::WALK) return 409;
-        clampPosture(s.s1, s.h, s.fd);
+        clampPosture(s.s1, s.h, s.fd, Stance::DEFAULT);
         if (!goalTops(goal.kind, gait, {s.s1, s.h, s.fd}, s.stride).walkable()) return 422;
         // A full stick walks the gait's top speed, which the goal's speed is a share of.
         s.lx = s.ly = s.rx = s.ry = 0.f;
@@ -573,7 +582,9 @@ class MotionService {
     // A foot that lifts in the stop's tail still sets down off its stance, so the stop is taken to step a little
     // further than its ramp. On the virtual robot's TRI and BI goals, 1.05 to 1.15 reach a metre at full speed in one
     // pass and every centimetre and few-degree goal at half speed; 1.0 needs a second pass at full speed, 1.2 misses
-    // 5 deg turns, and above 1.05 a TRI metre's predicted progress steps back more often.
+    // 5 deg turns, and above 1.05 a TRI metre's predicted progress steps back more often. Fitted on the strokes of the
+    // envelope before the 50.5 deg coxa (before c439426) and not fitted again: TRI's goals of 0.7 to 1.1 m now take a
+    // second pass more often, until PR #67 replaces this stop prediction.
     static constexpr float STOP_TAIL = 1.05f;
 
     static constexpr float smoothing_factor = BODY_SMOOTHING;
@@ -645,6 +656,7 @@ class MotionService {
     CommandMsg lastCommand{};
 
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, .limp = 0};
+    CoxaTravel _coxaTravel = CoxaTravel::SERVO;
 
   public:
     // Any task: the mode the control task applied last, the one the robot reports.
@@ -695,10 +707,15 @@ class MotionService {
         const AutoDemand demand = autoDemand(c.lx, c.ly, c.rx, c.s, p.s1, p.h, p.fd, stride);
         _walkSpeed01 = demand.speed01;
         _autoGait = selectAutoGait(demand, gait_state.gait_type, p.s1, p.h, p.fd, stride);
-        const WalkTarget w =
-            _requestedGait == GaitType::AUTO
-                ? autoWalkTarget(gait_state.gait_type, demand, c.lx, c.ly, c.rx, p.s1, p.h, p.fd, stride)
-                : classicWalkTarget(gait_state.gait_type, c.lx, c.ly, c.rx, c.s, p.s1, p.h, p.fd, stride);
+        WalkTarget w = _requestedGait == GaitType::AUTO
+                           ? autoWalkTarget(gait_state.gait_type, demand, c.lx, c.ly, c.rx, p.s1, p.h, p.fd, stride)
+                           : classicWalkTarget(gait_state.gait_type, c.lx, c.ly, c.rx, c.s, p.s1, p.h, p.fd, stride,
+                                               Stance::DEFAULT);
+        // A goal walking its sticks strides no further than what remains of it; a client's walk keeps its stride.
+        if (_goalStarted && goalActive() && _inbox.goalDrives()) {
+            const StrokeCap cap = _goal.strokeCap();
+            w = withStrokeCap(gait_state.gait_type, w, cap.axis, cap.limit, p.s1, p.h, p.fd, Stance::DEFAULT);
+        }
         target_gait_state.step_x = held ? 0.f : w.stepX;
         target_gait_state.step_y = held ? 0.f : w.stepY;
         target_gait_state.step_angle = held ? 0.f : w.stepAngle;
@@ -706,23 +723,36 @@ class MotionService {
     }
 
     // Control task, IDLE, after the tick's modes and the centring before them: the joints dragged while the robot
-    // idled. A joint writes its own servo alone, so every other servo holds the pulse it had when the motion stopped, or
-    // stays limp; a joint posted before a mode leaving IDLE was applied never gets here. The angles the servos hold, within travel as
-    // the controller held the motion's last pose, are published on entering IDLE and after each tick that writes, as the
-    // app's 3D view draws them, and never on a timer.
+    // idled. A joint writes its own servo alone, so every other servo holds the pulse it had when the motion stopped,
+    // or stays limp; a joint posted before a mode leaving IDLE was applied never gets here. The angles the servos hold,
+    // within travel as the controller held the motion's last pose, are published on entering IDLE and after each tick
+    // that writes, as the app's 3D view draws them, and never on a timer. A joint that would bring two legs within
+    // LEG_CLEARANCE_MM (leg_clearance.h), or a pair already within it any closer, pair by pair, judged
+    // against the angles held with the joints written before it, is refused (keepsLegsApart): its servo keeps its
+    // angle, and the angles held are published so a client that drew the drag sees it undone.
     void driveIdleServos(const MotionInbox::Mail &mail, bool entering) {
         if (entering)
             for (int servo = 0; servo < NUM_SERVO; ++servo)
-                msgAngles.angles[servo] = withinTravel(msgAngles.angles[servo], servo % 3);
-        bool written = false;
+                msgAngles.angles[servo] = _servoController->withinTravel(servo, msgAngles.angles[servo], _coxaTravel);
+        bool written = false, refused = false;
         for (int servo = 0; servo < NUM_SERVO; ++servo) {
             if (!(mail.joints.servos & (1u << servo))) continue;
+            float pose[NUM_SERVO];
+            std::copy_n(msgAngles.angles, NUM_SERVO, pose);
+            pose[servo] = _servoController->withinTravel(servo, mail.joints.degrees[servo]);
+            if (!keepsLegsApart(msgAngles.angles, pose)) {
+                refused = true;
+                continue;
+            }
             _servoController->setJointAngle(servo, mail.joints.degrees[servo]);
-            msgAngles.angles[servo] = withinTravel(mail.joints.degrees[servo], servo % 3);
+            msgAngles.angles[servo] = pose[servo];
             written = true;
         }
-        if (written) holdIdle();
-        if (entering || written) publishState();
+        if (written) {
+            _coxaTravel = CoxaTravel::SERVO;
+            holdIdle();
+        }
+        if (entering || written || refused) publishState();
     }
 
     // Control task, IDLE, before the tick's modes: every servo to its centre pulse, published as the centre pose.
@@ -794,8 +824,8 @@ class MotionService {
                 if (!liftArrived() || !feetAtRest()) return;
                 const float heldHeight = target_body_state.zm / bodyHeightMm(1.f);
                 _heightAfterStance = _walkPosture.h > heldHeight;
-                if (!(_heightAfterStance ? standFeasible(kinematics, heldHeight, _walkPosture.fd)
-                                         : standFeasible(kinematics, _walkPosture.h, _feetDistance)))
+                if (!(_heightAfterStance ? standFeasible(kinematics, heldHeight, _walkPosture.fd, Stance::DEFAULT)
+                                         : standFeasible(kinematics, _walkPosture.h, _feetDistance, Stance::DEFAULT)))
                     _heightAfterStance = !_heightAfterStance;
                 if (!_heightAfterStance) target_body_state.zm = bodyHeightMm(_walkPosture.h);
                 updateFeetDistanceTarget(_walkPosture.fd);
@@ -832,8 +862,8 @@ class MotionService {
     static GoalTops goalTops(GoalKind kind, GaitType gait, const Posture &p, float stride) {
         const GaitType walked = gait == GaitType::AUTO ? GaitType::BI_GATE : gait;
         const int axis = kind == GoalKind::SIDEWAYS ? 1 : 0;
-        return {envelopeAt(walked, axis, p.s1, p.h, p.fd, stride).vMax,
-                envelopeAt(walked, 2, p.s1, p.h, p.fd, stride).vMax};
+        return {envelopeAt(walked, axis, p.s1, p.h, p.fd, stride, Stance::DEFAULT).vMax,
+                envelopeAt(walked, 2, p.s1, p.h, p.fd, stride, Stance::DEFAULT).vMax};
     }
 
     static void setPose(socket_message_GoalStatus &s, const OdometryEstimate &pose) {
@@ -1030,7 +1060,7 @@ class MotionService {
         if (_walkPostureValid || _postureSettling || !std::exchange(_atRest, false)) return;
         const Posture rest = _restPosture;
         if (std::fabs(c.h - rest.h) > POSTURE_DEADBAND || std::fabs(c.fd - rest.fd) > POSTURE_DEADBAND ||
-            c.s1 < rest.s1 - POSTURE_DEADBAND || !postureWalkable(c.s1, rest.h, rest.fd))
+            c.s1 < rest.s1 - POSTURE_DEADBAND || !postureWalkable(c.s1, rest.h, rest.fd, Stance::DEFAULT))
             return;
         _walkPosture = {c.s1, rest.h, rest.fd};
         _walkPostureValid = true;
@@ -1116,7 +1146,7 @@ class MotionService {
 
     void updateFeetDistanceTarget(float normalizedFeetDistance) {
         _feetDistance = normalizedFeetDistance;
-        scaleStance(feetScale(normalizedFeetDistance), default_feet_pos);
+        stanceFeet(Stance::DEFAULT, feetScale(normalizedFeetDistance), default_feet_pos);
         gait.setDefaultFootTarget(default_feet_pos);
     }
 

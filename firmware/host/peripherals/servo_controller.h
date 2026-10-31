@@ -12,6 +12,7 @@
 #include <kinematics.h>
 #include <message_types.h>
 #include <platform_shared/message.pb.h>
+#include <servo_travel.h>
 
 class ServoController {
   public:
@@ -43,6 +44,13 @@ class ServoController {
     }
     // At the factory calibration, which this stand-in holds alone: every coxa and femur at 0, every tibia at -90.
     float centreAngle(int servo) const { return servo % 3 == 2 ? -90.0f : 0.0f; }
+    // As the robot's controller holds a joint, at the factory calibration: a coxa from -50.5 to +51.5 deg.
+    static float withinTravel(int servo, float angleDeg, CoxaTravel travel = CoxaTravel::SERVO) {
+        const int coxa = servo - servo % 3;
+        const JointTravel factory =
+            coxaTravel(FACTORY_CENTER_PWM, FACTORY_CONVERSION, FACTORY_DIRECTION[coxa], FACTORY_CENTER_ANGLE);
+        return jointWithinTravel(angleDeg, servo % 3, factory, travel);
+    }
     // As the robot's controller does: a pulse sent to sleeping boards drives no servo.
     void setCenterPwm() {
         for (int i = 0; i < NUM_SERVO; ++i) state().angles[i] = centreAngle(i);
@@ -54,15 +62,15 @@ class ServoController {
     // on the right one); a malformed one writes nothing.
     void setJointAngle(int servo, float angleDeg) {
         if (servo < 0 || servo >= NUM_SERVO || !std::isfinite(angleDeg)) return;
-        state().angles[servo] = withinTravel(angleDeg, servo % 3);
+        state().angles[servo] = withinTravel(servo, angleDeg);
         state().jointWrites++;
         if (state().awake) state().driven |= 1u << servo;
         (servo < 9 ? _right : _left) = socket_message_ServoWrite_SERVO_WRITE_OK;
     }
     // As the robot's controller does: each joint held within its travel, and a non-finite command ignored.
-    void setAngles(float angles[NUM_SERVO]) {
+    void setAngles(float angles[NUM_SERVO], CoxaTravel travel) {
         for (int i = 0; i < NUM_SERVO; ++i)
-            if (std::isfinite(angles[i])) state().angles[i] = withinTravel(angles[i], i % 3);
+            if (std::isfinite(angles[i])) state().angles[i] = withinTravel(i, angles[i], travel);
         state().writes++;
         if (state().awake) state().driven = ALL_SERVOS;
         _right = _left = socket_message_ServoWrite_SERVO_WRITE_OK;

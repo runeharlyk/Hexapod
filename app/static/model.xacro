@@ -107,7 +107,7 @@
             <child link="${pos}_shoulder_link" />
             <axis xyz="0 0 1" />
             <origin rpy="0 0 ${angle}" xyz="${shiftx} ${shifty} 0" />
-            <limit effort="1000.0" lower="-0.548" upper="0.548" velocity="0.7" />
+            <limit effort="1000.0" lower="-0.8814" upper="0.8814" velocity="0.7" />
             <dynamics damping="0.0" friction="0.5" />
         </joint>
     </xacro:macro>

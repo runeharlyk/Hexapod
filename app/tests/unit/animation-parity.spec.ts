@@ -12,7 +12,7 @@ import {
   type Stance,
   type Vec3
 } from '$lib/animation/model'
-import { State, loadAnimationEngine, type AnimationEngine } from '$lib/animation/engine'
+import { LEGS_TOUCH, State, loadAnimationEngine, type AnimationEngine } from '$lib/animation/engine'
 
 const FIXTURES = resolve(__dirname, '../../../animations/fixtures')
 const expected = JSON.parse(readFileSync(resolve(FIXTURES, 'expected.json'), 'utf8'))
@@ -55,6 +55,26 @@ describe('parity with the reference fixtures', () => {
     }
     expect(checked).toBe(59)
   })
+  it('flags a pose that brings two legs together, and only that, with LEGS_TOUCH', () => {
+    // Legs 0 and 1 meet with both coxas turned about 38.7 deg toward each other (leg_clearance_fixtures.txt).
+    const stance = engine.poseToAngles(
+      {
+        body: [0, 0, 0, 0, 0, 0],
+        legs: DEFAULT_FEET.map(() => ({ joints: false, v: [0, 0, 0] as Vec3 }))
+      },
+      DEFAULT_FEET
+    ).angles
+    const turned = (coxa: number[]): Pose => ({
+      body: [0, 0, 0, 0, 0, 0],
+      legs: coxa.map((c, leg) => ({
+        joints: true,
+        v: [c, stance[leg * 3 + 1], stance[leg * 3 + 2]] as Vec3
+      }))
+    })
+    expect(engine.poseToAngles(turned([-40, 40, 0, 0, 0, 0]), DEFAULT_FEET).mask).toBe(LEGS_TOUCH)
+    expect(engine.poseToAngles(turned([0, 40, 0, 0, 0, 0]), DEFAULT_FEET).mask).toBe(0)
+  })
+
   it('matches every player trace step', () => {
     let steps = 0
     for (const [ci, c] of expected.player.entries()) {

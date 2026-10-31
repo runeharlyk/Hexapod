@@ -35,7 +35,7 @@ class Hexapod {
 
     void updateActuators() {
         if (updatedMotion) {
-            _servoController.setAngles(_motionService.getAngles());
+            _servoController.setAngles(_motionService.getAngles(), _motionService.coxaTravel());
             _servoController.updateServoState();
         }
         _motionService.logMail();

@@ -15,6 +15,7 @@
 #include <peripherals/servo_board.h>
 #include <utils/math_utils.h>
 #include <kinematics.h>
+#include <servo_travel.h>
 
 #ifndef NUM_SERVO
 #define NUM_SERVO 18
@@ -22,10 +23,6 @@
 
 #ifndef FACTORY_SERVO_OSCILLATOR_FREQUENCY
 #define FACTORY_SERVO_OSCILLATOR_FREQUENCY 25000000
-#endif
-
-#ifndef FACTORY_SERVO_PWM_FREQUENCY
-#define FACTORY_SERVO_PWM_FREQUENCY 50
 #endif
 
 #ifndef SDA_PIN
@@ -54,6 +51,7 @@ class ServoController {
         for (const ServoCfg &servo : cfg) {
             if (servo.pin + 1 > channel_count) channel_count = servo.pin + 1;
         }
+        noteCoxaTravel();
     }
 
     void begin() {
@@ -109,7 +107,14 @@ class ServoController {
         pcaWrite(msg.id, msg.pwm);
     }
 
-    void setAngles(float new_angles[NUM_SERVO]) {
+    // A joint angle held within its travel at this servo's calibration: a coxa's pulses within the servo's safe span
+    // (and for TUNED and WALK_NN within the travel they were searched and trained in), a femur's and a tibia's within
+    // JOINT_LIMIT_DEG.
+    float withinTravel(int servo, float angleDeg, CoxaTravel travel = CoxaTravel::SERVO) const {
+        return jointWithinTravel(angleDeg, servo % 3, _coxaTravel[servo / 3], travel);
+    }
+
+    void setAngles(float new_angles[NUM_SERVO], CoxaTravel travel) {
         control_state = SERVO_CONTROL_STATE::ANGLE;
         for (int i = 0; i < NUM_SERVO; i++) {
             // Last line of defence: a NaN or infinity from any mode keeps the servo where it was.
@@ -125,7 +130,7 @@ class ServoController {
                 _peakAbs[joint] = requested;
                 _peakLeg[joint] = (uint8_t)(i / 3);
             }
-            const float angle = withinTravel(new_angles[i], joint);
+            const float angle = withinTravel(i, new_angles[i], travel);
             if (angle != new_angles[i]) _clampedSinceLog[joint]++;
             target_angles[i] = angle + (joint == 2 ? 90.0f : 0.0f);
         }
@@ -152,9 +157,8 @@ class ServoController {
                      (unsigned long)_clampedSinceLog[2], _peakAbs[0], (unsigned)_peakLeg[0],
                      _peakAbs[1], (unsigned)_peakLeg[1], _peakAbs[2], (unsigned)_peakLeg[2]);
         } else {
-            ESP_LOGD(TAG, "joint travel ok; peak |cmd| coxa %.1f/%.1f femur %.1f/%.1f tibia %.1f/%.1f deg",
-                     _peakAbs[0], JOINT_LIMIT_DEG[0], _peakAbs[1], JOINT_LIMIT_DEG[1], _peakAbs[2],
-                     JOINT_LIMIT_DEG[2]);
+            ESP_LOGD(TAG, "joint travel ok; peak |cmd| coxa %.1f femur %.1f/%.1f tibia %.1f/%.1f deg", _peakAbs[0],
+                     _peakAbs[1], JOINT_LIMIT_DEG[1], _peakAbs[2], JOINT_LIMIT_DEG[2]);
         }
         for (int j = 0; j < 3; j++) {
             _clampedSinceLog[j] = 0;
@@ -163,9 +167,11 @@ class ServoController {
     }
 
     // Float -> uint16_t is undefined for negatives, and the manual pcaWrite() path already
-    // validates this range; the gait path did not.
-    static uint16_t toPwm(float angle, const ServoCfg &cfg) {
+    // validates this range; the gait path did not. A coxa's pulse stays within the servo's safe span, which its angle's
+    // travel reaches only up to the float rounding of its edge.
+    static uint16_t toPwm(float angle, const ServoCfg &cfg, int joint) {
         const float pwm = (angle + cfg.centerAngle) * cfg.direction * cfg.conversion + cfg.centerPwm;
+        if (joint == 0) return (uint16_t)CLIP(pwm, (float)SERVO_SAFE_PULSE_MIN, (float)SERVO_SAFE_PULSE_MAX);
         return (uint16_t)CLIP(pwm, 0.0f, 4095.0f);
     }
 
@@ -174,8 +180,8 @@ class ServoController {
             const ServoCfg &sr = cfg[i];
             const ServoCfg &sl = cfg[i + 9];
 
-            right_pwm[sr.pin] = toPwm(target_angles[i], sr);
-            left_pwm[sl.pin] = toPwm(target_angles[i + 9], sl);
+            right_pwm[sr.pin] = toPwm(target_angles[i], sr, i % 3);
+            left_pwm[sl.pin] = toPwm(target_angles[i + 9], sl, i % 3);
         }
         writeBoards();
     }
@@ -189,6 +195,7 @@ class ServoController {
             cfg[i].direction = s.servos[i].direction;
             cfg[i].centerAngle = s.servos[i].center_angle;
         }
+        noteCoxaTravel();
     }
 
     // Control task, IDLE: one joint dragged in the app, through the same travel, calibration and direction as the
@@ -197,11 +204,11 @@ class ServoController {
     void setJointAngle(int servo, float angleDeg) {
         if (servo < 0 || servo >= NUM_SERVO || !std::isfinite(angleDeg)) return;
         const int joint = servo % 3;
-        target_angles[servo] = withinTravel(angleDeg, joint) + (joint == 2 ? 90.0f : 0.0f);
+        target_angles[servo] = withinTravel(servo, angleDeg) + (joint == 2 ? 90.0f : 0.0f);
         const ServoCfg &c = cfg[servo];
         const bool right = servo < 9;
         uint16_t *pwm = right ? right_pwm : left_pwm;
-        pwm[c.pin] = toPwm(target_angles[servo], c);
+        pwm[c.pin] = toPwm(target_angles[servo], c, joint);
         if (is_active) _driven |= 1u << servo;
         _writtenThisTick |= 1u << servo;
         ServoBoard &board = right ? _right : _left;
@@ -213,14 +220,18 @@ class ServoController {
     }
 
     // The joint angle whose pulse is the servo's calibrated centre (toPwm's inverse at centerPwm): the calibration's
-    // centre angle negated, less the tibia's square knee.
-    float centreAngle(int servo) const { return -cfg[servo].centerAngle - (servo % 3 == 2 ? 90.0f : 0.0f); }
+    // centre angle negated, less the tibia's square knee. A coxa's is held within its travel, as its centre pulse is.
+    float centreAngle(int servo) const {
+        const float angle = -cfg[servo].centerAngle - (servo % 3 == 2 ? 90.0f : 0.0f);
+        return servo % 3 == 0 ? withinTravel(servo, angle) : angle;
+    }
 
     // Control task, IDLE: every servo to its calibrated centre pulse, the pose the calibration page lines joints up in.
+    // The settings refuse a coxa centre outside the servo's safe pulses; one stored before they did is held to them.
     void setCenterPwm() {
         for (int i = 0; i < 9; i++) {
-            right_pwm[cfg[i].pin] = cfg[i].centerPwm;
-            left_pwm[cfg[i + 9].pin] = cfg[i + 9].centerPwm;
+            right_pwm[cfg[i].pin] = centrePulse(i);
+            left_pwm[cfg[i + 9].pin] = centrePulse(i + 9);
         }
         writeBoards();
     }
@@ -249,6 +260,20 @@ class ServoController {
     }
 
   private:
+    uint16_t centrePulse(int servo) const {
+        const float pwm = cfg[servo].centerPwm;
+        if (servo % 3 == 0) return (uint16_t)CLIP(pwm, (float)SERVO_SAFE_PULSE_MIN, (float)SERVO_SAFE_PULSE_MAX);
+        return (uint16_t)pwm;
+    }
+
+    // Each coxa's travel at its calibration, the angles whose pulses lie within the servo's safe span.
+    void noteCoxaTravel() {
+        for (int leg = 0; leg < 6; leg++) {
+            const ServoCfg &c = cfg[leg * 3];
+            _coxaTravel[leg] = coxaTravel(c.centerPwm, c.conversion, c.direction, c.centerAngle);
+        }
+    }
+
     void writeBoards() {
         if (is_active) _driven = ALL_SERVOS;
         _writtenThisTick = ALL_SERVOS;
@@ -290,6 +315,8 @@ class ServoController {
             ESP_LOGE(TAG, "Invalid PWM %d for servo %d (0-4096)", value, index);
             return;
         }
+        // The servo page's slider drives a coxa within the servo's safe pulses, holding one beyond at the span's end.
+        if (index % 3 == 0) value = CLIP(value, (int)SERVO_SAFE_PULSE_MIN, (int)SERVO_SAFE_PULSE_MAX);
         int pin = cfg[index].pin;
         index < 9 ? _right.setPWM(pin, value) : _left.setPWM(pin, value);
     }
@@ -329,6 +356,7 @@ class ServoController {
     float _peakAbs[3] = {0.0f, 0.0f, 0.0f};
     uint8_t _peakLeg[3] = {0, 0, 0};
     float target_angles[NUM_SERVO] = {0};
+    JointTravel _coxaTravel[6] = {};
     // This tick's write, kept for its telemetry.
     socket_message_ServoWrite _rightWrite = socket_message_ServoWrite_SERVO_WRITE_NONE;
     socket_message_ServoWrite _leftWrite = socket_message_ServoWrite_SERVO_WRITE_NONE;

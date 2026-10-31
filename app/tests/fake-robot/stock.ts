@@ -29,6 +29,7 @@ import {
   WifiStatus
 } from '../../src/lib/platform_shared/api'
 import type { StateTopic } from '../../src/lib/transport/topics'
+import { COXA_SAFE_PULSE } from '../../src/lib/calibration/leg-pose'
 import { FakeRobot, serveRobot } from './playwright'
 import { FileTree } from './file-tree'
 import { FACTORY_MDNS_SETTINGS, type RequestKey } from './robot'
@@ -204,10 +205,11 @@ export type SettingsUpdate = keyof typeof UPDATES
 // The firmware's reply to an mDNS update that names no valid host name (firmware/src/main.cpp).
 const MDNS_HOSTNAME_REFUSAL = 'the hostname must be one DNS label: a-z, 0-9 and -'
 
-// firmware/include/settings/servo_settings.h, Servo_isValid.
-const servoIsValid = (servo: Servo) =>
-  servo.centerPwm >= 0 &&
-  servo.centerPwm <= 4095 &&
+// firmware/include/settings/servo_settings.h, Servo_isValid: a coxa's centre within the servo's safe 1000 to 2000 us,
+// 205 to 409 counts (firmware/include/servo_travel.h).
+const servoIsValid = (servo: Servo, id: number) =>
+  servo.centerPwm >= (id % 3 === 0 ? COXA_SAFE_PULSE[0] : 0) &&
+  servo.centerPwm <= (id % 3 === 0 ? COXA_SAFE_PULSE[1] : 4095) &&
   servo.conversion > 0 &&
   servo.conversion <= 100 &&
   (servo.direction === 1 || servo.direction === -1) &&

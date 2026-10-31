@@ -539,27 +539,36 @@ void tearDown() {
 }
 
 // The body travel the gait's stance strokes command is integrated tick by tick from the stroke and cadence it walks.
+// While the stroke grows from rest, the planted feet also move with its growth, by d(stroke / 2) (1 - 2p) at stance
+// progress p, which stroke x cadence leaves out: at most half the stroke over the start. Once the stroke is reached the
+// two agree.
 void test_a_tripod_walk_forward_moves_the_odometry_forward_and_straight() {
     VirtualRobot robot;
     standUp(robot);
     robot.setMode(MOTION_STATE::WALK);
-    float commandedMm = 0;
-    for (int t = 0; t < ticksFor(WALK_S); ++t) {
-        if (t % COMMAND_PERIOD_TICKS == 0) robot.command(FORWARD);
-        robot.tick();
-        const gait_state_t &g = robot.gaitState();
-        TEST_ASSERT_EQUAL(GaitType::TRI_GATE, g.gait_type);
-        if (gaitIsCommanded(g)) commandedMm += g.step_y * g.phase_rate * DT / g.stand_frac;
-    }
-    const float commanded = commandedMm / 1000.0f;
+    const auto walk = [&robot](float seconds) {
+        float commandedMm = 0;
+        for (int t = 0; t < ticksFor(seconds); ++t) {
+            if (t % COMMAND_PERIOD_TICKS == 0) robot.command(FORWARD);
+            robot.tick();
+            const gait_state_t &g = robot.gaitState();
+            TEST_ASSERT_EQUAL(GaitType::TRI_GATE, g.gait_type);
+            if (gaitIsCommanded(g)) commandedMm += g.step_y * g.phase_rate * DT / g.stand_frac;
+        }
+        return commandedMm / 1000.0f;
+    };
+    const float commanded = walk(WALK_S);
     const OdometryEstimate e = robot.odometry();
     TEST_ASSERT_GREATER_THAN_FLOAT(0.1f, commanded);
-    TEST_ASSERT_FLOAT_WITHIN(0.03f * commanded, commanded, e.y);
+    TEST_ASSERT_FLOAT_WITHIN(0.5f * robot.gaitState().step_y / 1000.0f, commanded, e.y);
     TEST_ASSERT_FLOAT_WITHIN(0.01f * e.y, 0, e.x);
     // On a gyro reading zero the fused heading stays; the feet's own turns by about -0.015 rad as every walk starts,
     // and by none in the steady walk.
     TEST_ASSERT_FLOAT_WITHIN(0.005f, 0, e.yaw);
     TEST_ASSERT_FLOAT_WITHIN(0.02f, 0, e.kinematicYaw);
+    TEST_ASSERT_TRUE(robot.resetOdometry());
+    const float steady = walk(WALK_S);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f * steady, steady, robot.odometry().y);
 }
 
 // A stance change steps every foot to a new place, but each one only through the air: the robot does not travel.

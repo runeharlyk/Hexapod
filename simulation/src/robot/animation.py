@@ -20,9 +20,18 @@ from enum import IntEnum
 
 import numpy as np
 
+from src.robot.clearance import closest_legs, legs_clear
 from src.robot.firmware_gait import DEFAULT_FEET, BodyState, Kinematics
 
-JOINT_LIMIT_DEG = np.array([31.5, 90.0, 149.0])  # mirrors kinematics.h JOINT_LIMIT_DEG
+JOINT_LIMIT_DEG = np.array([50.5, 90.0, 149.0])  # mirrors kinematics.h JOINT_LIMIT_DEG
+# pose_to_angles' mask bit for angles that bring two legs within LEG_CLEARANCE_MM (src/robot/clearance.py), which the
+# firmware's player never drives; mirrors animation.h LEGS_TOUCH.
+LEGS_TOUCH = 1 << 18
+# Legs 0-5 as the app names them (docs/conventions.md): right front, middle, rear, then left; the refusal names a pair so.
+LEG_NAMES = ("RF", "RM", "RR", "LF", "LM", "LR")
+# The STAND ride-height slider's ends, h * 50 mm: the bases a clip without a ride height may be played on.
+SLIDER_RANGE_MM = 50.0
+TRAINED_COXA_LIMIT_DEG = 31.5  # mirrors kinematics.h: the coxa travel TUNED and WALK_NN were searched and trained in
 SCHEMA_VERSION = 1
 NAME_MAX = 32
 DESCRIPTION_MAX = 96
@@ -370,9 +379,10 @@ def foot_reachable(kin: Kinematics, body6: np.ndarray, foot_offset: np.ndarray, 
 
 
 def pose_to_angles(pose: Pose, kin: Kinematics, stance_feet: np.ndarray = DEFAULT_FEET) -> tuple[np.ndarray, int]:
-    """18 servo angles (deg, IK order) and an 18-bit mask, bit leg * 3 + joint, of the joints that
-    hit a limit. A foot leg that fails foot_reachable also sets its femur and tibia bits, the joints
-    the IK saturates. The firmware mirrors this with the same kinematics constants."""
+    """18 servo angles (deg, IK order) and a mask: bit leg * 3 + joint for each joint that hit a limit,
+    and LEGS_TOUCH when the angles within travel bring two legs within LEG_CLEARANCE_MM. A foot leg that
+    fails foot_reachable also sets its femur and tibia bits, the joints the IK saturates. The firmware
+    mirrors this with the same kinematics constants."""
     b = _body_state(pose.body, stance_feet)
     for i, leg in enumerate(pose.legs):
         if not leg.is_joints():
@@ -389,7 +399,36 @@ def pose_to_angles(pose: Pose, kin: Kinematics, stance_feet: np.ndarray = DEFAUL
     for i, leg in enumerate(pose.legs):
         if not leg.is_joints() and not foot_reachable(kin, pose.body, leg.foot, i, stance_feet):
             mask |= 0b110 << (i * 3)
+    if not legs_clear(clamped, kin):
+        mask |= LEGS_TOUCH
     return clamped, mask
+
+
+def clearance_error(anim: Animation, kin: Kinematics, stance_feet: np.ndarray = DEFAULT_FEET) -> str | None:
+    """The refusal of a clip that brings two legs within LEG_CLEARANCE_MM, naming the first such frame and its
+    closest pair, or None; the firmware's validation refuses the clip with the same words. The clip is swept
+    as that validation sweeps it (AnimationRunner::sweepClampMask): every keyframe and 32 evenly spaced
+    times a segment, at the default params, on every base the runner may add, the clip's ride height or
+    both ends of the STAND slider. The firmware's player never drives such a frame."""
+    params = resolve_params(anim, None)
+    bases = (anim.ride_height,) if anim.ride_height is not None else (-SLIDER_RANGE_MM, SLIDER_RANGE_MM)
+    times = []
+    for i, k in enumerate(anim.keyframes):
+        if i + 1 < len(anim.keyframes):
+            t1 = anim.keyframes[i + 1].time
+            times += [k.time + (t1 - k.time) * s / 32.0 for s in range(32)]
+        else:
+            times.append(k.time)
+    times.append(anim.duration)
+    for base in bases:
+        for t in times:
+            pose = evaluate(anim, params, t, kin, stance_feet, base_z=base)
+            pose.body[BodyAxis.Z] += base
+            angles, mask = pose_to_angles(pose, kin, stance_feet)
+            if mask & LEGS_TOUCH:
+                (a, b), _ = closest_legs(angles, kin)
+                return f"legs {LEG_NAMES[a]} and {LEG_NAMES[b]} touch at t={t:.3f} s on a {base:+.0f} mm base"
+    return None
 
 
 class State(IntEnum):

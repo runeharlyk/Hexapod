@@ -84,3 +84,7 @@ def test_pack_script_writes_a_decodable_pb_per_animation(tmp_path):
     assert {p.stem for p in written} == {p.stem for p in FILES}
     for p in written:
         assert an.validate(load_binary(p)) is None
+
+@pytest.mark.parametrize("path", FILES, ids=[p.stem for p in FILES])
+def test_bundled_animation_keeps_every_leg_pair_clear(path):
+    assert an.clearance_error(load_json(path), KIN) is None

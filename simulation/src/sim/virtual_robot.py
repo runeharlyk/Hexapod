@@ -79,10 +79,11 @@ def _library() -> ctypes.CDLL:
     lib.setJoint.argtypes = [ctypes.c_int, ctypes.c_float]
     lib.telemetrySample.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_int]
     lib.telemetrySample.restype = ctypes.c_int
-    lib.classicWalkTarget.argtypes = [ctypes.c_int, *floats(8), ctypes.POINTER(ctypes.c_float)]
+    lib.classicWalkTarget.argtypes = [ctypes.c_int, *floats(8), ctypes.c_int, ctypes.POINTER(ctypes.c_float)]
     lib.autoWalk.argtypes = [ctypes.c_int, *floats(8), ctypes.POINTER(ctypes.c_float)]
     lib.autoWalk.restype = ctypes.c_int
-    lib.clampPosture.argtypes = [ctypes.POINTER(ctypes.c_float)]
+    lib.clampPosture.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_int]
+    lib.stanceFeet.argtypes = [ctypes.c_int, ctypes.c_float, ctypes.POINTER(ctypes.c_float)]
     lib.goalMove.argtypes = [ctypes.c_int, *floats(4), ctypes.c_int, *floats(4)]
     lib.goalMove.restype = ctypes.c_int
     lib.goalStatus.argtypes = lib.odometry.argtypes = [ctypes.POINTER(ctypes.c_float)]

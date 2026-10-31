@@ -1,5 +1,6 @@
 #pragma once
 
+#include <gait.h>
 #include <odometry.h>
 #include <algorithm>
 #include <cmath>
@@ -26,6 +27,12 @@ struct Goal {
 /** Sticks in MotionService's convention: ly > 0 walks forward, lx > 0 right and rx > 0 turns clockwise. */
 struct GoalSticks {
     float lx = 0, ly = 0, rx = 0;
+};
+
+/** The longest stroke a goal's walk may take along one axis, as withStrokeCap (gait_speed.h) takes it. */
+struct StrokeCap {
+    int axis = 0;    // 0 forward, 1 lateral, 2 yaw
+    float limit = 0; // mm, or rad for yaw
 };
 
 /**
@@ -64,7 +71,11 @@ class GoalController {
     // How far the robot walks on once its sticks centre, as a time at the speed it walked. The stop ramp (gait.h
     // GaitCommandRamp) eases the stroke out through two first-order stages of RAMP_TAU_S, leaving the share
     // s = (1 + t / tau) exp(-t / tau), and slows the cadence with it, so the speed falls as s^2: its integral is
-    // 1.25 tau. The virtual robot coasts 0.19 s of its speed at full speed, measured on TRI and BI.
+    // 1.25 tau. The virtual robot coasts 0.19 s of its speed at full speed, measured on TRI and BI, on the strokes of
+    // the envelope before the 50.5 deg coxa (before c439426), and not fitted again: with the longer strokes TRI's goals
+    // of 0.7 to 1.1 m take a second pass more often, until PR #67 replaces this stop prediction. A known limit beside
+    // it, not traced: WAVE's 0.5 m, 90 deg arc reaches its turn 34 to 39 mm from the arc's end, past ARC_REACHED_M, and
+    // times out, at full and half speed; capping its stroke on the turn or the chord left does not change it.
     static constexpr float STOP_S = 1.25f * RAMP_TAU_S;
 
     /** A finite goal with a nonzero target, a positive radius for an arc, at a speed in (0, 1]. */
@@ -150,6 +161,21 @@ class GoalController {
     }
     /** The passes started, the first included. */
     int passes() const { return passCount; }
+    /**
+     * What remains of the goal, as the longest stroke its walk may take along the goal's axis, so that no step carries
+     * the robot past the target: a corrective pass of a centimetre steps a centimetre, not the gait's full stroke,
+     * whose stop then lands within the tolerance. An arc is capped on its turn. Never less than the least stroke the
+     * gait steps, its deadband (gait.h): a stroke under it stops the gait while the goal still runs, and the odometry
+     * with it, until the pass times out. A last step of the deadband passes the target by at most 2 mm or 0.005 rad,
+     * well inside REACHED_M and REACHED_RAD.
+     */
+    StrokeCap strokeCap() const {
+        switch (target.kind) {
+            case GoalKind::FORWARD: return {0, std::max(std::fabs(remaining) * 1000.0f, GAIT_STRIDE_DEADBAND_MM)};
+            case GoalKind::SIDEWAYS: return {1, std::max(std::fabs(remaining) * 1000.0f, GAIT_STRIDE_DEADBAND_MM)};
+            default: return {2, std::max(std::fabs(remaining), GAIT_YAW_DEADBAND_RAD)};
+        }
+    }
 
   private:
     Goal target;

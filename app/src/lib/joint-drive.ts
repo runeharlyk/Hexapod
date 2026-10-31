@@ -13,14 +13,36 @@ export const servoOfUrdfJoint = (index: number) => URDF_SERVOS[index]
 
 /**
  * Each joint's travel in degrees, coxa, femur and tibia: a copy of the firmware's kinematics.h JOINT_LIMIT_DEG, which
- * tests/unit/joint-drive.spec.ts keeps equal to it. The URDF model's own limits are wider, the femur's to -152.8.
+ * tests/unit/joint-drive.spec.ts keeps equal to it. The coxa's is the narrower side of its servo's safe pulses at the
+ * factory calibration; the robot holds each coxa within its own calibration's. The URDF model's coxa limit is this
+ * travel (the test keeps it no narrower) and its femur's is wider, to -152.8.
  */
-export const JOINT_LIMIT_DEG = [31.5, 90, 149] as const
+export const JOINT_LIMIT_DEG = [50.5, 90, 149] as const
 
 /** The URDF joint `index` at `radians`, held within the travel of the servo it drives, as the firmware holds it. */
 export const withinTravel = (index: number, radians: number) => {
   const limit = (JOINT_LIMIT_DEG[servoOfUrdfJoint(index) % 3] * Math.PI) / 180
   return Math.min(limit, Math.max(-limit, radians))
+}
+
+/** Whether moving between two poses of 18 joint angles in degrees, in the firmware's order, keeps the legs apart. */
+export type KeepsLegsApart = (fromDeg: readonly number[], toDeg: readonly number[]) => boolean
+
+/**
+ * The pose, in degrees in the firmware's order, that dragging the URDF joint `index` to `radians` makes of `drawnDeg`,
+ * the joint held within its travel; null when the move does not keep the legs apart as the robot judges a dragged joint
+ * (VirtualRobot.keepsLegsApart: into the firmware's clearance, or closer from within it), which the robot refuses too,
+ * so the model keeps the joint where it is and nothing is sent.
+ */
+export const draggedPose = (
+  drawnDeg: readonly number[],
+  index: number,
+  radians: number,
+  keepsLegsApart: KeepsLegsApart
+): number[] | null => {
+  const pose = [...drawnDeg]
+  pose[servoOfUrdfJoint(index)] = (withinTravel(index, radians) * 180) / Math.PI
+  return keepsLegsApart(drawnDeg, pose) ? pose : null
 }
 
 /**

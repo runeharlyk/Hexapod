@@ -2,23 +2,26 @@
 // only in IDLE, only over a link and not while the controls drive the simulation view; leaving any of those stops it.
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { writable } from 'svelte/store'
 import { MotionModes, urdfJointOrder } from '$lib/motion'
 import type { JointAngleData } from '$lib/platform_shared/message'
 import {
   JOINT_LIMIT_DEG,
   JointDrive,
+  draggedPose,
   drivesJoints,
   servoOfUrdfJoint,
   withinTravel
 } from '$lib/joint-drive'
+import { loadVirtualRobot, type VirtualRobot } from '$lib/simulation/virtual-robot'
 
 const SERVOS = Array.from({ length: 18 }, (_, servo) => servo)
 
 const rad = (deg: number) => (deg * Math.PI) / 180
 
-// kinematics.h's JOINT_LIMIT_DEG, read from the source: the travel ServoController holds every joint within.
+// kinematics.h's JOINT_LIMIT_DEG, read from the source: the travel ServoController holds every joint within at the
+// factory calibration, the coxa at the narrower side of its safe pulses.
 const firmwareLimits = () => {
   const header = readFileSync(resolve(__dirname, '../../../firmware/include/kinematics.h'), 'utf-8')
   const match = header.match(/JOINT_LIMIT_DEG\[3\]\s*=\s*\{([^}]*)\}/)
@@ -61,6 +64,19 @@ describe('withinTravel', () => {
   it("stops a femur at the firmware's -90 degrees, not at the model's -152.8", () => {
     const femur = urdfJointOrder(SERVOS).indexOf(1)
     expect(withinTravel(femur, rad(-152.8))).toBeCloseTo(rad(-90), 10)
+  })
+
+  // urdf-loader clamps a joint to the model's limits, so a narrower coxa would draw the crab's corner legs, at 45
+  // degrees, short of where the robot holds them, and stop a dragged coxa short of the robot's travel.
+  it("lets the model's coxas, the shoulder joints of static/model.xacro, reach the firmware's travel", () => {
+    const xacro = readFileSync(resolve(__dirname, '../../static/model.xacro'), 'utf-8')
+    const shoulder = xacro.match(
+      /name="\$\{pos\}_shoulder"[\s\S]*?<limit[^>]*lower="([^"]+)"[^>]*upper="([^"]+)"/
+    )
+    if (!shoulder) throw new Error('the shoulder joint has no limit in model.xacro')
+    const [lower, upper] = [Number(shoulder[1]), Number(shoulder[2])]
+    expect(-lower).toBeGreaterThanOrEqual(rad(JOINT_LIMIT_DEG[0]))
+    expect(upper).toBeGreaterThanOrEqual(rad(JOINT_LIMIT_DEG[0]))
   })
 })
 
@@ -113,5 +129,84 @@ describe('JointDrive', () => {
     state.set(true)
     expect(drive.drag(1, 0.1)).toBe(false)
     expect(sent).toHaveLength(0)
+  })
+})
+
+// platform_shared/leg_clearance_fixtures.txt, which the firmware's native test and the simulation pass too.
+const clearanceFixtures = () =>
+  readFileSync(resolve(__dirname, '../../../platform_shared/leg_clearance_fixtures.txt'), 'utf-8')
+    .split('\n')
+    .map(line => line.trim().split(/\s+/))
+    .filter(words => words[0] === 'case')
+    .map(([, name, , , clear, , ...angles]) => ({
+      name,
+      clear: clear === '1',
+      angles: angles.map(Number)
+    }))
+
+const urdfJointOf = (servo: number) => urdfJointOrder(SERVOS).indexOf(servo)
+
+describe('the clearance a drag is judged by', () => {
+  let robot: VirtualRobot
+  let keepsLegsApart: VirtualRobot['keepsLegsApart']
+
+  beforeAll(async () => {
+    robot = await loadVirtualRobot()
+    keepsLegsApart = robot.keepsLegsApart
+  })
+
+  const named = (name: string) => clearanceFixtures().find(c => c.name === name)!.angles
+
+  it("is the firmware's own check, leg_clearance.h, on every shared fixture", () => {
+    // From the clear stance, a move keeps the legs apart exactly when the pose moved to keeps the clearance.
+    const cases = clearanceFixtures()
+    expect(cases.length).toBeGreaterThan(20)
+    for (const { name, clear, angles } of cases)
+      expect(keepsLegsApart(named('stance'), angles), name).toBe(clear)
+  })
+
+  it('refuses a drag that would bring two legs together and passes one that keeps them apart', () => {
+    // Legs 0 and 1 meet with both coxas turned about 38.7 deg toward each other; one turned 40 deg alone stays apart.
+    const stand = Array.from(robot.standPose())
+    const leg1Turned = draggedPose(stand, urdfJointOf(3), rad(40), keepsLegsApart)
+    expect(leg1Turned?.[3]).toBeCloseTo(40, 4)
+    expect(draggedPose(leg1Turned!, urdfJointOf(0), rad(-40), keepsLegsApart)).toBeNull()
+    const both = draggedPose(leg1Turned!, urdfJointOf(0), rad(-20), keepsLegsApart)
+    expect(both?.[0]).toBeCloseTo(-20, 4)
+    expect(both?.filter((_, servo) => servo !== 0)).toEqual(
+      leg1Turned!.filter((_, servo) => servo !== 0)
+    )
+  })
+
+  it('from legs already through each other, passes a drag that parts them and refuses one that closes them', () => {
+    const touching = named('touching_0_1')
+    const coxa0 = touching[0]
+    expect(draggedPose(touching, urdfJointOf(0), rad(coxa0 + 2), keepsLegsApart)?.[0]).toBeCloseTo(
+      coxa0 + 2,
+      4
+    )
+    expect(draggedPose(touching, urdfJointOf(0), rad(coxa0 - 2), keepsLegsApart)).toBeNull()
+  })
+
+  it('judges every leg pair on its own, so legs through each other let no other pair come together', () => {
+    // Legs 0 and 1 through each other, leg 4's coxa turned 40 deg toward leg 3: leg 3's turned 40 deg toward leg 4 would
+    // bring that pair through each other too (they meet at about 38.7 deg each).
+    const from = [...named('through_0_1')]
+    const toward = named('touching_3_4')
+    from[12] = Math.sign(toward[12]) * 40
+    expect(
+      draggedPose(from, urdfJointOf(9), rad(Math.sign(toward[9]) * 40), keepsLegsApart)
+    ).toBeNull()
+    expect(
+      draggedPose(from, urdfJointOf(9), rad(Math.sign(toward[9]) * 10), keepsLegsApart)?.[9]
+    ).toBeCloseTo(Math.sign(toward[9]) * 10, 4)
+  })
+
+  it('judges the dragged joint within its travel, as the robot holds it', () => {
+    const stand = Array.from(robot.standPose())
+    expect(draggedPose(stand, urdfJointOf(3), rad(80), keepsLegsApart)?.[3]).toBeCloseTo(
+      JOINT_LIMIT_DEG[0],
+      4
+    )
   })
 })

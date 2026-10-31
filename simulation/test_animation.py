@@ -1,6 +1,7 @@
 """Unit tests for the animation reference implementation (src/robot/animation.py)."""
 import json
 import math
+import re
 from pathlib import Path
 
 import numpy as np
@@ -254,11 +255,11 @@ def test_leg_joints_deg_matches_the_full_body_ik():
 
 def test_pose_to_angles_overrides_joint_legs_and_clamps_with_a_mask():
     pose = an.Pose.stance()
-    pose.legs[1] = an.LegTarget(joints=np.array([40.0, 95.0, -100.0]))  # coxa and femur over the limit
+    pose.legs[1] = an.LegTarget(joints=np.array([60.0, 95.0, -100.0]))  # coxa and femur over the limit
     pose.legs[5] = an.LegTarget(foot=np.array([0, 0, 120.0]))           # unreachable lift, IK clamps
     angles, mask = an.pose_to_angles(pose, KIN)
     assert angles.shape == (18,)
-    assert angles[3] == 31.5 and angles[4] == 90.0 and angles[5] == -100.0
+    assert angles[3] == 50.5 and angles[4] == 90.0 and angles[5] == -100.0
     assert mask & (1 << 3) and mask & (1 << 4) and not mask & (1 << 5)
     assert mask & (1 << 16)  # femur of leg 5 pinned
     assert not mask & 0b111  # leg 0 at stance is clean
@@ -279,6 +280,56 @@ def test_mixed_interpolation_from_an_unreachable_foot_evaluates():
     a.keyframes[1].legs = [an.LegTarget(joints=np.array([0, 80.0, -110.0]))] + stance_legs()[:5]
     pose = an.evaluate(a, an.resolve_params(a, None), 0.5, KIN)
     assert pose.legs[0].is_joints() and np.all(np.isfinite(pose.legs[0].joints))
+
+
+def _coxas_turned(**coxa_deg):
+    """The stance with leg `legN`'s coxa as a joint target at the given angle, femur and tibia at stance."""
+    standing = KIN.inverse_kinematics(BodyState())
+    pose = an.Pose.stance()
+    for name, coxa in coxa_deg.items():
+        leg = int(name.removeprefix("leg"))
+        pose.legs[leg] = an.LegTarget(joints=np.array([coxa, *standing[leg * 3 + 1:leg * 3 + 3]]))
+    return pose
+
+
+def test_pose_to_angles_flags_two_legs_closer_than_the_clearance():
+    # Legs 0 and 1 meet with both coxas turned about 38.7 deg toward each other (leg_clearance_fixtures.txt); one leg
+    # turned that far alone keeps them apart.
+    _, mask = an.pose_to_angles(_coxas_turned(leg0=-40.0, leg1=40.0), KIN)
+    assert mask == an.LEGS_TOUCH
+    _, mask = an.pose_to_angles(_coxas_turned(leg1=40.0), KIN)
+    assert mask == 0
+
+
+def test_the_clearance_is_judged_on_the_angles_within_travel():
+    # Commanded at 60 deg the two coxas would cross; the servos stop at 50.5, which still meets, and the mask says both.
+    _, mask = an.pose_to_angles(_coxas_turned(leg0=-60.0, leg1=60.0), KIN)
+    assert mask == (1 << 0) | (1 << 3) | an.LEGS_TOUCH
+
+
+def test_a_clip_whose_pose_brings_two_legs_together_is_refused():
+    a = two_keyframes()
+    a.keyframes[1].legs = _coxas_turned(leg0=-40.0, leg1=40.0).legs
+    error = an.clearance_error(a, KIN)
+    assert re.fullmatch(r"legs RF and RM touch at t=0\.\d{3} s on a [+-]50 mm base", error)
+    a.keyframes[1].legs = _coxas_turned(leg1=40.0).legs
+    assert an.clearance_error(a, KIN) is None
+
+
+TOUCHING_CLIP_REFUSAL = "legs RF and RM touch at t=0.375 s on a +0 mm base"
+
+
+def test_the_clearance_sweep_finds_a_touch_between_keyframes():
+    # Both keyframes stand, at a fixed ride height, but half a sine on leg 0's foot backward and leg 1's forward brings
+    # them together half way: the sweep samples 32 times a segment, as the firmware's validation does.
+    swing = [an.Overlay(foot_channel=channel, amplitude=amplitude, frequency=0.5, start=0.0, end=1.0)
+             for channel, amplitude in ((1, -80.0), (4, 80.0))]
+    a = two_keyframes(ride_height=0.0, overlays=swing)
+    params = an.resolve_params(a, None)
+    assert all(an.pose_to_angles(an.evaluate(a, params, k.time, KIN), KIN)[1] == 0 for k in a.keyframes)
+    assert an.pose_to_angles(an.evaluate(a, params, 0.5, KIN), KIN)[1] == an.LEGS_TOUCH
+    # The firmware's validation names the same frame: firmware/test/test_animation_validate.
+    assert an.clearance_error(a, KIN) == TOUCHING_CLIP_REFUSAL
 
 
 def test_stance_pose_reproduces_the_standing_angles():

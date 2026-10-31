@@ -33,6 +33,10 @@ struct GaitMsg {
     GaitType gait;
 };
 
+// The feet the classic gaits stand and walk on: DEFAULT splays the legs about the body, CRAB points every leg straight
+// out to its side (gait_speed.h stanceFeet), each with its own walkable envelope.
+enum class Stance { DEFAULT, CRAB };
+
 struct ServoAnglesMsg {
     float angles[NUM_SERVO];
     uint32_t limp; // a bit per servo driven by no pulse since the boards woke, whose angle is unknown

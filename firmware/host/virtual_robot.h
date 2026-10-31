@@ -97,6 +97,8 @@ class VirtualRobot {
     unsigned jointWrites() const { return ServoController::output().jointWrites; }
     unsigned centrings() const { return ServoController::output().centrings; }
     GaitType gait() const { return static_cast<GaitType>(_sample.gait); }
+    // The coxa travel the servos hold the last pose within.
+    CoxaTravel coxaTravel() const { return _robot.motion().coxaTravel(); }
     // The stroke and cadence the gait is easing toward, as the motion holds them now.
     const gait_state_t &gaitCommand() const { return _robot.motion().gaitCommand(); }
     // The stroke and cadence the gait walks this tick.

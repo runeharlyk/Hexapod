@@ -35,6 +35,12 @@ export interface VirtualRobot {
   servoAngles(): Float32Array
   /** The joint angles of the firmware's stand, for spawning; leaves the robot as new. */
   standPose(): Float32Array
+  /**
+   * Whether moving the legs from one pose to another, joint angles in degrees with coxa, femur and tibia per leg in leg
+   * order, keeps them apart as the robot judges a dragged joint (leg_clearance.h keepsLegsApart): the pose moved to keeps
+   * the firmware's clearance, or, from a pose already within it, brings no pair closer.
+   */
+  keepsLegsApart(fromDeg: readonly number[], toDeg: readonly number[]): boolean
 }
 
 const STAND = 3
@@ -75,6 +81,11 @@ export async function loadVirtualRobot(): Promise<VirtualRobot> {
       const pose = servoAngles()
       m._reset()
       return pose
+    },
+    keepsLegsApart: (fromDeg, toDeg) => {
+      m.HEAPF32.set(fromDeg, m._clearanceAngles() / 4)
+      m.HEAPF32.set(toDeg, m._clearanceAngles() / 4 + 18)
+      return m._dragKeepsLegsApart() !== 0
     }
   }
 }

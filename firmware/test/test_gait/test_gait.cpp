@@ -69,7 +69,8 @@ TunedCommand makeTuned(float ly, float lx, float rx, float s1) {
     return out;
 }
 
-// Worst overshoot past JOINT_LIMIT_DEG over a full gait cycle, per joint type (coxa, femur, tibia).
+// Worst overshoot past the searched gait's travel over a full gait cycle, per joint type (coxa, femur, tibia): the
+// coxa's TRAINED_COXA_LIMIT_DEG, which the servos hold TUNED to, and JOINT_LIMIT_DEG's femur and tibia.
 // Also reports the peak absolute command, so a clean sweep still says how much travel was left.
 void sweepTunedCycle(float ly, float lx, float rx, float s1, float worst[3], float peak[3]) {
     TunedCommand cmd = makeTuned(ly, lx, rx, s1);
@@ -90,7 +91,7 @@ void sweepTunedCycle(float ly, float lx, float rx, float s1, float worst[3], flo
             const int joint = i % 3;
             const float mag = std::fabs(angles[i]);
             if (mag > peak[joint]) peak[joint] = mag;
-            const float over = mag - JOINT_LIMIT_DEG[joint];
+            const float over = mag - (joint == 0 ? TRAINED_COXA_LIMIT_DEG : JOINT_LIMIT_DEG[joint]);
             if (over > worst[joint]) worst[joint] = over;
         }
     }

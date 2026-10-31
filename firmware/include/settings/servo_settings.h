@@ -2,6 +2,7 @@
 
 #include <platform_shared/api.pb.h>
 #include <settings/servo_factory.h>
+#include <servo_travel.h>
 #include <template/state_result.h>
 #include <event_bus.h>
 #include <esp_log.h>
@@ -14,9 +15,12 @@ using ServoSettingsBus = EventBus<ServoSettings, 2, 2, 1>;
 inline void ServoSettings_read(const ServoSettings &settings, ServoSettings &proto) { proto = settings; }
 
 // Written as inclusive range tests so a NaN arriving over the wire fails instead of propagating into
-// the PWM math and driving a servo into its endstop.
-inline bool Servo_isValid(const api_Servo &servo) {
-    if (!(servo.center_pwm >= 0.0f && servo.center_pwm <= 4095.0f)) return false;
+// the PWM math and driving a servo into its endstop. A coxa's centre is a pulse "centre all servos" sends and the
+// middle of its travel, so it lies within the servo's safe pulses.
+inline bool Servo_isValid(const api_Servo &servo, pb_size_t index) {
+    const bool coxa = index % 3 == 0;
+    const float low = coxa ? SERVO_SAFE_PULSE_MIN : 0.0f, high = coxa ? SERVO_SAFE_PULSE_MAX : 4095.0f;
+    if (!(servo.center_pwm >= low && servo.center_pwm <= high)) return false;
     if (!(servo.conversion > 0.0f && servo.conversion <= 100.0f)) return false;
     if (servo.direction != 1.0f && servo.direction != -1.0f) return false;
     if (!(servo.center_angle >= -180.0f && servo.center_angle <= 180.0f)) return false;
@@ -32,7 +36,7 @@ inline StateUpdateResult ServoSettings_update(const ServoSettings &proto, ServoS
     // Calibration is an all-or-nothing set: a partially applied one leaves the robot in a pose it was
     // never commanded into, so a single bad entry rejects the whole payload.
     for (pb_size_t i = 0; i < proto.servos_count; i++) {
-        if (!Servo_isValid(proto.servos[i])) {
+        if (!Servo_isValid(proto.servos[i], i)) {
             ESP_LOGE("ServoSettings", "Servo %u calibration out of range", (unsigned)i);
             return StateUpdateResult::ERROR;
         }

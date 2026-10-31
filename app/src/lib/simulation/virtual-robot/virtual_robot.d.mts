@@ -27,6 +27,8 @@ export interface VirtualRobotModule {
   _tick(): void
   _servosDriven(): number
   _servoAngles(): number
+  _clearanceAngles(): number
+  _dragKeepsLegsApart(): number
 
   _animCreate(): number
   _animDestroy(session: number): void

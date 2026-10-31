@@ -6,7 +6,7 @@ import numpy as np
 import check_animation as ca
 from src.robot import animation as an
 from src.robot.animation_files import load_json, save_json
-from src.robot.firmware_gait import Kinematics
+from src.robot.firmware_gait import BodyState, Kinematics
 from src.sim.mj_runtime import HexapodSim
 
 LIBRARY = Path(__file__).resolve().parents[1] / "animations"
@@ -66,3 +66,15 @@ def test_main_exits_nonzero_on_a_fall_and_prints_the_row(tmp_path, capsys, monke
     assert ca.main([str(tmp_path / "tip.json")]) == 1
     out = capsys.readouterr().out
     assert "tip" in out and "FELL" in out and "0/1 passed" in out
+
+
+def test_a_clip_that_brings_two_legs_together_is_refused_without_simulating():
+    """Legs 0 and 1 meet with both coxas turned about 38.7 deg toward each other (leg_clearance_fixtures.txt)."""
+    kin = Kinematics()
+    standing = kin.inverse_kinematics(BodyState())
+    legs = [an.LegTarget(joints=standing[i * 3:i * 3 + 3].copy()) for i in range(6)]
+    legs[0].joints[0], legs[1].joints[0] = -40.0, 40.0
+    a = an.Animation(name="touch", keyframes=[an.Keyframe(0.0), an.Keyframe(1.0, legs=legs)])
+    r = ca.check(a, HexapodSim(), kin)
+    assert r.error is not None and "legs RF and RM touch" in r.error and r.steps == 0
+    assert "INVALID" in ca.format_row(r)

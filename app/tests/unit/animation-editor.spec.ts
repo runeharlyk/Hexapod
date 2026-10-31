@@ -24,9 +24,10 @@ import {
   saveDraft,
   type DraftRef
 } from '$lib/animation/library'
-import { State } from '$lib/animation/engine'
+import { LEGS_TOUCH, State } from '$lib/animation/engine'
 import {
   animationEngine,
+  clampedJoints,
   commitNumber,
   createEditor,
   engineReady,
@@ -567,5 +568,12 @@ describe('the preview Loop', () => {
   it('plays the document as written when off', () => {
     const clip = crouch()
     expect(previewClip(clip, false)).toBe(clip)
+  })
+})
+
+describe('clampedJoints', () => {
+  it('names each joint at a limit, and two legs brought together', () => {
+    expect(clampedJoints((1 << 0) | (1 << 17))).toEqual(['RF coxa', 'LR tibia'])
+    expect(clampedJoints((1 << 4) | LEGS_TOUCH)).toEqual(['RM femur', 'legs touch'])
   })
 })

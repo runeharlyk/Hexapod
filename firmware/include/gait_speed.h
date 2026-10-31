@@ -4,14 +4,25 @@
 #include <cmath>
 #include <gait_envelope.h>
 #include <kinematics.h>
+#include <leg_clearance.h>
 #include <message_types.h>
 
-// Stick -> walk command for the classic gaits, from the stroke geometry the generator measured (gait_envelope.h). The
-// stride picks each axis's stroke, from the longest the joints can travel and the one that walks fastest, and the
-// servos' peak joint rate over that stroke bounds its cadence. The stick is a fraction of that cadence, so a slower
-// command keeps its stroke and steps it more slowly, and no command asks for more than the joints and servos can
-// follow. Posture commands are pulled into the walkable region by clampPosture, and stand postures into the standable
-// one by clampStandPosture.
+// Stick -> walk command for the classic gaits, from the stroke geometry the generator measured (gait_envelope.h), one
+// table per stance. The stride picks each axis's stroke, from the longest the joints can travel with the legs apart
+// and the one that walks fastest, and the servos' peak joint rate over that stroke bounds its cadence. The stick is a
+// fraction of that cadence, so a slower command keeps its stroke and steps it more slowly, and no command asks for more
+// than the joints and servos can follow. Posture commands are pulled into the stance's walkable region by clampPosture,
+// and stand postures into the standable one by clampStandPosture.
+
+static_assert(gait_envelope::CLEARANCE_MM == LEG_CLEARANCE_MM,
+              "gait_envelope.h keeps another leg clearance than leg_clearance.h: run simulation/export_envelope.py");
+static_assert(
+    gait_envelope::COXA_RADIUS_MM == leg_clearance::COXA_RADIUS_MM &&
+        gait_envelope::FEMUR_RADIUS_MM == leg_clearance::FEMUR_RADIUS_MM &&
+        gait_envelope::TIBIA_RADIUS_MM == leg_clearance::TIBIA_RADIUS_MM &&
+        gait_envelope::FOOT_RADIUS_MM == leg_clearance::FOOT_RADIUS_MM,
+    "gait_envelope.h was judged with other leg radii than leg_clearance.h's: run simulation/export_envelope.py");
+static_assert(gait_envelope::STANCES == (int)Stance::CRAB + 1, "gait_envelope.h has a table per Stance");
 
 struct AxisEnvelope {
     float vMax;    // mm/s (forward, lateral) or rad/s (yaw): the stroke at its top cadence
@@ -42,10 +53,10 @@ inline Cell locate(float command) {
     return {index, pos - (float)index};
 }
 
-inline bool cellWalkable(const Cell& s1, const Cell& h, const Cell& fd) {
+inline bool cellWalkable(const Cell& s1, const Cell& h, const Cell& fd, Stance stance) {
+    const auto& walkable = gait_envelope::WALKABLE[(int)stance];
     for (int corner = 0; corner < 8; ++corner) {
-        if (!gait_envelope::WALKABLE[s1.index + (corner & 1)][h.index + ((corner >> 1) & 1)][fd.index + (corner >> 2)])
-            return false;
+        if (!walkable[s1.index + (corner & 1)][h.index + ((corner >> 1) & 1)][fd.index + (corner >> 2)]) return false;
     }
     return true;
 }
@@ -62,19 +73,21 @@ float trilinear(const Cell& s1, const Cell& h, const Cell& fd, At at) {
     return lerp(lerp(along_fd[0][0], along_fd[0][1], h.frac), lerp(along_fd[1][0], along_fd[1][1], h.frac), s1.frac);
 }
 
-// The longest stroke an axis's joints can travel at the posture, 0 where the posture cannot walk. Walkability gates the
-// lookup: some grid points outside the walkable cells carry a stroke, so the table is read only in a cell whose eight
-// corners all walk.
-inline float strokeMaxAt(int axis, float s1, float h, float fd) {
+// The longest stroke an axis's joints can travel at the posture in the stance, 0 where the posture cannot walk.
+// Walkability gates the lookup: some grid points outside the walkable cells carry a stroke, so the table is read only
+// in a cell whose eight corners all walk.
+inline float strokeMaxAt(int axis, float s1, float h, float fd, Stance stance) {
     const Cell cs1 = locate(s1), ch = locate(h), cfd = locate(fd);
-    if (axis < 0 || axis > 2 || !cellWalkable(cs1, ch, cfd)) return 0.0f;
-    return trilinear(cs1, ch, cfd, [axis](int i, int j, int k) { return gait_envelope::STROKE_MAX[axis][i][j][k]; });
+    if (axis < 0 || axis > 2 || !cellWalkable(cs1, ch, cfd, stance)) return 0.0f;
+    const auto& strokeMax = gait_envelope::STROKE_MAX[(int)stance][axis];
+    return trilinear(cs1, ch, cfd, [&](int i, int j, int k) { return strokeMax[i][j][k]; });
 }
 
 // Kappa at a stroke, as a fraction of the longest, from its samples at (k + 1) / SAMPLES: the running maximum of the
 // samples up to the stroke, linear between them, and the first sample below it. Kappa mostly rises with the stroke but
-// the swing samples dip in places, below the highest before them by up to 2.2 % forward and lateral and 15 % in yaw,
-// and a stroke inside a dip or short of the first sample is not taken to turn the joints any slower than a shorter one.
+// the swing samples dip in places, below the highest before them by up to 1.9 % forward and lateral and 18.1 % in yaw
+// in the default stance and 2.1 % forward, 5.2 % lateral and 0.3 % in yaw in the crab, and a stroke inside a dip or
+// short of the first sample is not taken to turn the joints any slower than a shorter one.
 inline float kappaAtStroke(const float (&samples)[SAMPLES], float fraction) {
     const float position = fraction * SAMPLES - 1.0f;
     float below = samples[0];
@@ -94,33 +107,44 @@ inline float topCadence(GaitType gait, float kappaSwing, float kappaStance) {
                     gait_envelope::CADENCE_MAX);
 }
 
-} // namespace gait_speed_detail
+// An axis's kappa samples at the posture, interpolated between the grid points.
+struct Kappas {
+    float swing[SAMPLES], stance[SAMPLES];
+};
 
-// True when the posture sits in a cell whose eight corners can all walk.
-inline bool postureWalkable(float s1, float h, float fd) {
-    using namespace gait_speed_detail;
-    return cellWalkable(locate(s1), locate(h), locate(fd));
+inline Kappas kappasAt(int axis, const Cell& s1, const Cell& h, const Cell& fd, Stance feet) {
+    const auto& kappaSwing = gait_envelope::KAPPA_SWING[(int)feet][axis];
+    const auto& kappaStance = gait_envelope::KAPPA_STANCE[(int)feet][axis];
+    Kappas kappas;
+    for (int n = 0; n < SAMPLES; ++n) {
+        kappas.swing[n] = trilinear(s1, h, fd, [&](int i, int j, int k) { return kappaSwing[i][j][k][n]; });
+        kappas.stance[n] = trilinear(s1, h, fd, [&](int i, int j, int k) { return kappaStance[i][j][k][n]; });
+    }
+    return kappas;
 }
 
-// The stroke `stride` picks on an axis (0 forward, 1 lateral, 2 yaw) at a posture, with its top cadence and the top
-// speed the two make. Stride 0 is the speed-optimal stroke, the stroke sample whose top speed is the highest, +1 the
-// longest stroke, and -1 MIN_STRIDE_SHARE of the speed-optimal one, linear in between. The envelope is empty where the
-// posture cannot walk the axis, and for GaitType::TUNED/AUTO.
-inline AxisEnvelope envelopeAt(GaitType gait, int axis, float s1, float h, float fd, float stride) {
+} // namespace gait_speed_detail
+
+// True when the posture sits in a cell whose eight corners can all walk in the stance.
+inline bool postureWalkable(float s1, float h, float fd, Stance stance) {
+    using namespace gait_speed_detail;
+    return cellWalkable(locate(s1), locate(h), locate(fd), stance);
+}
+
+// The stroke `stride` picks on an axis (0 forward, 1 lateral, 2 yaw) at a posture in a stance, with its top cadence and
+// the top speed the two make. Stride 0 is the speed-optimal stroke, the stroke sample whose top speed is the highest,
+// +1 the longest stroke, and -1 MIN_STRIDE_SHARE of the speed-optimal one, linear in between. The envelope is empty
+// where the posture cannot walk the axis, and for GaitType::TUNED/AUTO.
+inline AxisEnvelope envelopeAt(GaitType gait, int axis, float s1, float h, float fd, float stride, Stance feet) {
     using namespace gait_speed_detail;
     if (!isClassic(gait)) return {};
-    const float strokeMax = strokeMaxAt(axis, s1, h, fd);
+    const float strokeMax = strokeMaxAt(axis, s1, h, fd, feet);
     if (strokeMax <= 0.0f) return {};
-    const Cell cs1 = locate(s1), ch = locate(h), cfd = locate(fd);
-    float swing[SAMPLES], stance[SAMPLES];
+    const Kappas kappas = kappasAt(axis, locate(s1), locate(h), locate(fd), feet);
+    const auto& swing = kappas.swing;
+    const auto& stance = kappas.stance;
     int optimal = 0;
     float fastest = 0.0f;
-    for (int n = 0; n < SAMPLES; ++n) {
-        swing[n] =
-            trilinear(cs1, ch, cfd, [&](int i, int j, int k) { return gait_envelope::KAPPA_SWING[axis][i][j][k][n]; });
-        stance[n] =
-            trilinear(cs1, ch, cfd, [&](int i, int j, int k) { return gait_envelope::KAPPA_STANCE[axis][i][j][k][n]; });
-    }
     for (int n = 0; n < SAMPLES; ++n) {
         const float fraction = (float)(n + 1) / SAMPLES;
         // The top speed is stroke * cadence / d, and d is the gait's alone.
@@ -164,8 +188,12 @@ void clampAlongRay(float& s1, float& h, float& fd, Feasible feasible) {
     fd *= inside;
 }
 
-// Pulls an unwalkable posture into the walkable region.
-inline void clampPosture(float& s1, float& h, float& fd) { clampAlongRay(s1, h, fd, postureWalkable); }
+// Pulls a posture the stance cannot walk into its walkable region, which keeps the legs apart: a walkable grid point
+// strides with every leg pair LEG_CLEARANCE_MM apart over every classic timing's cycle, and both resting stances keep
+// more than 30 mm at every posture (simulation/test_leg_clearance.py).
+inline void clampPosture(float& s1, float& h, float& fd, Stance stance) {
+    clampAlongRay(s1, h, fd, [stance](float a, float b, float c) { return postureWalkable(a, b, c, stance); });
+}
 
 // What the posture sliders set, as the envelope was measured: the body height and the stance width.
 inline float bodyHeightMm(float h) { return h * 50.0f; }
@@ -175,34 +203,44 @@ inline float feetScale(float fd) { return 0.75f + (std::clamp(fd, -1.0f, 1.0f) +
 constexpr float DEFAULT_STANCE[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -152, -66, 1},
                                         {-122, 152, -66, 1}, {-171, 0, -66, 1}, {-122, -152, -66, 1}};
 
-inline void scaleStance(float scale, float out[6][4]) {
+// A stance's resting feet at a feet scale. The default stance is DEFAULT_STANCE with x and y scaled. The crab puts each
+// foot on the line through its coxa mount across the body, the lateral x axis, outward, at the reach from the mount the
+// default stance has at the same scale and height, so every leg points straight out to its side and the femur and tibia
+// stand as in the default stance. Ported as stance_feet in simulation/src/robot/firmware_gait.py.
+inline void stanceFeet(Stance stance, float scale, float out[6][4]) {
     for (int i = 0; i < 6; ++i) {
         out[i][0] = DEFAULT_STANCE[i][0] * scale;
         out[i][1] = DEFAULT_STANCE[i][1] * scale;
         out[i][2] = DEFAULT_STANCE[i][2];
         out[i][3] = DEFAULT_STANCE[i][3];
+        if (stance == Stance::CRAB) {
+            const float mountX = hexapodConfig.mountX[i], mountY = hexapodConfig.mountY[i];
+            out[i][0] = mountX + std::copysign(std::hypot(out[i][0] - mountX, out[i][1] - mountY), mountX);
+            out[i][1] = mountY;
+        }
     }
 }
 
-// Whether the body can stand level and unshifted at height h over the stance scaled by fd: every foot within reach
-// and every joint within travel. Standing asks less than walking, so a stand may take postures a walk cannot.
-inline bool standFeasible(Kinematics& kin, float h, float fd) {
+// Whether the body can stand level and unshifted at height h over the stance's feet at fd: every foot within reach,
+// every joint within travel and every leg pair LEG_CLEARANCE_MM apart. Standing asks less than walking, so a stand may
+// take postures a walk cannot.
+inline bool standFeasible(Kinematics& kin, float h, float fd, Stance stance) {
     BodyStateMsg body {};
     body.zm = bodyHeightMm(h);
-    scaleStance(feetScale(fd), body.feet);
+    stanceFeet(stance, feetScale(fd), body.feet);
     for (int i = 0; i < 6; ++i)
         if (!kin.footReachable(body, i)) return false;
     float angles[18];
     kin.inverseKinematics(body, angles);
     for (int j = 0; j < 18; ++j)
         if (std::fabs(angles[j]) > JOINT_LIMIT_DEG[j % 3]) return false;
-    return true;
+    return legsClear(angles);
 }
 
-// Pulls a posture the body cannot stand in toward neutral; the lift does not enter a stand.
-inline void clampStandPosture(Kinematics& kin, float& h, float& fd) {
+// Pulls a posture the body cannot stand in on the stance toward neutral; the lift does not enter a stand.
+inline void clampStandPosture(Kinematics& kin, float& h, float& fd, Stance stance) {
     float s1 = 0.0f;
-    clampAlongRay(s1, h, fd, [&](float, float height, float feet) { return standFeasible(kin, height, feet); });
+    clampAlongRay(s1, h, fd, [&](float, float height, float feet) { return standFeasible(kin, height, feet, stance); });
 }
 
 // Fraction of the top speed for the speed input s: stop at -1, the default at 0, the top at +1.
@@ -233,14 +271,15 @@ inline void stickShares(float lx, float ly, float rx, float s, float (&share)[3]
 // cadence among those axes: a combined stick never steps an axis faster than that axis's own top cadence, and so walks
 // an axis with a faster one below its share of its top speed.
 inline WalkTarget walkAtShares(GaitType gait, const float (&share)[3], float lx, float ly, float rx, float s1, float h,
-                               float fd, float stride) {
+                               float fd, float stride, Stance stance) {
     float used[3] = {}; // the shares of the axes the posture can walk
     float stroke[3] = {};
     float total = 0.0f, slowest = gait_envelope::CADENCE_MAX;
     for (int axis = 0; axis < 3; ++axis) {
         if (share[axis] <= 0.0f) continue;
-        const AxisEnvelope e = envelopeAt(gait, axis, s1, h, fd, stride);
-        // Defensive: walkable promises only the forward axis, though no walkable cell of the table has an empty one.
+        const AxisEnvelope e = envelopeAt(gait, axis, s1, h, fd, stride, stance);
+        // Defensive: a walkable posture promises only the axis its stance walks, though no walkable cell of either
+        // stance's table has an empty one.
         if (e.stroke <= 0.0f) continue;
         used[axis] = share[axis];
         stroke[axis] = e.stroke;
@@ -256,16 +295,41 @@ inline WalkTarget walkAtShares(GaitType gait, const float (&share)[3], float lx,
 } // namespace gait_speed_detail
 
 inline WalkTarget classicWalkTarget(GaitType gait, float lx, float ly, float rx, float s, float s1, float h, float fd,
-                                    float stride) {
+                                    float stride, Stance stance) {
     using namespace gait_speed_detail;
     if (!isClassic(gait)) return {};
     float share[3];
     stickShares(lx, ly, rx, s, share);
-    return walkAtShares(gait, share, lx, ly, rx, s1, h, fd, stride);
+    return walkAtShares(gait, share, lx, ly, rx, s1, h, fd, stride, stance);
+}
+
+// The walk `w` with every stroke scaled down alike until its stroke along `axis` (0 forward and 1 lateral in mm, 2 yaw
+// in rad) is the positive `cap`, and stepped faster in proportion, so each axis keeps its speed, up to the shorter
+// strokes' top cadence. A goal's approach walks so, so that no step carries the robot past its target; a walk within
+// the cap is left as it is. The capped axis is set to the cap itself, so a cap at the gait's deadband still steps.
+inline WalkTarget withStrokeCap(GaitType gait, const WalkTarget& w, int axis, float cap, float s1, float h, float fd,
+                                Stance stance) {
+    using namespace gait_speed_detail;
+    const float strokes[3] = {std::fabs(w.stepY), std::fabs(w.stepX), std::fabs(w.stepAngle)};
+    if (!(strokes[axis] > cap)) return w;
+    const float scale = cap / strokes[axis];
+    float rate = w.phaseRate / scale;
+    for (int a = 0; a < 3; ++a) {
+        if (strokes[a] <= 0.0f) continue;
+        const float strokeMax = strokeMaxAt(a, s1, h, fd, stance);
+        const Kappas kappas = kappasAt(a, locate(s1), locate(h), locate(fd), stance);
+        const float fraction = scale * strokes[a] / strokeMax;
+        rate = std::min(
+            rate, topCadence(gait, kappaAtStroke(kappas.swing, fraction), kappaAtStroke(kappas.stance, fraction)));
+    }
+    WalkTarget capped {w.stepX * scale, w.stepY * scale, w.stepAngle * scale, rate};
+    float& alongAxis = axis == 0 ? capped.stepY : axis == 1 ? capped.stepX : capped.stepAngle;
+    alongAxis = std::copysign(cap, alongAxis);
+    return capped;
 }
 
 // AUTO walks the speed the stick asks of the fastest classic gait, BI: the stick's share of BI's top speed at the
-// posture and stride, on each axis, whichever gait walks it.
+// posture and stride, on each axis, whichever gait walks it. AUTO walks the default stance alone.
 struct AutoDemand {
     float speed[3]; // forward and lateral in mm/s, yaw in rad/s
     float speed01;  // its share of BI's top speed, summed over the axes like the stick
@@ -276,7 +340,7 @@ inline AutoDemand autoDemand(float lx, float ly, float rx, float s, float s1, fl
     gait_speed_detail::stickShares(lx, ly, rx, s, share);
     AutoDemand demand {};
     for (int axis = 0; axis < 3; ++axis) {
-        const AxisEnvelope e = envelopeAt(GaitType::BI_GATE, axis, s1, h, fd, stride);
+        const AxisEnvelope e = envelopeAt(GaitType::BI_GATE, axis, s1, h, fd, stride, Stance::DEFAULT);
         if (e.vMax <= 0.0f) continue;
         demand.speed[axis] = share[axis] * e.vMax;
         demand.speed01 += share[axis];
@@ -292,7 +356,7 @@ inline bool demandShares(GaitType gait, const AutoDemand& demand, float s1, floa
     for (int axis = 0; axis < 3; ++axis) {
         share[axis] = 0.0f;
         if (demand.speed[axis] <= 0.0f) continue;
-        const AxisEnvelope e = envelopeAt(gait, axis, s1, h, fd, stride);
+        const AxisEnvelope e = envelopeAt(gait, axis, s1, h, fd, stride, Stance::DEFAULT);
         if (e.vMax <= 0.0f) return false;
         share[axis] = demand.speed[axis] / e.vMax;
     }
@@ -323,11 +387,11 @@ inline WalkTarget autoWalkTarget(GaitType gait, const AutoDemand& demand, float 
     if (!isClassic(gait)) return {};
     float share[3];
     for (int axis = 0; axis < 3; ++axis) {
-        const float vMax = envelopeAt(gait, axis, s1, h, fd, stride).vMax;
+        const float vMax = envelopeAt(gait, axis, s1, h, fd, stride, Stance::DEFAULT).vMax;
         share[axis] = vMax > 0.0f ? demand.speed[axis] / vMax : 0.0f;
     }
     const float total = share[0] + share[1] + share[2];
     if (total > 1.0f)
         for (float& axisShare : share) axisShare /= total;
-    return walkAtShares(gait, share, lx, ly, rx, s1, h, fd, stride);
+    return walkAtShares(gait, share, lx, ly, rx, s1, h, fd, stride, Stance::DEFAULT);
 }

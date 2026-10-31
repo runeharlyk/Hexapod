@@ -123,7 +123,7 @@ def test_the_travel_stops_where_the_operator_saw_each_joint_stop_and_at_the_firm
     assert np.abs(angles[:, 1]).max() == pytest.approx(90.0)  # never past the limit it was stepped to
     text = (tmp_path / "envelope.md").read_text()
     # 2 counts per degree commanded and 2.5 turned: 0.8 of each angle.
-    coxa = ("| coxa | 0 | -31.5 to +31.5 | 20.0 | stopped on its end stop | -25.0 | blocked by the body or a leg | "
+    coxa = ("| coxa | 0 | -50.5 to +50.5 | 20.0 | stopped on its end stop | -25.0 | blocked by the body or a leg | "
             "16.0 / -20.0")
     assert coxa + " |" in text
     assert backend.fresh_mode() is Mode.DEACTIVATED

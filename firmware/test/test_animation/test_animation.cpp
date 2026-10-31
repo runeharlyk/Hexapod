@@ -4,6 +4,7 @@
 
 #include <unity.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -325,11 +326,11 @@ void test_resolve_params_defaults_clamps_and_ignores_undeclared() {
 void test_pose_to_angles_clamps_overrides_and_flags_unreachable_feet() {
     Kinematics kin;
     anim::Pose pose;
-    pose.legs[1] = {true, {40.0f, 95.0f, -100.0f}};
+    pose.legs[1] = {true, {60.0f, 95.0f, -100.0f}};
     pose.legs[5] = {false, {0.0f, 0.0f, 120.0f}};
     float angles[18];
     const uint32_t mask = anim::poseToAngles(pose, kin, STANCE, angles);
-    TEST_ASSERT_EQUAL_FLOAT(31.5f, angles[3]);
+    TEST_ASSERT_EQUAL_FLOAT(50.5f, angles[3]);
     TEST_ASSERT_EQUAL_FLOAT(90.0f, angles[4]);
     TEST_ASSERT_EQUAL_FLOAT(-100.0f, angles[5]);
     TEST_ASSERT_TRUE(mask & (1u << 3));
@@ -588,6 +589,167 @@ void test_a_fixed_ride_height_entry_meets_playing_on_the_seam() {
     TEST_ASSERT_TRUE(maxAngleDelta(endOfEntry, firstPlaying) < CONTINUITY_TOL_DEG);
 }
 
+namespace {
+
+// The stance with leg `leg`'s coxa as a joint target at `coxa` degrees, its femur and tibia at stance.
+void turnCoxa(anim::Pose &pose, Kinematics &kin, int leg, float coxa) {
+    float standing[18];
+    anim::poseToAngles(anim::Pose {}, kin, STANCE, standing);
+    pose.legs[leg] = {true, {coxa, standing[leg * 3 + 1], standing[leg * 3 + 2]}};
+}
+
+} // namespace
+
+// Legs 0 and 1 meet with both coxas turned about 38.7 deg toward each other (leg_clearance_fixtures.txt); one leg
+// turned that far alone keeps them apart. The clearance is judged on the angles within travel: commanded at 60 deg the
+// coxas stop at 50.5, which still meets.
+void test_pose_to_angles_flags_two_legs_closer_than_the_clearance() {
+    Kinematics kin;
+    float angles[18];
+    anim::Pose touching;
+    turnCoxa(touching, kin, 0, -40.0f);
+    turnCoxa(touching, kin, 1, 40.0f);
+    TEST_ASSERT_EQUAL_UINT32(anim::LEGS_TOUCH, anim::poseToAngles(touching, kin, STANCE, angles));
+    anim::Pose alone;
+    turnCoxa(alone, kin, 1, 40.0f);
+    TEST_ASSERT_EQUAL_UINT32(0, anim::poseToAngles(alone, kin, STANCE, angles));
+    anim::Pose beyond;
+    turnCoxa(beyond, kin, 0, -60.0f);
+    turnCoxa(beyond, kin, 1, 60.0f);
+    TEST_ASSERT_EQUAL_UINT32((1u << 0) | (1u << 3) | anim::LEGS_TOUCH, anim::poseToAngles(beyond, kin, STANCE, angles));
+}
+
+namespace {
+
+constexpr float SERVO_STEP_DEG = 3.75f; // AnimationRunner's PUPPET_JOINT_STEP_DEG, the servo's top speed a tick
+
+// Drives `pose` through `clear` `calls` times; every call's angles keep the legs apart (keepsLegsApart: no closer than
+// the margin, or than the call before within it) and turn no joint more than a servo step from the call before,
+// starting from `previous`, which ends as the last angles driven.
+void driveClear(anim::ClearPose &clear, const anim::Pose &pose, Kinematics &kin, int calls, float previous[18]) {
+    for (int call = 0; call < calls; ++call) {
+        float angles[18];
+        clear.hold(anim::poseToAngles(pose, kin, STANCE, angles), angles, SERVO_STEP_DEG);
+        TEST_ASSERT_TRUE(keepsLegsApart(previous, angles));
+        for (int j = 0; j < 18; ++j) TEST_ASSERT_FLOAT_WITHIN(SERVO_STEP_DEG + 1e-4f, previous[j], angles[j]);
+        std::copy_n(angles, 18, previous);
+    }
+}
+
+} // namespace
+
+// The player's angles are a pose's own while it keeps the legs apart. Toward legs 0 and 1 turned 45 deg into each other
+// the angles step at the servo's speed only while the legs stay apart, and hold short of the touch.
+void test_a_pose_that_brings_two_legs_together_is_approached_only_while_they_stay_apart() {
+    Kinematics kin;
+    anim::ClearPose clear;
+    float driven[18], angles[18];
+    anim::poseToAngles(anim::Pose {}, kin, STANCE, driven);
+    clear.start(driven);
+    anim::Pose apart;
+    turnCoxa(apart, kin, 0, -30.0f);
+    turnCoxa(apart, kin, 1, 30.0f);
+    anim::poseToAngles(apart, kin, STANCE, driven);
+    clear.hold(anim::poseToAngles(apart, kin, STANCE, angles), angles, SERVO_STEP_DEG);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(driven, angles, 18);
+    anim::Pose touching;
+    turnCoxa(touching, kin, 0, -45.0f);
+    turnCoxa(touching, kin, 1, 45.0f);
+    driveClear(clear, touching, kin, 20, driven);
+    const float held = driven[0];
+    driveClear(clear, touching, kin, 1, driven);
+    TEST_ASSERT_EQUAL_FLOAT(held, driven[0]);
+    TEST_ASSERT_TRUE(held < -30.0f && held > -38.7f);
+}
+
+// Once the pose clears, a pose that ran on while the legs were held is caught up at the servo's speed, not jumped to,
+// and followed as it is from then on.
+void test_a_pose_that_clears_again_is_caught_up_at_the_servos_speed() {
+    Kinematics kin;
+    anim::ClearPose clear;
+    float driven[18], stance[18], angles[18];
+    anim::poseToAngles(anim::Pose {}, kin, STANCE, stance);
+    std::copy_n(stance, 18, driven);
+    clear.start(driven);
+    anim::Pose touching;
+    turnCoxa(touching, kin, 0, -45.0f);
+    turnCoxa(touching, kin, 1, 45.0f);
+    driveClear(clear, touching, kin, 20, driven);
+    driveClear(clear, anim::Pose {}, kin, 20, driven);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(stance, driven, 18);
+    anim::Pose apart;
+    turnCoxa(apart, kin, 0, -30.0f);
+    turnCoxa(apart, kin, 1, 30.0f);
+    clear.hold(anim::poseToAngles(apart, kin, STANCE, angles), angles, SERVO_STEP_DEG);
+    TEST_ASSERT_EQUAL_FLOAT(-30.0f, angles[0]);
+}
+
+// Legs 0 and 1 taken over 45 deg into each other, deep inside the margin, are not stuck there: toward the stance they
+// step apart at the servo's speed, every step bringing them no closer, and reach it.
+void test_legs_taken_over_inside_the_margin_step_apart() {
+    Kinematics kin;
+    anim::ClearPose clear;
+    anim::Pose touching;
+    turnCoxa(touching, kin, 0, -45.0f);
+    turnCoxa(touching, kin, 1, 45.0f);
+    float driven[18], stance[18];
+    anim::poseToAngles(touching, kin, STANCE, driven);
+    TEST_ASSERT_TRUE(legClearance(driven) < 0.0f);
+    clear.start(driven);
+    driveClear(clear, touching, kin, 1, driven);
+    driveClear(clear, anim::Pose {}, kin, 20, driven);
+    anim::poseToAngles(anim::Pose {}, kin, STANCE, stance);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(stance, driven, 18);
+    TEST_ASSERT_FALSE(clear.holding());
+}
+
+// Held just short of the touch, a clear pose whose lockstep path from there would touch is reached joint by joint: leg
+// 0 raises its femur and stretches its tibia over leg 1 before its coxa turns in under it.
+void test_a_clear_pose_past_a_touch_is_reached_joint_by_joint() {
+    Kinematics kin;
+    anim::ClearPose clear;
+    anim::Pose start;
+    turnCoxa(start, kin, 0, -36.5f);
+    turnCoxa(start, kin, 1, 36.5f);
+    float driven[18];
+    anim::poseToAngles(start, kin, STANCE, driven);
+    TEST_ASSERT_TRUE(legsClear(driven));
+    clear.start(driven);
+    anim::Pose touching;
+    turnCoxa(touching, kin, 0, -45.0f);
+    turnCoxa(touching, kin, 1, 45.0f);
+    driveClear(clear, touching, kin, 1, driven);
+    anim::Pose over = start;
+    over.legs[0] = {true, {-50.0f, 90.0f, -20.0f}};
+    float target[18];
+    TEST_ASSERT_EQUAL_UINT32(0, anim::poseToAngles(over, kin, STANCE, target) & anim::LEGS_TOUCH);
+    driveClear(clear, over, kin, 200, driven);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(target, driven, 18);
+    TEST_ASSERT_FALSE(clear.holding());
+}
+
+// The feet that put a body at given angles are those the IK solves back to the same angles, the body tilted, turned and
+// shifted as a clip may leave it.
+void test_feet_at_angles_solve_back_to_the_angles() {
+    Kinematics kin;
+    anim::Pose pose;
+    pose.body[anim::ROLL] = 0.1f;
+    pose.body[anim::PITCH] = -0.05f;
+    pose.body[anim::YAW] = 0.2f;
+    pose.body[anim::X] = 8.0f;
+    pose.body[anim::Z] = -12.0f;
+    turnCoxa(pose, kin, 0, -30.0f);
+    turnCoxa(pose, kin, 1, 30.0f);
+    pose.legs[4] = {false, {10.0f, -5.0f, 20.0f}};
+    float angles[18], solved[18];
+    anim::poseToAngles(pose, kin, STANCE, angles);
+    BodyStateMsg b;
+    anim::bodyState(pose.body, STANCE, b);
+    anim::feetAt(b, angles);
+    kin.inverseKinematics(b, solved);
+    TEST_ASSERT_FLOAT_ARRAY_WITHIN(1e-3f, angles, solved, 18);
+}
+
 void test_status_cadence_is_five_hertz_plus_every_change() {
     TEST_ASSERT_TRUE(anim::statusDue(true, true, 0, 0, 200));
     TEST_ASSERT_FALSE(anim::statusDue(false, true, 1000, 0, 200));
@@ -614,6 +776,12 @@ int main(int, char **) {
     RUN_TEST(test_entry_from_a_joint_leg_ends_where_a_slider_following_clip_starts);
     RUN_TEST(test_a_stop_in_a_joint_phase_exits_exactly_to_stance_on_the_base);
     RUN_TEST(test_a_fixed_ride_height_entry_meets_playing_on_the_seam);
+    RUN_TEST(test_pose_to_angles_flags_two_legs_closer_than_the_clearance);
+    RUN_TEST(test_a_pose_that_brings_two_legs_together_is_approached_only_while_they_stay_apart);
+    RUN_TEST(test_a_pose_that_clears_again_is_caught_up_at_the_servos_speed);
+    RUN_TEST(test_legs_taken_over_inside_the_margin_step_apart);
+    RUN_TEST(test_a_clear_pose_past_a_touch_is_reached_joint_by_joint);
+    RUN_TEST(test_feet_at_angles_solve_back_to_the_angles);
     RUN_TEST(test_status_cadence_is_five_hertz_plus_every_change);
     return UNITY_END();
 }
