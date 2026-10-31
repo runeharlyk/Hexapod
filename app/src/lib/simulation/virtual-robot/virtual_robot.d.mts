@@ -7,7 +7,10 @@ export interface VirtualRobotModule {
   UTF8ToString(pointer: number): string
   _reset(): void
   _setMode(mode: number): void
-  _setGait(gait: number): void
+  _setGait(gait: number): number
+  _gait(): number
+  _setStance(stance: number): void
+  _stance(): number
   _animationBuffer(size: number): number
   _playAnimation(size: number): number
   _stopAnimation(): void

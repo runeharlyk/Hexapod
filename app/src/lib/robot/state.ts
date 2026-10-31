@@ -6,9 +6,11 @@ import {
   GoalStatus,
   ModeData,
   OtaState,
-  OtaStatusData
+  OtaStatusData,
+  StanceData
 } from '$lib/platform_shared/message'
 import { GaitType } from '$lib/gait'
+import { Stance, stanceFromWire } from '$lib/stance'
 import { MotionModes, modeFromWire } from '$lib/motion'
 import { GOAL_END_HOLD_MS, isGoalActive } from '$lib/stores/goal'
 import { dataBroker, type DataBroker } from '$lib/transport/databroker'
@@ -73,12 +75,14 @@ const shownOta = (ota: Readable<Watched<OtaStatusData>>): Readable<OtaStatusData
 export const robotState = (broker: DataBroker) => {
   const modeState = watch(ModeData, broker)
   const gaitState = watch(GaitData, broker)
+  const stanceState = watch(StanceData, broker)
   const goalState = watch(GoalStatus, broker)
   const animationState = watch(AnimationStatus, broker)
   const otaState = watch(OtaStatusData, broker)
   return {
     modeState,
     gaitState,
+    stanceState,
     goalState,
     animationState,
     /** The robot's mode, DEACTIVATED until it reports one, and null for one this app does not know (UNKNOWN_MODE_HINT). */
@@ -92,6 +96,10 @@ export const robotState = (broker: DataBroker) => {
         GaitType.TRI_GATE
       : (Object.values(GaitType)[value.gait] ?? GaitType.TRI_GATE)
     ),
+    /** The robot's stance, the default one, which it boots in, until it reports one. */
+    stance: derived(stanceState, ({ value }): Stance =>
+      value === undefined ? Stance.DEFAULT : (stanceFromWire(value.stance) ?? Stance.DEFAULT)
+    ),
     goalStatus: shownGoal(goalState),
     otaStatus: shownOta(otaState),
     animationStatus: derived(animationState, ({ value, stale }) => (stale ? null : (value ?? null)))
@@ -101,11 +109,13 @@ export const robotState = (broker: DataBroker) => {
 export const {
   modeState,
   gaitState,
+  stanceState,
   goalState,
   animationState,
   mode,
   handheldDriving,
   gait,
+  stance,
   goalStatus,
   otaStatus,
   animationStatus

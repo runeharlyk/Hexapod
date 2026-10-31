@@ -7,12 +7,15 @@ import {
   CorrelationRequest,
   FeaturesDataResponse,
   GaitData,
+  GaitEnum,
   GoalStatus,
   IMUData,
+  Message,
   ModeData,
   ModesEnum,
   OtaStatusData,
   StanceData,
+  StanceEnum,
   StaticSystemInformation,
   TaskState,
   type MessageFns
@@ -311,6 +314,8 @@ export class StockRobot extends FakeRobot {
   held: Held
   /** The files the robot's LittleFS holds, which the file requests read and change. */
   readonly files = new FileTree(STOCK_FILES)
+  // Whether the feet still stand on the crab after the default stance was asked for outside STAND and WALK.
+  private crabFeet = false
 
   constructor(boot: Record<string, unknown>, held: Held = STOCK_HELD) {
     super({
@@ -318,6 +323,56 @@ export class StockRobot extends FakeRobot {
       ...Object.fromEntries(HELD_KEYS.map(key => [key, redacted(key, held[key])]))
     })
     this.held = held
+    this.takeCommands(message => this.take(message))
+  }
+
+  /**
+   * Takes a mode, a gait or a stance as the firmware does (firmware/test/test_stance), as simulation/test_real_backend.py's
+   * fake robot does: the crab, or feet that still stand on it, refuses AUTO and TUNED, answered with the gait in force,
+   * and WALK_NN, the mode in force restated; WALK_NN refuses the crab, answered with the stance in force; the crab asked
+   * for in AUTO or TUNED switches the gait to TRI_GATE first, pushed. The default stance asked for outside STAND and WALK
+   * leaves the feet on the crab until a stand or a walk steps them off, which here is at once. Any other command is
+   * ignored.
+   */
+  take(message: Message) {
+    if (message.mode) this.takeMode(message.mode.mode)
+    else if (message.gait) this.takeGait(message.gait.gait)
+    else if (message.stance) this.takeStance(message.stance.stance)
+  }
+
+  private crab() {
+    return this.value(StanceData).stance === StanceEnum.STANCE_CRAB || this.crabFeet
+  }
+
+  private takeMode(asked: ModesEnum) {
+    const current = this.value(ModeData)
+    const mode = asked === ModesEnum.WALK_NN && this.crab() ? current.mode : asked
+    if (
+      STEPPING_MODES.includes(mode) &&
+      this.value(StanceData).stance === StanceEnum.STANCE_DEFAULT
+    )
+      this.crabFeet = false
+    this.set(ModeData, { ...current, mode })
+  }
+
+  private takeGait(asked: GaitEnum) {
+    const refused = this.crab() && DEFAULT_STANCE_GAITS.includes(asked)
+    this.set(GaitData, { gait: refused ? this.value(GaitData).gait : asked })
+  }
+
+  private takeStance(asked: StanceEnum) {
+    const current = this.value(StanceData).stance
+    const mode = this.value(ModeData).mode
+    if (asked === StanceEnum.STANCE_CRAB && mode === ModesEnum.WALK_NN)
+      return this.set(StanceData, { stance: current })
+    if (asked === current) return
+    if (
+      asked === StanceEnum.STANCE_CRAB &&
+      DEFAULT_STANCE_GAITS.includes(this.value(GaitData).gait)
+    )
+      this.set(GaitData, { gait: GaitEnum.TRI_GATE })
+    this.crabFeet = asked === StanceEnum.STANCE_CRAB || !STEPPING_MODES.includes(mode)
+    this.set(StanceData, { stance: asked })
   }
 
   /** The settings as a read, a snapshot or an update's reply carries them. */
@@ -389,9 +444,15 @@ export class StockRobot extends FakeRobot {
   }
 }
 
+// The gaits the firmware walks on the default stance alone (message_types.h defaultStanceOnly), and the modes in which it
+// steps the feet onto the stance asked for.
+const DEFAULT_STANCE_GAITS = [GaitEnum.AUTO, GaitEnum.TUNED]
+const STEPPING_MODES = [ModesEnum.STAND, ModesEnum.WALK]
+
 /**
  * The fake robot answering every request the settings, status and peripheral pages make with the STOCK values, the
- * state topics holding them from the start. A test overrides any answer with `respond` before or after.
+ * state topics holding them from the start, and taking a mode, a gait or a stance as the firmware does. A test
+ * overrides any answer with `respond` before or after.
  */
 export const stockRobot = () => {
   const robot = new StockRobot({

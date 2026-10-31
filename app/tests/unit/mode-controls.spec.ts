@@ -27,6 +27,10 @@ describe('controlsFor', () => {
     expect(modesShowing('feetDistance')).toEqual([MotionModes.STAND, MotionModes.WALK])
   })
 
+  // The stance is the feet the classic gaits stand and walk on; WALK_NN walks the stance it was trained on.
+  it('shows the stance where the classic gait stands or walks, STAND and WALK', () =>
+    expect(modesShowing('stance')).toEqual([MotionModes.STAND, MotionModes.WALK]))
+
   it('shows the gait, speed, step height and stride in WALK alone', () => {
     expect(modesShowing('gait')).toEqual([MotionModes.WALK])
     expect(modesShowing('walk')).toEqual([MotionModes.WALK])

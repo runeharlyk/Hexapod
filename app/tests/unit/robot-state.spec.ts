@@ -17,10 +17,13 @@ import {
   ModeData,
   ModesEnum,
   OtaState,
-  OtaStatusData
+  OtaStatusData,
+  StanceData,
+  StanceEnum
 } from '$lib/platform_shared/message'
 import { MotionModes } from '$lib/motion'
 import { GaitType } from '$lib/gait'
+import { Stance } from '$lib/stance'
 import { FakeRobot, fakeLink } from '../fake-robot/transport'
 
 const settle = () => vi.advanceTimersByTimeAsync(0)
@@ -107,6 +110,19 @@ describe('the robot state', () => {
     await link.connect()
     await settle()
     expect(get(state.gait)).toBe(GaitType.WAVE)
+  })
+
+  it('shows the stance, the default one until the robot reports one, from the snapshot and every push', async () => {
+    follow(state.stance)
+    expect(get(state.stance)).toBe(Stance.DEFAULT)
+    robot.set(StanceData, { stance: StanceEnum.STANCE_CRAB })
+    await link.connect()
+    await settle()
+    expect(get(state.stance)).toBe(Stance.CRAB)
+
+    robot.set(StanceData, { stance: StanceEnum.STANCE_DEFAULT })
+    await settle()
+    expect(get(state.stance)).toBe(Stance.DEFAULT)
   })
 
   it('shows a running goal, and an ended one for a while after it ended', async () => {

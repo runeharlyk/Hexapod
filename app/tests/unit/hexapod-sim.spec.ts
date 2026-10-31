@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 import loadMujoco, { type MainModule } from '@mujoco/mujoco'
+import { GaitEnum, StanceEnum } from '../../src/lib/platform_shared/message'
 import { HexapodSim } from '../../src/lib/simulation/hexapod-sim'
 import {
   DMP_ANGLE_SIGNS,
@@ -113,6 +114,27 @@ describe('the simulated hexapod', () => {
     expect(moved.fallen).toBe(false)
     expect(moved.x).toBeGreaterThan(0.1)
     expect(Math.abs(moved.y)).toBeLessThan(moved.x / 4)
+  })
+
+  // The simulation view shows the gait and the stance its robot reports, as the controller shows the robot's.
+  it('steps onto the crab, reporting the switch from AUTO to TRI_GATE, and refuses AUTO there', () => {
+    const sim = new HexapodSim(mujoco, sceneXml, robot)
+    robot.setMode(STAND)
+    expect(robot.setGait(GaitEnum.AUTO)).toBe(true)
+    run(sim, 1)
+    expect([robot.stance(), robot.gait()]).toEqual([StanceEnum.STANCE_DEFAULT, GaitEnum.AUTO])
+
+    robot.setStance(StanceEnum.STANCE_CRAB)
+    run(sim, 2)
+    expect([robot.stance(), robot.gait()]).toEqual([StanceEnum.STANCE_CRAB, GaitEnum.TRI_GATE])
+    const angles = robot.servoAngles()
+    for (const leg of [0, 2, 3, 5]) expect(Math.abs(angles[leg * 3])).toBeCloseTo(45, 0)
+
+    expect(robot.setGait(GaitEnum.AUTO)).toBe(false)
+    run(sim, 0.1)
+    expect(robot.gait()).toBe(GaitEnum.TRI_GATE)
+    expect(sim.hasFallen()).toBe(false)
+    sim.dispose()
   })
 
   it('turns clockwise for the right stick pushed right', () => {

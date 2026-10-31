@@ -7,16 +7,19 @@
     drive,
     driveGait,
     driveMode,
+    driveStance,
     drivenGait,
     drivenGoal,
     drivenMode,
+    drivenStance,
     drivesSimulation
   } from '$lib/stores/drive'
   import { isLinked } from '$lib/stores/link'
   import { goalLine } from '$lib/stores/goal'
   import type { ControllerInput, vector } from '$lib/types/models'
   import { MotionModes, UNKNOWN_MODE_HINT, servoCount } from '$lib/motion'
-  import { GaitType, strideApplies } from '$lib/gait'
+  import { strideApplies } from '$lib/gait'
+  import { Stance, gaitsOffered, modesOffered } from '$lib/stance'
   import { notifications } from '$lib/components/toasts/notifications'
   import { gamepadAxes, gamepadButtons, hasGamepad } from '$lib/stores/gamepad'
   import { gamepadSticks, shapeStick } from '$lib/utilities/stick'
@@ -178,6 +181,14 @@
 
   // Each mode shows only the controls it reads, beside the mode selector (lib/mode-controls.ts).
   const controls = $derived(controlsFor($drivenMode))
+
+  // A selector shows the robot's value, never the request: the robot answers a request it refuses with the value in
+  // force, which may be the one shown already, so the selector is put back on it at once and moves when the robot pushes.
+  function choose<T>(event: Event, request: (value: T) => void, shown: () => T | null) {
+    const select = event.target as HTMLSelectElement
+    request(select.value as T)
+    select.value = String(shown() ?? '')
+  }
 </script>
 
 <div class="absolute top-0 left-0 h-full w-full">
@@ -228,16 +239,12 @@
         class="select select-primary select-sm lg:select-md w-auto min-w-0"
         aria-label="Mode"
         value={$drivenMode ?? ''}
-        onchange={e => {
-          const select = e.target as HTMLSelectElement
-          driveMode(select.value as MotionModes)
-          select.value = $drivenMode ?? ''
-        }}
+        onchange={e => choose(e, driveMode, () => $drivenMode)}
       >
         {#if $drivenMode === null}
           <option value="" disabled>Unknown mode</option>
         {/if}
-        {#each Object.values(MotionModes) as modeValue}
+        {#each modesOffered($drivenStance) as modeValue}
           <option value={modeValue}>{capitalize(modeValue)}</option>
         {/each}
       </select>
@@ -271,16 +278,28 @@
       <span class="text-warning max-w-sm text-xs" role="status">{UNKNOWN_MODE_HINT}</span>
     {/if}
 
-    {#if controls.gait || controls.walk}
+    {#if controls.stance || controls.gait || controls.walk}
       <div class="flex items-end gap-3">
+        {#if controls.stance}
+          <select
+            class="select select-primary select-sm lg:select-md w-auto max-w-1/3"
+            aria-label="Stance"
+            value={$drivenStance}
+            onchange={e => choose(e, driveStance, () => $drivenStance)}
+          >
+            {#each Object.values(Stance) as stanceValue}
+              <option value={stanceValue}>{capitalize(stanceValue)}</option>
+            {/each}
+          </select>
+        {/if}
         {#if controls.gait}
           <select
             class="select select-primary select-sm lg:select-md w-auto max-w-1/2"
             aria-label="Gait"
             value={$drivenGait}
-            onchange={e => driveGait((e.target as HTMLSelectElement).value as GaitType)}
+            onchange={e => choose(e, driveGait, () => $drivenGait)}
           >
-            {#each Object.values(GaitType) as gaitValue}
+            {#each gaitsOffered($drivenStance) as gaitValue}
               <option value={gaitValue}>{capitalize(gaitValue.toString())}</option>
             {/each}
           </select>

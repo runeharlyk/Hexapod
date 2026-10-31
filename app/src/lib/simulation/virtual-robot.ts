@@ -22,7 +22,14 @@ export type Command = [number, number, number, number, number, number, number, n
 
 export interface VirtualRobot {
   setMode(mode: number): void
-  setGait(gait: number): void
+  /** A gait by its GaitEnum value; false when the robot refuses it, as AUTO and TUNED in the crab. */
+  setGait(gait: number): boolean
+  /** The gait the robot reports, by its GaitEnum value: the last one it took. */
+  gait(): number
+  /** A stance by its StanceEnum value, which the robot takes on its next tick, or refuses. */
+  setStance(stance: number): void
+  /** The stance in force, by its StanceEnum value. */
+  stance(): number
   playAnimation(name: string, values: ReadonlyMap<ParamId, number>): void
   stopAnimation(): void
   animationStatus(): AnimationStatus
@@ -52,7 +59,10 @@ export async function loadVirtualRobot(): Promise<VirtualRobot> {
   const servoAngles = () => m.HEAPF32.slice(m._servoAngles() / 4, m._servoAngles() / 4 + 18)
   return {
     setMode: mode => m._setMode(mode),
-    setGait: gait => m._setGait(gait),
+    setGait: gait => m._setGait(gait) !== 0,
+    gait: () => m._gait(),
+    setStance: stance => m._setStance(stance),
+    stance: () => m._stance(),
     playAnimation: (name, values) => {
       const bytes = AnimationPlay.encode({
         name,

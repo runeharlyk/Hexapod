@@ -50,6 +50,14 @@ API bool setGait(int gait) {
     return instance().setGait(static_cast<GaitType>(gait));
 }
 
+// The gait the robot reports on its gait topic, by its GaitEnum value: the last one taken, as main.cpp's snapshot reads
+// it, AUTO and not the gait AUTO walks.
+API int gait() {
+    GaitMsg gait {GaitType::TRI_GATE};
+    EventBus<GaitMsg>::peek(gait);
+    return static_cast<int>(gait.gait);
+}
+
 // A stance by its StanceEnum value, as main.cpp's handler takes it: one out of range is ignored.
 API void setStance(int stance) {
     if (stance < 0 || stance > static_cast<int>(Stance::CRAB)) return;

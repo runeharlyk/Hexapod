@@ -15,7 +15,8 @@
     goalState,
     mode,
     modeState,
-    reportFailure
+    reportFailure,
+    stanceState
   } from '$lib/robot/state'
   import { notifications } from '$lib/components/toasts/notifications'
   import { dataBroker } from '$lib/transport/databroker'
@@ -75,7 +76,9 @@
     // The robot's state is followed for as long as the app runs, so every page finds it current. A firmware from before
     // the snapshots acks no subscribe, and says so here rather than leaving every watch failed in silence.
     stopFollowingState = [
-      ...[gaitState, goalState, animationState].map(state => state.subscribe(() => {})),
+      ...[gaitState, stanceState, goalState, animationState].map(state =>
+        state.subscribe(() => {})
+      ),
       reportFailure(modeState, 'live state', message =>
         notifications.error(`Robot state: ${message}`, 10000)
       )

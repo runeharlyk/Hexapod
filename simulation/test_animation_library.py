@@ -5,7 +5,7 @@ import pytest
 
 from src.robot import animation as an
 from src.robot.animation_files import load_json
-from src.robot.firmware_gait import Kinematics
+from src.robot.firmware_gait import STANCE_CRAB, Kinematics, stance_feet
 
 LIBRARY = Path(__file__).resolve().parents[1] / "animations"
 FILES = sorted(LIBRARY.glob("*.json"))
@@ -88,3 +88,10 @@ def test_pack_script_writes_a_decodable_pb_per_animation(tmp_path):
 @pytest.mark.parametrize("path", FILES, ids=[p.stem for p in FILES])
 def test_bundled_animation_keeps_every_leg_pair_clear(path):
     assert an.clearance_error(load_json(path), KIN) is None
+
+
+# The robot plays an animation on the feet of the stance in force (docs/animation.md), so a clip played from the crab
+# moves its legs from the crab's feet, at the feet distance of 0 as above.
+@pytest.mark.parametrize("path", FILES, ids=[p.stem for p in FILES])
+def test_bundled_animation_keeps_every_leg_pair_clear_on_the_crabs_feet(path):
+    assert an.clearance_error(load_json(path), KIN, stance_feet(STANCE_CRAB, 1.0)) is None

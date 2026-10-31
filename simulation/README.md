@@ -243,6 +243,8 @@ The command is a body-frame velocity vector `[vx, vy]` (m/s) + yaw rate (rad/s).
 - `reward_alignment.py` / `reward_resolution.py` - whether the training reward ranks gaits like the benchmark, globally and near the optimum.
 - `gait_sensitivity.py` - one-parameter-at-a-time sensitivity of a searched gait.
 - `arc_stance_test.py` - arc stance versus the straight chord during turns.
+- `compare_stances.py` - the default stance against the crab on every classic timing, on the firmware's own code: in MuJoCo, sideways and forward at a third, two thirds and all of full speed, the speed, the body's roll and pitch and the centre of mass's sway across the path, the servos' mechanical power and cost of transport, and the heading's drift per metre; and, kinematically, the static stability margin (centre of mass to the edge of the feet on the floor) at each stance's walkable extremes, BI left out as it stands on two feet for part of its cycle (`uv run --no-sync python compare_stances.py`, 4 s on 8 workers).
+  `test_compare_stances.py` holds the crab's margin at its extremes to at least 25 mm.
 - `check_self_level.py` - whether the firmware's self-levelling term reduces body tilt.
 - `train_jump.py` / `eval_jump.py` - sim-only jump policies (vertical hop, directional charge).
 - `sim_gui.py` - one window driving walk and jump policies live, optionally from the handheld controller.

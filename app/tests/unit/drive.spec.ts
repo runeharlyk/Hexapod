@@ -6,18 +6,20 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { get } from 'svelte/store'
 import { dataBroker } from '../../src/lib/transport/databroker'
 import { input, outControllerData } from '../../src/lib/stores'
-import { gait, goalStatus, mode, modeState } from '../../src/lib/robot/state'
+import { gait, goalStatus, mode, modeState, stance } from '../../src/lib/robot/state'
 import { FakeRobot, fakeLink } from '../fake-robot/transport'
 import {
   drive,
   driveGait,
   driveMode,
+  driveStance,
   playDrivenAnimation,
   stopDrivenAnimation,
   driveSimulation,
   drivenGait,
   drivenGoal,
   drivenMode,
+  drivenStance,
   simulation
 } from '../../src/lib/stores/drive'
 import {
@@ -27,11 +29,14 @@ import {
   GoalState,
   GoalStatus,
   ModeData,
-  ModesEnum
+  ModesEnum,
+  StanceData,
+  StanceEnum
 } from '../../src/lib/platform_shared/message'
 import { commandOf } from '../../src/lib/controller-input'
 import { GaitType } from '../../src/lib/gait'
 import { MotionModes } from '../../src/lib/motion'
+import { Stance } from '../../src/lib/stance'
 import type { Command } from '../../src/lib/simulation/virtual-robot'
 
 const CENTRED: Command = [0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -50,7 +55,7 @@ describe('the controls', () => {
   beforeAll(async () => {
     dataBroker.addTransport(link)
     await link.connect()
-    following = [mode, gait, goalStatus, modeState].map(store => store.subscribe(() => {}))
+    following = [mode, gait, stance, goalStatus, modeState].map(store => store.subscribe(() => {}))
   })
 
   afterAll(() => following.forEach(stop => stop()))
@@ -60,6 +65,8 @@ describe('the controls', () => {
     outControllerData.set(CENTRED)
     robot.set(ModeData, { mode: ModesEnum.STAND, handheld: false })
     robot.set(GaitData, { gait: GaitEnum.TRI_GATE })
+    robot.set(StanceData, { stance: StanceEnum.STANCE_DEFAULT })
+    simulation.stance.set(Stance.DEFAULT)
     await settle()
   })
 
@@ -82,6 +89,27 @@ describe('the controls', () => {
     expect(get(simulation.mode)).toBe(MotionModes.WALK)
     expect(get(simulation.gait)).toBe(GaitType.WAVE)
     expect([get(drivenMode), get(drivenGait)]).toEqual([MotionModes.WALK, GaitType.WAVE])
+  })
+
+  it("keep the simulation's stance off the robot", () => {
+    driveSimulation(true)
+    driveStance(Stance.CRAB)
+    expect(emit).not.toHaveBeenCalled()
+    expect(get(stance)).toBe(Stance.DEFAULT)
+    expect(get(simulation.stance)).toBe(Stance.CRAB)
+    expect(get(drivenStance)).toBe(Stance.CRAB)
+  })
+
+  // The stance shown is the robot's: the request changes it only once the robot pushes the change.
+  it('send the robot the stance asked for, and show the one it reports', async () => {
+    driveStance(Stance.CRAB)
+    expect(emit).toHaveBeenCalledExactlyOnceWith(StanceData, { stance: StanceEnum.STANCE_CRAB })
+    expect(get(drivenStance)).toBe(Stance.DEFAULT)
+
+    robot.set(StanceData, { stance: StanceEnum.STANCE_CRAB })
+    await settle()
+    expect(get(drivenStance)).toBe(Stance.CRAB)
+    expect(get(simulation.stance)).toBe(Stance.DEFAULT)
   })
 
   it('route animation playback and stop to the simulator without sending robot commands', () => {
