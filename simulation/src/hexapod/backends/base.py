@@ -36,6 +36,14 @@ class Gait(IntEnum):
     AUTO = 5
 
 
+class Stance(IntEnum):
+    """firmware Stance, by wire value (platform_shared/message.proto StanceEnum): the feet the classic gaits stand and
+    walk on. CRAB points every leg straight out to its side; the robot refuses AUTO, TUNED and WALK_NN in it."""
+
+    DEFAULT = 0
+    CRAB = 1
+
+
 class GoalKind(IntEnum):
     """firmware GoalKind, by wire value (platform_shared/message.proto)."""
 
@@ -154,6 +162,7 @@ class RobotState:
     roll: float | None = None  # degrees, left side up (REP-103), None without an IMU
     odometry: Odometry | None = None  # None from a robot that takes no goals
     handheld: bool = False  # the ESP-NOW handheld drives: the robot drops this client's sticks; never in the simulation
+    stance: Stance | None = None  # None until the robot has reported one, and from a firmware without the stance
 
 
 class RobotError(Exception):
@@ -177,6 +186,8 @@ class Backend(Protocol):
     def close(self) -> None: ...
     def set_mode(self, mode: Mode) -> None: ...  # returns once the robot reports the mode
     def set_gait(self, gait: Gait) -> None: ...
+    # Returns once the robot reports the stance; the feet then step to it, which takes STANCE_STEP_S after a stop.
+    def set_stance(self, stance: Stance) -> None: ...
     def set_height(self, height: float) -> None: ...  # the firmware's height input: -1 to 1, positive is LOWER
     def set_velocity(self, velocity: Velocity) -> Velocity: ...  # returns what was commanded, after clamping
     def max_velocity(self) -> Velocity: ...

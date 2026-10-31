@@ -8,6 +8,7 @@ import {
   Message,
   ModeData,
   OtaStatusData,
+  StanceData,
   SubscribeNotification,
   type MessageFns
 } from '../../src/lib/platform_shared/message'
@@ -61,6 +62,7 @@ const BOOT_VALUES: Record<string, unknown> = {
   mode: ModeData.create(),
   angles: AnglesData.create(),
   gait: GaitData.create(),
+  stance: StanceData.create(),
   wifiStatus: WifiStatus.create(),
   apStatus: APStatus.create(),
   otaStatus: OtaStatusData.create(),

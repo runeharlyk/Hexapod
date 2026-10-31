@@ -104,7 +104,7 @@ Template parameters set the queue depth, the subscriber limit and the batch size
 - `subscribe` returns an RAII `Handle` that unsubscribes when destroyed; an owner stores it in a member, and `consume(fn)` parks it in a function-local static for a subscription that lives as long as the program.
 - `publish(msg, handle)` skips the subscriber the handle names, so a component does not hear its own echo.
 
-The internal message structs (`CommandMsg`, `ModeMsg`, `GaitMsg`, `ServoAnglesMsg`, `ServoSignalMsg`, `ServoStateMsg`, `IMUAnglesMsg`, `PoseMsg`, `AnimationCommandMsg`) live in `include/message_types.h` and exist in RAM only.
+The internal message structs (`CommandMsg`, `ModeMsg`, `GaitMsg`, `StanceMsg`, `ServoAnglesMsg`, `ServoSignalMsg`, `ServoStateMsg`, `IMUAnglesMsg`, `PoseMsg`, `AnimationCommandMsg`) live in `include/message_types.h` and exist in RAM only.
 Status messages that go to the app unchanged (`OtaStatusData`, `WifiStatus`, `APStatus`, `AnimationStatus`, `GoalStatus`) travel on the bus as their generated protobuf structs.
 Callbacks run on the type's worker task, so a subscriber that touches state shared with the control task has to synchronise.
 `MotionService`'s subscribers write no motion state: they post into its inbox (`include/motion_inbox.h`), which the control task takes at the start of its next tick.
@@ -114,7 +114,7 @@ Callbacks run on the type's worker task, so a subscriber that touches state shar
 `MotionService` (`include/motion.h`) subscribes to `CommandMsg`, `ModeMsg` and `GaitMsg`, and `Hexapod::planMotion()` calls its `updateMotion()` once per control tick.
 Only the control task changes the motion.
 The subscribers and the goal and odometry requests post into `MotionInbox` under its one mutex, and `updateMotion()` starts by taking everything posted since the last tick, so nothing changes in the middle of one.
-It applies the modes in the order they arrived, then the newest gait, then the newest command, then the goal's mail, and in IDLE the joints and the centring (below).
+It applies the modes in the order they arrived, then the newest gait, then the newest stance, then the newest command, then the goal's mail, and in IDLE the joints and the centring (below).
 Commands and gaits coalesce, since each is a whole snapshot; modes queue, eight deep and dropping the oldest when full, since a borrow and a hand-back are decided against the mode they find.
 What a goal depends on is decided on arrival, under the mutex: its takeover by a stick off centre, the end a mode or a gait implies, and the refusal of an odometry reset while a goal drives.
 So is the handheld's priority over the other sources (below).
@@ -162,7 +162,7 @@ A robot on older firmware reports 2 when it is in `POSE`: the app shows that as 
   The generated `gait_envelope.h` holds, per `Stance` (`DEFAULT`, `CRAB`), the walkable postures (`WALKABLE`) and the gait-independent geometry (`STROKE_MAX` and swing and stance kappa samples per axis and posture), and the constants the runtime needs (`STAND_FRAC` per gait, `SERVO_RAD_S`, `CADENCE_MAX`, `TRAVEL_MARGIN_DEG`, `CLEARANCE_MM`, `DEFAULT_SPEED_FRACTION`); the firmware computes the top cadences at runtime, reading kappa as the running maximum of the samples.
   Every stroke in it keeps the joints within travel less the margin and every leg pair `LEG_CLEARANCE_MM` apart over every classic timing's cycle, and a posture is walkable where its stance strides 20 mm along the axis it walks: forward in the default stance, sideways in the crab, whose feet `stanceFeet` puts straight out to the side of each coxa mount.
   `MotionService` slews a stride change at 1.0 per second while walking and takes it at once at rest; a stride change is not a posture change and does not pause the walk.
-  The posture sliders (`s1` lift, `h` body height, `fd` feet distance) are first clamped along a ray from neutral to the stance's walkable region (`clampPosture`); every caller passes the default stance until the stance is state.
+  The posture sliders (`s1` lift, `h` body height, `fd` feet distance) are first clamped along a ray from neutral to the walkable region of the stance in force (`clampPosture`).
   A posture change while walking pauses the walk and settles the posture in stages: the lift comes down, the stance and body height move at the lower height, and the lift goes back up, after which the walk resumes.
   A walk entered from a stand at rest in the same posture starts at once; a rising lift needs no settling, a falling one does.
   A classic walk ignores the tilt stick and eases the stand's shift and tilt out, since the envelope was measured on a level, centred body.
@@ -175,6 +175,21 @@ A robot on older firmware reports 2 when it is in `POSE`: the app shows that as 
   Its `h` is clamped to the classic gaits' walkable region (`clampPosture`) and held for the mode after it, since the policy sets the ride height itself.
   `PolicyRunner::setCommand` turns the sticks into the policy's trained command (forward, right, counter-clockwise) with the walk's signs, so the policy's own input is unchanged by the stick mapping.
 - `ANIMATE` plays a clip or a streamed puppeteer pose through `AnimationRunner`.
+
+The stance (`Stance`: `DEFAULT`, or `CRAB`, every leg straight out to its side) is motion state, the `stance` topic (`StanceData`, `Message` 161).
+A client asks for it (`MotionService::requestStance`) and the control task takes it at its next tick, after the modes and the gait, and publishes it on `StanceBus` once per change, which the bridge pushes and the snapshot peeks; nothing else changes it, so a command, a handheld frame or a goal walks the stance in force.
+It boots `DEFAULT` and is not persisted, as the gait is not.
+The feet step to it only where the gait steps them: a stand takes it once the feet are still, a walk stops for it and settles into it as into a posture, and `IDLE`, `DEACTIVATED` and `ANIMATE` leave the feet on the stance they stand on until a stand or a walk takes it.
+A stance other than the one selected ends a goal on arrival, as a gait does.
+`TUNED`, `AUTO` and `WALK_NN` walk the default stance alone: while the crab is in force, or the feet still stand on it or step from it, a gait request for `TUNED` or `AUTO` is refused before it is published, a goal in `AUTO` is answered 422, and `WALK_NN` is refused by the mode arbiter and the mode restated.
+A goal is judged in the stance selected and posted under the inbox's lock with that stance: the post refuses a gait the crab does not walk (422) and a style judged in a stance another client changed meanwhile (409), and the control task refuses such a goal again as it takes it.
+A stance the inbox hands over is noted there at once, so a gait or a goal judged before the control task takes it finds it.
+The crab asked for in `AUTO` or `TUNED` first selects `TRI_GATE`, published as a gait, which a `TUNED` walk stops for; asked for in `WALK_NN`, or in an `ANIMATE` that hands back to it, it is refused.
+The crab is refused as well where a corner coxa's own calibration cannot turn it, on the side the crab points it, as far as the crab walks it: `CRAB_COXA_MAX_DEG`, the coxa's travel less the envelope's margin (48 deg), which the crab's forward and turning strokes reach from its 45 deg rest.
+A calibration that arrives while the crab is in force and leaves a corner coxa that short steps the feet back to the default stance, posted to the inbox as a client's `DEFAULT` is.
+Applying a calibration logs, once, each coxa side it leaves less than `JOINT_LIMIT_DEG` with its servo; the envelope's longest strides clip on that side, a known limit until the bench measures the servo.
+The control task answers each refusal with the value in force on its topic, the gait, the stance or the mode, so a client that showed the request comes back to the robot's state; it is a reply to that request, never a timer push.
+An animation plays on the feet of the stance in force, so one played from the crab moves its legs from the crab's feet and its exit brings them back there; on the default stance's feet it would slide the corner feet 83.5 mm on entry.
 
 Each tick in a stepping mode follows the same order: the body state eases toward its target, the gait command ramps toward the commanded one (`approachGaitCommand`), `GaitController::step` advances the phase and writes the six foot targets (Bezier swing, sinusoidal stance), and `Kinematics::inverseKinematics` turns body pose and feet into 18 joint angles.
 The IMU's roll and pitch, turned into the body frame (`include/imu_frame.h`), are added to the commanded tilt (self-levelling), clamped to the stick's own tilt range.
@@ -395,7 +410,7 @@ A bridge holds its EventBus subscription only while some client on some transpor
 `emitAll` sends a message on every transport.
 
 `platform_shared/topics.json` names each topic's kind, state or stream, and `include/communication/topics.h` and the app's `src/lib/transport/topics.ts` are checked against it (`test/test_topic_snapshot/`, `app/tests/unit/topics.spec.ts`).
-`main.cpp`'s `TOPICS` gives each state topic a snapshot function that reads its owner, as the replies do: `MotionInbox` for the mode and the goal, `EventBus::peek` for the gait, the joint angles, the OTA and the animation status, and the WiFi and AP services for theirs.
+`main.cpp`'s `TOPICS` gives each state topic a snapshot function that reads its owner, as the replies do: `MotionInbox` for the mode and the goal, `EventBus::peek` for the gait, the stance, the joint angles, the OTA and the animation status, and the WiFi and AP services for theirs.
 The six settings groups are state topics whose snapshot and push read the group under its service's lock and redact the passwords and the merge fingerprint (`include/settings/settings_topics.h`); each copy lives in PSRAM, since internal RAM is the binding limit, and a push is sent after the update has released the service's lock.
 The joint angles are a state topic so that a client subscribing while the robot idles gets the angles its servos hold, which IDLE publishes only on change; before the motion first publishes any, the snapshot is an empty `AnglesData`, which the app reads as no pose.
 A status nobody has published yet is its idle value, so every state topic has a value from boot; a `static_assert` holds `TOPICS` to `TOPIC_KINDS` in `topics.h`, which `test/test_topic_snapshot/` holds to the shared table.

@@ -34,8 +34,17 @@ struct GaitMsg {
 };
 
 // The feet the classic gaits stand and walk on: DEFAULT splays the legs about the body, CRAB points every leg straight
-// out to its side (gait_speed.h stanceFeet), each with its own walkable envelope.
+// out to its side (gait_speed.h stanceFeet), each with its own walkable envelope. Its value is its StanceEnum value on
+// the wire.
 enum class Stance { DEFAULT, CRAB };
+
+struct StanceMsg {
+    Stance stance;
+};
+
+// TUNED and AUTO walk the default stance alone: TUNED was searched in it, and AUTO chooses from its envelope alone.
+// WALK_NN does too, which the mode arbiter refuses in the crab (animation/mode_arbiter.h).
+inline bool defaultStanceOnly(GaitType gait) { return gait == GaitType::TUNED || gait == GaitType::AUTO; }
 
 struct ServoAnglesMsg {
     float angles[NUM_SERVO];

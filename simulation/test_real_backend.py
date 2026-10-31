@@ -13,7 +13,7 @@ import serial
 from websockets.asyncio.server import serve
 
 import robot_animate
-from src.hexapod import Gait, Mode, Robot, RobotDisconnected, RobotError, RobotTimeout, Velocity, speed_model
+from src.hexapod import Gait, Mode, Robot, RobotDisconnected, RobotError, RobotTimeout, Stance, Velocity, speed_model
 from src.hexapod.backends import real, serial_link
 from src.hexapod.backends.base import GoalState, Odometry
 from src.hexapod.backends.real import RealBackend
@@ -136,6 +136,10 @@ class SerialSide:
         self.hang_up()
 
 
+# The gaits the firmware walks on the default stance alone (message_types.h defaultStanceOnly).
+DEFAULT_STANCE_ONLY = (pb.AUTO, pb.TUNED)
+
+
 class FakeRobot:
     """The firmware's side of /api/ws and of the native USB serial link: applies a mode request at once and pushes the
     mode applied, and echoes gait requests, to subscribers as its EventBus bridges do, answers pings in order and the
@@ -151,11 +155,19 @@ class FakeRobot:
     exactly, and is zeroed RESET_LAG_S after a reset's reply, as the control task's next tick does it. Without, it
     answers every goal and odometry request 400, as a firmware from before goals does.
 
-    It boots DEACTIVATED in TRI_GATE and answers a subscribe as the firmware does (firmware/test/test_topic_snapshot):
-    a state topic with its current value and then the subscribe echoed as the ack, anything else with the ack alone; the
-    goal status is a topic only with `goals`. With `snapshots=False` it answers no subscribe, as a firmware from before
-    the snapshots. It loses the next `lost_mode_snapshots` snapshots of its mode, as a full BLE queue drops them, and
-    the next `lost_mode_acks` acks of a subscribe to it.
+    It takes a stance and pushes it on a change, and answers the crab in WALK_NN with the stance in force, as the
+    firmware refuses it; in the crab it answers AUTO and TUNED with the gait in force, and the crab asked for in AUTO or
+    TUNED switches the gait to TRI_GATE first, pushed, as the firmware does. Its feet stay on the crab after the default
+    stance asked for outside STAND and WALK, which keeps AUTO, TUNED and WALK_NN refused (WALK_NN restated) until a
+    stand or a walk steps them off. With `override_gait` it answers a gait request with that gait, as another client's
+    request arriving right after it would leave it. `gait_echo_delays_s` delays the echo of each next gait request by
+    its next entry, as a busy link or control task delays it.
+
+    It boots DEACTIVATED in TRI_GATE and the default stance and answers a subscribe as the firmware does
+    (firmware/test/test_topic_snapshot): a state topic with its current value and then the subscribe echoed as the ack,
+    anything else with the ack alone; the goal status is a topic only with `goals`. With `snapshots=False` it answers no
+    subscribe, as a firmware from before the snapshots. It loses the next `lost_mode_snapshots` snapshots of its mode,
+    as a full BLE queue drops them, and the next `lost_mode_acks` acks of a subscribe to it.
 
     It serves the servo settings, SERVO_SETTINGS, as a state topic of its own, and answers no request for them; with
     `settings_topics=False` it acks a subscribe to them without a value, as a firmware from before the settings topics.
@@ -169,6 +181,10 @@ class FakeRobot:
         self.lost_mode_snapshots = 0
         self.lost_mode_acks = 0
         self.gait = pb.TRI_GATE
+        self.stance = pb.STANCE_DEFAULT
+        self.crab_feet = False
+        self.override_gait = None
+        self.gait_echo_delays_s = []
         self.handheld = False
         self.drop_final_push = False
         self.goal_count, self.goal_started = 0, None
@@ -226,12 +242,20 @@ class FakeRobot:
                     await asyncio.sleep(max(0.0, self._booted_at - time.monotonic()) + HELD_GAP_S)
                 message = pb.Message.FromString(frame)
                 self.received.append((time.monotonic(), message))
+                delay = self.gait_echo_delays_s.pop(0) if message.HasField("gait") and self.gait_echo_delays_s else 0
                 for reply in self._replies(message):
-                    if not self.silent:
+                    if self.silent:
+                        continue
+                    if delay:
+                        self._loop.call_later(delay, self._loop.create_task, link.send(reply.SerializeToString()))
+                    else:
                         await link.send(reply.SerializeToString())
         finally:
             streamer.cancel()
             self.connections -= 1
+
+    def _crab(self):
+        return self.stance == pb.STANCE_CRAB or self.crab_feet
 
     def _replies(self, message):
         kind = message.WhichOneof("message")
@@ -247,6 +271,8 @@ class FakeRobot:
                     yield pb.Message(mode=pb.ModeData(mode=self.mode, handheld=self.handheld))
             elif tag == _tag("gait"):
                 yield pb.Message(gait=pb.GaitData(gait=self.gait))
+            elif tag == _tag("stance"):
+                yield pb.Message(stance=pb.StanceData(stance=self.stance))
             elif tag == _tag("goal_status") and self.goals:
                 yield pb.Message(goal_status=self.goal_status())
             elif tag == _tag("servo_settings") and self.settings_topics:
@@ -262,13 +288,29 @@ class FakeRobot:
         elif kind == "pingmsg":
             yield pb.Message(pongmsg=pb.PongMsg())
         elif kind == "mode" and self.obey:
-            self.mode = message.mode.mode
+            if not (message.mode.mode == pb.WALK_NN and self._crab()):
+                self.mode = message.mode.mode
+            if self.mode in (pb.STAND, pb.WALK) and self.stance == pb.STANCE_DEFAULT:
+                self.crab_feet = False
             if _tag("mode") in self.subscribed:
                 yield pb.Message(mode=pb.ModeData(mode=self.mode))
         elif kind == "gait":
-            self.gait = message.gait.gait
+            if not (self._crab() and message.gait.gait in DEFAULT_STANCE_ONLY):
+                self.gait = message.gait.gait if self.override_gait is None else self.override_gait
             if _tag("gait") in self.subscribed:
                 yield pb.Message(gait=pb.GaitData(gait=self.gait))
+        elif kind == "stance":
+            refused = message.stance.stance == pb.STANCE_CRAB and self.mode == pb.WALK_NN
+            changed = not refused and message.stance.stance != self.stance
+            if changed:
+                if message.stance.stance == pb.STANCE_CRAB and self.gait in DEFAULT_STANCE_ONLY:
+                    self.gait = pb.TRI_GATE
+                    if _tag("gait") in self.subscribed:
+                        yield pb.Message(gait=pb.GaitData(gait=self.gait))
+                self.stance = message.stance.stance
+                self.crab_feet = self.stance == pb.STANCE_CRAB or self.mode not in (pb.STAND, pb.WALK)
+            if (changed or refused) and _tag("stance") in self.subscribed:
+                yield pb.Message(stance=pb.StanceData(stance=self.stance))
         elif kind == "correlation_request":
             request = message.correlation_request
             response = pb.CorrelationResponse(correlation_id=request.correlation_id, status_code=self.status)
@@ -463,7 +505,7 @@ def test_a_firmware_without_snapshots_leaves_the_mode_unknown_and_takes_no_goals
             fake.push_mode(pb.STAND)
             _eventually(lambda: robot.state().mode is Mode.STAND)
             robot.sleep(3 * real.REFRESH_S)
-            assert fake.kinds().count("sub_notif") == 4
+            assert fake.kinds().count("sub_notif") == 5
     finally:
         fake.stop()
 
@@ -497,6 +539,83 @@ def test_stand_waits_for_the_mode_and_sends_the_height(robot, fake):
     _, last = fake.inputs()[-1]
     assert last.height == pytest.approx(-0.5)
     assert (last.left.x, last.left.y, last.right.x, last.speed, last.s1) == (0, 0, 0, 0, 0)
+
+
+# The stance is a state topic: its snapshot on connect, then a change the robot pushes once it has taken it.
+def test_a_stance_returns_once_the_robot_reports_it(robot, fake):
+    assert robot.state().stance is Stance.DEFAULT
+    robot._backend.set_stance(Stance.CRAB)
+    assert robot.state().stance is Stance.CRAB
+    assert [m.stance.stance for _, m in fake.received if m.WhichOneof("message") == "stance"] == [pb.STANCE_CRAB]
+
+
+# The robot refuses the crab in WALK_NN and answers with the default stance, which the backend reads as the refusal.
+def test_a_stance_the_robot_refuses_raises(robot, fake):
+    fake.mode = pb.WALK_NN
+    started = time.monotonic()
+    with pytest.raises(RobotError, match="refused the crab stance, or another request overrode it"):
+        robot._backend.set_stance(Stance.CRAB)
+    assert time.monotonic() - started < real.REPLY_TIMEOUT_S
+    assert robot.state().stance is Stance.DEFAULT
+
+
+# In the crab the robot refuses AUTO and TUNED and answers with the gait in force.
+def test_a_gait_the_crab_refuses_raises(robot, fake):
+    robot._backend.set_stance(Stance.CRAB)
+    for gait in (Gait.AUTO, Gait.TUNED):
+        with pytest.raises(RobotError, match=f"refused {gait.name}"):
+            robot._backend.set_gait(gait)
+        assert robot.state().gait is Gait.TRI_GATE
+
+
+# Another client's gait arriving right after ours leaves another gait in force: the backend says so, as a refusal.
+def test_a_gait_another_request_overrode_raises(robot, fake):
+    fake.override_gait = pb.WAVE
+    with pytest.raises(RobotError, match="refused BI_GATE, or another request overrode it"):
+        robot._backend.set_gait(Gait.BI_GATE)
+    assert robot.state().gait is Gait.WAVE
+
+
+# The default stance asked for in IDLE leaves the feet on the crab, so AUTO and WALK_NN stay refused until a stand steps
+# them off.
+def test_the_crabs_feet_keep_auto_and_walk_nn_refused_until_a_stand(robot, fake):
+    robot._backend.set_stance(Stance.CRAB)
+    robot._backend.set_mode(Mode.IDLE)
+    robot._backend.set_stance(Stance.DEFAULT)
+    with pytest.raises(RobotError, match="refused AUTO"):
+        robot._backend.set_gait(Gait.AUTO)
+    with pytest.raises(RobotTimeout):
+        robot._backend.set_mode(Mode.WALK_NN)
+    assert robot.state().mode is Mode.IDLE
+    robot._backend.set_mode(Mode.STAND)
+    robot._backend.set_gait(Gait.AUTO)
+    assert robot.state().gait is Gait.AUTO
+
+
+# The robot echoes every gait request, the gait already in force too, which connect asks for: a request that follows
+# must not take that echo, however late, for its own answer. Connect's echo comes 0.2 s late, the next request's 0.5 s,
+# so the stale one arrives first.
+def test_a_late_echo_of_an_earlier_gait_request_is_not_taken_for_a_refusal(fake, transport, monkeypatch):
+    monkeypatch.setattr(real, "REPLY_TIMEOUT_S", 1.0)
+    fake.gait_echo_delays_s = [0.2, 0.5]
+    client = Robot(_target(fake, transport, monkeypatch))
+    client.connect()
+    try:
+        client._backend.set_gait(Gait.AUTO)
+        assert client.state().gait is Gait.AUTO
+        client._backend.set_gait(Gait.AUTO)
+        client._backend.set_gait(Gait.BI_GATE)
+        assert client.state().gait is Gait.BI_GATE
+    finally:
+        client.close()
+
+
+# The crab asked for in AUTO switches the gait to TRI_GATE, reported, and then takes the crab.
+def test_the_crab_asked_for_in_auto_switches_the_gait_to_tri_gate(robot, fake):
+    robot._backend.set_gait(Gait.AUTO)
+    robot._backend.set_stance(Stance.CRAB)
+    _eventually(lambda: robot.state().gait is Gait.TRI_GATE)
+    assert robot.state().stance is Stance.CRAB
 
 
 def test_a_mode_the_robot_never_reports_times_out(transport, monkeypatch):

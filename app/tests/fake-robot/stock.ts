@@ -12,6 +12,7 @@ import {
   ModeData,
   ModesEnum,
   OtaStatusData,
+  StanceData,
   StaticSystemInformation,
   TaskState,
   type MessageFns
@@ -397,6 +398,7 @@ export const stockRobot = () => {
     mode: ModeData.create({ mode: ModesEnum.IDLE }),
     angles: AnglesData.create(),
     gait: GaitData.create(),
+    stance: StanceData.create(),
     wifiStatus: STOCK.wifiStatus,
     apStatus: STOCK.apStatus,
     otaStatus: OtaStatusData.create(),

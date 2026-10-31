@@ -70,7 +70,7 @@ AnimationRunner& runner() {
 
 socket_message_AnimationReport validate(const char* name) {
     socket_message_AnimationReport report = socket_message_AnimationReport_init_zero;
-    runner().validate(name, report);
+    runner().validate(name, report, STANCE);
     return report;
 }
 

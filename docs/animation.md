@@ -179,6 +179,7 @@ A failed `fwrite` can leave a partial chunk in the file, so the size read back, 
 The `config` directory is refused and never listed, and a name longer than 63 characters is neither listed nor counted.
 `file_mkdir` creates the directory with its parents and answers 200 for one that exists, 409 when a file has its path, or 500 when a file is in the way of a parent.
 Validation decodes the file, checks the structural rules, and evaluates every keyframe and 32 intermediate times per segment on the file's `ride_height`, or on both slider ends (`-50` and `+50` mm) when it has none, returning the first structural error or the union of clamped joints.
+A clip is validated on the stance in force, the default stance or the crab at the feet distance the robot stands on, from a copy of those feet the control task notes in the motion inbox, so a stance change under way never changes the feet mid-sweep.
 An invalid file is answered with status 422 and the report filled in (`ok` false and the `error`).
 A clamped joint is a warning, not a refusal.
 A frame of the sweep that brings two legs within `LEG_CLEARANCE_MM` refuses the file as an invalid one is refused, its `error` naming the first such frame and the pair, e.g. `legs RF and RM touch at t=0.375 s on a +0 mm base`, with `LEGS_TOUCH` in the mask; `animation.clearance_error` refuses it in the same words.

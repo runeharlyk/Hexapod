@@ -177,6 +177,9 @@ class GoalController {
         }
     }
 
+    /** The top speed, in m/s, the goal was started with: what a full stick walks at its posture, in its stance. */
+    float topSpeed() const { return topSpeedMs; }
+
   private:
     Goal target;
     GoalState current = GoalState::IDLE;

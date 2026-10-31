@@ -1,9 +1,9 @@
 #pragma once
 
 // What the other tasks hand MotionService's control task, under one mutex: the modes in arrival order, the newest
-// command and gait, a goal asked for and its end, an odometry reset, the servo page's switch, and in IDLE the joints
-// dragged and a centring of the servos; and back from the control task, the goal
-// status, the mode and the pose the replies carry. The decisions a reply or a goal depends on are made as each arrives,
+// command, gait and stance, a goal asked for and its end, an odometry reset, the servo page's switch, and in IDLE the
+// joints dragged and a centring of the servos; and back from the control task, the goal status, the mode, the stance
+// and the pose the replies carry. The decisions a reply or a goal depends on are made as each arrives,
 // in arrival order, against the mode the control task applied last; the control task takes what arrived at the start
 // of its next tick, so nothing changes the motion in the middle of one, and no task ever waits for the control task.
 // Ported in shape from SpotMicroESP32-Leika's esp32/include/motion_inbox.h.
@@ -40,6 +40,9 @@ static_assert((int)GoalKind::FORWARD == socket_message_GoalKind_GOAL_FORWARD &&
                   (int)GoalKind::TURN == socket_message_GoalKind_GOAL_TURN &&
                   (int)GoalKind::ARC == socket_message_GoalKind_GOAL_ARC,
               "GoalStatus.kind and GoalMove.kind carry GoalKind by value");
+static_assert((int)Stance::DEFAULT == socket_message_StanceEnum_STANCE_DEFAULT &&
+                  (int)Stance::CRAB == socket_message_StanceEnum_STANCE_CRAB,
+              "StanceData.stance carries Stance by value");
 
 inline socket_message_GoalStatus goalStatusOf(uint32_t id, GoalState state, const Goal &goal, float progress,
                                               int passes) {
@@ -60,6 +63,7 @@ class MotionInbox {
         CommandMsg style;
         GaitType gait;
         uint32_t id;
+        Stance stance; // the stance the style was judged in
     };
 
     // The arbiter's state (animation/mode_arbiter.h): the mode, whether ANIMATE is borrowed, the mode a hand-back
@@ -93,6 +97,7 @@ class MotionInbox {
         std::optional<CommandMsg> command; // the newest since the last take
         unsigned long commandMs = 0;       // when it arrived
         std::optional<GaitType> gait;      // the newest since the last take
+        std::optional<Stance> stance;      // the newest since the last take
         std::optional<GoalRequest> goal;   // accepted since the last take
         bool goalCancelled = false;  // the end of the goal driving the walk was asked for, or its owner fell silent
         bool goalDriveEnded = false; // so a goal no longer drives the walk, whose sticks are to be centred
@@ -100,6 +105,7 @@ class MotionInbox {
         bool handheldDriving = false; // the handheld has moved a stick within HANDHELD_PRIORITY_MS
         Joints joints;                // dragged in IDLE
         bool centreServos = false;    // every servo to its centre pulse, asked for in IDLE
+        bool gaitRefused = false; // a client's gait was refused (gaitOffered), to be answered with the gait in force
         // The servo page's switch, the newest since the last take.
         std::optional<bool> servoSwitch;
     };
@@ -119,18 +125,27 @@ class MotionInbox {
     // steering timeout.
     static constexpr unsigned long CLIENT_IN_FORCE_MS = 2000;
 
-    // Adapter task: a goal accepted, replacing one not yet taken. It drives the walk's sticks from now until it ends or
-    // an operator takes the walk back. Refused, false, while the handheld drives.
-    bool postGoal(const Goal &goal, const CommandMsg &style, GaitType gait, GoalOwner owner, unsigned long nowMs) {
+    // What became of a goal posted: accepted, refused while the handheld drives, refused for a gait the crab does not
+    // walk (gaitOffered), or refused for a style judged in a stance other than the one selected since.
+    enum class GoalPost { ACCEPTED, HANDHELD_DRIVES, NOT_OFFERED, STANCE_CHANGED };
+
+    // Adapter task: a goal whose style was judged in `stance`, accepted, replacing one not yet taken, unless the
+    // handheld drives, its gait walks the default stance alone in the crab, or the stance selected is no longer
+    // `stance`, all decided under the one lock a stance posted meanwhile takes too. It drives the walk's sticks from
+    // now until it ends or an operator takes the walk back.
+    GoalPost postGoal(const Goal &goal, const CommandMsg &style, GaitType gait, Stance stance, GoalOwner owner,
+                      unsigned long nowMs) {
         std::lock_guard<std::mutex> lock(_mutex);
-        if (handheldDrivingLocked(nowMs)) return false;
-        _goal = GoalRequest {goal, style, gait, ++_goalCount};
+        if (handheldDrivingLocked(nowMs)) return GoalPost::HANDHELD_DRIVES;
+        if (!gaitOfferedLocked(gait)) return GoalPost::NOT_OFFERED;
+        if (stance != _stanceRequest.value_or(_stance)) return GoalPost::STANCE_CHANGED;
+        _goal = GoalRequest {goal, style, gait, ++_goalCount, stance};
         _goalOwner = owner;
         _ownerHeardMs = nowMs;
         _goalDrives = true;
         // Whatever ended the goal before is done with: a cancel from now on is this goal's.
         _goalCancelRequested = false;
-        return true;
+        return GoalPost::ACCEPTED;
     }
 
     // Any task: ends the goal driving the walk, if any.
@@ -208,8 +223,8 @@ class MotionInbox {
             ++_modes.dropped;
         }
         _modes.items[_modes.count++] = m;
-        const ModeArbiterDecision d =
-            decideMode({_applied.mode, _applied.borrowed, _applied.previous, m.mode, m.kind, busy, _applied.idleHeld});
+        const ModeArbiterDecision d = decideMode(
+            {_applied.mode, _applied.borrowed, _applied.previous, m.mode, m.kind, busy, _applied.idleHeld, _crab});
         if (d.action == ModeArbiterDecision::APPLY && d.mode != MOTION_STATE::WALK) cancelGoalLocked();
     }
 
@@ -276,6 +291,55 @@ class MotionInbox {
         _gait = gait;
     }
 
+    // Adapter task, before a gait is published or a goal accepted: whether the robot offers it, which a gait that walks
+    // the default stance alone (defaultStanceOnly) it does not while the crab is selected, a crab posted but not yet
+    // taken included, or the feet still stand on or step from it.
+    bool gaitOffered(GaitType gait) const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return gaitOfferedLocked(gait);
+    }
+
+    // Adapter task: a client's gait refused (gaitOffered), which the control task answers with the gait in force.
+    void postGaitRefused() {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _gaitRefused = true;
+    }
+
+    // Adapter task: a stance asked for, the newest replacing one not yet taken. One other than the stance selected last
+    // ends the goal driving the walk, on arrival, as a gait does: its pace was reckoned in the stance it started in.
+    void postStance(Stance stance) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (stance != _stanceRequest.value_or(_stance)) cancelGoalLocked();
+        _stanceRequest = stance;
+    }
+
+    // Any task: the stance selected last, a stance posted but not yet taken included, which a goal accepted now walks.
+    Stance stanceSelected() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _stanceRequest.value_or(_stance);
+    }
+
+    // Control task, as it takes a stance and as the feet step onto or off the crab: the stance in force, and whether
+    // the crab is in force or the feet still stand on or step from it, which a mode posted next is decided against.
+    void noteStance(Stance stance, bool crab) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _stance = stance;
+        _crab = crab;
+    }
+
+    // Control task, whenever it sends the gait's feet elsewhere: the feet the robot stands on, which an animation is
+    // validated on (MotionService::validateAnimation), copied, so the adapter task never reads them as they change.
+    void noteFeet(const float (&feet)[6][4]) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        std::copy(&feet[0][0], &feet[0][0] + 6 * 4, &_feet[0][0]);
+    }
+
+    // Any task: the feet the control task noted last.
+    void feet(float (&out)[6][4]) const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        std::copy(&_feet[0][0], &_feet[0][0] + 6 * 4, &out[0][0]);
+    }
+
     // Control task: a goal's own gait becomes the selection, which ends nothing; its publish is not delivered back. A
     // gait posted since the take is the one the next take puts in force, so it stays selected, and the goal, which
     // would wait for its own gait, ends unless that is the gait posted.
@@ -330,6 +394,13 @@ class MotionInbox {
         mail.command = std::exchange(_command, std::nullopt);
         mail.commandMs = _commandMs;
         mail.gait = std::exchange(_gait, std::nullopt);
+        mail.stance = std::exchange(_stanceRequest, std::nullopt);
+        // A stance taken is noted at once, so a gait or a goal judged before the control task takes it in this tick
+        // finds it; the control task notes the stance in force again as it takes or refuses it (noteStance).
+        if (mail.stance) {
+            _stance = *mail.stance;
+            _crab = _crab || *mail.stance == Stance::CRAB;
+        }
         mail.goal = std::exchange(_goal, std::nullopt);
         mail.goalCancelled =
             std::exchange(_goalCancelRequested, false) ||
@@ -338,6 +409,7 @@ class MotionInbox {
         mail.odometryReset = std::exchange(_odometryReset, false);
         mail.joints = std::exchange(_joints, Joints {});
         mail.centreServos = std::exchange(_centreServos, false);
+        mail.gaitRefused = std::exchange(_gaitRefused, false);
         mail.servoSwitch = std::exchange(_servoSwitch, std::nullopt);
         mail.handheldDriving = _handheldDriving = handheldDrivingLocked(nowMs);
         // A lapsed window is forgotten, or the signed difference would reopen it half the clock's range later.
@@ -378,6 +450,10 @@ class MotionInbox {
     unsigned long _commandMs = 0;
     std::optional<GaitType> _gait;
     GaitType _selection = GaitType::TRI_GATE; // the gait selected last, from the gait MotionService starts in
+    std::optional<Stance> _stanceRequest;
+    Stance _stance = Stance::DEFAULT; // the stance in force, as the control task noted it last
+    bool _crab = false;               // the crab is in force, or the feet stand on or step from it
+    float _feet[6][4] = {};           // the feet the robot stands on, as the control task noted them last
     std::optional<GoalRequest> _goal;
     uint32_t _goalCount = 0;
     GoalOwner _goalOwner {};
@@ -389,6 +465,7 @@ class MotionInbox {
     bool _odometryReset = false;
     Joints _joints;
     bool _centreServos = false;
+    bool _gaitRefused = false;
     std::optional<bool> _servoSwitch;
     OdometryEstimate _odometry {};
     // The arrival of the handheld's last frame with a stick off centre, until the first take past its window.
@@ -404,6 +481,10 @@ class MotionInbox {
 
     void cancelGoalLocked() {
         if (_goalDrives) _goalCancelRequested = true;
+    }
+
+    bool gaitOfferedLocked(GaitType gait) const {
+        return !defaultStanceOnly(gait) || !(_crab || _stanceRequest == Stance::CRAB);
     }
 
     // A poster reads its clock before the lock, so a frame posted after that read carries a later time: the difference

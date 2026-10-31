@@ -3,16 +3,18 @@
 // Host stand-in for firmware/include/peripherals/servo_controller.h with the interface Hexapod and the
 // motion code use. It drives no PCA9685; it keeps what the servos would receive, the joint angles last sent
 // held within travel as the robot's controller holds them, whether the boards are awake and which servos a pulse
-// drives, which is what a simulated robot's actuators need. It keeps angles rather than pulses, so it has no
-// calibration and none of the servo page's single pulses (ServoSignalMsg), and a write never fails, so no board is
-// backed off, left asleep or started again. Hexapod owns its ServoController, so the output is shared by every instance
-// and read through output().
+// drives, which is what a simulated robot's actuators need. It keeps angles rather than pulses, so of a calibration it
+// takes only each coxa's travel, the factory's until one arrives on ServoSettingsBus, and none of the servo page's
+// single pulses (ServoSignalMsg), and a write never fails, so no board is backed off, left asleep or started again.
+// Hexapod owns its ServoController, so the output and the coxa travel are shared by every instance and read through
+// output() and coxaTravelOf().
 
 #include <cmath>
 #include <kinematics.h>
 #include <message_types.h>
 #include <platform_shared/message.pb.h>
 #include <servo_travel.h>
+#include <settings/servo_settings.h>
 
 class ServoController {
   public:
@@ -25,12 +27,28 @@ class ServoController {
         unsigned jointWrites = 0; // single joints written, in IDLE
         unsigned centrings = 0;   // every servo sent to its centre pulse, in IDLE
         float angles[NUM_SERVO] = {};
+        JointTravel coxa[6] = {factoryCoxa(0), factoryCoxa(1), factoryCoxa(2),
+                               factoryCoxa(3), factoryCoxa(4), factoryCoxa(5)};
     };
 
     static const Output &output() { return state(); }
     static void reset() { state() = {}; }
 
-    void begin() {}
+    // As the robot's controller does: a calibration published on ServoSettingsBus is applied when the bus delivers it,
+    // and one published before, as by a settings service that started first, at once. The bus keeps its last value
+    // until host_bus::resetAll(), so a robot made after another takes the calibration last published to that one.
+    void begin() {
+        _calibrationSub = ServoSettingsBus::subscribe([](ServoSettings const &s) { applyCalibration(s); });
+        ServoSettings pending;
+        if (ServoSettingsBus::peek(pending)) applyCalibration(pending);
+    }
+    static void applyCalibration(const ServoSettings &s) {
+        for (int leg = 0; leg < 6 && leg * 3 < static_cast<int>(s.servos_count); ++leg) {
+            const api_Servo &c = s.servos[leg * 3];
+            state().coxa[leg] = coxaTravel(c.center_pwm, c.conversion, c.direction, c.center_angle);
+        }
+    }
+    static JointTravel coxaTravelOf(int leg) { return state().coxa[leg]; }
     // As the robot's controller does: the boards wake with every channel off, so every servo is limp until written.
     void activate() {
         if (state().awake) return;
@@ -42,14 +60,13 @@ class ServoController {
         state().awake = false;
         state().driven = 0;
     }
-    // At the factory calibration, which this stand-in holds alone: every coxa and femur at 0, every tibia at -90.
+    // At the factory centres, which this stand-in keeps whatever calibration arrives, as it takes only each coxa's
+    // travel from one: every coxa and femur at 0, every tibia at -90.
     float centreAngle(int servo) const { return servo % 3 == 2 ? -90.0f : 0.0f; }
-    // As the robot's controller holds a joint, at the factory calibration: a coxa from -50.5 to +51.5 deg.
+    // As the robot's controller holds a joint: a coxa within its calibration's travel, at the factory one from -50.5 to
+    // +51.5 deg.
     static float withinTravel(int servo, float angleDeg, CoxaTravel travel = CoxaTravel::SERVO) {
-        const int coxa = servo - servo % 3;
-        const JointTravel factory =
-            coxaTravel(FACTORY_CENTER_PWM, FACTORY_CONVERSION, FACTORY_DIRECTION[coxa], FACTORY_CENTER_ANGLE);
-        return jointWithinTravel(angleDeg, servo % 3, factory, travel);
+        return jointWithinTravel(angleDeg, servo % 3, state().coxa[servo / 3], travel);
     }
     // As the robot's controller does: a pulse sent to sleeping boards drives no servo.
     void setCenterPwm() {
@@ -85,6 +102,11 @@ class ServoController {
     }
 
   private:
+    static constexpr JointTravel factoryCoxa(int leg) {
+        return coxaTravel(FACTORY_CENTER_PWM, FACTORY_CONVERSION, FACTORY_DIRECTION[leg * 3], FACTORY_CENTER_ANGLE);
+    }
+
+    ServoSettingsBus::Handle _calibrationSub;
     socket_message_ServoWrite _right = socket_message_ServoWrite_SERVO_WRITE_NONE;
     socket_message_ServoWrite _left = socket_message_ServoWrite_SERVO_WRITE_NONE;
 

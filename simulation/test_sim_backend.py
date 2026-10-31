@@ -4,7 +4,7 @@ import math
 import numpy as np
 import pytest
 
-from src.hexapod import Gait, Mode, Robot, RobotError, Velocity, speed_model
+from src.hexapod import Gait, Mode, Robot, RobotError, Stance, Velocity, speed_model
 from src.hexapod.backends.base import ZERO, GoalState
 from src.hexapod.backends.sim import SimBackend
 from src.sim import recording
@@ -245,6 +245,69 @@ def test_a_sideways_goal_walks_left_when_positive(standing):
     robot.walk(0.2, sideways=True)
     position, _ = _moved(start, _pose(backend))
     assert np.linalg.norm(position) < 0.03
+
+
+# The crab points every leg straight out to its side, the corner coxas turned 45 deg from the default stance, and walks
+# a sideways goal on the MuJoCo floor within the default stance's 3 cm. Asked for in AUTO, it switches the gait to
+# TRI_GATE, and the style follows, so the goal is not refused; the default stance stands the coxas back at 0.
+def test_the_crab_stands_its_legs_straight_out_and_walks_sideways(standing):
+    robot, backend = standing
+    robot.set_gait(Gait.AUTO)
+    robot.set_stance(Stance.CRAB)
+    assert robot.state().stance is Stance.CRAB
+    assert robot.state().gait is Gait.TRI_GATE
+    assert robot.style().gait is Gait.TRI_GATE
+    np.testing.assert_allclose(np.abs(backend._loop.robot.servo_angles()[::3]), [45, 0, 45, 45, 0, 45], atol=1.0)
+    start = _pose(backend)
+    robot.walk(-0.2, sideways=True)
+    position, _ = _moved(start, _pose(backend))
+    assert np.linalg.norm(position - (0.0, -0.2)) < 0.03
+    robot.set_stance(Stance.DEFAULT)
+    assert robot.state().stance is Stance.DEFAULT
+    np.testing.assert_allclose(backend._loop.robot.servo_angles()[::3], 0, atol=1.0)
+
+
+# In the crab the firmware refuses AUTO and TUNED and keeps its gait; the facade raises and keeps its style.
+def test_a_gait_the_crab_refuses_raises_in_the_simulation(standing):
+    robot, _ = standing
+    robot.set_stance(Stance.CRAB)
+    for gait in (Gait.AUTO, Gait.TUNED):
+        with pytest.raises(RobotError, match=f"refused {gait.name}"):
+            robot.set_gait(gait)
+        assert robot.state().gait is Gait.TRI_GATE
+        assert robot.style().gait is Gait.TRI_GATE
+
+
+# The firmware refuses the crab in WALK_NN, which the simulation backend reports as the robot's refusal.
+def test_a_crab_refused_in_walk_nn_raises_in_the_simulation(sim):
+    sim.set_mode(Mode.STAND)
+    sim.sleep(1.0)
+    sim._loop.set_mode(int(Mode.WALK_NN))
+    sim.sleep(0.1)
+    with pytest.raises(RobotError, match="refused the crab stance"):
+        sim.set_stance(Stance.CRAB)
+    assert sim.state().stance is Stance.DEFAULT
+
+
+# set_stance returns once every foot stands on the stance, in every classic gait, from a still stand and from a walk:
+# the corner coxas then stand at 45 deg from the default stance's 0, and no joint moves after it by more than the
+# self-levelling on the simulated IMU moves it (under 0.1 deg), where a foot still 2.5 mm short of its target (a short
+# swing's last tick) would turn its coxa about 1.3 deg.
+@pytest.mark.parametrize("walking", [False, True], ids=["stand", "walk"])
+@pytest.mark.parametrize("gait", [Gait.TRI_GATE, Gait.BI_GATE, Gait.WAVE, Gait.RIPPLE])
+def test_set_stance_returns_with_the_feet_on_the_stance(gait, walking):
+    backend = SimBackend()
+    with Robot(backend=backend, gait=gait) as robot:
+        robot.stand()
+        robot.sleep(1.0)
+        if walking:
+            robot.set_velocity(0.0, 0.05, 0.0)
+            robot.sleep(1.5)
+        robot.set_stance(Stance.CRAB)
+        returned = np.array(backend._loop.robot.servo_angles())
+        np.testing.assert_allclose(np.abs(returned[::3]), [45, 0, 45, 45, 0, 45], atol=0.5)
+        robot.sleep(2.0)
+        np.testing.assert_allclose(returned, backend._loop.robot.servo_angles(), atol=0.2)
 
 
 # The body vibrates at the physics rate, so one gyro sample per 5 ms tick aliases it: WAVE's integral read 91.2 deg for

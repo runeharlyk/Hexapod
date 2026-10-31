@@ -43,7 +43,21 @@ API void setMode(int mode) {
     if (const std::optional<MOTION_STATE> m = motionStateFromWire(mode)) instance().setMode(*m);
 }
 
-API void setGait(int gait) { instance().setGait(static_cast<GaitType>(gait)); }
+// A gait by its GaitEnum value, as main.cpp's handler takes it: one out of range is ignored, and one the crab does not
+// walk refused; whether it was taken.
+API bool setGait(int gait) {
+    if (gait < 0 || gait > static_cast<int>(GaitType::AUTO)) return false;
+    return instance().setGait(static_cast<GaitType>(gait));
+}
+
+// A stance by its StanceEnum value, as main.cpp's handler takes it: one out of range is ignored.
+API void setStance(int stance) {
+    if (stance < 0 || stance > static_cast<int>(Stance::CRAB)) return;
+    instance().setStance(static_cast<Stance>(stance));
+}
+
+// The stance in force, by its StanceEnum value.
+API int stance() { return static_cast<int>(instance().stance()); }
 
 // The input buffer carries the same protobuf play message as a real transport.
 API uint8_t *animationBuffer(int size) {

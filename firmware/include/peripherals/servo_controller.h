@@ -114,6 +114,9 @@ class ServoController {
         return jointWithinTravel(angleDeg, servo % 3, _coxaTravel[servo / 3], travel);
     }
 
+    // The coxa angles of a leg whose pulses lie within its servo's safe span, at its own calibration.
+    JointTravel coxaTravelOf(int leg) const { return _coxaTravel[leg]; }
+
     void setAngles(float new_angles[NUM_SERVO], CoxaTravel travel) {
         control_state = SERVO_CONTROL_STATE::ANGLE;
         for (int i = 0; i < NUM_SERVO; i++) {
@@ -196,6 +199,7 @@ class ServoController {
             cfg[i].centerAngle = s.servos[i].center_angle;
         }
         noteCoxaTravel();
+        logShortCoxaTravel();
     }
 
     // Control task, IDLE: one joint dragged in the app, through the same travel, calibration and direction as the
@@ -272,6 +276,15 @@ class ServoController {
             const ServoCfg &c = cfg[leg * 3];
             _coxaTravel[leg] = coxaTravel(c.centerPwm, c.conversion, c.direction, c.centerAngle);
         }
+    }
+
+    // A coxa whose calibrated centre leaves it less than JOINT_LIMIT_DEG on a side clips there the strides the walkable
+    // envelope plans to that travel: a known limit until the bench measures the servo, said once per calibration.
+    void logShortCoxaTravel() const {
+        char sides[SHORT_COXA_SIDES_SIZE];
+        if (shortCoxaSides(_coxaTravel, sides, sizeof(sides)))
+            ESP_LOGW(TAG, "coxa travel under %.1f deg at this calibration, strides clip there:%s", JOINT_LIMIT_DEG[0],
+                     sides);
     }
 
     void writeBoards() {

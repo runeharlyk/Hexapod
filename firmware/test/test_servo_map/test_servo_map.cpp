@@ -188,6 +188,26 @@ void test_the_centre_angle_is_the_angle_of_the_centre_pulse() {
     controller.applyCalibration(ServoSettings_defaults());
 }
 
+// A coxa centred off the factory's 306 counts has less than JOINT_LIMIT_DEG on one side, which the calibration names:
+// centred at 338 counts at 2 counts a degree, servo 6 reaches +35.5 deg. The factory calibration leaves no side short.
+void test_a_calibration_names_each_coxa_side_short_of_the_joint_limit() {
+    ServoController& controller = started();
+    char sides[SHORT_COXA_SIDES_SIZE];
+    const auto shortSides = [&] {
+        JointTravel travel[6];
+        for (int leg = 0; leg < 6; leg++) travel[leg] = controller.coxaTravelOf(leg);
+        return shortCoxaSides(travel, sides, sizeof(sides));
+    };
+    api_ServoSettings settings = ServoSettings_defaults();
+    controller.applyCalibration(settings);
+    TEST_ASSERT_EQUAL_INT(0, shortSides());
+    settings.servos[6].center_pwm = 338;
+    controller.applyCalibration(settings);
+    TEST_ASSERT_EQUAL_INT(1, shortSides());
+    TEST_ASSERT_EQUAL_STRING(" servo 6 +35.5", sides);
+    controller.applyCalibration(ServoSettings_defaults());
+}
+
 // Both boards' channel registers, to tell which a write touched.
 std::array<int, 32> channels() {
     std::array<int, 32> pulses {};
@@ -332,5 +352,6 @@ int main() {
     RUN_TEST(test_the_trained_travel_holds_the_coxa_at_31_5_deg);
     RUN_TEST(test_an_off_centre_calibration_never_leaves_the_safe_pulses);
     RUN_TEST(test_a_malformed_joint_angle_writes_nothing);
+    RUN_TEST(test_a_calibration_names_each_coxa_side_short_of_the_joint_limit);
     return UNITY_END();
 }

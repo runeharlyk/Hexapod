@@ -39,6 +39,13 @@ enum GaitEnum {
   AUTO = 5;
 }
 
+// Mirrors firmware Stance: the feet the classic gaits stand and walk on. DEFAULT splays the legs about the body, CRAB
+// points every leg straight out to its side, all six parallel. TUNED, AUTO and WALK_NN keep the default stance.
+enum StanceEnum {
+  STANCE_DEFAULT = 0;
+  STANCE_CRAB = 1;
+}
+
 message ControllerInputData {
   Vector left = 1;
   Vector right = 2;
@@ -56,6 +63,11 @@ message ModeData {
   bool handheld = 2;
 }
 message GaitData { GaitEnum gait = 1; }
+// Sent, asks for a stance, which only a sender that names it changes: a command or a goal walks the stance in force.
+// The feet step to it once a walk has stopped. The crab in WALK_NN is refused; asked for in AUTO or TUNED, the crab
+// switches the gait to TRI_GATE first; in the crab, and while the feet still stand on it, AUTO, TUNED and WALK_NN are
+// refused. A refusal is answered with the value in force on its topic: the stance, the gait or the mode.
+message StanceData { StanceEnum stance = 1; }
 // The angles the servos hold, in whole degrees in servo order, three per leg (coxa, femur, tibia). A servo whose bit is
 // set in limp has been driven by no pulse since the boards woke, so no angle is known for it and its entry is 0. A
 // robot whose every servo is limp reports no angles at all, as one that has driven no pose yet.
@@ -295,7 +307,9 @@ enum GoalState {
   GOAL_REFUSED = 6;
 }
 // Answered 202 with the accepted goal's status, 400 when malformed, 409 when the robot cannot walk now (deactivated,
-// in another mode than STAND or WALK, or updating) and 422 for a style it cannot walk (TUNED, or no speed envelope).
+// in another mode than STAND or WALK, updating, or another client changed the stance while the style was judged) and
+// 422 for a style it cannot walk (TUNED, AUTO in the crab, or no speed envelope). It walks the stance in force
+// (StanceData).
 message GoalMove {
   GoalKind kind = 1;
   float distance_m = 2;
@@ -516,6 +530,7 @@ message Message {
     ModeData mode = 130;
     ControllerInputData input = 140;
     GaitData gait = 160;
+    StanceData stance = 161;  // observable state: pushed as the robot takes a stance
     AnglesData angles = 170;
     ServoPWMData servo_pwm = 210;
     ServoStateData servo_state = 211;

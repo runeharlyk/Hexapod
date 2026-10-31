@@ -26,6 +26,7 @@ struct MessageTraits;
 DEFINE_MESSAGE_TRAITS(ControllerInputData, input)
 DEFINE_MESSAGE_TRAITS(ModeData, mode)
 DEFINE_MESSAGE_TRAITS(GaitData, gait)
+DEFINE_MESSAGE_TRAITS(StanceData, stance)
 DEFINE_MESSAGE_TRAITS(AnglesData, angles)
 DEFINE_MESSAGE_TRAITS(IMUData, imu)
 DEFINE_MESSAGE_TRAITS(ServoPWMData, servo_pwm)

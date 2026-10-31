@@ -6,6 +6,7 @@
 #include <kinematics.h>
 #include <leg_clearance.h>
 #include <message_types.h>
+#include <servo_travel.h>
 
 // Stick -> walk command for the classic gaits, from the stroke geometry the generator measured (gait_envelope.h), one
 // table per stance. The stride picks each axis's stroke, from the longest the joints can travel with the legs apart
@@ -235,6 +236,33 @@ inline bool standFeasible(Kinematics& kin, float h, float fd, Stance stance) {
     for (int j = 0; j < 18; ++j)
         if (std::fabs(angles[j]) > JOINT_LIMIT_DEG[j % 3]) return false;
     return legsClear(angles);
+}
+
+// The largest coxa angle the crab walks on level ground: every stroke of its table keeps each joint within its travel
+// less TRAVEL_MARGIN_DEG, and its forward and turning strokes take the corner coxas out to there from the 45 deg they
+// rest at (test_stance measures the walks reaching it). The self-levelling's tilt adds to it on a slope, held at the
+// calibration's travel by the servo controller.
+constexpr float CRAB_COXA_MAX_DEG = JOINT_LIMIT_DEG[0] - gait_envelope::TRAVEL_MARGIN_DEG;
+
+// Each coxa's angle in the crab at rest, the same at every posture, since each foot keeps the default stance's reach:
+// the corner legs' at +-45 deg, the middle legs' at 0.
+inline void crabRestCoxas(Kinematics& kin, float out[6]) {
+    BodyStateMsg body {};
+    stanceFeet(Stance::CRAB, feetScale(0.0f), body.feet);
+    float angles[18];
+    kin.inverseKinematics(body, angles);
+    for (int leg = 0; leg < 6; ++leg) out[leg] = angles[leg * 3];
+}
+
+// Whether each corner coxa, within `travel`, its own calibration's (ServoController::coxaTravelOf), turns out to the
+// crab's largest angle on the side the crab points it: one that cannot would rest the crab off its line, and drag its
+// feet. `rest` is crabRestCoxas'.
+inline bool crabWithinTravel(const float (&rest)[6], const JointTravel (&travel)[6]) {
+    for (int leg = 0; leg < 6; ++leg) {
+        if (rest[leg] > 1.0f && travel[leg].max < CRAB_COXA_MAX_DEG) return false;
+        if (rest[leg] < -1.0f && -travel[leg].min < CRAB_COXA_MAX_DEG) return false;
+    }
+    return true;
 }
 
 // Pulls a posture the body cannot stand in on the stance toward neutral; the lift does not enter a stand.

@@ -1,7 +1,10 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <kinematics.h>
 #include <settings/servo_factory.h>
 #include <utils/math_utils.h>
@@ -51,6 +54,22 @@ constexpr JointTravel FACTORY_COXA_TRAVEL =
     coxaTravel(FACTORY_CENTER_PWM, FACTORY_CONVERSION, FACTORY_DIRECTION[0], FACTORY_CENTER_ANGLE);
 static_assert(JOINT_LIMIT_DEG[0] == std::min(-FACTORY_COXA_TRAVEL.min, FACTORY_COXA_TRAVEL.max),
               "kinematics.h's coxa travel is the factory calibration's narrower side of the safe pulses");
+
+// Each coxa side with less than JOINT_LIMIT_DEG of travel, per leg in `travel`, written into `out` as its servo and
+// signed travel (" servo 6 +35.5"); how many sides. SHORT_COXA_SIDES_SIZE holds all twelve.
+constexpr size_t SHORT_COXA_SIDES_SIZE = 12 * 18;
+inline int shortCoxaSides(const JointTravel (&travel)[6], char *out, size_t size) {
+    int sides = 0;
+    size_t used = 0;
+    out[0] = '\0';
+    for (int leg = 0; leg < 6; leg++)
+        for (const float side : {travel[leg].min, travel[leg].max}) {
+            if (std::fabs(side) >= JOINT_LIMIT_DEG[0]) continue;
+            ++sides;
+            if (used < size) used += std::snprintf(out + used, size - used, " servo %d %+.1f", leg * 3, side);
+        }
+    return sides;
+}
 
 // Which coxa travel holds a pose: the servo's safe pulses, or for TUNED and WALK_NN within them TRAINED_COXA_LIMIT_DEG.
 enum class CoxaTravel : uint8_t { SERVO, TRAINED };

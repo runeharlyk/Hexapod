@@ -66,17 +66,20 @@ describe('withinTravel', () => {
     expect(withinTravel(femur, rad(-152.8))).toBeCloseTo(rad(-90), 10)
   })
 
-  // urdf-loader clamps a joint to the model's limits, so a narrower coxa would draw the crab's corner legs, at 45
-  // degrees, short of where the robot holds them, and stop a dragged coxa short of the robot's travel.
-  it("lets the model's coxas, the shoulder joints of static/model.xacro, reach the firmware's travel", () => {
+  // urdf-loader clamps a joint to the model's limits, so a narrower one would draw a joint short of where the robot holds
+  // it, as the crab's corner coxas at 45 degrees, and stop a dragged joint short of the robot's travel.
+  it("lets every joint of the model, static/model.xacro's shoulder, leg and foot, reach the firmware's travel", () => {
     const xacro = readFileSync(resolve(__dirname, '../../static/model.xacro'), 'utf-8')
-    const shoulder = xacro.match(
-      /name="\$\{pos\}_shoulder"[\s\S]*?<limit[^>]*lower="([^"]+)"[^>]*upper="([^"]+)"/
-    )
-    if (!shoulder) throw new Error('the shoulder joint has no limit in model.xacro')
-    const [lower, upper] = [Number(shoulder[1]), Number(shoulder[2])]
-    expect(-lower).toBeGreaterThanOrEqual(rad(JOINT_LIMIT_DEG[0]))
-    expect(upper).toBeGreaterThanOrEqual(rad(JOINT_LIMIT_DEG[0]))
+    ;['shoulder', 'leg', 'foot'].forEach((joint, j) => {
+      const limit = xacro.match(
+        new RegExp(
+          String.raw`name="\$\{pos\}_${joint}"[\s\S]*?<limit[^>]*lower="([^"]+)"[^>]*upper="([^"]+)"`
+        )
+      )
+      if (!limit) throw new Error(`the ${joint} joint has no limit in model.xacro`)
+      expect(-Number(limit[1]), `${joint} lower`).toBeGreaterThanOrEqual(rad(JOINT_LIMIT_DEG[j]))
+      expect(Number(limit[2]), `${joint} upper`).toBeGreaterThanOrEqual(rad(JOINT_LIMIT_DEG[j]))
+    })
   })
 })
 

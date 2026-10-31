@@ -14,8 +14,8 @@ export const servoOfUrdfJoint = (index: number) => URDF_SERVOS[index]
 /**
  * Each joint's travel in degrees, coxa, femur and tibia: a copy of the firmware's kinematics.h JOINT_LIMIT_DEG, which
  * tests/unit/joint-drive.spec.ts keeps equal to it. The coxa's is the narrower side of its servo's safe pulses at the
- * factory calibration; the robot holds each coxa within its own calibration's. The URDF model's coxa limit is this
- * travel (the test keeps it no narrower) and its femur's is wider, to -152.8.
+ * factory calibration; the robot holds each coxa within its own calibration's. The URDF model's limits are this travel
+ * or wider (the test keeps every joint's no narrower), the femur's down to -152.8.
  */
 export const JOINT_LIMIT_DEG = [50.5, 90, 149] as const
 

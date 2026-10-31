@@ -325,6 +325,10 @@ robot.state().odometry               # the pose in the frame the robot faced at 
   `move_forward`, `move_sideways` and `rotate` fall back to the timed motions above for TUNED, which has no speed envelope, and for a firmware that answers the subscribe to the goal status with no status, as one from before goals or before the snapshots does; `walk`, `turn` and `arc` refuse there.
   The speed model converts the speeds those three take (m/s and rad/s) to the share a goal asks for.
 - An arc's drift correction changes its length as well as its end heading.
+- `set_stance(Stance.CRAB)` stands every leg straight out to its side, and `set_stance(Stance.DEFAULT)` back; it stops, and returns once the feet stand on the stance: one cycle of the gait a second, one cycle in TRI and two in the others, after a walk's stop and its lift lowered (`stance_step_seconds`); a walk's lift may still be rising back for up to 0.32 s.
+  A stance or a gait the robot refuses raises `RobotError`.
+  Goals walk the stance in force; the robot refuses AUTO, TUNED and WALK_NN in the crab and switches a selected AUTO or TUNED to TRI_GATE, which the style follows.
+  The speed model was measured on the default stance, so a velocity walk in the crab sends the sticks that velocity takes in the default stance, which the crab walks at its own speeds.
 - The keep-alive that holds the link carries the last style's posture and stride (`s1`, `h`, `fd`, `stride`), so the robot keeps it after a goal.
   It therefore also carries a non-default style into later velocity walks, which the speed model (measured at the default posture and stride 0) does not cover.
   The style's speed is not carried: a goal ignores centred commands, so the speed would reach only the velocity walks.

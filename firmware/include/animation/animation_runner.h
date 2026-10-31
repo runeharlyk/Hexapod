@@ -112,10 +112,10 @@ class AnimationRunner {
     // A puppeteer's pose, approached at the servo's top speed.
     void setPuppet(const PoseMsg &p) { postPuppet(p, true); }
 
-    // Validate a file for a request handler. It has its own buffer, so it never overwrites a clip
-    // that is loaded and waiting for the control task, and its own lock, so the clamp sweep does not
-    // hold up a play.
-    void validate(const char *name, socket_message_AnimationReport &report) {
+    // Validate a file for a request handler on `feet`, the stance the robot stands on, a copy the caller owns. It has
+    // its own buffer, so it never overwrites a clip that is loaded and waiting for the control task, and its own lock,
+    // so the clamp sweep does not hold up a play.
+    void validate(const char *name, socket_message_AnimationReport &report, const float (&feet)[6][4]) {
         if (!buffersReady_) {
             report.ok = false;
             strncpy(report.error, "no PSRAM for the animation buffers", sizeof(report.error) - 1);
@@ -130,7 +130,7 @@ class AnimationRunner {
             strncpy(report.error, error, sizeof(report.error) - 1);
         } else {
             Touch touch;
-            report.clamped_mask = sweepClampMask(*scratch_, touch);
+            report.clamped_mask = sweepClampMask(*scratch_, feet, touch);
             // A frame that brings two legs together is refused, as simulation's animation.clearance_error refuses it.
             if (touch.found) {
                 report.ok = false;
@@ -449,7 +449,7 @@ class AnimationRunner {
     // base the runner may add: the clip's ride height, or both ends of the STAND slider for a clip
     // that follows it, as simulation/test_animation_library.py checks. `touch` is the first frame
     // that brings two legs together.
-    uint32_t sweepClampMask(const anim::Clip &clip, Touch &touch) {
+    uint32_t sweepClampMask(const anim::Clip &clip, const float (*feet)[4], Touch &touch) {
         const float sliderEnds[2] = {-SLIDER_RANGE_MM, SLIDER_RANGE_MM};
         const float *bases = clip.hasRideHeight ? &clip.rideHeight : sliderEnds;
         const int baseCount = clip.hasRideHeight ? 1 : 2;
@@ -462,19 +462,20 @@ class AnimationRunner {
                 const float t1 = i + 1 < clip.keyframeCount ? clip.keyframes[i + 1].time : t0;
                 const int samples = i + 1 < clip.keyframeCount ? 32 : 1;
                 for (int s = 0; s < samples; ++s)
-                    mask |= clampMaskAt(clip, params, t0 + (t1 - t0) * (float)s / 32.0f, bases[b], touch);
+                    mask |= clampMaskAt(clip, params, t0 + (t1 - t0) * (float)s / 32.0f, bases[b], feet, touch);
             }
-            mask |= clampMaskAt(clip, params, clip.duration(), bases[b], touch);
+            mask |= clampMaskAt(clip, params, clip.duration(), bases[b], feet, touch);
         }
         return mask;
     }
 
-    uint32_t clampMaskAt(const anim::Clip &clip, const float *params, float t, float baseZ, Touch &touch) {
+    uint32_t clampMaskAt(const anim::Clip &clip, const float *params, float t, float baseZ, const float (*feet)[4],
+                         Touch &touch) {
         anim::Pose pose;
-        anim::evaluate(clip, params, t, *kin_, stance_, pose, baseZ);
+        anim::evaluate(clip, params, t, *kin_, feet, pose, baseZ);
         pose.body[anim::Z] += baseZ;
         float angles[18];
-        const uint32_t mask = anim::poseToAngles(pose, *kin_, stance_, angles);
+        const uint32_t mask = anim::poseToAngles(pose, *kin_, feet, angles);
         if (mask & anim::LEGS_TOUCH && !touch.found) touch = {true, t, baseZ, leg_clearance::closest(angles).pair};
         return mask;
     }

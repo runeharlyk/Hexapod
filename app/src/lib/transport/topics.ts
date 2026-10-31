@@ -5,6 +5,7 @@ import {
   GoalStatus,
   ModeData,
   OtaStatusData,
+  StanceData,
   type MessageFns
 } from '$lib/platform_shared/message'
 import {
@@ -41,6 +42,7 @@ export const STATE_TOPICS = [
   ModeData,
   AnglesData,
   GaitData,
+  StanceData,
   WifiStatus,
   APStatus,
   OtaStatusData,

@@ -118,7 +118,7 @@
             <child link="${pos}_leg_link" />
             <axis xyz="0 1 0" />
             <origin rpy="0 0 0" xyz="-0.28 ${shift} 0.59" />
-            <limit effort="1000.0" lower="-2.666" upper="1.548" velocity="0.5" />
+            <limit effort="1000.0" lower="-2.666" upper="1.5708" velocity="0.5" />
             <dynamics damping="0.0" friction="0.0" />
         </joint>
     </xacro:macro>
@@ -129,7 +129,7 @@
             <child link="${pos}_foot_link" />
             <axis xyz="0 1 0" />
             <origin rpy="0 0 0" xyz="-0.43 0 -0" />
-            <limit effort="1000.0" lower="-2.6" upper="0.1" velocity="0.5" />
+            <limit effort="1000.0" lower="-2.6006" upper="2.6006" velocity="0.5" />
             <dynamics damping="0.0" friction="0.5" />
         </joint>
     </xacro:macro>
