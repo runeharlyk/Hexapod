@@ -125,6 +125,9 @@ test('in IDLE a drag starts from the pose the robot reports', async ({ page }) =
   await page.goto(`${base}/controller`)
   await expect(page.getByText(DRIVING)).toBeVisible()
   const canvas = page.locator('canvas').first()
+  // The mode badge, and a leg to take, can precede the report: a leg taken before it turns from the stand the model
+  // rests in.
+  await expect(canvas).toHaveAttribute('data-pose', 'reported')
 
   const point = await findJoint(canvas)
   expect(point, 'a leg of the model under the pointer').toBeDefined()
@@ -149,8 +152,8 @@ test('in IDLE a limp servo is dragged from the pose the model draws', async ({ p
   await expect(page.getByText(DRIVING)).toBeVisible()
   await expect(page.getByText(/servos limp/)).toHaveCount(0)
   const canvas = page.locator('canvas').first()
-  // The mode badge precedes model loading; let the view receive and draw HELD before making it limp.
-  await findJoint(canvas)
+  // The mode badge precedes the report; let the view draw HELD before making it limp.
+  await expect(canvas).toHaveAttribute('data-pose', 'reported')
 
   robot.set(AnglesData, AnglesData.create())
   await expect(page.getByText('18 of 18 servos limp')).toBeVisible()
@@ -227,8 +230,10 @@ test('in IDLE a drag from legs through each other sends the steps that part them
   await page.goto(`${base}/controller`)
   await expect(page.getByText(DRIVING)).toBeVisible()
   const canvas = page.locator('canvas').first()
-  // The view judges a drag once its virtual robot runs, which it marks on the canvas.
-  await expect(canvas).toHaveAttribute('data-virtual-robot', 'ready')
+  // The view judges a drag once its virtual robot runs and drags from the pose the robot reported, both of which it marks
+  // on the canvas; the virtual robot's WebAssembly loads within findJoint's bound for the model, not expect's default.
+  await expect(canvas).toHaveAttribute('data-virtual-robot', 'ready', { timeout: 10_000 })
+  await expect(canvas).toHaveAttribute('data-pose', 'reported')
   const { x, y } = await findJoint(canvas)
   await page.mouse.move(x, y)
   await page.mouse.down()

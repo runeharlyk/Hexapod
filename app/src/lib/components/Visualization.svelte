@@ -80,6 +80,9 @@
   const gaitIndex = (g: GaitType) => Object.values(GaitType).indexOf(g)
 
   let useInternalKinematics = true
+  // Shown on the canvas as data-pose="reported" while the model is drawn at a pose the robot reported, until the link
+  // drops.
+  let reportedPoseShown = $state(false)
 
   let lastRobotPosition = new Vector3()
   let unsubscribers: (() => void)[] = []
@@ -108,12 +111,16 @@
         if (!pose) return
         useInternalKinematics = false
         show(pose)
+        reportedPoseShown = true
       }),
       dataBroker.on(IMUData, data => shown.measure(data)),
       // Without a link no angles arrive, so the local model has to animate the robot again.
       isLinked.subscribe(linked => {
         shown.link(linked)
-        if (!linked) useInternalKinematics = true
+        if (!linked) {
+          useInternalKinematics = true
+          reportedPoseShown = false
+        }
       }),
       gait.subscribe(g => virtualRobot?.setGait(gaitIndex(g))),
       animationPreview.subscribe(value => (preview = value)),
@@ -310,4 +317,8 @@
 
 <svelte:window onresize={sceneManager.fillParent} />
 
-<canvas bind:this={canvas} data-virtual-robot={virtualRobotReady ? 'ready' : undefined}></canvas>
+<canvas
+  bind:this={canvas}
+  data-virtual-robot={virtualRobotReady ? 'ready' : undefined}
+  data-pose={reportedPoseShown ? 'reported' : undefined}
+></canvas>
