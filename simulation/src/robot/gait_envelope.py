@@ -6,7 +6,11 @@ gait-independent geometry factors, kappa_swing and kappa_stance (rad per unit of
 fraction d at cadence f then peaks at f * max(kappa_swing / (1 - d), kappa_stance / d) and walks at stroke * f / d.
 The cadence is capped by the servo speed through that peak and by CADENCE_MAX; the stroke by joint travel, less
 TRAVEL_MARGIN_DEG, by reach, and by the legs' clearance: every classic timing's cycle at the stroke keeps every leg pair
-LEG_CLEARANCE_MM apart (src/robot/clearance.py, the check firmware/include/leg_clearance.h ports).
+LEG_CLEARANCE_MM apart (src/robot/clearance.py, the check firmware/include/leg_clearance.h ports), and by the static
+margin: every statically stable timing's cycle (TRI_GATE, WAVE, RIPPLE) keeps the body centre, where the centre of mass
+is taken to be, STATIC_MARGIN_MM inside the support polygon of its feet in stance. BI_GATE stands on two feet for part
+of its cycle, a line with no static margin, so it is not judged by it; it walks the strokes the other timings bound,
+since the table is one per stance and not per timing.
 The factors are read off the port's own curves at sampled progress, so one posture costs two short sweeps and one
 sampled cycle per timing, not a rollout.
 The table keeps the factors themselves, sampled along each axis's stroke up to the longest feasible one, so a consumer
@@ -28,17 +32,26 @@ from src.robot.animation import JOINT_LIMIT_DEG
 DEFAULT_SERVO_RAD_S = 13.1  # MG92B 0.08 s / 60 deg at the 6 V servo rail
 CADENCE_MAX = 3.0  # cycles/s, the ceiling of the legacy step_speed law (2 x 1.5)
 # Travel kept in reserve on every joint. The table is measured at grid points and sampled curves, and the firmware
-# interpolates it between them, where the feasible stroke can fall short of the interpolated one: with the coxa's
-# 50.5 deg, 0.21 deg of tibia past travel at a 2 deg margin over 400 walkable postures of each stance (every classic
-# gait and axis, at the speed-optimal and the longest stride), none at this one. It does not bound every cell: over 400
-# other postures the crab still takes a middle tibia 0.55 deg past travel where its lateral stroke falls from 124 to
-# 29 mm across one cell (s1 -0.84, h 0.17, fd -0.30).
+# interpolates it between them, where the feasible stroke can fall short of the interpolated one: with a 50.5 deg
+# coxa, 0.21 deg of tibia past travel at a 2 deg margin over 400 walkable postures of each stance (every classic gait
+# and axis, at the speed-optimal and the longest stride), none at this one, nor with the 90 and 45 deg coxas. It does
+# not bound every cell: over 400 other postures a middle tibia goes 0.39 deg past travel in the crab and 0.32 deg in the
+# default stance where the lateral stroke falls steeply across one cell (s1 -0.84, h 0.17, fd -0.30).
 TRAVEL_MARGIN_DEG = 2.5
 DEFAULT_SPEED_FRACTION = 0.6  # of the top cadence at s = 0; s = +1 reaches 1.0
 LEG_CLEARANCE_MM = clearance.LEG_CLEARANCE_MM
-# Clearance kept in reserve above LEG_CLEARANCE_MM by every stroke, for the same reason: without it the walks between
-# the grid points came 0.21 mm closer than LEG_CLEARANCE_MM (measured as the travel above).
-CLEARANCE_RESERVE_MM = 0.5
+# Clearance kept in reserve above LEG_CLEARANCE_MM by every stroke, for the same reason and for the combined strokes
+# the table does not sample: without it the walks between the grid points came 0.21 mm closer than LEG_CLEARANCE_MM
+# (measured as the travel above), and at 0.5 mm, with the 90 and 45 deg coxas, BI in the crab backing and turning at
+# once at its walkable extreme (s1 -1, h 1, fd 1) came 0.03 mm closer. At 1 mm the least walk over both sets of 400
+# postures keeps 5.64 mm, and the walkable extremes' sweep (test_leg_clearance.py) keeps the margin.
+CLEARANCE_RESERVE_MM = 1.0
+# Owner's ruling 2026-11-01: the least distance from the body centre to the nearest edge of the support polygon, the
+# measure compare_stances.py reports (there with the model's centre of mass, legs included, which stays within
+# micrometres of the body centre in a symmetric stance). No reserve is kept above it: between the grid points the least
+# walk over both sets of 400 postures keeps 25.02 mm in the crab and 28.01 mm in the default stance (TRI forward), and
+# compare_stances.py's firmware walks at the walkable extremes 25.03 mm.
+STATIC_MARGIN_MM = 25.0
 
 AXES = ("forward", "lateral", "yaw")
 GAIT_NAMES = ("TRI_GATE", "BI_GATE", "WAVE", "RIPPLE")
@@ -80,6 +93,7 @@ def _timing(gait_type: int) -> tuple[np.ndarray, float]:
 
 TIMINGS = tuple(_timing(getattr(fg, name)) for name in GAIT_NAMES)
 STAND_FRAC = tuple(stand_frac for _, stand_frac in TIMINGS)
+STATICALLY_STABLE = tuple(GAIT_NAMES.index(name) for name in ("TRI_GATE", "WAVE", "RIPPLE"))
 _BEZIER_WEIGHTS = np.array([math.comb(11, i) for i in range(12)], dtype=float)
 
 
@@ -174,15 +188,19 @@ def kappas(axis: str, stroke: float, lift: float, zm: float, feet: np.ndarray) -
     return _peak_rate_per_progress(swing), _peak_rate_per_progress(stance), within_travel and reachable
 
 
+def cycle_phases(offset: np.ndarray) -> np.ndarray:
+    """Each leg's phase (CYCLE_PHASES, 6) over a timing's sampled cycle."""
+    return (np.arange(CYCLE_PHASES)[:, None] / CYCLE_PHASES + offset) % 1.0
+
+
 def cycle_feet(axis: str, stroke: float, lift: float, feet: np.ndarray) -> np.ndarray:
     """The feet (timing, phase, leg, xyz) every classic timing's cycle places at CYCLE_PHASES phases for a walk at the
     stroke along the axis over the resting feet, as GaitController.generate_feet places them once the walk runs: a leg
     in stance on gait.h's stance curve, a swinging one on its Bezier curve at the lift."""
     half, direction = _leg_strokes(axis, stroke, feet)
-    phases = np.arange(CYCLE_PHASES)[:, None] / CYCLE_PHASES
     placed = np.empty((len(TIMINGS), CYCLE_PHASES, 6, 3))
     for t, (offset, stand_frac) in enumerate(TIMINGS):
-        phase = (phases + offset) % 1.0
+        phase = cycle_phases(offset)
         swinging = phase >= stand_frac
         stance_step, stance_z = _stance_offsets(half, phase / stand_frac)
         swing_step, swing_z = _swing_offsets(half, lift, np.where(swinging, (phase - stand_frac) / (1.0 - stand_frac),
@@ -203,15 +221,40 @@ def cycle_clearance(axis: str, stroke: float, lift: float, zm: float, feet: np.n
     return float(clearance.surface_clearance(centre).min())
 
 
+def support_margins(feet_xy: np.ndarray, standing: np.ndarray) -> np.ndarray:
+    """The distance (mm) from the body centre to the nearest edge of the convex hull of the standing feet, negative
+    outside it, for each set of feet (..., 6, 2) with its mask of feet in stance (..., 6). A hull edge is an ordered
+    pair of standing feet with every other standing foot on its left, and the margin is the least distance of the
+    centre left of such an edge's line; feet on one line have edges both ways, so their margin is negative."""
+    edge = feet_xy[..., None, :, :] - feet_xy[..., :, None, :]  # [i, j]: foot i to foot j
+    to_k = feet_xy[..., None, None, :, :] - feet_xy[..., :, None, None, :]  # [i, j, k]: foot i to foot k
+    cross = edge[..., None, 0] * to_k[..., 1] - edge[..., None, 1] * to_k[..., 0]
+    pair = standing[..., :, None] & standing[..., None, :] & ~np.eye(6, dtype=bool)
+    hull_edge = pair & ((cross >= -1e-9) | ~standing[..., None, None, :]).all(-1)
+    to_centre = -edge[..., 0] * feet_xy[..., :, None, 1] + edge[..., 1] * feet_xy[..., :, None, 0]
+    length = np.where(pair, np.linalg.norm(edge, axis=-1), 1.0)
+    return np.where(hull_edge, to_centre / length, np.inf).min(axis=(-2, -1))
+
+
+def cycle_static_margin(axis: str, stroke: float, lift: float, feet: np.ndarray) -> float:
+    """The least static margin (mm) over every statically stable timing's sampled cycle at the stroke: the body
+    centre's distance to the nearest edge of the support polygon of the feet in stance."""
+    placed = cycle_feet(axis, stroke, lift, feet)[list(STATICALLY_STABLE), ..., :2]
+    standing = np.array([cycle_phases(TIMINGS[t][0]) < TIMINGS[t][1] for t in STATICALLY_STABLE])
+    return float(support_margins(placed, standing).min())
+
+
 def geometry_factors(axis: str, stroke: float, lift: float, zm: float, feet_scale: float,
                      stance: int = fg.STANCE_DEFAULT) -> tuple[float, float, bool]:
     """(kappa_swing, kappa_stance, feasible) over the stance's resting feet: the peak joint rate per unit of swing and
     stance progress, and whether the stroke keeps every sampled angle within the joint travel less TRAVEL_MARGIN_DEG,
     every sampled foot within reach, and every leg pair LEG_CLEARANCE_MM apart, with CLEARANCE_RESERVE_MM to spare,
-    over every classic timing's cycle."""
+    over every classic timing's cycle, and the body centre STATIC_MARGIN_MM inside the support over every statically
+    stable timing's."""
     feet = fg.stance_feet(stance, feet_scale)
     kappa_swing, kappa_stance, within = kappas(axis, stroke, lift, zm, feet)
-    feasible = within and cycle_clearance(axis, stroke, lift, zm, feet) >= LEG_CLEARANCE_MM + CLEARANCE_RESERVE_MM
+    feasible = (within and cycle_static_margin(axis, stroke, lift, feet) >= STATIC_MARGIN_MM
+                and cycle_clearance(axis, stroke, lift, zm, feet) >= LEG_CLEARANCE_MM + CLEARANCE_RESERVE_MM)
     return kappa_swing, kappa_stance, feasible
 
 
@@ -252,8 +295,8 @@ def longest_stroke(axis: str, s1: float, h: float, fd: float, stance: int = fg.S
 
 
 def is_walkable(s1: float, h: float, fd: float, stance: int = fg.STANCE_DEFAULT) -> bool:
-    """Whether the posture can stride WALKABLE_STROKE_MM along the axis the stance walks within joint travel, reach and
-    the legs' clearance."""
+    """Whether the posture can stride WALKABLE_STROKE_MM along the axis the stance walks within joint travel, reach,
+    the legs' clearance and the static margin."""
     strokes = _feasible_strokes(WALK_AXIS[stance], float(s1), float(h), float(fd), stance)
     return bool(strokes) and strokes[-1][0] >= WALKABLE_STROKE_MM
 
@@ -306,6 +349,7 @@ def build_table(servo_rad_s: float) -> dict:
         "leg_clearance_mm": LEG_CLEARANCE_MM,
         "link_radius_mm": dict(clearance.LINK_RADIUS_MM),
         "clearance_reserve_mm": CLEARANCE_RESERVE_MM,
+        "static_margin_mm": STATIC_MARGIN_MM,
         "default_speed_fraction": DEFAULT_SPEED_FRACTION,
         "stand_frac": list(STAND_FRAC),
         "stances": stances,

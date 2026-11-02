@@ -302,6 +302,8 @@ GAIT_ENVELOPE_PATH = os.path.join(os.path.dirname(__file__), "..", "resources", 
 
 # The stroke at stride -1, as a share of the speed-optimal one at stride 0 (gait_speed.h)
 MIN_STRIDE_SHARE = 0.3
+# The speed-optimal stroke is the shortest sample within this share of the fastest sample's speed (gait_speed.h)
+SPEED_TIE = 1e-3
 
 
 @lru_cache(maxsize=None)
@@ -393,12 +395,9 @@ def envelope_at(gait_type: int, axis: int, s1: float, h: float, fd: float,
     def cadence_at(fraction):
         return _top_cadence(gait_type, _kappa_at_stroke(swing, fraction), _kappa_at_stroke(stance, fraction))
 
-    optimal, fastest = 0, 0.0
-    for n in range(samples):
-        # The top speed is stroke * cadence / d, and d is the gait's alone.
-        speed = (n + 1) * cadence_at((n + 1) / samples)
-        if speed > fastest:
-            optimal, fastest = n, speed
+    # The top speed is stroke * cadence / d, and d is the gait's alone.
+    speeds = [(n + 1) * cadence_at((n + 1) / samples) for n in range(samples)]
+    optimal = next(n for n, speed in enumerate(speeds) if speed >= max(speeds) * (1.0 - SPEED_TIE))
     optimal_stroke = (optimal + 1) / samples * stroke_max
     stride = min(max(stride, -1.0), 1.0)
     if stride >= 0.0:
@@ -447,24 +446,30 @@ def _stick_shares(lx: float, ly: float, rx: float, s: float) -> list[float]:
 def _walk_at_shares(gait_type: int, share: list[float], lx: float, ly: float, rx: float, s1: float, h: float,
                     fd: float, stride: float, stance: int = STANCE_DEFAULT) -> tuple[float, float, float, float]:
     """Port of gait_speed_detail::walkAtShares: the walk at share[axis] of each axis's top speed at the stride, signed
-    by the stick: +lx strafes right, +ly walks forward and +rx turns clockwise. Each axis walks its share of the total
-    share of its stroke, at the total share of the slowest top cadence among those axes."""
-    used, stroke = [0.0] * 3, [0.0] * 3
-    total, slowest = 0.0, load_gait_envelope().cadence_max
+    by the stick: +lx strafes right, +ly walks forward and +rx turns clockwise. Each axis walks its weight, its share
+    over the total share, of its stroke, at the total share of the weighted harmonic mean of the axes' top cadences."""
+    used, stroke, cadence = [0.0] * 3, [0.0] * 3, [0.0] * 3
+    total = 0.0
     for axis in range(3):
         if share[axis] <= 0.0:
             continue
-        _, axis_stroke, cadence = envelope_at(gait_type, axis, s1, h, fd, stride, stance)
+        _, axis_stroke, axis_cadence = envelope_at(gait_type, axis, s1, h, fd, stride, stance)
         if axis_stroke <= 0.0:
             continue
         used[axis] = share[axis]
         stroke[axis] = axis_stroke
-        slowest = min(slowest, cadence)
+        cadence[axis] = axis_cadence
         total += used[axis]
     if total <= 0.0:
         return 0.0, 0.0, 0.0, 0.0
-    stroke = [stroke[axis] * (used[axis] / total) for axis in range(3)]
-    return math.copysign(stroke[1], lx), math.copysign(stroke[0], ly), -math.copysign(stroke[2], rx), total * slowest
+    cycle_time = 0.0  # s per cycle at the axes' own top cadences, weighted
+    for axis in range(3):
+        if used[axis] <= 0.0:
+            continue
+        weight = used[axis] / total
+        stroke[axis] *= weight
+        cycle_time += weight / cadence[axis]
+    return math.copysign(stroke[1], lx), math.copysign(stroke[0], ly), -math.copysign(stroke[2], rx), total / cycle_time
 
 
 def classic_walk_target(gait_type: int, lx: float, ly: float, rx: float, s: float, s1: float, h: float,

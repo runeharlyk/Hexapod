@@ -16,7 +16,8 @@ inline void ServoSettings_read(const ServoSettings &settings, ServoSettings &pro
 
 // Written as inclusive range tests so a NaN arriving over the wire fails instead of propagating into
 // the PWM math and driving a servo into its endstop. A coxa's centre is a pulse "centre all servos" sends and the
-// middle of its travel, so it lies within the servo's safe pulses.
+// middle of its travel, so it lies within the servo's safe pulses. A coxa's travel at the calibration (coxaTravel)
+// holds angle 0, its angle in the stand, so the safe pulses and its leg's JOINT_LIMIT_DEG overlap.
 inline bool Servo_isValid(const api_Servo &servo, pb_size_t index) {
     const bool coxa = index % 3 == 0;
     const float low = coxa ? SERVO_SAFE_PULSE_MIN : 0.0f, high = coxa ? SERVO_SAFE_PULSE_MAX : 4095.0f;
@@ -24,6 +25,11 @@ inline bool Servo_isValid(const api_Servo &servo, pb_size_t index) {
     if (!(servo.conversion > 0.0f && servo.conversion <= 100.0f)) return false;
     if (servo.direction != 1.0f && servo.direction != -1.0f) return false;
     if (!(servo.center_angle >= -180.0f && servo.center_angle <= 180.0f)) return false;
+    if (coxa) {
+        const JointTravel travel =
+            coxaTravel(index / 3, servo.center_pwm, servo.conversion, servo.direction, servo.center_angle);
+        if (!(travel.min <= 0.0f && travel.max >= 0.0f)) return false;
+    }
     return true;
 }
 

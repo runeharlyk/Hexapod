@@ -356,7 +356,7 @@ inline uint32_t poseToAngles(const Pose &p, Kinematics &kin, const float stance[
         }
     }
     for (int j = 0; j < 18; ++j) {
-        const float limit = JOINT_LIMIT_DEG[j % 3];
+        const float limit = JOINT_LIMIT_DEG[j / 3][j % 3];
         const float clamped = CLIP(angles[j], -limit, limit);
         if (clamped != angles[j]) {
             mask |= 1u << j;

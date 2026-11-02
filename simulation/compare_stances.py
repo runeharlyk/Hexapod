@@ -44,6 +44,7 @@ import numpy as np
 
 from src.robot.firmware_gait import (BI_GATE, RIPPLE, STANCE_CRAB, STANCE_DEFAULT, STANCE_NAMES, TRI_GATE,
                                      WAVE)
+from src.robot.gait_envelope import STATIC_MARGIN_MM
 from src.sim.firmware_loop import FIRMWARE_DT, FirmwareLoop
 from src.sim.mj_runtime import HexapodSim
 from src.sim.virtual_robot import STAND, WALK, VirtualRobot, native_library
@@ -51,7 +52,6 @@ from src.sim.virtual_robot import STAND, WALK, VirtualRobot, native_library
 GAIT_NAMES = {TRI_GATE: "TRI", BI_GATE: "BI", WAVE: "WAVE", RIPPLE: "RIPPLE"}
 STATICALLY_STABLE = (TRI_GATE, WAVE, RIPPLE)
 STANCES = (STANCE_DEFAULT, STANCE_CRAB)
-CRAB_MIN_MARGIN_MM = 25.0  # spec 2026-10-30-crab-stance section 6
 
 # Part 1: the stick's share of full speed, on the axis walked; +lx strafes right, +ly walks forward.
 SHARES = (1 / 3, 2 / 3, 1.0)
@@ -378,9 +378,11 @@ def main() -> None:
     print()
     margins = [m for stance in STANCES for m in static_margins(stance, args.workers)]
     print(_margin_table(margins))
-    crab = min((m for m in margins if m.stance == STANCE_CRAB), key=lambda m: m.margin_mm)
-    print(f"\nleast crab margin {crab.margin_mm:.1f} mm ({GAIT_NAMES[crab.gait]}, {crab.axis}, posture {crab.posture});"
-          f" the spec asks at least {CRAB_MIN_MARGIN_MM:.0f} mm")
+    print()
+    for stance in STANCES:
+        least = min((m for m in margins if m.stance == stance), key=lambda m: m.margin_mm)
+        print(f"least {STANCE_NAMES[stance]} margin {least.margin_mm:.1f} mm ({GAIT_NAMES[least.gait]}, {least.axis}, "
+              f"posture {least.posture}); the envelope keeps {STATIC_MARGIN_MM:.0f} mm")
 
 
 if __name__ == "__main__":

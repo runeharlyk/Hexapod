@@ -340,10 +340,8 @@ void test_an_arc_goal_ends_on_its_arc() {
     assertAtRest(rig);
 }
 
-// A left arc of 0.5 m through 90 deg in every classic gait, at full and half speed, ends on its arc. WAVE's is a known
-// limit (GoalController::STOP_S): it reaches the turn but ends 34 to 39 mm from the arc's end, past ARC_REACHED_M, and
-// times out, at full speed since the 50.5 deg coxa's longer strokes and at half speed before them too; the stroke cap,
-// on the turn left or on the chord left, does not move it. It is held to that, so a change either way shows here.
+// A left arc of 0.5 m through 90 deg in every classic gait, at full and half speed, ends on its arc. WAVE's ended 34 to
+// 39 mm off with the 50.5 deg coxa, past ARC_REACHED_M; with the 90 deg coxa it ends 19 to 22 mm off.
 void test_every_gait_ends_an_arc_on_it() {
     for (const GaitType gait : {GaitType::TRI_GATE, GaitType::BI_GATE, GaitType::WAVE, GaitType::RIPPLE}) {
         for (const float speed : {1.0f, 0.5f}) {
@@ -359,11 +357,6 @@ void test_every_gait_ends_an_arc_on_it() {
                           (int)gait, speed, (int)rig.state(), (unsigned)rig.robot.goalStatus().passes, off * 1000.0f,
                           (end.yaw - 90 * DEG) / DEG);
             TEST_ASSERT_FLOAT_WITHIN_MESSAGE(GoalController::REACHED_RAD, 90 * DEG, end.yaw, msg);
-            if (gait == GaitType::WAVE) {
-                TEST_ASSERT_EQUAL_MESSAGE(GoalState::TIMED_OUT, rig.state(), msg);
-                TEST_ASSERT_TRUE_MESSAGE(off > GoalController::ARC_REACHED_M && off < 0.04f, msg);
-                continue;
-            }
             TEST_ASSERT_EQUAL_MESSAGE(GoalState::REACHED, rig.state(), msg);
             TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(GoalController::ARC_REACHED_M, off, msg);
         }
@@ -378,12 +371,14 @@ void test_every_gait_ends_an_arc_on_it() {
 // goals take a corrective pass that an exact stop prediction would save (roadmap 3.11). At full and half speed each
 // case walks five targets, 0.90 to 1.10 m or 70 to 110 deg, and its passes in all are held to those measured on this
 // rig plus one, the slack for another platform's floating point: a target that needs two passes more, or two that need
-// one more, fails. Measured 2026-10-31 with the approach's stroke capped at what remains, never under the gait's
-// deadband (GoalController::strokeCap), and the envelope of the 50.5 deg coxa; 2026-10-29's TRI and BI counts, before
-// both, were 6, 5, 7, 10, 5, 5, 9 and 7. TRI's metre-scale goals take two passes more often than before (0.7 to 1.1 m)
-// until the stop prediction is replaced (PR #67): its STOP_S and STOP_TAIL were fitted on the shorter strokes. WAVE
-// and RIPPLE reach every target in one pass. At a quarter of the speed only the metre and the right angle are walked,
-// and no pass count is held.
+// one more, fails. Measured 2026-11-01 with the approach's stroke capped at what remains, never under the gait's
+// deadband (GoalController::strokeCap), the envelope of the 90 deg corner and 45 deg middle coxas, and a combined stick
+// stepped at the weighted harmonic mean of its axes' top cadences (walkAtShares); 2026-10-31's, with the 50.5 deg
+// coxa, were 7, 6, 9, 9, 5, 6, 7 and 7 for TRI and BI, and 2026-10-29's, before both, 6, 5, 7, 10, 5, 5, 9 and 7. A
+// goal's cross-track and heading corrections add a little lx and rx to its stick: stepped at the slowest axis's top
+// cadence, as walkAtShares once stepped it, that slowed TRI's forward walk by 18 % on this envelope, and every TRI
+// metre target at full speed stopped short and took a second pass. WAVE and RIPPLE reach every target in one pass. At
+// a quarter of the speed only the metre and the right angle are walked, and no pass count is held.
 static uint32_t walkToTarget(GaitType gait, const Goal &goal) {
     Rig &rig = newRig();
     standUp(rig);
@@ -414,9 +409,9 @@ void test_fast_and_slow_goals_reach_their_targets() {
         uint32_t passes; // measured over the five targets
     };
     const Case cases[] = {
-        {GaitType::TRI_GATE, 1.0f, false, 7}, {GaitType::TRI_GATE, 1.0f, true, 6}, {GaitType::TRI_GATE, 0.5f, false, 9},
+        {GaitType::TRI_GATE, 1.0f, false, 5}, {GaitType::TRI_GATE, 1.0f, true, 6}, {GaitType::TRI_GATE, 0.5f, false, 8},
         {GaitType::TRI_GATE, 0.5f, true, 9},  {GaitType::BI_GATE, 1.0f, false, 5}, {GaitType::BI_GATE, 1.0f, true, 6},
-        {GaitType::BI_GATE, 0.5f, false, 7},  {GaitType::BI_GATE, 0.5f, true, 7},  {GaitType::WAVE, 1.0f, false, 5},
+        {GaitType::BI_GATE, 0.5f, false, 8},  {GaitType::BI_GATE, 0.5f, true, 7},  {GaitType::WAVE, 1.0f, false, 5},
         {GaitType::WAVE, 1.0f, true, 5},      {GaitType::WAVE, 0.5f, false, 5},    {GaitType::WAVE, 0.5f, true, 5},
         {GaitType::RIPPLE, 1.0f, false, 5},   {GaitType::RIPPLE, 1.0f, true, 5},   {GaitType::RIPPLE, 0.5f, false, 5},
         {GaitType::RIPPLE, 0.5f, true, 5}};
@@ -957,11 +952,13 @@ void test_a_new_goal_replaces_the_one_in_progress() {
 // The status is pushed on every change of state and on every 5 % of progress, and on nothing else. A one-pass goal goes
 // SETTLING (its posture), RUNNING, SETTLING (coming to rest) and REACHED, and its progress crosses each of the 20 steps
 // once on the way up. Progress is judged on the pose the feet will settle in, which can step back a little as a step
-// lands, so a step may be crossed back and forth: each crossing back costs two pushes more.
+// lands, so a step may be crossed back and forth: each crossing back costs two pushes more. TRI's metre at half
+// speed stops 12 mm short and takes a second pass (test_fast_and_slow_goals_reach_their_targets), so the goal is
+// 0.8 m, which one pass reaches.
 void test_the_status_is_pushed_on_state_changes_and_every_5_percent() {
     Rig &rig = newRig();
     standUp(rig);
-    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(1.0f), style(), GaitType::TRI_GATE));
+    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(0.8f), style(), GaitType::TRI_GATE));
     const uint32_t id = rig.robot.goalStatus().id;
     rig.runGoal();
     TEST_ASSERT_EQUAL(GoalState::REACHED, rig.state());

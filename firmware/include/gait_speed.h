@@ -25,6 +25,12 @@ static_assert(
     "gait_envelope.h was judged with other leg radii than leg_clearance.h's: run simulation/export_envelope.py");
 static_assert(gait_envelope::STANCES == (int)Stance::CRAB + 1, "gait_envelope.h has a table per Stance");
 
+// The least distance from the body centre to the nearest edge of the feet in stance that every classic stroke keeps on
+// the statically stable timings (TRI_GATE, WAVE, RIPPLE), the owner's ruling of 2026-11-01; the generator applies it.
+constexpr float STATIC_MARGIN_MM = 25.0f;
+static_assert(gait_envelope::STATIC_MARGIN_MM == STATIC_MARGIN_MM,
+              "gait_envelope.h keeps another static margin than gait_speed.h: run simulation/export_envelope.py");
+
 struct AxisEnvelope {
     float vMax;    // mm/s (forward, lateral) or rad/s (yaw): the stroke at its top cadence
     float stroke;  // mm or rad per cycle
@@ -33,6 +39,14 @@ struct AxisEnvelope {
 
 // The stroke at stride -1, as a share of the speed-optimal one at stride 0.
 constexpr float MIN_STRIDE_SHARE = 0.3f;
+
+// The speed-optimal stroke is the shortest sample within this share of the fastest sample's speed. Where the servos
+// bind, kappa grows with the stroke and several samples walk within 1e-4 of each other, which float and the
+// simulation's double order differently; a shorter stroke that walks as fast is the better step, and a share a
+// thousand times float's 1e-6 rounding of the lookup makes it unlikely, though not impossible, that the firmware and
+// the port pick different samples: a sample whose speed falls within float's rounding of the share's edge can still
+// split them.
+constexpr float SPEED_TIE = 1e-3f;
 
 namespace gait_speed_detail {
 
@@ -86,9 +100,9 @@ inline float strokeMaxAt(int axis, float s1, float h, float fd, Stance stance) {
 
 // Kappa at a stroke, as a fraction of the longest, from its samples at (k + 1) / SAMPLES: the running maximum of the
 // samples up to the stroke, linear between them, and the first sample below it. Kappa mostly rises with the stroke but
-// the swing samples dip in places, below the highest before them by up to 1.9 % forward and lateral and 18.1 % in yaw
-// in the default stance and 2.1 % forward, 5.2 % lateral and 0.3 % in yaw in the crab, and a stroke inside a dip or
-// short of the first sample is not taken to turn the joints any slower than a shorter one.
+// the swing samples dip in places, below the highest before them by up to 1.9 % forward, 1.9 % lateral and 18.1 % in
+// yaw in the default stance and 5.1 % forward, 5.2 % lateral and 1.3 % in yaw in the crab, and a stroke inside a dip
+// or short of the first sample is not taken to turn the joints any slower than a shorter one.
 inline float kappaAtStroke(const float (&samples)[SAMPLES], float fraction) {
     const float position = fraction * SAMPLES - 1.0f;
     float below = samples[0];
@@ -133,9 +147,9 @@ inline bool postureWalkable(float s1, float h, float fd, Stance stance) {
 }
 
 // The stroke `stride` picks on an axis (0 forward, 1 lateral, 2 yaw) at a posture in a stance, with its top cadence and
-// the top speed the two make. Stride 0 is the speed-optimal stroke, the stroke sample whose top speed is the highest,
-// +1 the longest stroke, and -1 MIN_STRIDE_SHARE of the speed-optimal one, linear in between. The envelope is empty
-// where the posture cannot walk the axis, and for GaitType::TUNED/AUTO.
+// the top speed the two make. Stride 0 is the speed-optimal stroke, the shortest stroke sample whose top speed is
+// within SPEED_TIE of the highest, +1 the longest stroke, and -1 MIN_STRIDE_SHARE of the speed-optimal one, linear in
+// between. The envelope is empty where the posture cannot walk the axis, and for GaitType::TUNED/AUTO.
 inline AxisEnvelope envelopeAt(GaitType gait, int axis, float s1, float h, float fd, float stride, Stance feet) {
     using namespace gait_speed_detail;
     if (!isClassic(gait)) return {};
@@ -144,18 +158,15 @@ inline AxisEnvelope envelopeAt(GaitType gait, int axis, float s1, float h, float
     const Kappas kappas = kappasAt(axis, locate(s1), locate(h), locate(fd), feet);
     const auto& swing = kappas.swing;
     const auto& stance = kappas.stance;
-    int optimal = 0;
-    float fastest = 0.0f;
+    float speed[SAMPLES], fastest = 0.0f;
     for (int n = 0; n < SAMPLES; ++n) {
         const float fraction = (float)(n + 1) / SAMPLES;
         // The top speed is stroke * cadence / d, and d is the gait's alone.
-        const float speed =
-            (float)(n + 1) * topCadence(gait, kappaAtStroke(swing, fraction), kappaAtStroke(stance, fraction));
-        if (speed > fastest) {
-            fastest = speed;
-            optimal = n;
-        }
+        speed[n] = (float)(n + 1) * topCadence(gait, kappaAtStroke(swing, fraction), kappaAtStroke(stance, fraction));
+        fastest = std::max(fastest, speed[n]);
     }
+    int optimal = 0;
+    while (speed[optimal] < fastest * (1.0f - SPEED_TIE)) ++optimal;
     const float optimalStroke = (float)(optimal + 1) / SAMPLES * strokeMax;
     stride = std::clamp(stride, -1.0f, 1.0f);
     const float stroke = stride >= 0.0f ? optimalStroke + stride * (strokeMax - optimalStroke)
@@ -234,15 +245,17 @@ inline bool standFeasible(Kinematics& kin, float h, float fd, Stance stance) {
     float angles[18];
     kin.inverseKinematics(body, angles);
     for (int j = 0; j < 18; ++j)
-        if (std::fabs(angles[j]) > JOINT_LIMIT_DEG[j % 3]) return false;
+        if (std::fabs(angles[j]) > JOINT_LIMIT_DEG[j / 3][j % 3]) return false;
     return legsClear(angles);
 }
 
-// The largest coxa angle the crab walks on level ground: every stroke of its table keeps each joint within its travel
-// less TRAVEL_MARGIN_DEG, and its forward and turning strokes take the corner coxas out to there from the 45 deg they
-// rest at (test_stance measures the walks reaching it). The self-levelling's tilt adds to it on a slope, held at the
-// calibration's travel by the servo controller.
-constexpr float CRAB_COXA_MAX_DEG = JOINT_LIMIT_DEG[0] - gait_envelope::TRAVEL_MARGIN_DEG;
+// The largest coxa angle the crab walks a corner coxa to on level ground, measured on its walks: the forward and
+// turning strokes of its table, alone and combined, at the speed-optimal and the longest stride, in every classic
+// timing at the neutral posture and the corners of the posture cube, take a corner coxa out to 60.96 deg from the 45 it
+// rests at, the static margin ending most forward strokes and the legs' clearance the turning ones, not the coxa's
+// 90 deg travel (test_stance holds the walks within half a degree under it). The self-levelling's tilt adds to it on a
+// slope, held at the calibration's travel by the servo controller. Regenerating the envelope can move it.
+constexpr float CRAB_COXA_MAX_DEG = 61.0f;
 
 // Each coxa's angle in the crab at rest, the same at every posture, since each foot keeps the default stance's reach:
 // the corner legs' at +-45 deg, the middle legs' at 0.
@@ -295,14 +308,19 @@ inline void stickShares(float lx, float ly, float rx, float s, float (&share)[3]
 
 // The walk at share[axis] of each axis's top speed at the stride, the shares summing to at most 1, signed as lx and
 // ly on its lateral and forward axes and against rx on its yaw.
-// Each axis walks its share of the total share of its stroke, and the gait steps at the total share of the slowest top
-// cadence among those axes: a combined stick never steps an axis faster than that axis's own top cadence, and so walks
-// an axis with a faster one below its share of its top speed.
+// Each axis walks its weight, its share over the total share, of its stroke, the weights summing to 1, and a cycle
+// takes the weighted sum of the axes' own top cycle times: the gait steps at the total share of the weighted harmonic
+// mean of their top cadences. To first order a foot's motion is the weighted sum of the motions each axis's stroke
+// would give it, so a joint turns at most at the weighted sum of the axes' peak rates per cycle (kappa), which that
+// cadence keeps within the servo's speed; test_virtual_robot measures the combined sticks' joint steps on the
+// firmware's own walk. The axes' speeds as shares of their top speeds sum to the total share, the faster axis below its
+// own share and the slower one above it, and an axis of small weight, as a goal's cross-track correction, slows the
+// others by about its weight alone.
 inline WalkTarget walkAtShares(GaitType gait, const float (&share)[3], float lx, float ly, float rx, float s1, float h,
                                float fd, float stride, Stance stance) {
     float used[3] = {}; // the shares of the axes the posture can walk
-    float stroke[3] = {};
-    float total = 0.0f, slowest = gait_envelope::CADENCE_MAX;
+    float stroke[3] = {}, cadence[3] = {};
+    float total = 0.0f;
     for (int axis = 0; axis < 3; ++axis) {
         if (share[axis] <= 0.0f) continue;
         const AxisEnvelope e = envelopeAt(gait, axis, s1, h, fd, stride, stance);
@@ -311,13 +329,20 @@ inline WalkTarget walkAtShares(GaitType gait, const float (&share)[3], float lx,
         if (e.stroke <= 0.0f) continue;
         used[axis] = share[axis];
         stroke[axis] = e.stroke;
-        slowest = std::min(slowest, e.cadence);
+        cadence[axis] = e.cadence;
         total += used[axis];
     }
     if (total <= 0.0f) return {};
-    for (int axis = 0; axis < 3; ++axis) stroke[axis] *= used[axis] / total;
+    float cycleTime = 0.0f; // s per cycle at the axes' own top cadences, weighted
+    for (int axis = 0; axis < 3; ++axis) {
+        if (used[axis] <= 0.0f) continue;
+        const float weight = used[axis] / total;
+        stroke[axis] *= weight;
+        cycleTime += weight / cadence[axis];
+    }
     // +lx strafes right (+x), +ly walks forward (+y) and +rx turns clockwise (negative step_angle).
-    return {std::copysign(stroke[1], lx), std::copysign(stroke[0], ly), -std::copysign(stroke[2], rx), total * slowest};
+    return {std::copysign(stroke[1], lx), std::copysign(stroke[0], ly), -std::copysign(stroke[2], rx),
+            total / cycleTime};
 }
 
 } // namespace gait_speed_detail

@@ -330,7 +330,8 @@ void test_pose_to_angles_clamps_overrides_and_flags_unreachable_feet() {
     pose.legs[5] = {false, {0.0f, 0.0f, 120.0f}};
     float angles[18];
     const uint32_t mask = anim::poseToAngles(pose, kin, STANCE, angles);
-    TEST_ASSERT_EQUAL_FLOAT(50.5f, angles[3]);
+    TEST_ASSERT_EQUAL_FLOAT(JOINT_LIMIT_DEG[1][0], angles[3]);
+    TEST_ASSERT_EQUAL_FLOAT(45.0f, angles[3]);
     TEST_ASSERT_EQUAL_FLOAT(90.0f, angles[4]);
     TEST_ASSERT_EQUAL_FLOAT(-100.0f, angles[5]);
     TEST_ASSERT_TRUE(mask & (1u << 3));
@@ -602,7 +603,7 @@ void turnCoxa(anim::Pose &pose, Kinematics &kin, int leg, float coxa) {
 
 // Legs 0 and 1 meet with both coxas turned about 38.7 deg toward each other (leg_clearance_fixtures.txt); one leg
 // turned that far alone keeps them apart. The clearance is judged on the angles within travel: commanded at 60 deg the
-// coxas stop at 50.5, which still meets.
+// middle coxa stops at its 45, which still meets.
 void test_pose_to_angles_flags_two_legs_closer_than_the_clearance() {
     Kinematics kin;
     float angles[18];
@@ -616,7 +617,7 @@ void test_pose_to_angles_flags_two_legs_closer_than_the_clearance() {
     anim::Pose beyond;
     turnCoxa(beyond, kin, 0, -60.0f);
     turnCoxa(beyond, kin, 1, 60.0f);
-    TEST_ASSERT_EQUAL_UINT32((1u << 0) | (1u << 3) | anim::LEGS_TOUCH, anim::poseToAngles(beyond, kin, STANCE, angles));
+    TEST_ASSERT_EQUAL_UINT32((1u << 3) | anim::LEGS_TOUCH, anim::poseToAngles(beyond, kin, STANCE, angles));
 }
 
 namespace {

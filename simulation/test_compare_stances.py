@@ -1,13 +1,14 @@
 """The static stability margin compare_stances.py reports: the distance from the centre of mass, projected on the floor,
-to the nearest edge of the support polygon of the feet on it, on the firmware's own walk (spec section 6: the crab keeps
-at least 25 mm at its walkable extremes)."""
+to the nearest edge of the support polygon of the feet on it, on the firmware's own walk: each stance keeps the
+envelope's STATIC_MARGIN_MM at its walkable extremes."""
 import numpy as np
 import pytest
 
 import compare_stances
-from compare_stances import (AXIS_INDEX, CRAB_MIN_MARGIN_MM, POSTURES, STATICALLY_STABLE, StaticMargin, feet_on,
+from compare_stances import (AXIS_INDEX, POSTURES, STATICALLY_STABLE, StaticMargin, feet_on,
                              static_margins, support_margin)
 from src.robot.firmware_gait import STANCE_CRAB, STANCE_DEFAULT, TRI_GATE
+from src.robot.gait_envelope import STATIC_MARGIN_MM
 
 
 def _square(z=-66.0):
@@ -64,6 +65,8 @@ def test_a_margin_measured_before_the_feet_reach_the_crab_is_refused(monkeypatch
         compare_stances._static_margin((STANCE_CRAB, TRI_GATE, POSTURES[0], "sideways right"))
 
 
-def test_the_crab_keeps_its_static_margin_at_its_walkable_extremes(crab):
-    worst = min(crab, key=lambda m: m.margin_mm)
-    assert worst.margin_mm >= CRAB_MIN_MARGIN_MM, worst
+@pytest.mark.parametrize("stance", (STANCE_DEFAULT, STANCE_CRAB))
+def test_each_stance_keeps_the_envelope_s_static_margin_at_its_walkable_extremes(stance, crab):
+    margins = crab if stance == STANCE_CRAB else static_margins(stance)
+    worst = min(margins, key=lambda m: m.margin_mm)
+    assert worst.margin_mm >= STATIC_MARGIN_MM, worst

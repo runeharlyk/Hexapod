@@ -118,7 +118,7 @@ def clamp_to_travel(angles: np.ndarray, gait_type: int) -> np.ndarray:
     gait's coxa to TRAINED_COXA_LIMIT_DEG, the travel it was searched in."""
     limit = np.array(JOINT_LIMIT_DEG)
     if gait_type == TUNED:
-        limit[0] = TRAINED_COXA_LIMIT_DEG
+        limit[:, 0] = TRAINED_COXA_LIMIT_DEG
     limit = np.deg2rad(limit)
     return np.clip(angles, -limit, limit)
 

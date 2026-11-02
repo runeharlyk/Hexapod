@@ -158,7 +158,13 @@ def test_a_session_offset_needs_two_runs_with_a_unique_start_that_agree(session_
     shifted = (tri[1][0], "tri", _later(tri[1][2], 10.0))
     clock = bench_floor.session_clock([turn, tri[0], shifted, tri[2]], track)
     assert clock.offset == pytest.approx(0.0, abs=0.1)
-    assert list(clock.outliers) == [tri[1][0]] and clock.outliers[tri[1][0]] == pytest.approx(-10.0, abs=0.1)
+    # The run is found 10 s from its own offset unshifted: a single run's own offset carries the commanded start model's
+    # error against the true start, up to 0.13 s on these runs, which the session's median of several runs averages;
+    # 0.15 s holds that with a little to spare.
+    unshifted = score_track.clock_offset(track, score_track.Telemetry.from_recording(tri[1][2]))[0]
+    assert abs(unshifted) <= 0.15
+    assert list(clock.outliers) == [tri[1][0]]
+    assert clock.outliers[tri[1][0]] == pytest.approx(unshifted - 10.0, abs=1e-3)
     # Two runs that disagree give none: their mean would match neither.
     split = bench_floor.session_clock([turn, shifted], track)
     assert split.offset is None and "agree" in split.reason and len(split.outliers) == 2

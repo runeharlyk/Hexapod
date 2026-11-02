@@ -11,6 +11,8 @@ import {
   LEG_NAMES,
   SERVO_ANGLE_OFFSET,
   calibrationLeg,
+  coxaHoldsZero,
+  coxaPulseAtZero,
   jointAngleFromPwm,
   kneeAngle,
   legPlanePoints,
@@ -109,6 +111,42 @@ const firmwareSafePulse = () => {
 
 describe("a coxa's safe pulses", () => {
   it("are the firmware's", () => expect(COXA_SAFE_PULSE).toEqual(firmwareSafePulse()))
+
+  it('are 500 to 2500 us, the full range of a 180 degree hobby servo', () =>
+    expect(COXA_SAFE_PULSE).toEqual([103, 512]))
+})
+
+// firmware/include/settings/servo_settings.h's Servo_isValid refuses a coxa whose travel at its calibration misses angle
+// 0, the stand's: the pulse ServoController::toPwm drives at angle 0 must lie within the safe pulses, which the servo
+// page checks before it saves.
+describe("a coxa's pulse at angle 0", () => {
+  const coxa = (centerAngle: number, direction = 1, conversion = 2, centerPwm = 306): Servo => ({
+    centerPwm,
+    direction,
+    centerAngle,
+    conversion,
+    name: ''
+  })
+
+  it('is the pulse the robot drives the coxa to at angle 0', () => {
+    expect(coxaPulseAtZero(coxa(0))).toBe(306)
+    expect(coxaPulseAtZero(coxa(100))).toBe(506)
+    expect(coxaPulseAtZero(coxa(100, -1))).toBe(106)
+    // Inverted by the page's own jointAngleFromPwm, it is the coxa's angle 0.
+    expect(jointAngleFromPwm(coxa(37, -1, 2.2), 0, coxaPulseAtZero(coxa(37, -1, 2.2)))).toBeCloseTo(
+      0,
+      10
+    )
+  })
+
+  it("is held within the safe pulses as the firmware's tests hold it", () => {
+    // firmware/test/test_servo_settings: refused, refused, refused, taken, taken.
+    expect(coxaHoldsZero(coxa(180, 1, 100))).toBe(false)
+    expect(coxaHoldsZero(coxa(110))).toBe(false)
+    expect(coxaHoldsZero(coxa(-110, -1))).toBe(false)
+    expect(coxaHoldsZero(coxa(100))).toBe(true)
+    expect(coxaHoldsZero(coxa(100, -1))).toBe(true)
+  })
 })
 
 describe('the firmware geometry', () => {

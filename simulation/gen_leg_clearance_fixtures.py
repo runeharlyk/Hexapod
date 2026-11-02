@@ -115,8 +115,8 @@ def _foot_cells() -> list[Case]:
     while len(found) < len(FOOT_CELLS):
         angles = STANCE.copy()
         for leg, sign in ((1, -1.0), (2, 1.0)):
-            angles[leg * 3:leg * 3 + 3] = (sign * rng.uniform(15.0, JOINT_LIMIT_DEG[0]), rng.uniform(-40.0, 60.0),
-                                           rng.uniform(-JOINT_LIMIT_DEG[2], 0.0))
+            angles[leg * 3:leg * 3 + 3] = (sign * rng.uniform(15.0, JOINT_LIMIT_DEG[leg, 0]),
+                                           rng.uniform(-40.0, 60.0), rng.uniform(-JOINT_LIMIT_DEG[leg, 2], 0.0))
         case = _case("", angles)
         cell = closest_cell(case.angles)
         if case.pair == (1, 2) and cell in FOOT_CELLS and cell not in found and -10.0 < case.clearance < 15.0:
@@ -186,7 +186,7 @@ def cases() -> list[Case]:
         out.append(_case(f"through_{a}_{b}", _pair_pose(pair, _turn_to(pair, 0.0) + 5.0)))
     out += _foot_cells()
     rng = np.random.default_rng(RANDOM_SEED)
-    limit = np.tile(JOINT_LIMIT_DEG, 6)
+    limit = JOINT_LIMIT_DEG.reshape(18)
     for k in range(RANDOM_POSES):
         out.append(_case(f"random_{k}", rng.uniform(-limit, limit)))
     return out

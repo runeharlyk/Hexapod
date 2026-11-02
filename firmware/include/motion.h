@@ -729,8 +729,7 @@ class MotionService {
     // further than its ramp. On the virtual robot's TRI and BI goals, 1.05 to 1.15 reach a metre at full speed in one
     // pass and every centimetre and few-degree goal at half speed; 1.0 needs a second pass at full speed, 1.2 misses
     // 5 deg turns, and above 1.05 a TRI metre's predicted progress steps back more often. Fitted on the strokes of the
-    // envelope before the 50.5 deg coxa (before c439426) and not fitted again: TRI's goals of 0.7 to 1.1 m now take a
-    // second pass more often, until PR #67 replaces this stop prediction.
+    // 31.5 deg coxa's envelope and not fitted again.
     static constexpr float STOP_TAIL = 1.05f;
 
     static constexpr float smoothing_factor = BODY_SMOOTHING;

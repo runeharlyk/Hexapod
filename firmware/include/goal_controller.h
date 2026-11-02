@@ -72,10 +72,7 @@ class GoalController {
     // GaitCommandRamp) eases the stroke out through two first-order stages of RAMP_TAU_S, leaving the share
     // s = (1 + t / tau) exp(-t / tau), and slows the cadence with it, so the speed falls as s^2: its integral is
     // 1.25 tau. The virtual robot coasts 0.19 s of its speed at full speed, measured on TRI and BI, on the strokes of
-    // the envelope before the 50.5 deg coxa (before c439426), and not fitted again: with the longer strokes TRI's goals
-    // of 0.7 to 1.1 m take a second pass more often, until PR #67 replaces this stop prediction. A known limit beside
-    // it, not traced: WAVE's 0.5 m, 90 deg arc reaches its turn 34 to 39 mm from the arc's end, past ARC_REACHED_M, and
-    // times out, at full and half speed; capping its stroke on the turn or the chord left does not change it.
+    // the 31.5 deg coxa's envelope, and not fitted again.
     static constexpr float STOP_S = 1.25f * RAMP_TAU_S;
 
     /** A finite goal with a nonzero target, a positive radius for an arc, at a speed in (0, 1]. */

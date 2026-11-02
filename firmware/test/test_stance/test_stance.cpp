@@ -477,8 +477,9 @@ ServoSettings coxaCentredAt(int servo, float centerPwm, float direction = 1.0f) 
 
 // A corner coxa whose calibration leaves it less than the crab's largest angle on the side the crab turns it refuses
 // the crab, answered with the stance in force. Legs 2 and 3 rest at +45 deg in the crab, legs 0 and 5 at -45. At 2
-// counts a degree, a coxa centred at 338 counts reaches +35.5 deg and -66.5, one centred at 274 +67.5 and -34.5, and a
-// coxa turning the other way swaps the two sides.
+// counts a degree within the safe 103 to 512 counts, a coxa centred at 400 counts reaches +56 deg and -90, one centred
+// at 212 +90 and -54.5, both short of the crab's 61 on one side, and a coxa turning the other way swaps the two
+// sides; the robot's own centres, 291 to 338 counts, reach at least 85.5 deg either way.
 void test_the_crab_is_refused_where_a_corner_coxa_cannot_turn_out_to_it() {
     struct Case {
         int servo;
@@ -486,10 +487,11 @@ void test_the_crab_is_refused_where_a_corner_coxa_cannot_turn_out_to_it() {
         float direction;
         Stance taken;
     };
-    for (const Case c : {Case {6, 338.0f, 1.0f, Stance::DEFAULT}, Case {6, 306.0f, 1.0f, Stance::CRAB},
-                         Case {0, 338.0f, 1.0f, Stance::CRAB}, Case {0, 274.0f, 1.0f, Stance::DEFAULT},
-                         Case {9, 338.0f, 1.0f, Stance::DEFAULT}, Case {15, 274.0f, 1.0f, Stance::DEFAULT},
-                         Case {6, 338.0f, -1.0f, Stance::CRAB}, Case {6, 274.0f, -1.0f, Stance::DEFAULT}}) {
+    for (const Case c : {Case {6, 400.0f, 1.0f, Stance::DEFAULT}, Case {6, 306.0f, 1.0f, Stance::CRAB},
+                         Case {0, 400.0f, 1.0f, Stance::CRAB}, Case {0, 212.0f, 1.0f, Stance::DEFAULT},
+                         Case {9, 400.0f, 1.0f, Stance::DEFAULT}, Case {15, 212.0f, 1.0f, Stance::DEFAULT},
+                         Case {6, 400.0f, -1.0f, Stance::CRAB}, Case {6, 212.0f, -1.0f, Stance::DEFAULT},
+                         Case {6, 338.0f, 1.0f, Stance::CRAB}, Case {0, 291.0f, 1.0f, Stance::CRAB}}) {
         VirtualRobot robot;
         robot.calibrate(coxaCentredAt(c.servo, c.centre, c.direction));
         standUp(robot);
@@ -514,7 +516,7 @@ void test_a_calibration_the_crab_cannot_walk_steps_the_feet_back_to_the_default_
     watch(robot, ticksFor(3.0f));
     TEST_ASSERT_EQUAL(Stance::CRAB, robot.stance());
     StancePushes pushes;
-    robot.calibrate(coxaCentredAt(6, 338.0f));
+    robot.calibrate(coxaCentredAt(6, 400.0f));
     const Watch w = watch(robot, ticksFor(3.0f));
     TEST_ASSERT_EQUAL(Stance::DEFAULT, robot.stance());
     TEST_ASSERT_EQUAL(1, pushes.heard.size());
@@ -528,7 +530,7 @@ void test_a_calibration_the_crab_cannot_walk_steps_the_feet_back_to_the_default_
 // walk: its style was judged in the crab, and the feet stand on the default stance.
 void test_a_goal_judged_in_a_crab_refused_for_travel_does_not_walk() {
     VirtualRobot robot;
-    robot.calibrate(coxaCentredAt(6, 338.0f));
+    robot.calibrate(coxaCentredAt(6, 400.0f));
     standUp(robot);
     robot.setStance(Stance::CRAB);
     const CommandMsg style {0, 0, 0, 0, 0, 0, 0, 0};
@@ -540,13 +542,16 @@ void test_a_goal_judged_in_a_crab_refused_for_travel_does_not_walk() {
     assertFeetOn(robot, Stance::DEFAULT, 0.0f, "the feet never walked");
 }
 
-// CRAB_COXA_MAX_DEG is the largest angle the crab walks a corner coxa to: its forward and turning strokes, at full
-// stick in every classic timing at the neutral posture and the corners of the posture cube, reach it and go no further.
+// CRAB_COXA_MAX_DEG is the largest angle the crab walks a corner coxa to: its forward and turning strokes, alone and
+// combined with each other and with its sideways one, at full stick and at the speed-optimal and the longest stride, in
+// every classic timing at the neutral posture and the corners of the posture cube, reach it and go no further.
 void test_the_crab_walks_its_corner_coxas_out_to_its_largest_angle_and_no_further() {
+    const float sticks[][3] = {{0, 1, 0},  {0, -1, 0}, {0, 0, 1},  {0, 0, -1}, {0, 1, 1},
+                               {0, 1, -1}, {1, 0, 1},  {1, 0, -1}, {1, 1, 0},  {1, -1, 0}};
     float largest = 0.0f;
     for (const GaitType gait : CLASSIC_GAITS)
-        for (const float stick : {1.0f, -1.0f})
-            for (int axis = 0; axis < 2; ++axis)
+        for (const auto &stick : sticks)
+            for (const float stride : {0.0f, 1.0f})
                 for (int corner = 0; corner < 9; ++corner) {
                     const float h = corner == 8 ? 0.0f : (corner & 1 ? 1.0f : -1.0f);
                     const float fd = corner == 8 ? 0.0f : (corner & 2 ? 1.0f : -1.0f);
@@ -560,7 +565,10 @@ void test_the_crab_walks_its_corner_coxas_out_to_its_largest_angle_and_no_furthe
                     robot.setMode(MOTION_STATE::WALK);
                     CommandMsg walk = held;
                     walk.s = 1.0f;
-                    (axis == 0 ? walk.ly : walk.rx) = stick;
+                    walk.stride = stride;
+                    walk.lx = stick[0];
+                    walk.ly = stick[1];
+                    walk.rx = stick[2];
                     watch(robot, ticksFor(5.0f), &walk, [&](int) {
                         for (const int leg : {0, 2, 3, 5})
                             largest = std::max(largest, std::fabs(robot.angles()[leg * 3]));

@@ -68,8 +68,10 @@ def emit_header(table, path):
 // stroke, and the peak joint rate per unit of swing and stance progress (kappa) at STROKE_SAMPLES strokes, sample k at
 // (k + 1) / STROKE_SAMPLES of the longest.
 // A stroke is feasible within joint travel less TRAVEL_MARGIN_DEG and reach, with every leg pair CLEARANCE_MM apart
-// and {table["clearance_reserve_mm"]} mm to spare over every classic timing's cycle; a posture walks where it strides
-// 20 mm along the axis its stance walks ({walk_axes}).
+// and {table["clearance_reserve_mm"]} mm to spare over every classic timing's cycle, and with the body centre
+// STATIC_MARGIN_MM inside the support of the feet in stance over every statically stable timing's (TRI_GATE, WAVE,
+// RIPPLE; BI_GATE stands on two feet and has none); a posture walks where it strides 20 mm along the axis its stance
+// walks ({walk_axes}).
 // A gait with stand fraction d at stroke s and cadence f peaks at f * max(kappaSwing / (1 - d), kappaStance / d).
 // A grid axis holds a posture command in [-1, 1] at {2 / (n - 1)} steps: s1 (step height), h (body height), fd (feet distance).
 // WALKABLE is indexed [stance][s1][h][fd], STAND_FRAC by GaitType 0-3 (TRI_GATE, BI_GATE, WAVE, RIPPLE).
@@ -85,6 +87,7 @@ constexpr float SERVO_RAD_S = {table["servo_rad_s"]}f;  // servo speed the speed
 constexpr float CADENCE_MAX = {table["cadence_max"]}f;  // cycles/s
 constexpr float TRAVEL_MARGIN_DEG = {table["travel_margin_deg"]}f;  // joint travel kept in reserve by every stroke
 constexpr float CLEARANCE_MM = {table["leg_clearance_mm"]}f;  // leg-pair clearance kept by every stroke
+constexpr float STATIC_MARGIN_MM = {table["static_margin_mm"]}f;  // body centre to support edge, kept by every stroke
 {_radii(table)}
 constexpr float DEFAULT_SPEED_FRACTION = {table["default_speed_fraction"]}f;  // of the top speed at stick s = 0; s = 1 reaches 1
 

@@ -45,7 +45,7 @@ class ServoController {
     static void applyCalibration(const ServoSettings &s) {
         for (int leg = 0; leg < 6 && leg * 3 < static_cast<int>(s.servos_count); ++leg) {
             const api_Servo &c = s.servos[leg * 3];
-            state().coxa[leg] = coxaTravel(c.center_pwm, c.conversion, c.direction, c.center_angle);
+            state().coxa[leg] = coxaTravel(leg, c.center_pwm, c.conversion, c.direction, c.center_angle);
         }
     }
     static JointTravel coxaTravelOf(int leg) { return state().coxa[leg]; }
@@ -63,10 +63,10 @@ class ServoController {
     // At the factory centres, which this stand-in keeps whatever calibration arrives, as it takes only each coxa's
     // travel from one: every coxa and femur at 0, every tibia at -90.
     float centreAngle(int servo) const { return servo % 3 == 2 ? -90.0f : 0.0f; }
-    // As the robot's controller holds a joint: a coxa within its calibration's travel, at the factory one from -50.5 to
-    // +51.5 deg.
+    // As the robot's controller holds a joint: a coxa within its calibration's travel, at the factory one its leg's
+    // full JOINT_LIMIT_DEG.
     static float withinTravel(int servo, float angleDeg, CoxaTravel travel = CoxaTravel::SERVO) {
-        return jointWithinTravel(angleDeg, servo % 3, state().coxa[servo / 3], travel);
+        return jointWithinTravel(angleDeg, servo, state().coxa[servo / 3], travel);
     }
     // As the robot's controller does: a pulse sent to sleeping boards drives no servo.
     void setCenterPwm() {
@@ -103,7 +103,8 @@ class ServoController {
 
   private:
     static constexpr JointTravel factoryCoxa(int leg) {
-        return coxaTravel(FACTORY_CENTER_PWM, FACTORY_CONVERSION, FACTORY_DIRECTION[leg * 3], FACTORY_CENTER_ANGLE);
+        return coxaTravel(leg, FACTORY_CENTER_PWM, FACTORY_CONVERSION, FACTORY_DIRECTION[leg * 3],
+                          FACTORY_CENTER_ANGLE);
     }
 
     ServoSettingsBus::Handle _calibrationSub;

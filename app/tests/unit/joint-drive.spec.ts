@@ -20,13 +20,15 @@ const SERVOS = Array.from({ length: 18 }, (_, servo) => servo)
 
 const rad = (deg: number) => (deg * Math.PI) / 180
 
-// kinematics.h's JOINT_LIMIT_DEG, read from the source: the travel ServoController holds every joint within at the
-// factory calibration, the coxa at the narrower side of its safe pulses.
+// kinematics.h's JOINT_LIMIT_DEG, read from the source: each leg's travel, coxa, femur and tibia, that ServoController
+// holds every joint within at the factory calibration.
 const firmwareLimits = () => {
   const header = readFileSync(resolve(__dirname, '../../../firmware/include/kinematics.h'), 'utf-8')
-  const match = header.match(/JOINT_LIMIT_DEG\[3\]\s*=\s*\{([^}]*)\}/)
+  const match = header.match(/JOINT_LIMIT_DEG\[6\]\[3\]\s*=\s*\{([\s\S]*?)\};/)
   if (!match) throw new Error('JOINT_LIMIT_DEG not found in kinematics.h')
-  return match[1].split(',').map(value => parseFloat(value))
+  return [...match[1].matchAll(/\{([^{}]*)\}/g)].map(row =>
+    row[1].split(',').map(value => parseFloat(value))
+  )
 }
 
 const driver = (driving: boolean) => {
@@ -54,7 +56,8 @@ describe('withinTravel', () => {
   it('holds each joint of the model within the travel of the servo it drives', () => {
     const limits = firmwareLimits()
     for (let joint = 0; joint < 18; joint++) {
-      const limit = limits[servoOfUrdfJoint(joint) % 3]
+      const servo = servoOfUrdfJoint(joint)
+      const limit = limits[Math.floor(servo / 3)][servo % 3]
       expect(withinTravel(joint, rad(limit + 20))).toBeCloseTo(rad(limit), 10)
       expect(withinTravel(joint, rad(-limit - 20))).toBeCloseTo(rad(-limit), 10)
       expect(withinTravel(joint, rad(limit - 1))).toBe(rad(limit - 1))
@@ -70,15 +73,37 @@ describe('withinTravel', () => {
   // it, as the crab's corner coxas at 45 degrees, and stop a dragged joint short of the robot's travel.
   it("lets every joint of the model, static/model.xacro's shoulder, leg and foot, reach the firmware's travel", () => {
     const xacro = readFileSync(resolve(__dirname, '../../static/model.xacro'), 'utf-8')
-    ;['shoulder', 'leg', 'foot'].forEach((joint, j) => {
+    const property = (name: string) => {
+      const value = xacro.match(new RegExp(`<xacro:property name="${name}" value="([^"]+)"`))
+      if (!value) throw new Error(`model.xacro has no property ${name}`)
+      return Number(value[1])
+    }
+    // Each leg's shoulder takes its coxa_limit, at least its own firmware leg's: the legs are declared in the URDF
+    // model's joint order, three joints each, so the n-th one's shoulder is URDF joint 3n.
+    const legs = [
+      ...xacro.matchAll(/<xacro:gen_full_leg_joint pos="(\w+)"[^>]*coxa_limit="\$\{(\w+)\}"/g)
+    ]
+    expect(legs).toHaveLength(6)
+    legs.forEach(([, pos, name], n) => {
+      const firmwareLeg = Math.floor(servoOfUrdfJoint(3 * n) / 3)
+      expect(property(name), `${pos} shoulder`).toBeGreaterThanOrEqual(
+        rad(JOINT_LIMIT_DEG[firmwareLeg][0])
+      )
+    })
+    expect(xacro).toMatch(/<limit[^>]*lower="\$\{-coxa_limit\}" upper="\$\{coxa_limit\}"/)
+    ;['leg', 'foot'].forEach((joint, j) => {
       const limit = xacro.match(
         new RegExp(
           String.raw`name="\$\{pos\}_${joint}"[\s\S]*?<limit[^>]*lower="([^"]+)"[^>]*upper="([^"]+)"`
         )
       )
       if (!limit) throw new Error(`the ${joint} joint has no limit in model.xacro`)
-      expect(-Number(limit[1]), `${joint} lower`).toBeGreaterThanOrEqual(rad(JOINT_LIMIT_DEG[j]))
-      expect(Number(limit[2]), `${joint} upper`).toBeGreaterThanOrEqual(rad(JOINT_LIMIT_DEG[j]))
+      expect(-Number(limit[1]), `${joint} lower`).toBeGreaterThanOrEqual(
+        rad(JOINT_LIMIT_DEG[0][j + 1])
+      )
+      expect(Number(limit[2]), `${joint} upper`).toBeGreaterThanOrEqual(
+        rad(JOINT_LIMIT_DEG[0][j + 1])
+      )
     })
   })
 })
@@ -208,7 +233,7 @@ describe('the clearance a drag is judged by', () => {
   it('judges the dragged joint within its travel, as the robot holds it', () => {
     const stand = Array.from(robot.standPose())
     expect(draggedPose(stand, urdfJointOf(3), rad(80), keepsLegsApart)?.[3]).toBeCloseTo(
-      JOINT_LIMIT_DEG[0],
+      JOINT_LIMIT_DEG[1][0],
       4
     )
   })

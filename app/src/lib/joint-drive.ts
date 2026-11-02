@@ -12,16 +12,25 @@ const URDF_SERVOS = urdfJointOrder(Array.from({ length: 18 }, (_, servo) => serv
 export const servoOfUrdfJoint = (index: number) => URDF_SERVOS[index]
 
 /**
- * Each joint's travel in degrees, coxa, femur and tibia: a copy of the firmware's kinematics.h JOINT_LIMIT_DEG, which
- * tests/unit/joint-drive.spec.ts keeps equal to it. The coxa's is the narrower side of its servo's safe pulses at the
- * factory calibration; the robot holds each coxa within its own calibration's. The URDF model's limits are this travel
- * or wider (the test keeps every joint's no narrower), the femur's down to -152.8.
+ * Each leg's joint travel in degrees, coxa, femur and tibia per leg: a copy of the firmware's kinematics.h
+ * JOINT_LIMIT_DEG, which tests/unit/joint-drive.spec.ts keeps equal to it. A corner coxa turns 90 degrees, its servo's
+ * travel, a middle coxa 45, short of its servo connections meeting the body; the robot holds each coxa within its own
+ * calibration's safe pulses as well. The URDF model's limits are this travel or wider (the test keeps every joint's no
+ * narrower), the femur's down to -152.8.
  */
-export const JOINT_LIMIT_DEG = [50.5, 90, 149] as const
+export const JOINT_LIMIT_DEG = [
+  [90, 90, 149],
+  [45, 90, 149],
+  [90, 90, 149],
+  [90, 90, 149],
+  [45, 90, 149],
+  [90, 90, 149]
+] as const
 
 /** The URDF joint `index` at `radians`, held within the travel of the servo it drives, as the firmware holds it. */
 export const withinTravel = (index: number, radians: number) => {
-  const limit = (JOINT_LIMIT_DEG[servoOfUrdfJoint(index) % 3] * Math.PI) / 180
+  const servo = servoOfUrdfJoint(index)
+  const limit = (JOINT_LIMIT_DEG[Math.floor(servo / 3)][servo % 3] * Math.PI) / 180
   return Math.min(limit, Math.max(-limit, radians))
 }
 

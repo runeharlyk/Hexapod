@@ -1,20 +1,22 @@
 """Check the gait speed envelope generator against a timed gait rollout and the reference sweep.
 
 The sampled joint-rate factors replace a rollout per posture, so the first test pins them to one.
-The remaining tests pin the table's reference values, its walkable region in each stance, the legs' clearance that
-bounds a stroke, the servo scaling of the speed, the per-stroke geometry samples the firmware interpolates, and the
-agreement of the generated header with the generated JSON, and walk the port at full stick and at the shortest, the
+The remaining tests pin the table's reference values, its walkable region in each stance, the legs' clearance and the
+static margin that bound a stroke, the servo scaling of the speed, the per-stroke geometry samples the firmware
+interpolates, and the agreement of the generated header with the generated JSON, and walk the port at full stick and at the shortest, the
 speed-optimal and the longest stride in random walkable postures of each stance, between the grid points the table was
 measured at.
 """
 
 import json
+import math
 import os
 import re
 
 import numpy as np
 import pytest
 
+import compare_stances
 from src.robot import clearance
 from src.robot import firmware_gait as fg
 from src.robot import gait_envelope as ge
@@ -28,12 +30,12 @@ GRID_N = 9
 MID = GRID_N // 2
 STANCES = (fg.STANCE_DEFAULT, fg.STANCE_CRAB)
 # The largest fall of a swing kappa sample below the highest before it, measured over each stance's walkable cells,
-# with under a point of slack: default 1.86% forward, 1.85% lateral, 18.1% in yaw; crab 2.06% forward, 5.18% lateral,
-# 0.26% in yaw. A dip lets the reference sweep, which reads kappa as it is, run a stroke faster than the firmware, which
+# with under a point of slack: default 1.86% forward, 1.87% lateral, 18.1% in yaw; crab 5.14% forward, 5.18% lateral,
+# 1.27% in yaw. A dip lets the reference sweep, which reads kappa as it is, run a stroke faster than the firmware, which
 # reads the running maximum.
 KAPPA_DIP = {
     fg.STANCE_DEFAULT: {"forward": 0.025, "lateral": 0.025, "yaw": 0.19},
-    fg.STANCE_CRAB: {"forward": 0.025, "lateral": 0.055, "yaw": 0.01},
+    fg.STANCE_CRAB: {"forward": 0.06, "lateral": 0.055, "yaw": 0.015},
 }
 SPEED_ROUNDING = 1e-3  # the table's kappas are rounded to 4 decimals
 MONOTONE_SHARE = 0.95
@@ -188,13 +190,58 @@ def test_the_cycle_clearance_is_the_check_the_firmware_ports():
     assert ge.cycle_clearance("forward", 80.0, lift, zm, feet) == pytest.approx(least, abs=1e-9)
 
 
+def test_a_stride_that_brings_the_body_centre_within_the_static_margin_is_not_feasible():
+    """Every statically stable timing's cycle keeps the body centre STATIC_MARGIN_MM inside the support of its feet in
+    stance. The crab stands its feet out to the sides, so a forward stride soon brings the support's front or rear edge
+    near the centre: at the neutral posture 40 mm, within travel, reach and the legs' clearance, leaves 20 mm and is not
+    feasible, while 20 mm leaves 29 mm and is."""
+    lift, zm, feet_scale = ge.posture(0.0, 0.0, 0.0)
+    feet = fg.stance_feet(fg.STANCE_CRAB, feet_scale)
+    long_stroke, short_stroke = 40.0, 20.0
+    assert ge.kappas("forward", long_stroke, lift, zm, feet)[2]
+    assert ge.cycle_clearance("forward", long_stroke, lift, zm, feet) >= ge.LEG_CLEARANCE_MM + ge.CLEARANCE_RESERVE_MM
+    assert ge.cycle_static_margin("forward", long_stroke, lift, feet) == pytest.approx(20.1, abs=0.1)
+    assert ge.cycle_static_margin("forward", short_stroke, lift, feet) == pytest.approx(29.3, abs=0.1)
+    assert not ge.geometry_factors("forward", long_stroke, lift, zm, feet_scale, fg.STANCE_CRAB)[2]
+    assert ge.geometry_factors("forward", short_stroke, lift, zm, feet_scale, fg.STANCE_CRAB)[2]
+
+
+@pytest.mark.parametrize("stance", STANCES)
+@pytest.mark.parametrize("axis, stroke", [("forward", 30.0), ("lateral", 60.0), ("yaw", 0.3)])
+def test_the_static_margin_is_the_one_compare_stances_reports(stance, axis, stroke):
+    """cycle_static_margin is the least of compare_stances.support_margin, with the centre of mass at the body centre,
+    over the feet in stance of each statically stable timing's sampled cycle, the timings compare_stances judges."""
+    assert tuple(getattr(fg, ge.GAIT_NAMES[t]) for t in ge.STATICALLY_STABLE) == compare_stances.STATICALLY_STABLE
+    lift, _, feet_scale = ge.posture(0.0, 0.0, 0.0)
+    feet = fg.stance_feet(stance, feet_scale)
+    placed = ge.cycle_feet(axis, stroke, lift, feet)
+    least = math.inf
+    for t in ge.STATICALLY_STABLE:
+        standing = ge.cycle_phases(ge.TIMINGS[t][0]) < ge.TIMINGS[t][1]
+        for phase in range(ge.CYCLE_PHASES):
+            on_floor = placed[t, phase][standing[phase]]
+            on_floor[:, 2] = 0.0  # compare_stances takes the feet within TOUCH_MM of the lowest as the support
+            least = min(least, compare_stances.support_margin(np.zeros(2), on_floor))
+    assert ge.cycle_static_margin(axis, stroke, lift, feet) == pytest.approx(least, abs=1e-9)
+
+
+def test_feet_on_one_line_hold_no_static_margin():
+    """Two feet, or three in a row, enclose no area, so no centre is inside their support."""
+    feet = np.array([[-100.0, -10.0], [100.0, -10.0], [0.0, -10.0], [0.0, 90.0], [50.0, 40.0], [-50.0, 40.0]])
+    two = np.array([True, True, False, False, False, False])
+    in_a_row = np.array([True, True, True, False, False, False])
+    triangle = np.array([True, True, False, True, False, False])
+    assert ge.support_margins(feet, two) == pytest.approx(-10.0)
+    assert ge.support_margins(feet, in_a_row) == pytest.approx(-10.0)
+    assert ge.support_margins(feet, triangle) == pytest.approx(10.0)
+
+
 def test_the_crab_is_walkable_by_its_sideways_stroke():
-    """The crab walks sideways: a posture is walkable in it when it can stride WALKABLE_STROKE_MM laterally, though
-    its coxas, already turned 45 deg at the corners, leave it a forward stroke shorter than that."""
+    """The crab walks sideways: a posture is walkable in it when it can stride WALKABLE_STROKE_MM laterally, whatever
+    it strides forward."""
     assert ge.WALK_AXIS == {fg.STANCE_DEFAULT: "forward", fg.STANCE_CRAB: "lateral"}
     assert ge.is_walkable(0.0, 0.0, 0.0, fg.STANCE_CRAB)
     assert ge.longest_stroke("lateral", 0.0, 0.0, 0.0, fg.STANCE_CRAB) >= ge.WALKABLE_STROKE_MM
-    assert ge.longest_stroke("forward", 0.0, 0.0, 0.0, fg.STANCE_CRAB) < ge.WALKABLE_STROKE_MM
 
 
 def top_speed(gait_type, axis, s1, h, fd, servo_rad_s, stance=fg.STANCE_DEFAULT):
@@ -272,8 +319,9 @@ def _walkable_postures(count, seed, stance):
 def _worst_excursion(gait_type, stick, s1, h, fd, stride, stance):
     """The port's gait at the firmware's tick from a stand in the posture and stance, the command eased in as
     MotionService does and then held at the top speed for two cycles: the largest |joint| / JOINT_LIMIT_DEG, whether
-    every foot stayed in reach, and the least leg-pair clearance on the angles the servos reach. None when the posture
-    cannot walk the axis."""
+    every foot stayed in reach, the least leg-pair clearance on the angles the servos reach, and the least static margin
+    of the body centre over the feet in stance (inf for BI_GATE, which has none). None when the posture cannot walk the
+    axis."""
     target = fg.GaitState(gait_type=gait_type)
     fg.set_gait(target)
     zm = fg.command_to_walk_gait(*stick, 1.0, s1, target, h, fd, stride, stance)
@@ -287,25 +335,29 @@ def _worst_excursion(gait_type, stick, s1, h, fd, stride, stance):
     controller.target_default_position = feet.copy()
     body, kin = fg.BodyState(zm=zm, feet=feet.copy()), fg.Kinematics()
     body6 = np.array([0.0, 0.0, 0.0, 0.0, 0.0, zm])
-    reachable, walked = True, []
+    reachable, walked, margin = True, [], math.inf
     ramp_s = 1.0
     for _ in range(int(np.ceil((ramp_s + 2.0 / target.phase_rate) / FIRMWARE_DT))):
         fg.approach_gait_command(gait, target, FIRMWARE_DT)
         controller.step(gait, body, FIRMWARE_DT)
         walked.append(kin.inverse_kinematics(body).reshape(6, 3))
         reachable = reachable and all(foot_reachable(kin, body6, np.zeros(3), leg, body.feet) for leg in range(6))
+        if gait_type in ge.STATICALLY_STABLE:
+            standing = (controller.phase + gait.offset) % 1.0 < gait.stand_frac
+            margin = min(margin, float(ge.support_margins(body.feet[:, :2], standing)))
     walked = np.array(walked)
     worst = float((np.abs(walked) / JOINT_LIMIT_DEG).max())
     chains = clearance.leg_chains(clearance.KIN, np.radians(np.clip(walked, -JOINT_LIMIT_DEG, JOINT_LIMIT_DEG)))
     pairs = np.array(clearance.NEIGHBOUR_PAIRS)
     least = float(clearance.surface_clearance(
         clearance.segment_pair_distances(chains[:, pairs[:, 0]], chains[:, pairs[:, 1]])).min())
-    return worst, reachable, least
+    return worst, reachable, least, margin
 
 
 @pytest.fixture(scope="module")
 def full_stick_walks():
-    """{(stance, gait, axis, stride, posture): (worst, reachable, least clearance)} over 40 walkable postures of each
+    """{(stance, gait, axis, stride, posture): (worst, reachable, least clearance, least static margin)} over 40
+    walkable postures of each
     stance, at the shortest, the speed-optimal and the longest stride. Between the grid points the envelope is
     interpolated, so a stroke read inside a walkable cell has to hold for the posture actually walked, not only at the
     corners it was measured at."""
@@ -326,18 +378,24 @@ def full_stick_walks():
 
 
 def test_walkable_postures_walk_full_stick_in_reach(full_stick_walks):
-    assert [where for where, (_, reachable, _) in full_stick_walks.items() if not reachable] == []
+    assert [where for where, (_, reachable, _, _) in full_stick_walks.items() if not reachable] == []
 
 
 def test_walkable_postures_walk_full_stick_in_travel(full_stick_walks):
-    beyond = {where: round(worst, 4) for where, (worst, _, _) in full_stick_walks.items() if worst > 1.0}
+    beyond = {where: round(worst, 4) for where, (worst, _, _, _) in full_stick_walks.items() if worst > 1.0}
     assert beyond == {}
 
 
 def test_walkable_postures_walk_full_stick_clear_of_the_other_legs(full_stick_walks):
-    touching = {where: round(least, 2) for where, (_, _, least) in full_stick_walks.items()
+    touching = {where: round(least, 2) for where, (_, _, least, _) in full_stick_walks.items()
                 if least < clearance.LEG_CLEARANCE_MM}
     assert touching == {}
+
+
+def test_walkable_postures_walk_full_stick_with_the_static_margin(full_stick_walks):
+    near_an_edge = {where: round(margin, 2) for where, (_, _, _, margin) in full_stick_walks.items()
+                    if margin < ge.STATIC_MARGIN_MM}
+    assert near_an_edge == {}
 
 
 @pytest.mark.parametrize("stance", STANCES)
@@ -361,12 +419,15 @@ def test_table_holds_the_geometry_per_axis(table, stance):
     np.testing.assert_array_equal(walkable, walk_stroke >= ge.WALKABLE_STROKE_MM)
 
 
-def test_the_crab_table_walks_postures_that_cannot_stride_forward(table):
+def test_the_crab_table_judges_a_posture_by_its_sideways_stroke_not_its_forward_one(table):
+    """Postures where the crab could stride forward but not sideways do not walk in it."""
     crab = _tables(table, fg.STANCE_CRAB)
     walkable = np.array(crab["walkable"], dtype=bool)
     forward = np.array(crab["stroke_max"]["forward"])
+    lateral = np.array(crab["stroke_max"]["lateral"])
     assert walkable.any()
-    assert (forward[walkable] < ge.WALKABLE_STROKE_MM).any()
+    strides_forward_alone = (forward >= ge.WALKABLE_STROKE_MM) & (lateral < ge.WALKABLE_STROKE_MM)
+    assert strides_forward_alone.any() and not walkable[strides_forward_alone].any()
 
 
 @pytest.mark.parametrize("stance", STANCES)
@@ -424,12 +485,13 @@ def test_speed_optimal_stroke_matches_the_reference_sweep(table, axis, stance):
     assert compared >= 10, f"{compared} cells stride the axis far enough to compare"
 
 
-@pytest.mark.parametrize("stance", STANCES)
-@pytest.mark.parametrize("axis", ["forward", "lateral"])
+@pytest.mark.parametrize("stance, axis", [(fg.STANCE_DEFAULT, "forward"), (fg.STANCE_DEFAULT, "lateral"),
+                                          (fg.STANCE_CRAB, "lateral"), (fg.STANCE_CRAB, "yaw")])
 def test_kappa_rises_with_stroke(table, axis, stance):
     """Between the samples kappa is interpolated, so it is the rise of kappa that keeps a lookup below a sample safe.
-    Yaw does not rise: its swing kappa falls up to 18% from its peak in many cells, which the test below bounds where
-    it matters."""
+    The axes that turn the coxas furthest do not rise: the default stance's yaw, whose swing kappa falls up to 18% from
+    its peak in 59% of its cells, and the crab's forward, up to 5.1% in 62%; the test below bounds that where it matters,
+    and the firmware reads the running maximum."""
     tables = _tables(table, stance)
     strides = np.array(tables["walkable"], dtype=bool) & (np.array(tables["stroke_max"][axis]) > 0)
     rises = np.ones(strides.shape, dtype=bool)
@@ -492,6 +554,8 @@ def test_header_and_json_carry_the_same_table(table):
     assert _cpp_array(text, "CADENCE_MAX") == pytest.approx(table["cadence_max"], abs=TOL)
     assert _cpp_array(text, "TRAVEL_MARGIN_DEG") == pytest.approx(table["travel_margin_deg"], abs=TOL)
     assert _cpp_array(text, "CLEARANCE_MM") == pytest.approx(table["leg_clearance_mm"], abs=TOL)
+    assert _cpp_array(text, "STATIC_MARGIN_MM") == pytest.approx(table["static_margin_mm"], abs=TOL)
+    assert table["static_margin_mm"] == ge.STATIC_MARGIN_MM
     # The capsules the clearance was judged with, which gait_speed.h holds to leg_clearance.h's.
     assert table["link_radius_mm"] == clearance.LINK_RADIUS_MM
     for segment, radius in clearance.LINK_RADIUS_MM.items():

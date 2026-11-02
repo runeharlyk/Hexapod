@@ -259,7 +259,7 @@ def test_pose_to_angles_overrides_joint_legs_and_clamps_with_a_mask():
     pose.legs[5] = an.LegTarget(foot=np.array([0, 0, 120.0]))           # unreachable lift, IK clamps
     angles, mask = an.pose_to_angles(pose, KIN)
     assert angles.shape == (18,)
-    assert angles[3] == 50.5 and angles[4] == 90.0 and angles[5] == -100.0
+    assert angles[3] == 45.0 and angles[4] == 90.0 and angles[5] == -100.0  # a middle coxa's 45 deg
     assert mask & (1 << 3) and mask & (1 << 4) and not mask & (1 << 5)
     assert mask & (1 << 16)  # femur of leg 5 pinned
     assert not mask & 0b111  # leg 0 at stance is clean
@@ -302,9 +302,10 @@ def test_pose_to_angles_flags_two_legs_closer_than_the_clearance():
 
 
 def test_the_clearance_is_judged_on_the_angles_within_travel():
-    # Commanded at 60 deg the two coxas would cross; the servos stop at 50.5, which still meets, and the mask says both.
+    # Commanded at 60 deg the two coxas would cross; the middle one stops at its 45, which still meets, and the mask
+    # says both.
     _, mask = an.pose_to_angles(_coxas_turned(leg0=-60.0, leg1=60.0), KIN)
-    assert mask == (1 << 0) | (1 << 3) | an.LEGS_TOUCH
+    assert mask == (1 << 3) | an.LEGS_TOUCH
 
 
 def test_a_clip_whose_pose_brings_two_legs_together_is_refused():

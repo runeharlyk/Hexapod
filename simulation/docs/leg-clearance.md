@@ -15,7 +15,7 @@ A gait that drove two legs through each other would therefore run in the sim wit
 
 For each gait, every stick command `(lx, ly, rx)` on a grid over [-1, 1]^3 goes through `command_to_walk_gait`, the firmware gait port generates the feet at evenly spaced phases of one cycle, and the port's IK turns them into joint angles.
 The command is taken as already reached and the feet as already on their resting stance, so the command ramp, the stop/start easing and stance changes are outside the sweep.
-`ServoController::setAngles` clips every joint to its travel before it reaches a servo, a coxa to its servo's safe pulses (about +-50.5 deg at the factory calibration, TUNED's to 31.5 deg), a femur to 90 and a tibia to 149 deg, so the default check runs on the clamped angles the robot actually reaches; the `commanded` rows use the raw IK angles for comparison.
+`ServoController::setAngles` clips every joint to its travel before it reaches a servo, a coxa to its leg's travel within its servo's safe pulses (+-90 deg at a corner and +-45 deg in the middle, TUNED's to 31.5 deg), a femur to 90 and a tibia to 149 deg, so the default check runs on the clamped angles the robot actually reaches; the `commanded` rows use the raw IK angles for comparison.
 The angles give each leg's chain mount -> hip -> knee -> tip, built with the same conventions as `Kinematics.forward_kinematics_local`; the test checks that the chain's tip reproduces the IK's target foot wherever the foot is reachable.
 Neighbouring legs are the ring 0-1-2-5-4-3: the same-side pairs 0-1, 1-2, 3-4, 4-5 and the pairs across the body 0-3 and 2-5.
 Each neighbouring pair's coxa, femur and tibia segments and foot point are compared by exact segment-segment distance.
@@ -49,8 +49,8 @@ With the model's capsules, the raw IK angles collided on 104 to 287 of the 729 c
 Same-side neighbours are mounted only 45 deg apart, so the travel alone does not rule contact out; it is the clamped sweep that shows the legs stay apart within it.
 The coxa's travel has since widened to its servo's safe pulses, so these sweeps, measured at 31.5 deg, no longer describe the robot's walk until they are re-run at the new travel.
 `test_leg_clearance.py` keeps the tripod and TUNED sweeps on a 5^3 grid at least `LEG_CLEARANCE_MM`, 5 mm, apart, so a gait change that brings the legs together fails there.
-It also sweeps every classic timing in both stances at the longest stride, at the neutral posture and the posture cube's corners pulled onto the walkable boundary (`--stance`, `--stride`, `--fd`), where the least clearance is 5.9 mm (BI, legs 1-2) in the default stance and 30.3 mm in the crab.
-The walkable envelope is bounded by the same check (`src/robot/gait_envelope.py`): it ends the default stance's longest forward stroke at 92 of the 508 grid postures that stride forward and its longest turn at 285 of 528, and never the crab's.
+It also sweeps every classic timing in both stances at the longest stride, at the neutral posture and the posture cube's corners pulled onto the walkable boundary (`--stance`, `--stride`, `--fd`), where the least clearance is 6.2 mm (BI, legs 1-2) in the default stance and 6.0 mm (BI, legs 3-4) in the crab.
+The walkable envelope is bounded by the same check (`src/robot/gait_envelope.py`), with the corner coxas' 90 deg the binding limit wherever the legs meet first: it ends the default stance's longest forward stroke at 129 of the 508 grid postures that stride forward, its lateral one at 14 of 506 and its longest turn at 290 of 528, and the crab's forward stroke at 62 of 528 and its turn at 459 of 526; the static margin ends the crab's forward stroke at 466 of the 528 and its sideways one at 28 of 505.
 
 ## Limits
 

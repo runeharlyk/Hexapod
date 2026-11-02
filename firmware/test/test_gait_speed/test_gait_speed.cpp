@@ -7,6 +7,7 @@
 #include <unity.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <gait.h>
 #include <gait_speed.h>
@@ -105,8 +106,11 @@ void test_the_stride_anchors_the_stroke() {
             const float fraction = axisStroke(optimal, point.axis) / point.strokeMax();
             const int n = (int)std::lround(fraction * SAMPLES) - 1;
             TEST_ASSERT_FLOAT_WITHIN(1e-5f, (float)(n + 1) / SAMPLES, fraction);
-            TEST_ASSERT_FLOAT_WITHIN(1e-5f * point.fastestSampleSpeed(gait), point.fastestSampleSpeed(gait),
+            TEST_ASSERT_FLOAT_WITHIN(SPEED_TIE * point.fastestSampleSpeed(gait), point.fastestSampleSpeed(gait),
                                      point.sampleSpeed(gait, n));
+            // The shortest sample that walks as fast: none shorter comes within SPEED_TIE of the fastest.
+            for (int m = 0; m < n; ++m)
+                TEST_ASSERT_TRUE(point.sampleSpeed(gait, m) < point.fastestSampleSpeed(gait) * (1.0f - SPEED_TIE));
             TEST_ASSERT_FLOAT_WITHIN(1e-5f, point.cadenceAt(gait, fraction), optimal.phaseRate);
 
             const WalkTarget longest = fullStickAlong(gait, point.axis, 1, 1);
@@ -143,7 +147,7 @@ void test_the_envelope_follows_the_tables_on_the_grid() {
                                 continue;
                             }
                             const float optimal = point.envelope(gait, 0).stroke;
-                            TEST_ASSERT_FLOAT_WITHIN(1e-5f * point.fastestSampleSpeed(gait),
+                            TEST_ASSERT_FLOAT_WITHIN(SPEED_TIE * point.fastestSampleSpeed(gait),
                                                      point.fastestSampleSpeed(gait), point.envelope(gait, 0).vMax);
                             for (const float stride : STRIDES) {
                                 const AxisEnvelope e = point.envelope(gait, stride);
@@ -301,25 +305,28 @@ void test_signs_follow_the_convention() {
     TEST_ASSERT_TRUE(turnLeft.stepAngle > 0.0f);
 }
 
-// A combined stick past an L1 norm of 1 is normalised by it: each axis takes a third of its stroke, and the gait steps
-// at the slowest of the three axes' top cadences, so no axis runs faster than its own.
+// A combined stick past an L1 norm of 1 is normalised by it: each axis takes a third of its stroke, and a cycle takes
+// the mean of the three axes' top cycle times, a cadence between the slowest axis's top cadence and the fastest's.
 void test_combined_stick_is_l1_normalized() {
     const GaitType gait = GaitType::TRI_GATE;
     for (const float stride : STRIDES) {
         const WalkTarget target = classicWalkTarget(gait, 1, 1, 1, 1, 0, 0, 0, stride, Stance::DEFAULT);
-        float slowest = INFINITY;
+        float slowest = INFINITY, fastest = 0.0f, cycleTime = 0.0f;
         for (int axis = 0; axis < 3; ++axis) {
             const AxisEnvelope e = envelopeAt(gait, axis, 0, 0, 0, stride, Stance::DEFAULT);
             TEST_ASSERT_FLOAT_WITHIN(1e-5f, 1.0f / 3, axisStroke(target, axis) / e.stroke);
             slowest = std::min(slowest, e.cadence);
+            fastest = std::max(fastest, e.cadence);
+            cycleTime += 1.0f / e.cadence / 3;
         }
-        TEST_ASSERT_FLOAT_WITHIN(1e-6f, slowest, target.phaseRate);
+        TEST_ASSERT_FLOAT_WITHIN(1e-5f, 1.0f / cycleTime, target.phaseRate);
+        TEST_ASSERT_TRUE(target.phaseRate >= slowest * 0.9999f && target.phaseRate <= fastest * 1.0001f);
         TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.0f, autoDemand(1, 1, 1, 1, 0, 0, 0, stride).speed01);
     }
 }
 
-// An unequal stick: the strokes follow |stick| / L of each axis's own, and the cadence the speed fraction of the
-// slowest axis's top cadence, whatever the axes' own limits are.
+// An unequal stick: the strokes follow |stick| / L of each axis's own, and a cycle takes the axes' top cycle times
+// weighted by those shares, over the speed fraction, whatever the axes' own limits are.
 void test_stick_scales_every_axis_by_its_own_share() {
     const GaitType gait = GaitType::RIPPLE;
     const float lx = -0.5f, ly = 1.0f, rx = 0.25f, s = 0.5f;
@@ -328,15 +335,58 @@ void test_stick_scales_every_axis_by_its_own_share() {
     const float stick[3] = {ly, lx, rx};
     for (const float stride : STRIDES) {
         const WalkTarget target = classicWalkTarget(gait, lx, ly, rx, s, 0, 0, 0, stride, Stance::DEFAULT);
-        float slowest = INFINITY;
+        float cycleTime = 0.0f;
         for (int axis = 0; axis < 3; ++axis) {
             const AxisEnvelope e = envelopeAt(gait, axis, 0, 0, 0, stride, Stance::DEFAULT);
-            TEST_ASSERT_FLOAT_WITHIN(1e-5f, std::fabs(stick[axis]) / length, axisStroke(target, axis) / e.stroke);
-            slowest = std::min(slowest, e.cadence);
+            const float weight = std::fabs(stick[axis]) / length;
+            TEST_ASSERT_FLOAT_WITHIN(1e-5f, weight, axisStroke(target, axis) / e.stroke);
+            cycleTime += weight / e.cadence;
         }
-        TEST_ASSERT_FLOAT_WITHIN(1e-6f, frac * slowest, target.phaseRate);
+        TEST_ASSERT_FLOAT_WITHIN(1e-5f, frac / cycleTime, target.phaseRate);
         TEST_ASSERT_FLOAT_WITHIN(1e-6f, frac, autoDemand(lx, ly, rx, s, 0, 0, 0, stride).speed01);
     }
+}
+
+// A full stick along the axis a stance walks, forward in the default stance and sideways in the crab, with a small part
+// on another axis, as a goal's cross-track and heading corrections send, walks its axis nearly as fast as the straight
+// stick: the L1 norm takes 1 % of the main share, and the small axis's weight of 1 % slows the cadence by at most a
+// few percent more, where its top cadence is a fraction of the main one (measured worst 0.975 in the default stance, BI
+// at the longest stride; 0.990, the L1 norm's alone, in the crab, whose sideways cadence is its slowest). Stepping at
+// the slowest axis's own top cadence, as walkAtShares once did, cost the default stance's forward walk up to 61 %, 18 %
+// on TRI's speed-optimal stride at neutral.
+void test_a_small_cross_axis_costs_the_walked_axis_little() {
+    struct Walk {
+        Stance stance;
+        int axis;                  // envelope order: 0 forward, 1 lateral
+        std::array<float, 3> main; // lx, ly, rx
+        std::array<float, 3> crosses[4];
+    };
+    const Walk walks[] = {
+        {Stance::DEFAULT, 0, {0, 1, 0}, {{0.01f, 0, 0}, {-0.01f, 0, 0}, {0, 0, 0.01f}, {0, 0, -0.01f}}},
+        {Stance::CRAB, 1, {1, 0, 0}, {{0, 0.01f, 0}, {0, -0.01f, 0}, {0, 0, 0.01f}, {0, 0, -0.01f}}},
+    };
+    const float postures[][3] = {{0, 0, 0}, {0.5f, -0.5f, -0.5f}, {-0.5f, 0.5f, 0.5f}, {-0.5f, 0, 0.5f}};
+    for (const Walk& w : walks)
+        for (GaitType gait : WALKING_GAITS)
+            for (const auto& p : postures)
+                for (const float stride : {-1.0f, 0.0f, 1.0f}) {
+                    const WalkTarget straight =
+                        classicWalkTarget(gait, w.main[0], w.main[1], w.main[2], 1, p[0], p[1], p[2], stride, w.stance);
+                    TEST_ASSERT_TRUE(straight.phaseRate > 0.0f);
+                    for (const auto& cross : w.crosses) {
+                        const WalkTarget mixed =
+                            classicWalkTarget(gait, w.main[0] + cross[0], w.main[1] + cross[1], w.main[2] + cross[2], 1,
+                                              p[0], p[1], p[2], stride, w.stance);
+                        const float ratio = axisSpeed(gait, axisStroke(mixed, w.axis), mixed) /
+                                            axisSpeed(gait, axisStroke(straight, w.axis), straight);
+                        char msg[140];
+                        std::snprintf(msg, sizeof(msg),
+                                      "stance %d gait %d posture (%.1f %.1f %.1f) stride %.0f cross (%.2f %.2f %.2f)",
+                                      (int)w.stance, (int)gait, p[0], p[1], p[2], stride, cross[0], cross[1], cross[2]);
+                        TEST_ASSERT_GREATER_OR_EQUAL_FLOAT_MESSAGE(0.97f, ratio, msg);
+                        TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(1.0f, ratio, msg);
+                    }
+                }
 }
 
 void test_partial_stick_commands_a_fraction_of_the_speed() {
@@ -372,7 +422,9 @@ void test_speed_fraction_anchors() {
 }
 
 // The stroke sweep bounded the joints and kappa the servos, so a command whose stroke on some axis passes that axis's
-// longest, or whose cadence passes the top cadence of some axis it walks, would leave what the tables measured.
+// longest, or whose joints turn faster than the servo, would leave what the tables measured. A joint's rate is at most
+// the axes' peak rates at their strokes (kappa, read from the table here) weighted by their shares of the stroke, and
+// the axes' speeds as shares of their top speeds sum to the stick's share.
 void test_commands_stay_inside_the_table() {
     const float sticks[][3] = {{0, 1, 0}, {1, 0, 0}, {0, 0, 1}, {1, 1, 1}, {-0.5f, 1, 0.25f}, {0.3f, -0.7f, 0.9f}};
     const float postures[][3] = {{0, 0, 0}, {-0.5f, 0.25f, 0.5f}, {0.5f, -0.5f, -0.25f}, {1, -1, -1}};
@@ -388,16 +440,31 @@ void test_commands_stay_inside_the_table() {
                         TEST_ASSERT_TRUE(target.phaseRate <= gait_envelope::CADENCE_MAX * 1.0001f);
                         const float axisStick[3] = {stick[1], stick[0], stick[2]};
                         int used = 0;
+                        float weights = 0.0f, peakRate = 0.0f, shareOfTops = 0.0f;
                         for (int axis = 0; axis < 3; ++axis) {
+                            const float strokeMax =
+                                gait_speed_detail::strokeMaxAt(axis, p[0], p[1], p[2], Stance::DEFAULT);
                             const AxisEnvelope e = envelopeAt(gait, axis, p[0], p[1], p[2], stride, Stance::DEFAULT);
-                            TEST_ASSERT_TRUE(e.stroke <=
-                                             gait_speed_detail::strokeMaxAt(axis, p[0], p[1], p[2], Stance::DEFAULT) *
-                                                 1.0001f);
+                            TEST_ASSERT_TRUE(e.stroke <= strokeMax * 1.0001f);
                             TEST_ASSERT_TRUE(axisStroke(target, axis) <= e.stroke * 1.0001f);
                             if (axisStick[axis] == 0.0f || e.stroke <= 0.0f) continue;
-                            TEST_ASSERT_TRUE(target.phaseRate <= e.cadence * 1.0001f);
+                            const auto kappas = gait_speed_detail::kappasAt(
+                                axis, gait_speed_detail::locate(p[0]), gait_speed_detail::locate(p[1]),
+                                gait_speed_detail::locate(p[2]), Stance::DEFAULT);
+                            const float fraction = e.stroke / strokeMax;
+                            const float d = standFrac(gait);
+                            const float weight = axisStroke(target, axis) / e.stroke;
+                            weights += weight;
+                            peakRate += weight * std::max(kappaAt(kappas.swing, fraction) / (1.0f - d),
+                                                          kappaAt(kappas.stance, fraction) / d);
+                            shareOfTops += axisSpeed(gait, axisStroke(target, axis), target) / e.vMax;
                             ++used;
                         }
+                        TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.0f, weights);
+                        TEST_ASSERT_TRUE(target.phaseRate * peakRate <= gait_envelope::SERVO_RAD_S * 1.0001f);
+                        float shares[3];
+                        gait_speed_detail::stickShares(stick[0], stick[1], stick[2], s, shares);
+                        TEST_ASSERT_FLOAT_WITHIN(1e-4f, shares[0] + shares[1] + shares[2], shareOfTops);
                         mixed += used > 1;
                     }
     TEST_ASSERT_TRUE(mixed > 0);
@@ -634,7 +701,7 @@ void test_a_stance_whose_legs_touch_is_not_standable() {
     float angles[18];
     turned.inverseKinematics(body, angles);
     for (int i = 0; i < 6; ++i) TEST_ASSERT_TRUE(turned.footReachable(body, i));
-    for (int j = 0; j < 18; ++j) TEST_ASSERT_TRUE(std::fabs(angles[j]) <= JOINT_LIMIT_DEG[j % 3]);
+    for (int j = 0; j < 18; ++j) TEST_ASSERT_TRUE(std::fabs(angles[j]) <= JOINT_LIMIT_DEG[j / 3][j % 3]);
     TEST_ASSERT_FALSE(legsClear(angles));
 
     Kinematics kin;
@@ -642,13 +709,11 @@ void test_a_stance_whose_legs_touch_is_not_standable() {
     TEST_ASSERT_FALSE(standFeasible(turned, 0, 0, Stance::DEFAULT));
 }
 
-// The crab walks sideways: its table judges a posture walkable on its lateral stroke, which it strides at neutral,
-// while its coxas, turned 45 deg at the corners, leave it a shorter forward stroke than a walk needs.
+// The crab walks sideways: its table judges a posture walkable on its lateral stroke, which it strides at neutral.
 void test_the_crab_is_walkable_by_its_sideways_stroke() {
     using gait_speed_detail::strokeMaxAt;
     TEST_ASSERT_TRUE(postureWalkable(0, 0, 0, Stance::CRAB));
     TEST_ASSERT_TRUE(strokeMaxAt(1, 0, 0, 0, Stance::CRAB) >= 20.0f);
-    TEST_ASSERT_TRUE(strokeMaxAt(0, 0, 0, 0, Stance::CRAB) < 20.0f);
     for (GaitType gait : WALKING_GAITS) {
         const WalkTarget sideways = classicWalkTarget(gait, 1, 0, 0, 1, 0, 0, 0, 1, Stance::CRAB);
         TEST_ASSERT_FLOAT_WITHIN(1e-3f, strokeMaxAt(1, 0, 0, 0, Stance::CRAB), sideways.stepX);
@@ -740,8 +805,9 @@ void test_auto_demand_is_the_sticks_share_of_bi() {
 }
 
 // AUTO picks the slowest of RIPPLE, TRI and BI whose top speed at the stride covers the demand, and that gait walks the
-// demand: exactly along one axis, and on a combined stick at most the demand on every axis, since the gait steps at
-// the slowest axis's top cadence. The speed rises with the stick across both band edges. The old bands, set on the
+// demand: exactly along one axis, and on a combined stick the demand's shares of the gait's top speeds in sum, the
+// axis with the faster top cadence below its demand and the slower above it. The speed rises with the stick across
+// both band edges. The old bands, set on the
 // share of the gait in effect's own top speed, jumped from 21 to 103 mm/s at half stick.
 void test_auto_walks_the_stick_monotonically_across_the_bands() {
     const float postures[][3] = {{0, 0, 0}, {1, -1, -1}, {-0.5f, 0.25f, 0.5f}};
@@ -767,16 +833,19 @@ void test_auto_walks_the_stick_monotonically_across_the_bands() {
                             TEST_ASSERT_TRUE(shareOfTop(slower, demand, p[0], p[1], p[2], stride) > margin - 1e-5f);
                         }
                         const WalkTarget target = autoWalkTarget(gait, demand, lx, ly, rx, p[0], p[1], p[2], stride);
-                        float speed = 0.0f;
+                        float speed = 0.0f, walkedShare = 0.0f;
                         for (int axis = 0; axis < 3; ++axis) {
                             const float walked = walkedSpeed(gait, target, axis);
                             const float tolerance = 0.005f * demand.speed[axis] + 1e-5f;
                             if (single) TEST_ASSERT_FLOAT_WITHIN(tolerance, demand.speed[axis], walked);
-                            TEST_ASSERT_TRUE(walked <= demand.speed[axis] + tolerance);
+                            const float vMax = envelopeAt(gait, axis, p[0], p[1], p[2], stride, Stance::DEFAULT).vMax;
+                            if (vMax > 0.0f) walkedShare += walked / vMax;
                             speed +=
                                 walked /
                                 envelopeAt(GaitType::BI_GATE, axis, p[0], p[1], p[2], stride, Stance::DEFAULT).vMax;
                         }
+                        TEST_ASSERT_FLOAT_WITHIN(1e-4f, shareOfTop(gait, demand, p[0], p[1], p[2], stride),
+                                                 walkedShare);
                         // A combined stick past an L1 norm of 1 asks for the same speed from there on.
                         TEST_ASSERT_TRUE(speed >= previous - 1e-5f);
                         previous = speed;
@@ -812,8 +881,8 @@ void test_auto_resists_flapping_at_a_band_edge() {
 }
 
 // The gait changes only at a stop, so a stick pushed past the top of the gait in effect walks at that gait's top until
-// then: the demand's shares of the gait's top speeds scaled to sum to 1, each axis taking that share of its stroke at
-// the slowest axis's top cadence.
+// then: the demand's shares of the gait's top speeds scaled to sum to 1, each axis taking that share of its stroke, and
+// a cycle the axes' top cycle times weighted by those shares; the walked shares of the top speeds sum to 1.
 void test_auto_caps_a_demand_above_the_gaits_top() {
     for (const float stride : STRIDES) {
         const AutoDemand demand = autoDemand(1, 1, 1, 1, 0, 0, 0, stride);
@@ -821,15 +890,16 @@ void test_auto_caps_a_demand_above_the_gaits_top() {
         TEST_ASSERT_TRUE(need > 2.0f);
         const WalkTarget capped = autoWalkTarget(GaitType::RIPPLE, demand, 1, 1, 1, 0, 0, 0, stride);
         TEST_ASSERT_TRUE(capped.stepX > 0.0f && capped.stepY > 0.0f && capped.stepAngle < 0.0f);
-        float slowest = INFINITY;
+        float cycleTime = 0.0f, walkedShare = 0.0f;
         for (int axis = 0; axis < 3; ++axis) {
             const AxisEnvelope e = envelopeAt(GaitType::RIPPLE, axis, 0, 0, 0, stride, Stance::DEFAULT);
             const float share = demand.speed[axis] / e.vMax / need;
             TEST_ASSERT_FLOAT_WITHIN(1e-4f * share, share, axisStroke(capped, axis) / e.stroke);
-            TEST_ASSERT_TRUE(walkedSpeed(GaitType::RIPPLE, capped, axis) <= demand.speed[axis] / need * 1.0001f);
-            slowest = std::min(slowest, e.cadence);
+            cycleTime += share / e.cadence;
+            walkedShare += walkedSpeed(GaitType::RIPPLE, capped, axis) / e.vMax;
         }
-        TEST_ASSERT_FLOAT_WITHIN(1e-6f, slowest, capped.phaseRate);
+        TEST_ASSERT_FLOAT_WITHIN(1e-5f, 1.0f / cycleTime, capped.phaseRate);
+        TEST_ASSERT_FLOAT_WITHIN(1e-4f, 1.0f, walkedShare);
     }
 }
 
@@ -846,6 +916,7 @@ int main(int, char**) {
     RUN_TEST(test_signs_follow_the_convention);
     RUN_TEST(test_combined_stick_is_l1_normalized);
     RUN_TEST(test_stick_scales_every_axis_by_its_own_share);
+    RUN_TEST(test_a_small_cross_axis_costs_the_walked_axis_little);
     RUN_TEST(test_partial_stick_commands_a_fraction_of_the_speed);
     RUN_TEST(test_speed_rises_with_the_speed_input);
     RUN_TEST(test_speed_fraction_anchors);

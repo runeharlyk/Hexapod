@@ -187,20 +187,26 @@ void test_a_joint_in_idle_moves_only_its_servo() {
     TEST_ASSERT_EQUAL(socket_message_ServoWrite_SERVO_WRITE_NONE, robot.servoWrite());
 }
 
-// A coxa within its servo's safe pulses, 1000 to 2000 us: 205 to 409 counts about the factory centre of 306 at 2 counts
-// per degree, so -50.5 to +51.5 deg; 45 deg, a front leg pointing straight out to its side, is within them.
+// A coxa within its leg's travel inside its servo's safe pulses (500 to 2500 us, 103 to 512 counts about the factory
+// centre of 306 at 2 counts per degree): a corner coxa's 90 deg, a middle coxa's 45, a tibia's 149.
+// Each joint is dragged alone from the stand, so no other dragged leg is in its way.
 void test_a_joint_in_idle_is_held_within_its_travel() {
-    VirtualRobot robot;
-    idleFromStand(robot);
-    robot.setJoint(0, 80.0f);
-    robot.setJoint(3, 45.0f);
-    robot.setJoint(9, -80.0f);
-    robot.setJoint(5, -170.0f);
-    robot.tick();
-    TEST_ASSERT_EQUAL_FLOAT(51.5f, robot.servoAngles()[0]);
-    TEST_ASSERT_EQUAL_FLOAT(45.0f, robot.servoAngles()[3]);
-    TEST_ASSERT_EQUAL_FLOAT(-50.5f, robot.servoAngles()[9]);
-    TEST_ASSERT_EQUAL_FLOAT(-JOINT_LIMIT_DEG[2], robot.servoAngles()[5]);
+    TEST_ASSERT_EQUAL_FLOAT(90.0f, JOINT_LIMIT_DEG[0][0]);
+    TEST_ASSERT_EQUAL_FLOAT(45.0f, JOINT_LIMIT_DEG[1][0]);
+    const struct {
+        int servo;
+        float asked, held;
+    } drags[] = {{0, 120.0f, JOINT_LIMIT_DEG[0][0]},
+                 {3, 60.0f, JOINT_LIMIT_DEG[1][0]},
+                 {9, -120.0f, -JOINT_LIMIT_DEG[3][0]},
+                 {5, -170.0f, -JOINT_LIMIT_DEG[1][2]}};
+    for (const auto &drag : drags) {
+        VirtualRobot robot;
+        idleFromStand(robot);
+        robot.setJoint(drag.servo, drag.asked);
+        robot.tick();
+        TEST_ASSERT_EQUAL_FLOAT(drag.held, robot.servoAngles()[drag.servo]);
+    }
 }
 
 // Outside IDLE a joint is ignored: the motion owns the servos, and deactivated they are limp.
@@ -325,7 +331,7 @@ void test_a_joint_write_in_idle_publishes_the_angles() {
     robot.setJoint(13, -120.0f);
     robot.tick();
     expected[4] = 20.0f;
-    expected[13] = -JOINT_LIMIT_DEG[1];
+    expected[13] = -JOINT_LIMIT_DEG[4][1];
     TEST_ASSERT_EQUAL_size_t(1, heard.size());
     TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected.data(), heard[0].data(), 18);
     TEST_ASSERT_EQUAL_FLOAT_ARRAY(expected.data(), robot.angles(), 18);
@@ -1901,9 +1907,9 @@ constexpr float CAP_TOLERANCE_DEG = 1e-3f;
 
 // The joints dragged far from the stand: a coxa at its travel, a femur raised square and a tibia folded back.
 void dragAway(VirtualRobot &robot) {
-    robot.setJoint(0, JOINT_LIMIT_DEG[0]);
-    robot.setJoint(1, JOINT_LIMIT_DEG[1]);
-    robot.setJoint(5, JOINT_LIMIT_DEG[2]);
+    robot.setJoint(0, JOINT_LIMIT_DEG[0][0]);
+    robot.setJoint(1, JOINT_LIMIT_DEG[0][1]);
+    robot.setJoint(5, JOINT_LIMIT_DEG[1][2]);
     robot.tick();
 }
 
@@ -1944,12 +1950,12 @@ void test_leaving_limp_idle_stands_up_as_from_deactivated() {
     VirtualRobot dragged;
     dragged.setMode(MOTION_STATE::IDLE);
     dragged.tick();
-    dragged.setJoint(1, JOINT_LIMIT_DEG[1]);
+    dragged.setJoint(1, JOINT_LIMIT_DEG[0][1]);
     dragged.tick();
     run = takeOver(dragged, MOTION_STATE::STAND, 1);
     TEST_ASSERT_EQUAL(MOTION_STATE::ANIMATE, run.modes.front());
     TEST_ASSERT_TRUE(dragged.servosDriven());
-    TEST_ASSERT_FLOAT_WITHIN(STEP_BOUND_DEG, JOINT_LIMIT_DEG[1], dragged.servoAngles()[1]);
+    TEST_ASSERT_FLOAT_WITHIN(STEP_BOUND_DEG, JOINT_LIMIT_DEG[0][1], dragged.servoAngles()[1]);
     const std::array<float, 18> first = servoAnglesOf(dragged);
     for (int t = 0; t < ticksFor(2.0f); ++t) dragged.tick();
     TEST_ASSERT_EQUAL(MOTION_STATE::STAND, dragged.mode());
@@ -2005,7 +2011,7 @@ void test_a_second_mode_in_the_tick_of_the_ease_out_of_idle_waits_for_it() {
 void test_puppeteering_and_its_leave_keep_the_servos_top_speed_beside_the_ease_out_of_idle() {
     PoseMsg folded {};
     folded.joints[0] = true;
-    std::copy_n(JOINT_LIMIT_DEG, 3, folded.legs[0]);
+    std::copy_n(JOINT_LIMIT_DEG[0], 3, folded.legs[0]);
 
     VirtualRobot during;
     idleFromStand(during);
@@ -2329,14 +2335,18 @@ void describeStride(char *msg, size_t size, GaitType gait, const CommandMsg &c, 
 
 // Every stride, from three tenths of the speed-optimal stroke to the longest the joints can travel, walks a full stick
 // inside travel in every classic gait, at the envelope's extreme postures as at neutral. A walk's start from a stand
-// peaks above the steady walk's STEP_BOUND_DEG and the servo's 3.75 deg: at 4.17 deg in a tick on BI's longest forward
-// stroke at neutral, whose steady walk peaks at 3.67 (measured). Measured, not explained: the peak is leg 3's tibia in
-// its swing 0.19 s in, while the command ramp eases the stroke in (85 of the 118.5 mm) at the cadence it took outright,
-// as the simulation's port reproduces (4.24); easing the cadence in with the stroke, as a stop eases it out, makes it
-// worse there (4.80), so the start is left as it is. It is 11 % past the servo for a few ticks of an unloaded leg,
-// which the servo follows a fraction of a degree late.
+// peaks above the steady walk's STEP_BOUND_DEG and the servo's 3.75 deg: at 4.63 deg in a tick on BI's longest lateral
+// stroke at the highest, narrowest, lowest corner (1, -1, -1), and 4.25 on its longest forward stroke at neutral,
+// whose steady walks peak at 3.75 and 3.68 (measured with the 90 deg corner coxas; 4.17 with the 50.5 deg coxa's
+// shorter strokes). The lateral peak is leg 3's coxa (leg 2's walking left) in a swing 0.155 s after the first lift,
+// on the 97.5 mm stroke the 90 deg corner coxas allow there; on the 50.5 deg coxa's 71.0 mm the start peaked no
+// higher than its steady walk, 3.71. Measured, not explained: the forward peak is leg 3's tibia in its swing 0.19 s
+// in, while the command ramp eases the stroke in at the cadence it took outright, as the simulation's port reproduces;
+// easing the cadence in with the stroke, as a stop eases it out, makes it worse there, so the start is left as it is.
+// It is up to 23 % past the servo for a few ticks of an unloaded leg, which the servo follows a fraction of a degree
+// late.
 void test_full_stick_walk_stays_in_travel_at_every_stride() {
-    constexpr float ENTRY_STEP_BOUND_DEG = 4.2f;
+    constexpr float ENTRY_STEP_BOUND_DEG = 4.65f;
     for (const GaitType gait : CLASSIC_GAITS) {
         for (Posture3 posture : STRIDE_POSTURES) {
             clampPosture(posture.s1, posture.h, posture.fd, Stance::DEFAULT);

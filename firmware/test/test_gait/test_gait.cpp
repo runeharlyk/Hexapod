@@ -91,7 +91,7 @@ void sweepTunedCycle(float ly, float lx, float rx, float s1, float worst[3], flo
             const int joint = i % 3;
             const float mag = std::fabs(angles[i]);
             if (mag > peak[joint]) peak[joint] = mag;
-            const float over = mag - (joint == 0 ? TRAINED_COXA_LIMIT_DEG : JOINT_LIMIT_DEG[joint]);
+            const float over = mag - (joint == 0 ? TRAINED_COXA_LIMIT_DEG : JOINT_LIMIT_DEG[i / 3][joint]);
             if (over > worst[joint]) worst[joint] = over;
         }
     }
@@ -659,7 +659,7 @@ void test_nominal_stance_is_inside_joint_travel() {
     float angles[18];
     kin.inverseKinematics(body, angles);
     for (int i = 0; i < 18; ++i) {
-        const float limit = JOINT_LIMIT_DEG[i % 3];
+        const float limit = JOINT_LIMIT_DEG[i / 3][i % 3];
         TEST_ASSERT_TRUE_MESSAGE(std::fabs(angles[i]) <= limit, "nominal stance needs a clamped servo");
     }
 }
@@ -680,7 +680,7 @@ void test_walking_stays_inside_joint_travel() {
         float angles[18];
         kin.inverseKinematics(body, angles);
         for (int i = 0; i < 18; ++i) {
-            const float over = std::fabs(angles[i]) - JOINT_LIMIT_DEG[i % 3];
+            const float over = std::fabs(angles[i]) - JOINT_LIMIT_DEG[i / 3][i % 3];
             if (over > worst[i % 3]) worst[i % 3] = over;
         }
     }
@@ -702,8 +702,8 @@ void test_tuned_lift_trim_keeps_the_femur_inside_travel() {
 
     char msg[176];
     std::snprintf(msg, sizeof(msg),
-                  "fwd x turn plane at s1=-1: femur peak %.1f of %.1f deg; coxa over %.1f, tibia over %.1f",
-                  peak[1], JOINT_LIMIT_DEG[1], worst[0], worst[2]);
+                  "fwd x turn plane at s1=-1: femur peak %.1f of %.1f deg; coxa over %.1f, tibia over %.1f", peak[1],
+                  JOINT_LIMIT_DEG[0][1], worst[0], worst[2]);
     TEST_MESSAGE(msg);
     TEST_ASSERT_TRUE_MESSAGE(worst[1] <= 0.0f,
                              "femur exceeds travel on the forward x turn plane at the bottom of the lift trim");

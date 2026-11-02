@@ -125,7 +125,7 @@ describe('the stock robot', () => {
     expect(robot.held.mdnsSettings.hostname).toBe('hexapod')
   })
 
-  // firmware/include/settings/servo_settings.h: a coxa's centre within the servo's safe 205 to 409 counts.
+  // firmware/include/settings/servo_settings.h: a coxa's centre within the servo's safe 103 to 512 counts.
   it("refuses a coxa centre outside the servo's safe pulses and takes a femur's", async () => {
     const broker = await join()
     const servos = await hear(broker, ServoSettings)
@@ -135,7 +135,7 @@ describe('the stock robot', () => {
     await expect(
       writeSettings(
         ServoSettings,
-        { servoSettingsUpdate: { servos: centred(9, 410) } },
+        { servoSettingsUpdate: { servos: centred(9, 520) } },
         'the servo settings',
         broker
       )
@@ -149,6 +149,34 @@ describe('the stock robot', () => {
       broker
     )
     expect(robot.held.servoSettings.servos[10].centerPwm).toBe(410)
+  })
+
+  // Servo_isValid as well: a coxa's travel at its calibration holds angle 0, so a centre angle that drives angle 0 past
+  // the safe pulses, servo 9 at 311 + 2.2 x 95 = 520 counts, is refused, and one that keeps it within them, 509, is
+  // taken.
+  it('refuses a coxa calibration that drives angle 0 outside the safe pulses', async () => {
+    const broker = await join()
+    const servos = await hear(broker, ServoSettings)
+    const angled = (centerAngle: number) =>
+      robot.shown('servoSettings').servos.map((s, id) => (id === 9 ? { ...s, centerAngle } : s))
+
+    await expect(
+      writeSettings(
+        ServoSettings,
+        { servoSettingsUpdate: { servos: angled(95) } },
+        'the servo settings',
+        broker
+      )
+    ).rejects.toBeInstanceOf(RequestFailed)
+    expect(servos).toHaveLength(0)
+
+    await writeSettings(
+      ServoSettings,
+      { servoSettingsUpdate: { servos: angled(90) } },
+      'the servo settings',
+      broker
+    )
+    expect(robot.held.servoSettings.servos[9].centerAngle).toBe(90)
   })
 
   // firmware/src/main.cpp asks the fitted sensor first and the range second, and gives each refusal its reason.

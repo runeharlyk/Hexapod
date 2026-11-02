@@ -32,7 +32,7 @@
             contype="4" conaffinity="1"/>
       <site name="imu" pos="0 0 0" size="0.005"/>
       <body name="coxa_0" pos="0.04482 0.07482 0" euler="0 0 0.785398">
-        <joint name="coxa_0" type="hinge" axis="0 0 1" range="-0.8813912722571364 0.8813912722571364"
+        <joint name="coxa_0" type="hinge" axis="0 0 1" range="-1.5707963267948966 1.5707963267948966"
                damping="0.02" frictionloss="0.005" armature="0.003"/>
         <inertial pos="0.01900 0 0" mass="0.01" diaginertia="6.667e-07 1.537e-06 1.537e-06"/>
         <geom name="link_coxa_0" type="capsule" fromto="0 0 0 0.03800 0 0" size="0.008"
@@ -57,7 +57,7 @@
         </body>
       </body>
       <body name="coxa_1" pos="0.06103 0.00000 0" euler="0 0 0.000000">
-        <joint name="coxa_1" type="hinge" axis="0 0 1" range="-0.8813912722571364 0.8813912722571364"
+        <joint name="coxa_1" type="hinge" axis="0 0 1" range="-0.7853981633974483 0.7853981633974483"
                damping="0.02" frictionloss="0.005" armature="0.003"/>
         <inertial pos="0.01900 0 0" mass="0.01" diaginertia="6.667e-07 1.537e-06 1.537e-06"/>
         <geom name="link_coxa_1" type="capsule" fromto="0 0 0 0.03800 0 0" size="0.008"
@@ -82,7 +82,7 @@
         </body>
       </body>
       <body name="coxa_2" pos="0.04482 -0.07482 0" euler="0 0 -0.785398">
-        <joint name="coxa_2" type="hinge" axis="0 0 1" range="-0.8813912722571364 0.8813912722571364"
+        <joint name="coxa_2" type="hinge" axis="0 0 1" range="-1.5707963267948966 1.5707963267948966"
                damping="0.02" frictionloss="0.005" armature="0.003"/>
         <inertial pos="0.01900 0 0" mass="0.01" diaginertia="6.667e-07 1.537e-06 1.537e-06"/>
         <geom name="link_coxa_2" type="capsule" fromto="0 0 0 0.03800 0 0" size="0.008"
@@ -107,7 +107,7 @@
         </body>
       </body>
       <body name="coxa_3" pos="-0.04482 0.07482 0" euler="0 0 -3.926991">
-        <joint name="coxa_3" type="hinge" axis="0 0 1" range="-0.8813912722571364 0.8813912722571364"
+        <joint name="coxa_3" type="hinge" axis="0 0 1" range="-1.5707963267948966 1.5707963267948966"
                damping="0.02" frictionloss="0.005" armature="0.003"/>
         <inertial pos="0.01900 0 0" mass="0.01" diaginertia="6.667e-07 1.537e-06 1.537e-06"/>
         <geom name="link_coxa_3" type="capsule" fromto="0 0 0 0.03800 0 0" size="0.008"
@@ -132,7 +132,7 @@
         </body>
       </body>
       <body name="coxa_4" pos="-0.06103 0.00000 0" euler="0 0 -3.141593">
-        <joint name="coxa_4" type="hinge" axis="0 0 1" range="-0.8813912722571364 0.8813912722571364"
+        <joint name="coxa_4" type="hinge" axis="0 0 1" range="-0.7853981633974483 0.7853981633974483"
                damping="0.02" frictionloss="0.005" armature="0.003"/>
         <inertial pos="0.01900 0 0" mass="0.01" diaginertia="6.667e-07 1.537e-06 1.537e-06"/>
         <geom name="link_coxa_4" type="capsule" fromto="0 0 0 0.03800 0 0" size="0.008"
@@ -157,7 +157,7 @@
         </body>
       </body>
       <body name="coxa_5" pos="-0.04482 -0.07482 0" euler="0 0 -2.356194">
-        <joint name="coxa_5" type="hinge" axis="0 0 1" range="-0.8813912722571364 0.8813912722571364"
+        <joint name="coxa_5" type="hinge" axis="0 0 1" range="-1.5707963267948966 1.5707963267948966"
                damping="0.02" frictionloss="0.005" armature="0.003"/>
         <inertial pos="0.01900 0 0" mass="0.01" diaginertia="6.667e-07 1.537e-06 1.537e-06"/>
         <geom name="link_coxa_5" type="capsule" fromto="0 0 0 0.03800 0 0" size="0.008"

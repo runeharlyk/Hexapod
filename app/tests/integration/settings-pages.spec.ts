@@ -185,7 +185,7 @@ test('the servo calibration refuses a conversion of 0, as the robot does', async
   ).toEqual([0.5])
 })
 
-// A coxa's centre is held to the servo's safe 1000 to 2000 us, 205 to 409 counts, which the robot refuses outside; a
+// A coxa's centre is held to the servo's safe 500 to 2500 us, 103 to 512 counts, which the robot refuses outside; a
 // femur's to the app's own 80 to 600.
 test("the servo calibration holds a coxa's centre to the servo's safe pulses, as the robot does", async ({
   page
@@ -193,14 +193,14 @@ test("the servo calibration holds a coxa's centre to the servo's safe pulses, as
   const { robot } = await serveStockRobot(page)
   await page.goto(`${base}/peripherals/servo`)
   const coxa = page.getByLabel('Servo 3 centre PWM')
-  await coxa.fill('420')
+  await coxa.fill('520')
   await save(page).click()
 
   await expect(coxa).toBeFocused()
   expect(await coxa.evaluate(field => (field as HTMLInputElement).validity.valid)).toBe(false)
 
-  await coxa.fill('409')
-  await page.getByLabel('Servo 4 centre PWM').fill('420')
+  await coxa.fill('512')
+  await page.getByLabel('Servo 4 centre PWM').fill('520')
   await save(page).click()
   await expect(page.getByText('Servo calibration saved.')).toBeVisible()
   expect(
@@ -210,7 +210,32 @@ test("the servo calibration holds a coxa's centre to the servo's safe pulses, as
         r.servoSettingsUpdate?.servos[3].centerPwm,
         r.servoSettingsUpdate?.servos[4].centerPwm
       ])
-  ).toEqual([[409, 420]])
+  ).toEqual([[512, 520]])
+})
+
+// A coxa's travel holds angle 0, which the robot refuses otherwise (Servo_isValid): servo 9, centred at 311 counts at
+// 2.2 a degree, drives angle 0 at 520 with a centre angle of 95, past 512, and at 509 with one of 90.
+test("the servo calibration holds a coxa's angle 0 to the servo's safe pulses, as the robot does", async ({
+  page
+}) => {
+  const { robot } = await serveStockRobot(page)
+  await page.goto(`${base}/peripherals/servo`)
+  const angle = page.getByLabel('Servo 9 centre angle')
+  await angle.fill('95')
+  await save(page).click()
+
+  await expect(angle).toBeFocused()
+  expect(await angle.evaluate(field => (field as HTMLInputElement).validationMessage)).toBe(
+    'Angle 0 at 520, outside 103 to 512'
+  )
+  expect(robot.requests('servoSettingsUpdate')).toHaveLength(0)
+
+  await angle.fill('90')
+  await save(page).click()
+  await expect(page.getByText('Servo calibration saved.')).toBeVisible()
+  expect(
+    robot.requests('servoSettingsUpdate').map(r => r.servoSettingsUpdate?.servos[9].centerAngle)
+  ).toEqual([90])
 })
 
 // The slider drives a coxa only within the servo's safe pulses, as the robot holds it, and a femur over the app's own
@@ -227,10 +252,10 @@ test("the servo page's pulse slider offers a coxa only its safe pulses", async (
   await expect(pulse).toHaveAttribute('max', '600')
 
   await servo.fill('3')
-  await expect(pulse).toHaveAttribute('min', '205')
-  await expect(pulse).toHaveAttribute('max', '409')
-  await expect(pulse).toHaveValue('409')
-  await expect(pulse.locator('xpath=following-sibling::p[1]')).toHaveText('409')
+  await expect(pulse).toHaveAttribute('min', '103')
+  await expect(pulse).toHaveAttribute('max', '512')
+  await expect(pulse).toHaveValue('512')
+  await expect(pulse.locator('xpath=following-sibling::p[1]')).toHaveText('512')
 })
 
 test('the access point page holds an address to the IPv4 rule', async ({ page }) => {

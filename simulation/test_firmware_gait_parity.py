@@ -91,6 +91,14 @@ def _array(text, name):
     return _cpp_list(m.group(1))
 
 
+def _joint_limits(text):
+    """kinematics.h's JOINT_LIMIT_DEG, a row of coxa, femur and tibia per leg."""
+    m = re.search(r"\bJOINT_LIMIT_DEG\[6\]\[3\]\s*=\s*\{(.*?)\};", text, re.S)
+    if not m:
+        raise KeyError("JOINT_LIMIT_DEG[6][3] not found")
+    return np.array([_cpp_list(row) for row in re.findall(r"\{([^{}]*)\}", m.group(1))])
+
+
 def _nested_array(text, name):
     m = re.search(rf"\b{name}\[6\]\[4\]\s*=\s*\{{(.*?)\}};", text, re.S)
     if not m:
@@ -232,6 +240,7 @@ def test_gait_h_constants_match_the_port(gait_h):
         assert getattr(fg, name) == pytest.approx(value), name
     assert fg.AUTO_HYSTERESIS == pytest.approx(_constexpr(_read(GAIT_SPEED_H), "AUTO_HYSTERESIS"))
     assert fg.MIN_STRIDE_SHARE == pytest.approx(_constexpr(_read(GAIT_SPEED_H), "MIN_STRIDE_SHARE"))
+    assert fg.SPEED_TIE == pytest.approx(_constexpr(_read(GAIT_SPEED_H), "SPEED_TIE"))
     np.testing.assert_allclose(fg.BEZIER_STEPS, _array(gait_h, "BEZIER_STEPS"))
     np.testing.assert_allclose(fg.BEZIER_HEIGHTS, _array(gait_h, "BEZIER_HEIGHTS"))
     for name in ("defaultPosition", "targetDefaultPosition", "swingStartPosition"):
@@ -441,7 +450,7 @@ def test_nominal_stance_ik_meets_the_firmware_host_test():
     per_leg = angles.reshape(6, 3)
     for a, b in ((0, 2), (3, 5)):
         np.testing.assert_allclose(per_leg[a, 1:], per_leg[b, 1:], atol=0.01)
-    limits = np.array(_array(_read(KINEMATICS_H), "JOINT_LIMIT_DEG"))
+    limits = _joint_limits(_read(KINEMATICS_H))
     assert np.all(np.abs(per_leg) <= limits)
 
 
@@ -449,16 +458,18 @@ def test_the_joint_travel_copies_are_the_firmware_s():
     """kinematics.h's joint travel, as the animation checker and the envelope take it, and the MuJoCo model's ranges,
     in build_model.py and in the model.xml generated from it; and the coxa travel TUNED and WALK_NN keep."""
     text = _read(KINEMATICS_H)
-    np.testing.assert_array_equal(JOINT_LIMIT_DEG, _array(text, "JOINT_LIMIT_DEG"))
+    np.testing.assert_array_equal(JOINT_LIMIT_DEG, _joint_limits(text))
+    assert JOINT_LIMIT_DEG.shape == (6, 3)
     assert TRAINED_COXA_LIMIT_DEG == _constexpr(text, "TRAINED_COXA_LIMIT_DEG")
-    assert math.degrees(build_model.COXA_RANGE) == pytest.approx(JOINT_LIMIT_DEG[0], abs=1e-9)
+    np.testing.assert_allclose(np.degrees(build_model.COXA_RANGE), JOINT_LIMIT_DEG[:, 0], rtol=0, atol=1e-9)
     # The femur's and tibia's are written in radians to 3 and 1 decimals, 1.571 and 2.6: 90.01 and 148.97 deg.
     femur_tibia = np.degrees([build_model.FEMUR_RANGE, build_model.TIBIA_RANGE])
-    np.testing.assert_allclose(femur_tibia, JOINT_LIMIT_DEG[1:], atol=0.05)
+    np.testing.assert_allclose(np.tile(femur_tibia, (6, 1)), JOINT_LIMIT_DEG[:, 1:], atol=0.05)
     model = HexapodSim().model
     for leg in range(6):
         joint = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"coxa_{leg}")
-        np.testing.assert_allclose(model.jnt_range[joint], [-build_model.COXA_RANGE, build_model.COXA_RANGE])
+        coxa = build_model.COXA_RANGE[leg]
+        np.testing.assert_allclose(model.jnt_range[joint], [-coxa, coxa])
 
 
 # ------------------------------------------------------------------ behaviour, ported from test_gait.cpp

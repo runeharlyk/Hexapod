@@ -19,7 +19,7 @@
     {
       "name": "forward",
       "stick": { "lx": 0, "ly": 0.5, "rx": 0 },
-      "gait": { "step_x": 0, "step_y": 71.1, "step_angle": 0 },
+      "gait": { "step_x": 0, "step_y": 61.0, "step_angle": 0 },
       "body_velocity_sign": [0, 1],
       "yaw_sign": 0,
       "stance_foot_displacement_sign": [
@@ -49,7 +49,7 @@
     {
       "name": "counter-clockwise turn",
       "stick": { "lx": 0, "ly": 0, "rx": -0.5 },
-      "gait": { "step_x": 0, "step_y": 0, "step_angle": 0.462 },
+      "gait": { "step_x": 0, "step_y": 0, "step_angle": 0.459 },
       "body_velocity_sign": [0, 0],
       "yaw_sign": 1,
       "stance_foot_displacement_sign": [

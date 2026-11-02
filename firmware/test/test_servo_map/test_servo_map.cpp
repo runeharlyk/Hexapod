@@ -21,9 +21,9 @@ constexpr uint8_t PRE_SCALE = 0xFE;
 constexpr uint8_t MODE1 = 0x00;
 constexpr int CENTRE = 306; // the factory centre PWM
 constexpr int CONVERSION = 2;
-// The MG92B's safe 1000 and 2000 us in PCA9685 counts at 50 Hz, 4096 to the 20 ms: 204.8 and 409.6, rounded inward.
-constexpr int SAFE_PULSE_MIN = 205;
-constexpr int SAFE_PULSE_MAX = 409;
+// The MG92B's safe 500 and 2500 us in PCA9685 counts at 50 Hz, 4096 to the 20 ms: 102.4 and 512, rounded inward.
+constexpr int SAFE_PULSE_MIN = 103;
+constexpr int SAFE_PULSE_MAX = 512;
 
 I2CBus& bus() { return I2CBus::instance(); }
 
@@ -152,17 +152,17 @@ void test_the_calibrated_centres_reach_their_own_servos() {
 void test_centring_holds_a_coxa_within_the_safe_pulses() {
     ServoController& controller = started();
     api_ServoSettings settings = ServoSettings_defaults();
-    settings.servos[0].center_pwm = 450.0f;
-    settings.servos[9].center_pwm = 150.0f;
-    settings.servos[1].center_pwm = 450.0f;
+    settings.servos[0].center_pwm = 560.0f;
+    settings.servos[9].center_pwm = 60.0f;
+    settings.servos[1].center_pwm = 560.0f;
     controller.applyCalibration(settings);
     controller.activate();
     controller.setCenterPwm();
     TEST_ASSERT_EQUAL_INT(SAFE_PULSE_MAX, offCount(RIGHT_BOARD, 8));
     TEST_ASSERT_EQUAL_INT(SAFE_PULSE_MIN, offCount(LEFT_BOARD, 8));
-    TEST_ASSERT_EQUAL_INT(450, offCount(RIGHT_BOARD, 9));       // a femur's centre is not held to it
-    TEST_ASSERT_EQUAL_FLOAT(-20.5f, controller.centreAngle(0)); // (409 - 450) / 2
-    TEST_ASSERT_EQUAL_FLOAT(27.5f, controller.centreAngle(9));  // (205 - 150) / 2
+    TEST_ASSERT_EQUAL_INT(560, offCount(RIGHT_BOARD, 9));       // a femur's centre is not held to it
+    TEST_ASSERT_EQUAL_FLOAT(-24.0f, controller.centreAngle(0)); // (512 - 560) / 2
+    TEST_ASSERT_EQUAL_FLOAT(21.5f, controller.centreAngle(9));  // (103 - 60) / 2
     controller.applyCalibration(ServoSettings_defaults());
 }
 
@@ -188,8 +188,9 @@ void test_the_centre_angle_is_the_angle_of_the_centre_pulse() {
     controller.applyCalibration(ServoSettings_defaults());
 }
 
-// A coxa centred off the factory's 306 counts has less than JOINT_LIMIT_DEG on one side, which the calibration names:
-// centred at 338 counts at 2 counts a degree, servo 6 reaches +35.5 deg. The factory calibration leaves no side short.
+// A coxa centred off the factory's 306 counts has less than its leg's JOINT_LIMIT_DEG on one side, which the
+// calibration names: centred at 338 counts at 2 counts a degree, servo 6 reaches +87 deg of its 90. The factory
+// calibration leaves no side short, nor does a middle coxa's 45 deg at the same centre.
 void test_a_calibration_names_each_coxa_side_short_of_the_joint_limit() {
     ServoController& controller = started();
     char sides[SHORT_COXA_SIDES_SIZE];
@@ -202,9 +203,10 @@ void test_a_calibration_names_each_coxa_side_short_of_the_joint_limit() {
     controller.applyCalibration(settings);
     TEST_ASSERT_EQUAL_INT(0, shortSides());
     settings.servos[6].center_pwm = 338;
+    settings.servos[3].center_pwm = 338;
     controller.applyCalibration(settings);
     TEST_ASSERT_EQUAL_INT(1, shortSides());
-    TEST_ASSERT_EQUAL_STRING(" servo 6 +35.5", sides);
+    TEST_ASSERT_EQUAL_STRING(" servo 6 +87.0", sides);
     controller.applyCalibration(ServoSettings_defaults());
 }
 
@@ -242,14 +244,19 @@ void test_a_joint_angle_takes_the_tibia_offset_and_the_sides_direction() {
     TEST_ASSERT_EQUAL_INT(CENTRE - 15 * CONVERSION, offCount(LEFT_BOARD, 9));
 }
 
-// A coxa turns as far as its servo's safe pulses allow, 1000 to 2000 us.
-void test_a_joint_angle_is_held_within_its_safe_pulses() {
+// A coxa turns as far as its leg allows within its servo's safe pulses: a corner leg's 90 deg, the servo's travel, and
+// a middle leg's 45 deg, short of its servo connections meeting the body.
+void test_a_joint_angle_is_held_within_its_legs_travel() {
     ServoController& controller = started();
     controller.activate();
-    controller.setJointAngle(0, 80.0f);
-    TEST_ASSERT_EQUAL_INT(SAFE_PULSE_MAX, offCount(RIGHT_BOARD, 8));
-    controller.setJointAngle(9, -80.0f);
-    TEST_ASSERT_EQUAL_INT(SAFE_PULSE_MIN, offCount(LEFT_BOARD, 8));
+    controller.setJointAngle(0, 120.0f);
+    TEST_ASSERT_EQUAL_INT(CENTRE + 90 * CONVERSION, offCount(RIGHT_BOARD, 8));
+    controller.setJointAngle(9, -120.0f);
+    TEST_ASSERT_EQUAL_INT(CENTRE - 90 * CONVERSION, offCount(LEFT_BOARD, 8));
+    controller.setJointAngle(3, 60.0f);
+    TEST_ASSERT_EQUAL_INT(CENTRE + 45 * CONVERSION, offCount(RIGHT_BOARD, 2));
+    controller.setJointAngle(12, -60.0f);
+    TEST_ASSERT_EQUAL_INT(CENTRE - 45 * CONVERSION, offCount(LEFT_BOARD, 2));
 }
 
 // The classic gaits and IDLE turn a coxa 45 deg, which a front or rear leg needs to point straight out to its side.
@@ -287,9 +294,9 @@ void test_an_off_centre_calibration_never_leaves_the_safe_pulses() {
     controller.activate();
     api_ServoSettings settings = ServoSettings_defaults();
     settings.servos[0].center_pwm = 349.2f;
-    settings.servos[0].conversion = 2.1f;
+    settings.servos[0].conversion = 3.1f;
     settings.servos[9].center_pwm = 266.3f;
-    settings.servos[9].conversion = 2.3f;
+    settings.servos[9].conversion = 3.3f;
     settings.servos[9].direction = -1.0f;
     settings.servos[9].center_angle = 3.7f;
     controller.applyCalibration(settings);
@@ -310,13 +317,14 @@ void test_an_off_centre_calibration_never_leaves_the_safe_pulses() {
         TEST_ASSERT_LESS_OR_EQUAL_INT(SAFE_PULSE_MAX, highest[side]);
         TEST_ASSERT_GREATER_OR_EQUAL_INT(SAFE_PULSE_MAX - 1, highest[side]);
     }
-    // Servo 0's centre sits 43.2 counts high, at 2.1 counts per degree: 28.5 deg left to turn up, 68.7 down. Its lower
-    // edge's angle comes back as 204.99998 counts in floating point, which the pulse's own clamp holds at 205.
+    // Servo 0's centre sits 43.2 counts high, at 3.1 counts per degree: 52.5 deg left to turn up, 79.4 down, both
+    // inside its leg's 90. The pulse's own clamp holds an edge's angle that comes back a hair outside in floating
+    // point.
     controller.setJointAngle(0, -60.0f);
-    TEST_ASSERT_EQUAL_INT(223, offCount(RIGHT_BOARD, 8)); // 349.2 - 60 x 2.1 = 223.2
-    controller.setJointAngle(0, 30.0f);
+    TEST_ASSERT_EQUAL_INT(163, offCount(RIGHT_BOARD, 8)); // 349.2 - 60 x 3.1 = 163.2
+    controller.setJointAngle(0, 52.0f);
     TEST_ASSERT_LESS_OR_EQUAL_INT(SAFE_PULSE_MAX, offCount(RIGHT_BOARD, 8));
-    controller.setJointAngle(0, -69.0f);
+    controller.setJointAngle(0, -80.0f);
     TEST_ASSERT_EQUAL_INT(SAFE_PULSE_MIN, offCount(RIGHT_BOARD, 8));
     controller.applyCalibration(ServoSettings_defaults());
 }
@@ -347,7 +355,7 @@ int main() {
     RUN_TEST(test_centring_holds_a_coxa_within_the_safe_pulses);
     RUN_TEST(test_a_joint_angle_moves_only_its_own_servo);
     RUN_TEST(test_a_joint_angle_takes_the_tibia_offset_and_the_sides_direction);
-    RUN_TEST(test_a_joint_angle_is_held_within_its_safe_pulses);
+    RUN_TEST(test_a_joint_angle_is_held_within_its_legs_travel);
     RUN_TEST(test_a_coxa_turns_45_deg_where_its_safe_pulses_allow);
     RUN_TEST(test_the_trained_travel_holds_the_coxa_at_31_5_deg);
     RUN_TEST(test_an_off_centre_calibration_never_leaves_the_safe_pulses);

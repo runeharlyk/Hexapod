@@ -23,7 +23,10 @@ import numpy as np
 from src.robot.clearance import closest_legs, legs_clear
 from src.robot.firmware_gait import DEFAULT_FEET, BodyState, Kinematics
 
-JOINT_LIMIT_DEG = np.array([50.5, 90.0, 149.0])  # mirrors kinematics.h JOINT_LIMIT_DEG
+# Each leg's travel in degrees, a row of coxa, femur and tibia per leg; mirrors kinematics.h JOINT_LIMIT_DEG: a corner
+# coxa's 90 deg, the servo's travel, a middle coxa's 45, short of its servo connections meeting the body.
+JOINT_LIMIT_DEG = np.array([[90.0, 90.0, 149.0], [45.0, 90.0, 149.0], [90.0, 90.0, 149.0],
+                            [90.0, 90.0, 149.0], [45.0, 90.0, 149.0], [90.0, 90.0, 149.0]])
 # pose_to_angles' mask bit for angles that bring two legs within LEG_CLEARANCE_MM (src/robot/clearance.py), which the
 # firmware's player never drives; mirrors animation.h LEGS_TOUCH.
 LEGS_TOUCH = 1 << 18
@@ -391,7 +394,7 @@ def pose_to_angles(pose: Pose, kin: Kinematics, stance_feet: np.ndarray = DEFAUL
     for i, leg in enumerate(pose.legs):
         if leg.is_joints():
             angles[i * 3:i * 3 + 3] = leg.joints
-    limit = np.tile(JOINT_LIMIT_DEG, 6)
+    limit = JOINT_LIMIT_DEG.reshape(18)
     clamped = np.clip(angles, -limit, limit)
     mask = 0
     for j in np.flatnonzero(clamped != angles):
