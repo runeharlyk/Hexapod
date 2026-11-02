@@ -19,10 +19,12 @@ square closes on the robot's own heading.
 from contextlib import contextmanager, suppress
 from dataclasses import replace
 
+from src.robot.firmware_gait import DEFAULT_STEP_HEIGHT_MM, GaitState, approach_gait_command
+
 from ..sim.recording import RecordingWriter
 from . import motions
 from .backends.base import (ZERO, Backend, Gait, Goal, GoalKind, GoalState, GoalStatus, GoalTimedOut, Mode, RobotError,
-                            RobotState, RobotTimeout, Style, Velocity)
+                            RobotState, RobotTimeout, Stance, Style, Velocity)
 from .servos import PWM_MAX, ServoCalibration
 
 # The modes a script may walk from. DEACTIVATED is the app's stop button and IDLE and ANIMATE are the user's:
@@ -32,6 +34,15 @@ HEIGHT_RANGE_MM = 50.0  # motion.h handleCommand: zm = h * 50, and a positive zm
 SIT_S = 0.6  # the body's height lerp (0.06 per 5 ms tick) settles well inside this
 STEP_HEIGHT_MM = 20.0  # motion.h: the feet lift (s1 + 1) * 20 mm
 GOAL_POLL_S = 0.05
+# A stance change steps the feet at the firmware's repositioning pace, one cycle of the gait a second (gait.h: its phase
+# advances at step_speed 1). Every foot swings once a cycle, and one whose swing's last tick leaves it more than 0.5 mm
+# short of its target swings again the next cycle, which TRI's long swing never does and the shorter swings do
+# (virtual robot from a still stand: TRI 1.00 s, BI 1.42, WAVE and RIPPLE 1.98). AUTO and TUNED count as the longest.
+REPOSITION_HZ = 1.0
+STANCE_CYCLES = {Gait.TRI_GATE: 1, Gait.BI_GATE: 2, Gait.WAVE: 2, Gait.RIPPLE: 2}
+# The stance is taken at the control task's next tick, and a foot lands on the tick after its swing ends.
+STANCE_TAKE_S = 2 * motions.CONTROL_TICK_S
+POSTURE_SETTLED_MM = 0.5  # motion.h: a lift has arrived within this
 NO_GOALS = "the robot's firmware takes no goals"
 
 
@@ -40,6 +51,25 @@ def _height(height_mm: float) -> float:
     if abs(height_mm) > HEIGHT_RANGE_MM:
         raise ValueError(f"the body moves {HEIGHT_RANGE_MM:g} mm either way, not {height_mm:g}")
     return -height_mm / HEIGHT_RANGE_MM
+
+
+def _lift_seconds(from_mm: float, to_mm: float) -> float:
+    """How long the firmware's command ramp (approachGaitCommand, gait.h) takes to bring the lift from `from_mm` within
+    POSTURE_SETTLED_MM of `to_mm`."""
+    live, target, seconds = GaitState(step_height=from_mm), GaitState(step_height=to_mm), 0.0
+    while abs(live.step_height - to_mm) >= POSTURE_SETTLED_MM:
+        approach_gait_command(live, target, motions.CONTROL_TICK_S)
+        seconds += motions.CONTROL_TICK_S
+    return seconds
+
+
+def stance_step_seconds(gait: Gait | None, walking: bool, lift_mm: float) -> float:
+    """How long the feet take to stand on a stance asked for now, in `gait`, once the robot has stopped. A walk settles
+    into it as into a posture: its lift comes down to the stand's first and goes back up to `lift_mm` after."""
+    seconds = STANCE_CYCLES.get(gait, max(STANCE_CYCLES.values())) / REPOSITION_HZ + STANCE_TAKE_S
+    if walking:
+        seconds += _lift_seconds(lift_mm, DEFAULT_STEP_HEIGHT_MM) + _lift_seconds(DEFAULT_STEP_HEIGHT_MM, lift_mm)
+    return seconds
 
 
 def _wrap(degrees: float) -> float:
@@ -172,7 +202,29 @@ class Robot:
         self._style = replace(self._style, gait=gait)
         self._backend.sleep(motions.SETTLE_S)
 
+    def set_stance(self, stance: Stance) -> None:
+        """Stands the feet on `stance`: DEFAULT, or CRAB, every leg straight out to its side, which walks sideways.
+        Stops first, and returns once the robot reports the stance and its feet stand on it, stepped there through the
+        gait's own schedule, a walk's after its stop (stance_step_seconds); a walk's lift may still be rising back for up
+        to 0.32 s. The robot refuses AUTO, TUNED and
+        WALK_NN in the crab and switches a selected AUTO or TUNED to TRI_GATE, so the style's gait follows; a stance it
+        refuses, the crab in WALK_NN, raises RobotError. Goals walk the stance in force at the speeds asked;
+        set_velocity's speed model was measured on the default stance, so in the crab it sends the sticks a velocity
+        takes there, which the crab walks at its own speeds."""
+        walking = self._backend.state().mode is Mode.WALK
+        self.stop()
+        self._backend.set_stance(stance)
+        if stance is Stance.CRAB and self._style.gait in (Gait.AUTO, Gait.TUNED):
+            self._style = replace(self._style, gait=Gait.TRI_GATE)
+        lift = (self._style.s1 + 1.0) * STEP_HEIGHT_MM
+        self._backend.sleep((motions.SETTLE_S if walking else 0.0)
+                            + stance_step_seconds(self._backend.state().gait, walking, lift))
+
     def set_velocity(self, vx: float, vy: float, yaw_rate: float) -> Velocity:
+        """Walks at `vx`, `vy` (m/s) and `yaw_rate` (rad/s), REP-103, through the speed model's sticks, and returns what
+        was commanded after clamping. The speed model was measured on the default stance: in the crab (set_stance) it
+        sends the sticks the velocity takes there, which the crab walks at its own speeds, so the velocity is not the
+        one asked; goals walk the crab at the speeds asked."""
         velocity = Velocity(vx, vy, yaw_rate)
         if velocity != ZERO:
             mode = self._backend.state().mode

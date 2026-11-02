@@ -50,7 +50,7 @@ socket_message_TickSample angleTick(ServoController& controller) {
     controller.startTick();
     float angles[NUM_SERVO];
     pose(angles);
-    controller.setAngles(angles);
+    controller.setAngles(angles, CoxaTravel::SERVO);
     controller.updateServoState();
     socket_message_TickSample tick = socket_message_TickSample_init_zero;
     controller.fillTelemetry(tick);

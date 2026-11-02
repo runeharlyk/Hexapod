@@ -256,6 +256,24 @@ void test_a_mode_from_an_idle_with_written_servos_eases_through_animate() {
     }
 }
 
+// The policy walks the default stance alone, so an explicit WALK_NN in the crab is refused from every mode, the mode
+// restated so the client learns the answer, and never becomes a hand-back target; outside the crab it applies.
+void test_walk_nn_in_the_crab_is_refused_and_the_mode_restated() {
+    for (const M current : {M::STAND, M::WALK, M::IDLE, M::ANIMATE, M::DEACTIVATED}) {
+        for (const bool idleHeld : {false, true}) {
+            const D d = decideMode({current, false, M::STAND, M::WALK_NN, K::REQUEST, true, idleHeld, true});
+            TEST_ASSERT_EQUAL_INT(D::RESTATE, d.action);
+            assertMode(current, d.mode);
+            TEST_ASSERT_FALSE(d.borrowed);
+            assertMode(M::STAND, d.previous);
+            TEST_ASSERT_FALSE(d.requestLeave);
+        }
+    }
+    const D d = decideMode({M::STAND, false, M::STAND, M::WALK_NN, K::REQUEST, false, false, false});
+    TEST_ASSERT_EQUAL_INT(D::APPLY, d.action);
+    assertMode(M::WALK_NN, d.mode);
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_two_quick_plays_from_stand_keep_stand_as_the_hand_back);
@@ -270,5 +288,6 @@ int main(int, char **) {
     RUN_TEST(test_a_sticky_animate_holding_a_posed_joint_leg_leaves_gracefully);
     RUN_TEST(test_a_hand_back_while_busy_is_ignored_until_asked_again);
     RUN_TEST(test_an_applied_report_is_never_taken_as_a_request);
+    RUN_TEST(test_walk_nn_in_the_crab_is_refused_and_the_mode_restated);
     return UNITY_END();
 }

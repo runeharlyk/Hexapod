@@ -111,7 +111,7 @@ def joint_range(calibration: ServoCalibration, servo: int) -> JointRange:
     centre_pwm = calibration.center_pwm[servo]
     span = SERVO_HALF_RANGE_DEG * abs(calibration.conversion[servo])
     servo_low, servo_high = sorted((angle_at(centre_pwm - span), angle_at(centre_pwm + span)))
-    limit = float(JOINT_LIMIT_DEG[servo % 3])
+    limit = float(JOINT_LIMIT_DEG[servo // 3, servo % 3])
     low, high = max(servo_low, -limit), min(servo_high, limit)
     if low >= high:
         raise Refused(f"servo {servo}'s calibrated range, {servo_low:+.1f} to {servo_high:+.1f} deg, lies outside "

@@ -6,19 +6,23 @@ import numpy as np
 import check_animation as ca
 from src.robot import animation as an
 from src.robot.animation_files import load_json, save_json
-from src.robot.firmware_gait import Kinematics
+from src.robot.firmware_gait import BodyState, Kinematics
 from src.sim.mj_runtime import HexapodSim
 
 LIBRARY = Path(__file__).resolve().parents[1] / "animations"
 
 
 def hard_roll():
-    """A 1.3 rad body roll: the legs clamp and the sim robot tilts about 38 deg (measured 2026-09-29)
+    """A 0.8 rad body roll: the legs clamp and the sim robot tilts about 37 deg (measured 2026-11-01)
     without tipping over. A statically stable hexapod rarely falls, so the verdict plumbing is tested
-    by lowering the threshold below that measured tilt."""
+    by lowering the threshold below that measured tilt. The rear legs (2 and 5) cannot reach their feet
+    in such a roll, their femurs and tibias clamp, and the coxa limit decides where their coxas end:
+    at 1.0 rad the IK turns them to 77 deg, which the 50.5 deg coxa clamped at 50.5, and the robot
+    tilts 46 deg, past FALL_TILT_DEG, where clamping those two coxas alone at 50.5 leaves 40.7. A roll
+    of 1.2 rad brings legs 1 and 2 together and is refused."""
     return an.Animation(name="tip", keyframes=[
-        an.Keyframe(0.0), an.Keyframe(0.15, body=np.array([1.3, 0, 0, 0, 0, 0])),
-        an.Keyframe(2.0, body=np.array([1.3, 0, 0, 0, 0, 0]))])
+        an.Keyframe(0.0), an.Keyframe(0.15, body=np.array([0.8, 0, 0, 0, 0, 0])),
+        an.Keyframe(2.0, body=np.array([0.8, 0, 0, 0, 0, 0]))])
 
 
 def test_crouch_is_feasible_with_no_clamp_knock_or_fall():
@@ -66,3 +70,15 @@ def test_main_exits_nonzero_on_a_fall_and_prints_the_row(tmp_path, capsys, monke
     assert ca.main([str(tmp_path / "tip.json")]) == 1
     out = capsys.readouterr().out
     assert "tip" in out and "FELL" in out and "0/1 passed" in out
+
+
+def test_a_clip_that_brings_two_legs_together_is_refused_without_simulating():
+    """Legs 0 and 1 meet with both coxas turned about 38.7 deg toward each other (leg_clearance_fixtures.txt)."""
+    kin = Kinematics()
+    standing = kin.inverse_kinematics(BodyState())
+    legs = [an.LegTarget(joints=standing[i * 3:i * 3 + 3].copy()) for i in range(6)]
+    legs[0].joints[0], legs[1].joints[0] = -40.0, 40.0
+    a = an.Animation(name="touch", keyframes=[an.Keyframe(0.0), an.Keyframe(1.0, legs=legs)])
+    r = ca.check(a, HexapodSim(), kin)
+    assert r.error is not None and "legs RF and RM touch" in r.error and r.steps == 0
+    assert "INVALID" in ca.format_row(r)

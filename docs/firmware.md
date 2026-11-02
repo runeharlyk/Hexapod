@@ -18,6 +18,7 @@ Paths are relative to `firmware/` unless they start at the repository root.
 | Gait generator and command ramp | `include/gait.h`, generated `include/gait_tuned.h` |
 | Classic gait speed envelope (stick to stroke and cadence, posture clamps) | `include/gait_speed.h`, generated `include/gait_envelope.h` |
 | Inverse kinematics | `include/kinematics.h` |
+| Leg-to-leg clearance of a pose | `include/leg_clearance.h` |
 | Odometry (stance-feet fit, gyro fusion) | `include/odometry.h` |
 | Goal controller (distance, turn and arc moves on the odometry) | `include/goal_controller.h`, the goal parts of `include/motion.h` |
 | Learned policy (WALK_NN) | `include/policy_runner.h`, generated `include/policy/hexapod_policy.h` |
@@ -103,7 +104,7 @@ Template parameters set the queue depth, the subscriber limit and the batch size
 - `subscribe` returns an RAII `Handle` that unsubscribes when destroyed; an owner stores it in a member, and `consume(fn)` parks it in a function-local static for a subscription that lives as long as the program.
 - `publish(msg, handle)` skips the subscriber the handle names, so a component does not hear its own echo.
 
-The internal message structs (`CommandMsg`, `ModeMsg`, `GaitMsg`, `ServoAnglesMsg`, `ServoSignalMsg`, `ServoStateMsg`, `IMUAnglesMsg`, `PoseMsg`, `AnimationCommandMsg`) live in `include/message_types.h` and exist in RAM only.
+The internal message structs (`CommandMsg`, `ModeMsg`, `GaitMsg`, `StanceMsg`, `ServoAnglesMsg`, `ServoSignalMsg`, `ServoStateMsg`, `IMUAnglesMsg`, `PoseMsg`, `AnimationCommandMsg`) live in `include/message_types.h` and exist in RAM only.
 Status messages that go to the app unchanged (`OtaStatusData`, `WifiStatus`, `APStatus`, `AnimationStatus`, `GoalStatus`) travel on the bus as their generated protobuf structs.
 Callbacks run on the type's worker task, so a subscriber that touches state shared with the control task has to synchronise.
 `MotionService`'s subscribers write no motion state: they post into its inbox (`include/motion_inbox.h`), which the control task takes at the start of its next tick.
@@ -113,7 +114,7 @@ Callbacks run on the type's worker task, so a subscriber that touches state shar
 `MotionService` (`include/motion.h`) subscribes to `CommandMsg`, `ModeMsg` and `GaitMsg`, and `Hexapod::planMotion()` calls its `updateMotion()` once per control tick.
 Only the control task changes the motion.
 The subscribers and the goal and odometry requests post into `MotionInbox` under its one mutex, and `updateMotion()` starts by taking everything posted since the last tick, so nothing changes in the middle of one.
-It applies the modes in the order they arrived, then the newest gait, then the newest command, then the goal's mail, and in IDLE the joints and the centring (below).
+It applies the modes in the order they arrived, then the newest gait, then the newest stance, then the newest command, then the goal's mail, and in IDLE the joints and the centring (below).
 Commands and gaits coalesce, since each is a whole snapshot; modes queue, eight deep and dropping the oldest when full, since a borrow and a hand-back are decided against the mode they find.
 What a goal depends on is decided on arrival, under the mutex: its takeover by a stick off centre, the end a mode or a gait implies, and the refusal of an odometry reset while a goal drives.
 So is the handheld's priority over the other sources (below).
@@ -138,6 +139,7 @@ A robot on older firmware reports 2 when it is in `POSE`: the app shows that as 
   Entered from a mode that drives the servos, every servo holds the pulse it had when the motion stopped and the first write after it moves nothing else; activated from `DEACTIVATED`, every servo stays limp until a joint or the centring writes it.
   Two writes are taken in IDLE alone, through `MotionInbox` and by the control task: a joint dragged on the app's 3D model (`JointAngleData`, `Message` 212) and the calibration page's "Centre all servos" (`ServoCentreRequest`, request 82).
   A joint is the kinematics' angle in degrees, as the robot reports its angles; `ServoController::setJointAngle` holds it within the joint's travel (`withinTravel`), turns it into a pulse with the servo's calibration and direction as the motion's angles are, and writes that one channel through its board's backoff (`ServoBoard::writeChannel`).
+  A joint that would bring two legs within `LEG_CLEARANCE_MM` (`include/leg_clearance.h`), judged against the angles held with the tick's earlier joints, is refused: its servo keeps its angle, and the angles held are published.
   The inbox drops a joint on arrival unless the mode applied last is `IDLE` and keeps the newest per servo until the take; the control task writes the joints only if the modes taken before them leave the robot in `IDLE`, so a joint sent behind a mode leaving it moves nothing.
   The centring is answered at once, 200 when the mode applied last is `IDLE` and no mode is queued, 409 otherwise, and sends every servo to its calibrated centre pulse at the next tick (`setCenterPwm`), before the modes that tick takes, so a mode that arrives after it cannot drop it.
   It replaces the joints posted before it, and a joint posted after it is written after it.
@@ -154,12 +156,14 @@ A robot on older firmware reports 2 when it is in `POSE`: the app shows that as 
   For an operator behind the robot, +ly walks forward, +lx strafes right and +rx turns clockwise, in every gait (`docs/conventions.md`).
   A classical gait (`TRI_GATE`, `BI_GATE`, `WAVE`, `RIPPLE`) takes its stroke and cadence from `classicWalkTarget` in `include/gait_speed.h`.
   The `stride` slider picks the stroke per axis: 0 is each gait's speed-optimal stroke at the posture, +1 the longest feasible stroke and -1 0.3 of the optimum, linear in between.
-  A positive stride changes nothing where the speed-optimal stroke is already the longest: BI at the default posture and in most yaw postures, TRI in most yaw postures; at the default posture TRI, WAVE and RIPPLE have room (forward 65 to 82 mm).
+  A positive stride changes nothing where the speed-optimal stroke is already the longest, as BI's lateral one at the default posture; there the forward stroke goes from 61 mm (BI 73 mm) to 122 mm.
   The stick's share (L1-normalised, times `speedFraction(s)`: -1, 0 and +1 give 0, 60 % and 100 %) sets the cadence as a fraction of that stroke's servo-bound top cadence, passed as an explicit `phase_rate`, with the stroke held, so slow walking takes long, slow steps.
-  A mixed command runs at the smallest top cadence of the axes it uses.
-  The generated `gait_envelope.h` holds the walkable postures (`WALKABLE`), the gait-independent geometry (`STROKE_MAX` and swing and stance kappa samples per axis and posture) and the constants the runtime needs (`STAND_FRAC` per gait, `SERVO_RAD_S`, `CADENCE_MAX`, `TRAVEL_MARGIN_DEG`, `DEFAULT_SPEED_FRACTION`); the firmware computes the top cadences at runtime, reading kappa as the running maximum of the samples.
+  A mixed command takes each axis's share of its stroke and steps at the weighted harmonic mean of the axes' top cadences, which keeps every joint within the servo's speed to first order (test_virtual_robot measures the combined sticks' joint steps), so a small cross-axis part costs the main axis about its own share.
+  The generated `gait_envelope.h` holds, per `Stance` (`DEFAULT`, `CRAB`), the walkable postures (`WALKABLE`) and the gait-independent geometry (`STROKE_MAX` and swing and stance kappa samples per axis and posture), and the constants the runtime needs (`STAND_FRAC` per gait, `SERVO_RAD_S`, `CADENCE_MAX`, `TRAVEL_MARGIN_DEG`, `CLEARANCE_MM`, `STATIC_MARGIN_MM`, `DEFAULT_SPEED_FRACTION`); the firmware computes the top cadences at runtime, reading kappa as the running maximum of the samples.
+  Every stroke in it keeps the joints within travel less the margin and every leg pair `LEG_CLEARANCE_MM` apart over every classic timing's cycle, and a posture is walkable where its stance strides 20 mm along the axis it walks: forward in the default stance, sideways in the crab, whose feet `stanceFeet` puts straight out to the side of each coxa mount.
+  Every stroke also keeps the body centre `STATIC_MARGIN_MM`, 25 mm, inside the support of the feet in stance over the cycles of `TRI_GATE`, `WAVE` and `RIPPLE`, which bounds the crab's forward stroke to 30.5 mm at most, 29 mm at the neutral posture; `BI_GATE` stands on two feet for part of its cycle, has no static margin, and walks the strokes the other timings bound.
   `MotionService` slews a stride change at 1.0 per second while walking and takes it at once at rest; a stride change is not a posture change and does not pause the walk.
-  The posture sliders (`s1` lift, `h` body height, `fd` feet distance) are first clamped along a ray from neutral to the walkable region (`clampPosture`).
+  The posture sliders (`s1` lift, `h` body height, `fd` feet distance) are first clamped along a ray from neutral to the walkable region of the stance in force (`clampPosture`).
   A posture change while walking pauses the walk and settles the posture in stages: the lift comes down, the stance and body height move at the lower height, and the lift goes back up, after which the walk resumes.
   A walk entered from a stand at rest in the same posture starts at once; a rising lift needs no settling, a falling one does.
   A classic walk ignores the tilt stick and eases the stand's shift and tilt out, since the envelope was measured on a level, centred body.
@@ -173,9 +177,25 @@ A robot on older firmware reports 2 when it is in `POSE`: the app shows that as 
   `PolicyRunner::setCommand` turns the sticks into the policy's trained command (forward, right, counter-clockwise) with the walk's signs, so the policy's own input is unchanged by the stick mapping.
 - `ANIMATE` plays a clip or a streamed puppeteer pose through `AnimationRunner`.
 
+The stance (`Stance`: `DEFAULT`, or `CRAB`, every leg straight out to its side) is motion state, the `stance` topic (`StanceData`, `Message` 161).
+A client asks for it (`MotionService::requestStance`) and the control task takes it at its next tick, after the modes and the gait, and publishes it on `StanceBus` once per change, which the bridge pushes and the snapshot peeks; nothing else changes it, so a command, a handheld frame or a goal walks the stance in force.
+It boots `DEFAULT` and is not persisted, as the gait is not.
+The feet step to it only where the gait steps them: a stand takes it once the feet are still, a walk stops for it and settles into it as into a posture, and `IDLE`, `DEACTIVATED` and `ANIMATE` leave the feet on the stance they stand on until a stand or a walk takes it.
+A stance other than the one selected ends a goal on arrival, as a gait does.
+`TUNED`, `AUTO` and `WALK_NN` walk the default stance alone: while the crab is in force, or the feet still stand on it or step from it, a gait request for `TUNED` or `AUTO` is refused before it is published, a goal in `AUTO` is answered 422, and `WALK_NN` is refused by the mode arbiter and the mode restated.
+A goal is judged in the stance selected and posted under the inbox's lock with that stance: the post refuses a gait the crab does not walk (422) and a style judged in a stance another client changed meanwhile (409), and the control task refuses such a goal again as it takes it.
+A stance the inbox hands over is noted there at once, so a gait or a goal judged before the control task takes it finds it.
+The crab asked for in `AUTO` or `TUNED` first selects `TRI_GATE`, published as a gait, which a `TUNED` walk stops for; asked for in `WALK_NN`, or in an `ANIMATE` that hands back to it, it is refused.
+The crab is refused as well where a corner coxa's own calibration cannot turn it, on the side the crab points it, as far as the crab walks it: `CRAB_COXA_MAX_DEG`, 61 deg, measured on the crab's forward and turning walks from its 45 deg rest, where the static margin and the legs' clearance and not the coxa's 90 deg travel end them.
+A calibration that arrives while the crab is in force and leaves a corner coxa that short steps the feet back to the default stance, posted to the inbox as a client's `DEFAULT` is.
+Applying a calibration logs, once, each coxa side it leaves less than its leg's `JOINT_LIMIT_DEG` with its servo; the envelope's longest strides clip on that side.
+The control task answers each refusal with the value in force on its topic, the gait, the stance or the mode, so a client that showed the request comes back to the robot's state; it is a reply to that request, never a timer push.
+An animation plays on the feet of the stance in force, so one played from the crab moves its legs from the crab's feet and its exit brings them back there; on the default stance's feet it would slide the corner feet 83.5 mm on entry.
+
 Each tick in a stepping mode follows the same order: the body state eases toward its target, the gait command ramps toward the commanded one (`approachGaitCommand`), `GaitController::step` advances the phase and writes the six foot targets (Bezier swing, sinusoidal stance), and `Kinematics::inverseKinematics` turns body pose and feet into 18 joint angles.
 The IMU's roll and pitch, turned into the body frame (`include/imu_frame.h`), are added to the commanded tilt (self-levelling), clamped to the stick's own tilt range.
 `ServoController::setAngles` converts angles to PWM with the per-servo calibration, holds a servo on a non-finite command, clamps to joint travel and logs saturation per joint type.
+A coxa's travel is its leg's `JOINT_LIMIT_DEG`, +-90 deg at a corner and +-45 deg in the middle, where the servo connections meet the body, within the MG92B's safe pulse span, 500 to 2500 us, about its calibrated centre (`include/servo_travel.h`; the whole limit at the factory calibration), and its pulse never leaves that span; TUNED and WALK_NN, searched and trained within 31.5 deg, keep that too (`TRAINED_COXA_LIMIT_DEG`, chosen by `MotionService::coxaTravel`); a femur's and a tibia's travel is `JOINT_LIMIT_DEG`.
 
 Commands arrive asynchronously and only set targets.
 If no command arrives within a timeout, `MotionService` applies a zero command; the timeout is shorter while a stick is steering, because the senders repeat their command while one is held.
@@ -271,6 +291,8 @@ Each tick `GoalController` compares the odometry with the target in the frame th
 - **Turn:** the remaining angle on the unwrapped fused yaw, slowed over `SLOW_DOWN_RAD` (30 deg) to the same floor.
 - **Arc:** a forward stick with the turn stick its radius implies, slowed on the remaining angle; the same heading gain steers the heading toward the arc's ideal heading at the distance travelled.
   That drift correction changes the arc's length as well as its end heading.
+
+The goal's walk strides no further along its axis than what remains (`GoalController::strokeCap`, applied in `applyWalkTarget` by `withStrokeCap` in `gait_speed.h`): every stroke is scaled down alike and the cadence raised in proportion, up to the shorter strokes' top cadence, so the speed holds and no step carries the robot past the target; the cap never goes under the gait's deadband, which would stop the gait with the goal still running, and a client's walk keeps the stride's stroke.
 
 Once the remainder is within the coast the stop is predicted to take (the live command ramp stepped ahead, with `STOP_TAIL` for a foot that sets down off its stance), the sticks centre and the controller waits until the gait is not commanded and the feet are at rest, then judges the settled pose.
 The tolerances are 10 mm and 3 deg, an arc's end within 30 mm and 3 deg, and a straight walk's cross-track within 20 mm.
@@ -389,7 +411,7 @@ A bridge holds its EventBus subscription only while some client on some transpor
 `emitAll` sends a message on every transport.
 
 `platform_shared/topics.json` names each topic's kind, state or stream, and `include/communication/topics.h` and the app's `src/lib/transport/topics.ts` are checked against it (`test/test_topic_snapshot/`, `app/tests/unit/topics.spec.ts`).
-`main.cpp`'s `TOPICS` gives each state topic a snapshot function that reads its owner, as the replies do: `MotionInbox` for the mode and the goal, `EventBus::peek` for the gait, the joint angles, the OTA and the animation status, and the WiFi and AP services for theirs.
+`main.cpp`'s `TOPICS` gives each state topic a snapshot function that reads its owner, as the replies do: `MotionInbox` for the mode and the goal, `EventBus::peek` for the gait, the stance, the joint angles, the OTA and the animation status, and the WiFi and AP services for theirs.
 The six settings groups are state topics whose snapshot and push read the group under its service's lock and redact the passwords and the merge fingerprint (`include/settings/settings_topics.h`); each copy lives in PSRAM, since internal RAM is the binding limit, and a push is sent after the update has released the service's lock.
 The joint angles are a state topic so that a client subscribing while the robot idles gets the angles its servos hold, which IDLE publishes only on change; before the motion first publishes any, the snapshot is an empty `AnglesData`, which the app reads as no pose.
 A status nobody has published yet is its idle value, so every state topic has a value from boot; a `static_assert` holds `TOPICS` to `TOPIC_KINDS` in `topics.h`, which `test/test_topic_snapshot/` holds to the shared table.

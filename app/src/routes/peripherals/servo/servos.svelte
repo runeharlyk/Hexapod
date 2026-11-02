@@ -5,7 +5,7 @@
   import { throttler as Throttler } from '$lib/utilities'
   import { dataBroker } from '$lib/transport/databroker'
   import { ServoPWMData, ServoStateData } from '$lib/platform_shared/message'
-  import { JOINT_NAMES, LEG_NAMES, servoJoint } from '$lib/calibration/leg-pose'
+  import { COXA_SAFE_PULSE, JOINT_NAMES, LEG_NAMES, servoJoint } from '$lib/calibration/leg-pose'
   import { centreServos } from '$lib/servo-centre'
   import { notifications } from '$lib/components/toasts/notifications'
 
@@ -19,6 +19,14 @@
   const deactivateServo = () => dataBroker.emit(ServoStateData, { active: false })
 
   const selected = $derived(servoJoint(servoId))
+
+  // A coxa within the servo's safe pulses, which the robot holds it to; the other joints within the app's own guard. A
+  // pulse beyond the chosen servo's is pulled in, so the page never shows one the robot would not drive.
+  const pulseRange = $derived(selected.joint === 0 ? COXA_SAFE_PULSE : ([80, 600] as const))
+  $effect(() => {
+    const [low, high] = pulseRange
+    if (pwm < low || pwm > high) pwm = Math.min(high, Math.max(low, pwm))
+  })
 
   // Every servo to its calibrated centre, the pose to line the joints up in; the robot does it only while it idles.
   let centring = $state(false)
@@ -66,8 +74,8 @@
         id="servo-pwm"
         class="range range-sm w-full"
         type="range"
-        min="80"
-        max="600"
+        min={pulseRange[0]}
+        max={pulseRange[1]}
         bind:value={pwm}
         oninput={updatePWM}
       />

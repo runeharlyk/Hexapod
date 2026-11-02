@@ -126,6 +126,23 @@ def test_the_robots_modes_refuse_what_the_robot_does_not_have(option):
         HexapodMjEnv(control_mode="residual_gait", **option)
 
 
+# The robot's servos hold WALK_NN's coxae within the 31.5 deg the policy was trained in (kinematics.h
+# TRAINED_COXA_LIMIT_DEG), narrower than the model's coxa range, so the training path does too, and still prices the
+# command beyond it. Every foot pushed out by its whole residual for 4 s asks the coxae for up to 42 deg.
+def test_the_firmware_path_holds_the_coxa_within_the_trained_travel():
+    env = HexapodMjEnv(control_mode="residual_pure")
+    env.reset(seed=0)
+    sent, over = 0.0, 0.0
+    for _ in range(200):
+        _, _, terminated, truncated, info = env.step(np.ones(env.action_space.shape, dtype=np.float32))
+        sent = max(sent, float(np.degrees(np.abs(env.sim.joint_target[0::3])).max()))
+        over = max(over, info["joint_over_deg"])
+        if terminated or truncated:
+            break
+    assert sent == pytest.approx(31.5, abs=1e-4)
+    assert over > 1.0
+
+
 # The robot samples its MPU6050's 188 Hz low-passed gyro once per 5 ms tick, so the WALK_NN path observes the rate
 # averaged over the 5 ms before, as FirmwareLoop feeds the firmware, not over the whole control period.
 def test_the_firmware_path_observes_the_gyro_over_the_last_5_ms():

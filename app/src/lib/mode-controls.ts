@@ -5,6 +5,7 @@ import { MotionModes } from '$lib/motion'
  * - height: the body height;
  * - feetDistance: the feet distance;
  * - sticks: the two sticks and their keys, a body shift and tilt in STAND and the walk in the walking modes;
+ * - stance: the stance choice, the feet the classic gaits stand and walk on;
  * - gait: the gait choice;
  * - walk: speed, step height and stride;
  * - joints: driving the servos by dragging the 3D model's joints, and the servo page;
@@ -14,6 +15,7 @@ export interface ModeControls {
   height: boolean
   feetDistance: boolean
   sticks: boolean
+  stance: boolean
   gait: boolean
   walk: boolean
   joints: boolean
@@ -24,13 +26,20 @@ const NONE: ModeControls = {
   height: false,
   feetDistance: false,
   sticks: false,
+  stance: false,
   gait: false,
   walk: false,
   joints: false,
   animation: false
 }
 
-const STANDING: ModeControls = { ...NONE, height: true, feetDistance: true, sticks: true }
+const STANDING: ModeControls = {
+  ...NONE,
+  height: true,
+  feetDistance: true,
+  sticks: true,
+  stance: true
+}
 
 // Each mode shows only what it reads. WALK_NN's policy rides at its own height, lift, stride and cadence, chooses its
 // own gait and walks the stance it was trained on: it reads the sticks alone.

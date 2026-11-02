@@ -34,6 +34,10 @@
     <xacro:property name="leg_y_center" value="0" />
     <xacro:property name="shiftz" value="0" />
 
+    <!-- Each coxa's travel in rad, as firmware/include/kinematics.h JOINT_LIMIT_DEG: a corner coxa's 90 deg, its servo's
+         travel, a middle coxa's 45, short of its servo connections meeting the body. -->
+    <xacro:property name="corner_coxa_limit" value="1.5708" />
+    <xacro:property name="middle_coxa_limit" value="0.7854" />
     <xacro:property name="front_left_angle" value="2.35619" />
     <xacro:property name="front_right_angle" value="0.785398" />
     <xacro:property name="middle_left_angle" value="3.14159" />
@@ -101,13 +105,13 @@
 
     <!-- Macros joints -->
 
-    <xacro:macro name="gen_shoulder_joint" params="pos shiftx shifty angle">
+    <xacro:macro name="gen_shoulder_joint" params="pos shiftx shifty angle coxa_limit">
         <joint name="${pos}_shoulder" type="revolute">
             <parent link="base_link" />
             <child link="${pos}_shoulder_link" />
             <axis xyz="0 0 1" />
             <origin rpy="0 0 ${angle}" xyz="${shiftx} ${shifty} 0" />
-            <limit effort="1000.0" lower="-0.548" upper="0.548" velocity="0.7" />
+            <limit effort="1000.0" lower="${-coxa_limit}" upper="${coxa_limit}" velocity="0.7" />
             <dynamics damping="0.0" friction="0.5" />
         </joint>
     </xacro:macro>
@@ -118,7 +122,7 @@
             <child link="${pos}_leg_link" />
             <axis xyz="0 1 0" />
             <origin rpy="0 0 0" xyz="-0.28 ${shift} 0.59" />
-            <limit effort="1000.0" lower="-2.666" upper="1.548" velocity="0.5" />
+            <limit effort="1000.0" lower="-2.666" upper="1.5708" velocity="0.5" />
             <dynamics damping="0.0" friction="0.0" />
         </joint>
     </xacro:macro>
@@ -129,20 +133,20 @@
             <child link="${pos}_foot_link" />
             <axis xyz="0 1 0" />
             <origin rpy="0 0 0" xyz="-0.43 0 -0" />
-            <limit effort="1000.0" lower="-2.6" upper="0.1" velocity="0.5" />
+            <limit effort="1000.0" lower="-2.6006" upper="2.6006" velocity="0.5" />
             <dynamics damping="0.0" friction="0.5" />
         </joint>
     </xacro:macro>
 
     <!-- Leg macros -->
 
-    <xacro:macro name="gen_full_leg_joint" params="pos shiftx shifty shift angle">
+    <xacro:macro name="gen_full_leg_joint" params="pos shiftx shifty shift angle coxa_limit">
         <xacro:gen_shoulder name="${pos}_shoulder_link" />
         <xacro:gen_leg name="${pos}_leg_link" />
         <xacro:gen_foot name="${pos}_foot_link" />
 
         <xacro:gen_shoulder_joint pos="${pos}" shiftx="${shiftx}" shifty="${shifty}"
-            angle="${angle}" />
+            angle="${angle}" coxa_limit="${coxa_limit}" />
         <xacro:gen_leg_joint pos="${pos}" shift="${shift}" />
         <xacro:gen_foot_joint pos="${pos}" />
     </xacro:macro>
@@ -171,18 +175,17 @@
     </link>
 
     <xacro:gen_full_leg_joint pos="front_left" shiftx="${leg_x}" shifty="-${leg_y}" shift="${shift}"
-        angle="${front_left_angle}" />
+        coxa_limit="${corner_coxa_limit}" angle="${front_left_angle}" />
     <xacro:gen_full_leg_joint pos="front_right" shiftx="-${leg_x}" shifty="-${leg_y}"
-        shift="${shift}" angle="${front_right_angle}" />
+        shift="${shift}" coxa_limit="${corner_coxa_limit}" angle="${front_right_angle}" />
 
     <xacro:gen_full_leg_joint pos="middle_left" shiftx="${leg_x_center}" shifty="${leg_y_center}"
-        shift="${shift}"
-        angle="${middle_left_angle}" />
+        shift="${shift}" coxa_limit="${middle_coxa_limit}" angle="${middle_left_angle}" />
     <xacro:gen_full_leg_joint pos="middle_right" shiftx="-${leg_x_center}" shifty="${leg_y_center}"
-        shift="${shift}" angle="${middle_right_angle}" />
+        shift="${shift}" coxa_limit="${middle_coxa_limit}" angle="${middle_right_angle}" />
 
     <xacro:gen_full_leg_joint pos="back_left" shiftx="${leg_x}" shifty="${leg_y}" shift="${shift}"
-        angle="${back_left_angle}" />
+        coxa_limit="${corner_coxa_limit}" angle="${back_left_angle}" />
     <xacro:gen_full_leg_joint pos="back_right" shiftx="-${leg_x}" shifty="${leg_y}" shift="${shift}"
-        angle="${back_right_angle}" />
+        coxa_limit="${corner_coxa_limit}" angle="${back_right_angle}" />
 </robot>

@@ -1,22 +1,24 @@
 import { derived, get, writable } from 'svelte/store'
-import { playAnimation, stopAnimation, requestGait, requestMode } from '$lib/control'
+import { playAnimation, stopAnimation, requestGait, requestMode, requestStance } from '$lib/control'
 import { GaitType } from '$lib/gait'
+import { Stance } from '$lib/stance'
 import { MotionModes } from '$lib/motion'
 import type { Command } from '$lib/simulation/virtual-robot'
-import { gait, goalStatus, mode } from '$lib/robot/state'
+import { gait, goalStatus, mode, stance } from '$lib/robot/state'
 import { input, outControllerData } from './model-store'
 import type { ParamId } from '$lib/platform_shared/animation'
 import type { AnimationStatus } from '$lib/platform_shared/message'
 import type { VirtualRobot } from '$lib/simulation/virtual-robot'
 
 /**
- * The simulation view's own robot: the sticks, mode and gait the controls give it. None of them reaches the real
- * robot, and none follows it.
+ * The simulation view's own robot: the sticks, mode, gait and stance the controls give it. None of them reaches the real
+ * robot, and none follows it. The view sets the gait and the stance to those its robot reports (SimulationView.svelte).
  */
 export const simulation = {
   command: writable<Command>([0, 0, 0, 0, 0, 0, 0, 0, 0]),
   mode: writable(MotionModes.DEACTIVATED),
   gait: writable(GaitType.TRI_GATE),
+  stance: writable(Stance.DEFAULT),
   player: writable<Pick<VirtualRobot, 'playAnimation' | 'stopAnimation'> | null>(null),
   animationStatus: writable<AnimationStatus | null>(null)
 }
@@ -24,12 +26,16 @@ export const simulation = {
 /** Whether the controls drive the simulation view's robot instead of the real one: true while the view is shown. */
 export const drivesSimulation = writable(false)
 
-/** The mode and gait of the robot the controls drive. */
+/** The mode, gait and stance of the robot the controls drive. */
 export const drivenMode = derived([drivesSimulation, simulation.mode, mode], ([sim, own, robot]) =>
   sim ? own : robot
 )
 export const drivenGait = derived([drivesSimulation, simulation.gait, gait], ([sim, own, robot]) =>
   sim ? own : robot
+)
+export const drivenStance = derived(
+  [drivesSimulation, simulation.stance, stance],
+  ([sim, own, robot]) => (sim ? own : robot)
 )
 
 /** The robot's goal while the controls drive it; the simulation view's robot runs none. */
@@ -46,6 +52,9 @@ export const driveMode = (next: MotionModes) =>
 
 export const driveGait = (next: GaitType) =>
   get(drivesSimulation) ? simulation.gait.set(next) : requestGait(next)
+
+export const driveStance = (next: Stance) =>
+  get(drivesSimulation) ? simulation.stance.set(next) : requestStance(next)
 
 export const playDrivenAnimation = (name: string, values: Map<ParamId, number>) =>
   get(drivesSimulation) ?

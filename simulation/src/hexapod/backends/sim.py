@@ -17,7 +17,8 @@ from ...sim.mj_runtime import HexapodSim
 from ...sim.virtual_robot import firmware_version
 from .. import speed_model
 from ..servos import FACTORY, NUM_SERVOS, ServoCalibration
-from .base import Gait, Goal, GoalStatus, Mode, Odometry, RobotDisconnected, RobotError, RobotState, Style, Velocity
+from .base import (Gait, Goal, GoalStatus, Mode, Odometry, RobotDisconnected, RobotError, RobotState, Stance, Style,
+                   Velocity)
 from .messages import pb
 
 POWERED = (Mode.STAND, Mode.WALK, Mode.IDLE)
@@ -117,9 +118,21 @@ class SimBackend:
         self._loop.set_mode(int(mode))
         self._command()
 
+    # The firmware refuses AUTO and TUNED in the crab and keeps the gait it has.
     def set_gait(self, gait: Gait) -> None:
+        if not self._loop.select_gait(int(gait)):
+            raise RobotError(f"the robot refused {gait.name}: the crab walks the classic gaits alone")
         self._gait = gait
-        self._loop.select_gait(int(gait))
+
+    # The firmware takes the stance at its next tick; the crab switches AUTO and TUNED to TRI_GATE, as the robot
+    # reports.
+    def set_stance(self, stance: Stance) -> None:
+        self._loop.select_stance(int(stance))
+        self.sleep(FIRMWARE_DT)
+        if self._loop.robot.stance() != stance:
+            raise RobotError(f"the robot refused the {stance.name.lower()} stance")
+        if stance is Stance.CRAB and self._gait in (Gait.AUTO, Gait.TUNED):
+            self._gait = Gait.TRI_GATE
 
     def set_height(self, height: float) -> None:
         self._style = replace(self._style, h=height)
@@ -146,7 +159,7 @@ class SimBackend:
         # The rotation about the body's forward axis, +Y: the world z of the body's +X (right) axis is -sin(roll).
         roll = math.degrees(math.atan2(-2.0 * (x * z - w * y), 1.0 - 2.0 * (x * x + y * y)))
         return RobotState(t=self.now(), mode=self._mode, gait=self._gait, yaw=math.degrees(self.sim.base_yaw()),
-                          link_drops=0, roll=roll)
+                          link_drops=0, roll=roll, stance=Stance(self._loop.robot.stance()))
 
     def fresh_mode(self) -> Mode | None:
         return self._mode

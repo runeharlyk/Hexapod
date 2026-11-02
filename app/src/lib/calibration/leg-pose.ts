@@ -19,6 +19,26 @@ export const LEG_NAMES = [
 ] as const
 export const JOINT_NAMES = ['Coxa', 'Femur', 'Tibia'] as const
 
+/**
+ * The pulses a coxa may be driven to and centred on, in PCA9685 counts: the MG92B's safe 500 to 2500 us at 50 Hz, the
+ * full range of a 180 degree hobby servo, firmware/include/servo_travel.h's SERVO_SAFE_PULSE_MIN and MAX, which
+ * tests/unit/leg-pose.spec.ts keeps equal.
+ */
+export const COXA_SAFE_PULSE = [103, 512] as const
+
+/** The pulse ServoController::toPwm drives a coxa to at angle 0, its angle in the stand. */
+export const coxaPulseAtZero = (servo: Servo) =>
+  servo.centerAngle * servo.direction * servo.conversion + servo.centerPwm
+
+/**
+ * Whether a coxa's travel at its calibration holds angle 0, its pulse there within COXA_SAFE_PULSE, as
+ * firmware/include/settings/servo_settings.h's Servo_isValid requires of a coxa before it takes a calibration.
+ */
+export const coxaHoldsZero = (servo: Servo) => {
+  const pulse = coxaPulseAtZero(servo)
+  return pulse >= COXA_SAFE_PULSE[0] && pulse <= COXA_SAFE_PULSE[1]
+}
+
 /** The servo order of ServoController::setAngles: three joints per leg. */
 export const servoJoint = (servoId: number) => ({
   leg: Math.floor(servoId / 3),

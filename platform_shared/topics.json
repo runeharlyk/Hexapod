@@ -5,6 +5,7 @@
     { "name": "mode", "tag": 130, "kind": "state" },
     { "name": "analytics", "tag": 150, "kind": "stream" },
     { "name": "gait", "tag": 160, "kind": "state" },
+    { "name": "stance", "tag": 161, "kind": "state" },
     { "name": "angles", "tag": 170, "kind": "state" },
     { "name": "wifi_status", "tag": 250, "kind": "state" },
     { "name": "ap_status", "tag": 251, "kind": "state" },

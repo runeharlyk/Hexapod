@@ -125,6 +125,9 @@ test('in IDLE a drag starts from the pose the robot reports', async ({ page }) =
   await page.goto(`${base}/controller`)
   await expect(page.getByText(DRIVING)).toBeVisible()
   const canvas = page.locator('canvas').first()
+  // The mode badge, and a leg to take, can precede the report: a leg taken before it turns from the stand the model
+  // rests in.
+  await expect(canvas).toHaveAttribute('data-pose', 'reported')
 
   const point = await findJoint(canvas)
   expect(point, 'a leg of the model under the pointer').toBeDefined()
@@ -149,8 +152,8 @@ test('in IDLE a limp servo is dragged from the pose the model draws', async ({ p
   await expect(page.getByText(DRIVING)).toBeVisible()
   await expect(page.getByText(/servos limp/)).toHaveCount(0)
   const canvas = page.locator('canvas').first()
-  // The mode badge precedes model loading; let the view receive and draw HELD before making it limp.
-  await findJoint(canvas)
+  // The mode badge precedes the report; let the view draw HELD before making it limp.
+  await expect(canvas).toHaveAttribute('data-pose', 'reported')
 
   robot.set(AnglesData, AnglesData.create())
   await expect(page.getByText('18 of 18 servos limp')).toBeVisible()
@@ -190,4 +193,60 @@ test('no other 3D view drives the joints, even of an idle robot', async ({ page 
   for (const point of await grid(canvas, 0.4)) await drag(page, point)
   await page.waitForTimeout(500)
   expect(jointFrames(robot)).toHaveLength(0)
+})
+
+// Legs 0 and 1, and legs 3 and 4, turned 50 deg into each other, which meet at about 38.7 deg each
+// (platform_shared/leg_clearance_fixtures.txt): every joint of those legs moves them apart one way and closer the other.
+const TOUCHING = Array.from({ length: 18 }, (_, servo) => [0, 31, -106][servo % 3])
+TOUCHING[0] = -50
+TOUCHING[3] = 50
+TOUCHING[9] = 50
+TOUCHING[12] = -50
+
+// The firmware's own judgement of a move between two poses (leg_clearance.h keepsLegsApart), from its WebAssembly build.
+const keepsLegsApart = async () => {
+  const { default: create } =
+    await import('../../src/lib/simulation/virtual-robot/virtual_robot.mjs')
+  const m = await create()
+  return (from: readonly number[], to: readonly number[]) => {
+    m.HEAPF32.set(from, m._clearanceAngles() / 4)
+    m.HEAPF32.set(to, m._clearanceAngles() / 4 + 18)
+    return m._dragKeepsLegsApart() !== 0
+  }
+}
+
+// From legs through each other the app judges each step of a drag by the firmware's own check, run in the virtual robot:
+// a step that parts them, or leaves them as they are, goes out, and one that closes them does not, as the robot would
+// refuse it. The drag sweeps its joint one way and back, so a joint of legs 0, 1, 3 or 4 is tried both ways.
+test('in IDLE a drag from legs through each other sends the steps that part them and no step that closes them', async ({
+  page
+}) => {
+  const judge = await keepsLegsApart()
+  const robot = await idleRobot(page)
+  robot.set(AnglesData, AnglesData.create({ angles: TOUCHING }))
+  await page.addInitScript(() =>
+    localStorage.setItem('selected_view', JSON.stringify('3D representation'))
+  )
+  await page.goto(`${base}/controller`)
+  await expect(page.getByText(DRIVING)).toBeVisible()
+  const canvas = page.locator('canvas').first()
+  // The view judges a drag once its virtual robot runs and drags from the pose the robot reported, both of which it marks
+  // on the canvas; the virtual robot's WebAssembly loads within findJoint's bound for the model, not expect's default.
+  await expect(canvas).toHaveAttribute('data-virtual-robot', 'ready', { timeout: 10_000 })
+  await expect(canvas).toHaveAttribute('data-pose', 'reported')
+  const { x, y } = await findJoint(canvas)
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  await page.mouse.move(x + 40, y - 30, { steps: 4 })
+  await page.mouse.move(x - 40, y + 30, { steps: 8 })
+  await page.mouse.up()
+  await expect.poll(() => jointFrames(robot).length).toBeGreaterThan(0)
+  await page.waitForTimeout(500)
+  let pose = [...TOUCHING]
+  for (const { jointAngle } of jointFrames(robot)) {
+    const next = [...pose]
+    next[jointAngle!.servo] = jointAngle!.degrees
+    expect(judge(pose, next), `servo ${jointAngle!.servo} to ${jointAngle!.degrees}`).toBe(true)
+    pose = next
+  }
 })

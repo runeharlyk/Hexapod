@@ -22,7 +22,7 @@ const GoalOwner OTHER_TRANSPORT {&owners[1], 7};
 
 // A goal posted and taken: it drives the walk.
 void driving(MotionInbox &inbox) {
-    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, 0);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, {}, 0);
     inbox.take(0);
 }
 
@@ -33,7 +33,7 @@ void tearDown() {}
 
 void test_a_goal_is_taken_once_and_reported_settling_until_then() {
     MotionInbox inbox;
-    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::BI_GATE, {}, 0);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::BI_GATE, Stance::DEFAULT, {}, 0);
     const socket_message_GoalStatus pending = inbox.goalStatus();
     TEST_ASSERT_EQUAL_UINT32(1, pending.id);
     TEST_ASSERT_EQUAL(socket_message_GoalState_GOAL_SETTLING, pending.state);
@@ -52,8 +52,8 @@ void test_a_goal_is_taken_once_and_reported_settling_until_then() {
 
 void test_a_newer_goal_replaces_the_one_not_yet_taken() {
     MotionInbox inbox;
-    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, 0);
-    inbox.postGoal({GoalKind::TURN, 0, 1.0f, 0, 0.5f}, STYLE, GaitType::TRI_GATE, {}, 0);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, {}, 0);
+    inbox.postGoal({GoalKind::TURN, 0, 1.0f, 0, 0.5f}, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, {}, 0);
     const MotionInbox::Mail mail = inbox.take(0);
     TEST_ASSERT_EQUAL_UINT32(2, mail.goal->id);
     TEST_ASSERT_EQUAL(GoalKind::TURN, mail.goal->goal.kind);
@@ -63,10 +63,10 @@ void test_a_newer_goal_replaces_the_one_not_yet_taken() {
 void test_a_cancel_ends_only_the_goal_driving_when_it_arrives() {
     MotionInbox inbox;
     inbox.cancelGoal();
-    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, 0);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, {}, 0);
     TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
     inbox.cancelGoal();
-    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, 0);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, {}, 0);
     TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
     inbox.cancelGoal();
     const MotionInbox::Mail mail = inbox.take(0);
@@ -79,7 +79,7 @@ void test_a_cancel_ends_only_the_goal_driving_when_it_arrives() {
 
 void test_an_odometry_reset_is_refused_while_a_goal_drives_and_accepted_once_it_ends() {
     MotionInbox inbox;
-    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, 0);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, {}, 0);
     TEST_ASSERT_FALSE(inbox.requestOdometryReset());
     TEST_ASSERT_FALSE(inbox.take(0).odometryReset);
     TEST_ASSERT_FALSE(inbox.requestOdometryReset());
@@ -94,7 +94,7 @@ void test_an_odometry_reset_is_refused_while_a_goal_drives_and_accepted_once_it_
 // messages do not keep it.
 void test_an_owner_silent_past_the_limit_loses_its_goal_at_the_take() {
     MotionInbox inbox;
-    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, OWNER, 1000);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, OWNER, 1000);
     inbox.take(1000);
     inbox.ownerHeard(OWNER, 2500);
     inbox.ownerHeard(OTHER_ID, 4000);
@@ -109,11 +109,11 @@ void test_an_owner_silent_past_the_limit_loses_its_goal_at_the_take() {
 // read and before the lock carries a time later than the take's. That is no silence.
 void test_an_owner_heard_after_the_takes_clock_read_keeps_its_goal() {
     MotionInbox inbox;
-    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, OWNER, 1000);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, OWNER, 1000);
     inbox.take(1000);
     inbox.ownerHeard(OWNER, 5001);
     TEST_ASSERT_FALSE(inbox.take(5000).goalCancelled);
-    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, OWNER, 7001);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, OWNER, 7001);
     const MotionInbox::Mail mail = inbox.take(7000);
     TEST_ASSERT_TRUE(mail.goal.has_value());
     TEST_ASSERT_FALSE(mail.goalCancelled);
@@ -123,13 +123,13 @@ void test_an_owner_heard_after_the_takes_clock_read_keeps_its_goal() {
 // A goal with no transport has no owner to fall silent.
 void test_a_goal_without_an_owner_never_falls_silent() {
     MotionInbox inbox;
-    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, 0);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, {}, 0);
     TEST_ASSERT_FALSE(inbox.take(100 * MotionInbox::OWNER_SILENCE_MS).goalCancelled);
 }
 
 void test_the_owner_leaving_ends_its_goal_and_another_client_leaving_does_not() {
     MotionInbox inbox;
-    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, OWNER, 0);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, OWNER, 0);
     inbox.clientGone(OTHER_ID);
     inbox.clientGone(OTHER_TRANSPORT);
     TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
@@ -179,7 +179,7 @@ void test_while_a_goal_drives_a_centred_command_is_swallowed_and_a_stick_takes_t
 void test_a_command_posted_before_the_goal_leaves_it_alone() {
     MotionInbox inbox;
     inbox.postCommand(FORWARD_STICK, 10);
-    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, 11);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, {}, 11);
     const MotionInbox::Mail mail = inbox.take(15);
     TEST_ASSERT_TRUE(mail.command.has_value());
     TEST_ASSERT_TRUE(mail.goal.has_value());
@@ -352,7 +352,7 @@ void test_a_mode_leaving_walk_ends_only_a_goal_posted_before_it() {
     {
         MotionInbox inbox;
         inbox.postMode({MOTION_STATE::STAND}, false);
-        inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, 0);
+        inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, {}, 0);
         inbox.postMode({MOTION_STATE::WALK}, false);
         TEST_ASSERT_FALSE(inbox.take(0).goalCancelled);
         inbox.postMode({MOTION_STATE::STAND}, false);
@@ -361,7 +361,7 @@ void test_a_mode_leaving_walk_ends_only_a_goal_posted_before_it() {
     MotionInbox inbox;
     inbox.postMode({MOTION_STATE::IDLE}, false);
     inbox.postMode({MOTION_STATE::STAND}, false);
-    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, 0);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, {}, 0);
     const MotionInbox::Mail mail = inbox.take(0);
     TEST_ASSERT_TRUE(mail.goal.has_value());
     TEST_ASSERT_FALSE(mail.goalCancelled);
@@ -377,7 +377,7 @@ void test_the_replies_carry_the_pose_the_control_task_noted_last() {
     TEST_ASSERT_EQUAL_FLOAT(0.3f, pose.yaw);
     TEST_ASSERT_EQUAL_FLOAT(0.4f, pose.kinematicYaw);
     TEST_ASSERT_EQUAL_FLOAT(0.5f, pose.distance);
-    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, 0);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, {}, 0);
     socket_message_GoalStatus status = inbox.goalStatus();
     TEST_ASSERT_EQUAL_FLOAT(0.1f, status.x);
     TEST_ASSERT_EQUAL_FLOAT(0.2f, status.y);
@@ -442,7 +442,8 @@ void test_a_robot_that_never_saw_the_handheld_move_takes_every_command() {
     inbox.postCommand(HANDHELD_CENTRED, 0);
     inbox.postCommand(FORWARD_STICK, 1);
     TEST_ASSERT_TRUE(inbox.take(1).command.has_value());
-    TEST_ASSERT_TRUE(inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, 2));
+    TEST_ASSERT_TRUE(inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, {}, 2) ==
+                     MotionInbox::GoalPost::ACCEPTED);
 }
 
 // A goal asked for while the handheld drives is refused, decided under the lock of the posts; once the window ends it
@@ -450,10 +451,12 @@ void test_a_robot_that_never_saw_the_handheld_move_takes_every_command() {
 void test_a_goal_within_the_handheld_window_is_refused() {
     MotionInbox inbox;
     inbox.postCommand(HANDHELD_FORWARD, 1000);
-    TEST_ASSERT_FALSE(inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, OWNER, 1000 + WINDOW_MS - 1));
+    TEST_ASSERT_TRUE(inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, OWNER,
+                                    1000 + WINDOW_MS - 1) == MotionInbox::GoalPost::HANDHELD_DRIVES);
     TEST_ASSERT_FALSE(inbox.take(1000 + WINDOW_MS - 1).goal.has_value());
     TEST_ASSERT_FALSE(inbox.goalDrives());
-    TEST_ASSERT_TRUE(inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, OWNER, 1000 + WINDOW_MS));
+    TEST_ASSERT_TRUE(inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, OWNER,
+                                    1000 + WINDOW_MS) == MotionInbox::GoalPost::ACCEPTED);
     TEST_ASSERT_TRUE(inbox.take(1000 + WINDOW_MS).goal.has_value());
 }
 
@@ -540,7 +543,7 @@ void test_a_heartbeat_a_goal_swallows_keeps_its_client_in_force() {
     MotionInbox inbox;
     inbox.postCommand(CENTRED, 0);
     inbox.take(0);
-    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, 100);
+    inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, {}, 100);
     inbox.take(100);
     inbox.postCommand(CENTRED, IN_FORCE_MS);
     TEST_ASSERT_FALSE(inbox.take(IN_FORCE_MS).command.has_value());
@@ -589,7 +592,8 @@ void test_a_lapsed_handheld_window_does_not_reopen_half_a_clock_later() {
     const MotionInbox::Mail mail = inbox.take(later);
     TEST_ASSERT_TRUE(mail.command.has_value());
     TEST_ASSERT_FALSE(mail.handheldDriving);
-    TEST_ASSERT_TRUE(inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, {}, later));
+    TEST_ASSERT_TRUE(inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, {}, later) ==
+                     MotionInbox::GoalPost::ACCEPTED);
 }
 
 // The robot stays stopped after the handheld lets go: from the window's end, a client's stick off centre, the stale
@@ -684,6 +688,35 @@ void test_centring_the_servos_is_accepted_only_in_idle() {
     TEST_ASSERT_FALSE(inbox.take(0).centreServos);
 }
 
+// A crab posted by another client between a goal's judgement and its post (the reviewer's race): the post refuses a
+// gait the crab does not walk, and a style judged in the stance the crab replaced, under the one lock both take.
+void test_a_goal_judged_before_a_crab_posted_meanwhile_is_refused() {
+    MotionInbox inbox;
+    inbox.postStance(Stance::CRAB);
+    TEST_ASSERT_TRUE(inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::AUTO, Stance::CRAB, {}, 0) ==
+                     MotionInbox::GoalPost::NOT_OFFERED);
+    TEST_ASSERT_TRUE(inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::DEFAULT, {}, 0) ==
+                     MotionInbox::GoalPost::STANCE_CHANGED);
+    TEST_ASSERT_FALSE(inbox.take(0).goal.has_value());
+    TEST_ASSERT_TRUE(inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::TRI_GATE, Stance::CRAB, {}, 0) ==
+                     MotionInbox::GoalPost::ACCEPTED);
+}
+
+// A crab taken stays noted between the take and the control task's note of it later in the tick, so a gait or a goal
+// judged meanwhile finds it; the control task's note then has the last word.
+void test_a_crab_taken_is_noted_before_the_control_task_notes_it() {
+    MotionInbox inbox;
+    inbox.postStance(Stance::CRAB);
+    TEST_ASSERT_TRUE(inbox.take(0).stance == Stance::CRAB);
+    TEST_ASSERT_FALSE(inbox.gaitOffered(GaitType::AUTO));
+    TEST_ASSERT_TRUE(inbox.stanceSelected() == Stance::CRAB);
+    TEST_ASSERT_TRUE(inbox.postGoal(FORWARD_GOAL, STYLE, GaitType::AUTO, Stance::CRAB, {}, 0) ==
+                     MotionInbox::GoalPost::NOT_OFFERED);
+    inbox.noteStance(Stance::DEFAULT, false); // refused, say in WALK_NN
+    TEST_ASSERT_TRUE(inbox.gaitOffered(GaitType::AUTO));
+    TEST_ASSERT_TRUE(inbox.stanceSelected() == Stance::DEFAULT);
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_goal_is_taken_once_and_reported_settling_until_then);
@@ -698,6 +731,8 @@ int main(int, char **) {
     RUN_TEST(test_while_a_goal_drives_a_centred_command_is_swallowed_and_a_stick_takes_the_walk_back);
     RUN_TEST(test_a_command_posted_before_the_goal_leaves_it_alone);
     RUN_TEST(test_a_gait_is_taken_once_and_the_newest_wins);
+    RUN_TEST(test_a_goal_judged_before_a_crab_posted_meanwhile_is_refused);
+    RUN_TEST(test_a_crab_taken_is_noted_before_the_control_task_notes_it);
     RUN_TEST(test_a_gait_other_than_the_selection_ends_the_goal);
     RUN_TEST(test_a_goals_own_gait_is_the_selection);
     RUN_TEST(test_a_gait_posted_before_the_goals_selection_stays_the_selection);

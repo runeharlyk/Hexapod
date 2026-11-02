@@ -12,15 +12,46 @@ const URDF_SERVOS = urdfJointOrder(Array.from({ length: 18 }, (_, servo) => serv
 export const servoOfUrdfJoint = (index: number) => URDF_SERVOS[index]
 
 /**
- * Each joint's travel in degrees, coxa, femur and tibia: a copy of the firmware's kinematics.h JOINT_LIMIT_DEG, which
- * tests/unit/joint-drive.spec.ts keeps equal to it. The URDF model's own limits are wider, the femur's to -152.8.
+ * Each leg's joint travel in degrees, coxa, femur and tibia per leg: a copy of the firmware's kinematics.h
+ * JOINT_LIMIT_DEG, which tests/unit/joint-drive.spec.ts keeps equal to it. A corner coxa turns 90 degrees, its servo's
+ * travel, a middle coxa 45, short of its servo connections meeting the body; the robot holds each coxa within its own
+ * calibration's safe pulses as well. The URDF model's limits are this travel or wider (the test keeps every joint's no
+ * narrower), the femur's down to -152.8.
  */
-export const JOINT_LIMIT_DEG = [31.5, 90, 149] as const
+export const JOINT_LIMIT_DEG = [
+  [90, 90, 149],
+  [45, 90, 149],
+  [90, 90, 149],
+  [90, 90, 149],
+  [45, 90, 149],
+  [90, 90, 149]
+] as const
 
 /** The URDF joint `index` at `radians`, held within the travel of the servo it drives, as the firmware holds it. */
 export const withinTravel = (index: number, radians: number) => {
-  const limit = (JOINT_LIMIT_DEG[servoOfUrdfJoint(index) % 3] * Math.PI) / 180
+  const servo = servoOfUrdfJoint(index)
+  const limit = (JOINT_LIMIT_DEG[Math.floor(servo / 3)][servo % 3] * Math.PI) / 180
   return Math.min(limit, Math.max(-limit, radians))
+}
+
+/** Whether moving between two poses of 18 joint angles in degrees, in the firmware's order, keeps the legs apart. */
+export type KeepsLegsApart = (fromDeg: readonly number[], toDeg: readonly number[]) => boolean
+
+/**
+ * The pose, in degrees in the firmware's order, that dragging the URDF joint `index` to `radians` makes of `drawnDeg`,
+ * the joint held within its travel; null when the move does not keep the legs apart as the robot judges a dragged joint
+ * (VirtualRobot.keepsLegsApart: into the firmware's clearance, or closer from within it), which the robot refuses too,
+ * so the model keeps the joint where it is and nothing is sent.
+ */
+export const draggedPose = (
+  drawnDeg: readonly number[],
+  index: number,
+  radians: number,
+  keepsLegsApart: KeepsLegsApart
+): number[] | null => {
+  const pose = [...drawnDeg]
+  pose[servoOfUrdfJoint(index)] = (withinTravel(index, radians) * 180) / Math.PI
+  return keepsLegsApart(drawnDeg, pose) ? pose : null
 }
 
 /**

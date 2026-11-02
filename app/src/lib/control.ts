@@ -1,4 +1,5 @@
 import { GaitType } from '$lib/gait'
+import { Stance, stanceToWire } from '$lib/stance'
 import { MotionModes, UNKNOWN_MODE_HINT, modeToWire } from '$lib/motion'
 import { mode as modeStore } from '$lib/robot/state'
 import { dataBroker } from '$lib/transport/databroker'
@@ -14,6 +15,7 @@ import {
   ModeData,
   GaitData,
   PoseData,
+  StanceData,
   type MessageFns
 } from '$lib/platform_shared/message'
 
@@ -25,7 +27,8 @@ const act = <T>(fns: MessageFns<T>, data: T, failed: string) => {
   return sent
 }
 
-// The mode and the gait shown are the robot's, from its pushes, never the request's: a mode it refuses pushes nothing.
+// The mode, the gait and the stance shown are the robot's, from its pushes, never the request's: a mode, gait or stance
+// it refuses is answered with the one in force.
 export const requestMode = (nextMode: MotionModes) => {
   // The robot reads the mode alone; whether the handheld drives is its own to report.
   const mode = { mode: modeToWire(nextMode), handheld: false }
@@ -35,6 +38,10 @@ export const requestMode = (nextMode: MotionModes) => {
 export const requestGait = (nextGait: GaitType) => {
   const gait = { gait: Object.values(GaitType).indexOf(nextGait) }
   act(GaitData, gait, 'Gait not changed')
+}
+
+export const requestStance = (nextStance: Stance) => {
+  act(StanceData, { stance: stanceToWire(nextStance) }, 'Stance not changed')
 }
 
 export const playAnimation = (name: string, values: Map<ParamId, number>) => {

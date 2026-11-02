@@ -329,7 +329,11 @@ static void registerHandlers(CommAdapterBase &c) {
     });
     c.on<socket_message_GaitData>([](const socket_message_GaitData &g, int) {
         if ((int)g.gait < 0 || (int)g.gait > (int)socket_message_GaitEnum_AUTO) return;
-        EventBus<GaitMsg>::publish({static_cast<GaitType>(g.gait)});
+        robot.requestGait(static_cast<GaitType>(g.gait));
+    });
+    c.on<socket_message_StanceData>([](const socket_message_StanceData &s, int) {
+        if ((int)s.stance < 0 || (int)s.stance > (int)socket_message_StanceEnum_STANCE_CRAB) return;
+        robot.requestStance(static_cast<Stance>(s.stance));
     });
     c.on<socket_message_ServoPWMData>([](const socket_message_ServoPWMData &s, int) {
         EventBus<ServoSignalMsg>::publish({static_cast<int8_t>(s.servo_id), static_cast<uint16_t>(s.servo_pwm)});
@@ -852,8 +856,8 @@ static void observeStatus() {
     addBridge<ProtoT, Bus>(MessageTraits<ProtoT>::tag, [](const ProtoT &s) { emitAll(s); });
 }
 
-// A status no one has published yet is its idle value, the zero of its message (OTA_IDLE, ANIM_IDLE, and TRI_GATE,
-// the gait MotionService starts in), so every state topic has a value from boot.
+// A status no one has published yet is its idle value, the zero of its message (OTA_IDLE, ANIM_IDLE, and TRI_GATE and
+// STANCE_DEFAULT, the gait and the stance MotionService starts in), so every state topic has a value from boot.
 template <typename ProtoT, typename Bus = EventBus<ProtoT>>
 static ProtoT latestOr(ProtoT idle) {
     ProtoT latest;
@@ -880,6 +884,15 @@ static constexpr Topic TOPICS[] = {
          socket_message_GaitData gait = socket_message_GaitData_init_zero;
          gait.gait = static_cast<socket_message_GaitEnum>(latestOr<GaitMsg>({GaitType::TRI_GATE}).gait);
          sink.put(gait);
+     }},
+    {MessageTraits<socket_message_StanceData>::tag, TopicKind::STATE,
+     [](SnapshotSink &sink) {
+         // The stance the control task took last, which the bridge pushes; MotionService::begin() publishes the one it
+         // starts in.
+         socket_message_StanceData stance = socket_message_StanceData_init_zero;
+         stance.stance =
+             static_cast<socket_message_StanceEnum>(latestOr<StanceMsg, StanceBus>({Stance::DEFAULT}).stance);
+         sink.put(stance);
      }},
     {MessageTraits<socket_message_AnglesData>::tag, TopicKind::STATE,
      [](SnapshotSink &sink) {
@@ -1022,6 +1035,12 @@ static void setupComm() {
     addBridge<GaitMsg>(MessageTraits<socket_message_GaitData>::tag, [](const GaitMsg &g) {
         socket_message_GaitData out = socket_message_GaitData_init_zero;
         out.gait = static_cast<socket_message_GaitEnum>(g.gait);
+        emitAll(out);
+    });
+
+    addBridge<StanceMsg, StanceBus>(MessageTraits<socket_message_StanceData>::tag, [](const StanceMsg &s) {
+        socket_message_StanceData out = socket_message_StanceData_init_zero;
+        out.stance = static_cast<socket_message_StanceEnum>(s.stance);
         emitAll(out);
     });
 

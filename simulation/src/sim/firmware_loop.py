@@ -1,7 +1,8 @@
 """The firmware's control loop driving the MuJoCo robot: each 5 ms tick the firmware's own Hexapod (virtual_robot.py,
 the code main.cpp's control task runs) reads the simulated IMU and drives the servos, and physics stays locked to the
-tick. Modes, gaits, sticks and goals reach it as a transport delivers them, and the current sticks are sent again every
-20 ms, as the app's heartbeat does, so a held command outlasts the firmware's dead-man timeout as it does on the robot.
+tick. Modes, gaits, stances, sticks and goals reach it as a transport delivers them, and the current sticks are sent
+again every 20 ms, as the app's heartbeat does, so a held command outlasts the firmware's dead-man timeout as it does on
+the robot.
 """
 from collections.abc import Callable
 
@@ -85,8 +86,12 @@ class FirmwareLoop:
     def reset_odometry(self) -> bool:
         return self.robot.reset_odometry()
 
-    def select_gait(self, gait: int) -> None:
-        self.robot.set_gait(gait)
+    def select_gait(self, gait: int) -> bool:
+        """False when the firmware refuses the gait."""
+        return self.robot.set_gait(gait)
+
+    def select_stance(self, stance: int) -> None:
+        self.robot.set_stance(stance)
 
     def tick(self) -> None:
         if self._sticks is not None and self.ticks % HEARTBEAT_TICKS == 0:

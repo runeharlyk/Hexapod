@@ -6,10 +6,13 @@ import { loadAnimationEngine, type AnimationEngine } from '../../src/lib/animati
 import { firmwareInverseKinematics } from './firmware-ik'
 import { config } from '../../src/lib/components/config'
 import {
+  COXA_SAFE_PULSE,
   JOINT_NAMES,
   LEG_NAMES,
   SERVO_ANGLE_OFFSET,
   calibrationLeg,
+  coxaHoldsZero,
+  coxaPulseAtZero,
   jointAngleFromPwm,
   kneeAngle,
   legPlanePoints,
@@ -88,6 +91,63 @@ const fwConfig = firmwareConfig()
 
 const expectClose = (actual: number[], expected: number[]) =>
   expected.forEach((v, i) => expect(actual[i]).toBeCloseTo(v, 6))
+
+// servo_travel.h's safe span, read from the source: its microseconds and the PCA9685's 4096 counts per 50 Hz period,
+// rounded inward as the firmware rounds them.
+const firmwareSafePulse = () => {
+  const header = firmware('servo_travel.h')
+  const constant = (name: string) => {
+    const match = header.match(new RegExp(`${name}\\s*=\\s*(\\d+)`))
+    if (!match) throw new Error(`${name} not found in servo_travel.h`)
+    return Number(match[1])
+  }
+  const frequency = Number(header.match(/#define FACTORY_SERVO_PWM_FREQUENCY (\d+)/)?.[1])
+  const counts = (us: number) => (us * frequency * 4096) / 1e6
+  return [
+    Math.ceil(counts(constant('SERVO_SAFE_PULSE_MIN_US'))),
+    Math.floor(counts(constant('SERVO_SAFE_PULSE_MAX_US')))
+  ]
+}
+
+describe("a coxa's safe pulses", () => {
+  it("are the firmware's", () => expect(COXA_SAFE_PULSE).toEqual(firmwareSafePulse()))
+
+  it('are 500 to 2500 us, the full range of a 180 degree hobby servo', () =>
+    expect(COXA_SAFE_PULSE).toEqual([103, 512]))
+})
+
+// firmware/include/settings/servo_settings.h's Servo_isValid refuses a coxa whose travel at its calibration misses angle
+// 0, the stand's: the pulse ServoController::toPwm drives at angle 0 must lie within the safe pulses, which the servo
+// page checks before it saves.
+describe("a coxa's pulse at angle 0", () => {
+  const coxa = (centerAngle: number, direction = 1, conversion = 2, centerPwm = 306): Servo => ({
+    centerPwm,
+    direction,
+    centerAngle,
+    conversion,
+    name: ''
+  })
+
+  it('is the pulse the robot drives the coxa to at angle 0', () => {
+    expect(coxaPulseAtZero(coxa(0))).toBe(306)
+    expect(coxaPulseAtZero(coxa(100))).toBe(506)
+    expect(coxaPulseAtZero(coxa(100, -1))).toBe(106)
+    // Inverted by the page's own jointAngleFromPwm, it is the coxa's angle 0.
+    expect(jointAngleFromPwm(coxa(37, -1, 2.2), 0, coxaPulseAtZero(coxa(37, -1, 2.2)))).toBeCloseTo(
+      0,
+      10
+    )
+  })
+
+  it("is held within the safe pulses as the firmware's tests hold it", () => {
+    // firmware/test/test_servo_settings: refused, refused, refused, taken, taken.
+    expect(coxaHoldsZero(coxa(180, 1, 100))).toBe(false)
+    expect(coxaHoldsZero(coxa(110))).toBe(false)
+    expect(coxaHoldsZero(coxa(-110, -1))).toBe(false)
+    expect(coxaHoldsZero(coxa(100))).toBe(true)
+    expect(coxaHoldsZero(coxa(100, -1))).toBe(true)
+  })
+})
 
 describe('the firmware geometry', () => {
   it('is the geometry the app draws with', () => {

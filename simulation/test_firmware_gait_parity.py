@@ -10,8 +10,8 @@ As a pytest module it checks:
   * gait_tuned.h against its gait_library.json entry, including the C++ velocity_to_gait port;
   * firmware_gait.py against constants parsed out of the firmware headers;
   * firmware_gait.py's TUNED command mapping against the header's own formula;
-  * firmware_gait.py's classic command mapping, AUTO's choice and walk, and the posture clamp against gait_speed.h,
-    run in the native library;
+  * firmware_gait.py's classic command mapping and posture clamp in each stance, AUTO's choice and walk, and each
+    stance's resting feet against gait_speed.h, run in the native library;
   * the nominal-stance IK against the properties the firmware host test pins.
 
 As a script it runs the header check only:
@@ -27,12 +27,16 @@ import os
 import re
 import sys
 
+import mujoco
 import numpy as np
 import pytest
 
 from src.envs.hexapod_mj_env import PG_HEIGHT, PG_PHASE_RATE, PG_STEP_ANGLE, PG_STEP_XY
+from src.resources import build_model
+from src.robot.animation import JOINT_LIMIT_DEG, TRAINED_COXA_LIMIT_DEG
 from src.robot import firmware_gait as fg
 from src.robot.gait_schedule import GaitSchedule
+from src.sim.mj_runtime import HexapodSim
 from src.sim.virtual_robot import native_library
 
 FIRMWARE_INCLUDE = os.path.join(os.path.dirname(__file__), "..", "firmware", "include")
@@ -85,6 +89,14 @@ def _array(text, name):
     if not m:
         raise KeyError(f"{name} not found")
     return _cpp_list(m.group(1))
+
+
+def _joint_limits(text):
+    """kinematics.h's JOINT_LIMIT_DEG, a row of coxa, femur and tibia per leg."""
+    m = re.search(r"\bJOINT_LIMIT_DEG\[6\]\[3\]\s*=\s*\{(.*?)\};", text, re.S)
+    if not m:
+        raise KeyError("JOINT_LIMIT_DEG[6][3] not found")
+    return np.array([_cpp_list(row) for row in re.findall(r"\{([^{}]*)\}", m.group(1))])
 
 
 def _nested_array(text, name):
@@ -228,6 +240,7 @@ def test_gait_h_constants_match_the_port(gait_h):
         assert getattr(fg, name) == pytest.approx(value), name
     assert fg.AUTO_HYSTERESIS == pytest.approx(_constexpr(_read(GAIT_SPEED_H), "AUTO_HYSTERESIS"))
     assert fg.MIN_STRIDE_SHARE == pytest.approx(_constexpr(_read(GAIT_SPEED_H), "MIN_STRIDE_SHARE"))
+    assert fg.SPEED_TIE == pytest.approx(_constexpr(_read(GAIT_SPEED_H), "SPEED_TIE"))
     np.testing.assert_allclose(fg.BEZIER_STEPS, _array(gait_h, "BEZIER_STEPS"))
     np.testing.assert_allclose(fg.BEZIER_HEIGHTS, _array(gait_h, "BEZIER_HEIGHTS"))
     for name in ("defaultPosition", "targetDefaultPosition", "swingStartPosition"):
@@ -281,6 +294,7 @@ def test_tuned_command_mapping_follows_the_firmware_formula(header, gait_h):
 
 
 CLASSIC_GAITS = (fg.TRI_GATE, fg.BI_GATE, fg.WAVE, fg.RIPPLE)
+STANCES = (fg.STANCE_DEFAULT, fg.STANCE_CRAB)
 
 
 def _random_stick(rng):
@@ -294,30 +308,31 @@ def _random_stride(rng):
     return float(rng.choice([-1.0, 0.0, 1.0])) if rng.random() < 0.5 else rng.uniform(-1.1, 1.1)
 
 
-def _random_posture(rng):
-    """Half beyond the grid or anywhere in it, half pulled onto the walkable boundary, where most clamped commands
-    land and where the corner gate decides."""
+def _random_posture(rng, stance=fg.STANCE_DEFAULT):
+    """Half beyond the grid or anywhere in it, half pulled onto the stance's walkable boundary, where most clamped
+    commands land and where the corner gate decides."""
     posture = rng.uniform(-1.2, 1.2, 3)
-    return fg.clamp_posture(*posture) if rng.random() < 0.5 else tuple(posture)
+    return fg.clamp_posture(*posture, stance) if rng.random() < 0.5 else tuple(posture)
 
 
-def _native_walk_target(gait, lx, ly, rx, s, s1, h, fd, stride):
+def _native_walk_target(gait, lx, ly, rx, s, s1, h, fd, stride, stance):
     out = (ctypes.c_float * 4)()
-    native_library().classicWalkTarget(gait, lx, ly, rx, s, s1, h, fd, stride, out)
+    native_library().classicWalkTarget(gait, lx, ly, rx, s, s1, h, fd, stride, stance, out)
     return np.array(out[:])
 
 
+@pytest.mark.parametrize("stance", STANCES)
 @pytest.mark.parametrize("gait", CLASSIC_GAITS)
-def test_classic_walk_target_matches_the_firmware(gait):
-    rng = np.random.default_rng(100 + gait)
+def test_classic_walk_target_matches_the_firmware(gait, stance):
+    rng = np.random.default_rng(100 + gait + 10 * stance)
     walking = 0
     for _ in range(500):
         lx, ly, rx = _random_stick(rng)
         s = rng.uniform(-1.1, 1.1)
         stride = _random_stride(rng)
-        posture = _random_posture(rng)
-        native = _native_walk_target(gait, lx, ly, rx, s, *posture, stride)
-        port = np.array(fg.classic_walk_target(gait, lx, ly, rx, s, *posture, stride))
+        posture = _random_posture(rng, stance)
+        native = _native_walk_target(gait, lx, ly, rx, s, *posture, stride, stance)
+        port = np.array(fg.classic_walk_target(gait, lx, ly, rx, s, *posture, stride, stance))
         np.testing.assert_allclose(port, native, rtol=0, atol=TOL,
                                    err_msg=f"stick {lx, ly, rx} s {s} stride {stride} at {posture}")
         walking += native[3] > 0.0
@@ -351,14 +366,15 @@ def test_auto_matches_the_firmware(current):
     assert chosen == {fg.RIPPLE, fg.TRI_GATE, fg.BI_GATE}, "the samples must reach every band"
 
 
-def test_clamp_posture_matches_the_firmware():
-    rng = np.random.default_rng(7)
+@pytest.mark.parametrize("stance", STANCES)
+def test_clamp_posture_matches_the_firmware(stance):
+    rng = np.random.default_rng(7 + stance)
     moved = 0
     for _ in range(500):
         posture = rng.uniform(-1.3, 1.3, 3)
         native = (ctypes.c_float * 3)(*posture)
-        native_library().clampPosture(native)
-        clamped = fg.clamp_posture(*posture)
+        native_library().clampPosture(native, stance)
+        clamped = fg.clamp_posture(*posture, stance)
         np.testing.assert_allclose(clamped, native[:], rtol=0, atol=1e-5, err_msg=f"posture {posture}")
         moved += not np.allclose(clamped, np.clip(posture, -1.0, 1.0))
     assert moved > 100, "too few postures needed clamping to compare the ray search"
@@ -377,6 +393,36 @@ def test_classic_command_walks_the_clamped_posture_at_its_stride():
     assert gait.step_height == pytest.approx((s1 + 1.0) * 20.0)
     assert gait.step_speed == 1.0
     assert zm == pytest.approx(h * 50.0)
+
+
+@pytest.mark.parametrize("stance", STANCES)
+def test_stance_feet_match_the_firmware(stance):
+    """gait_speed.h's stanceFeet in float against the port in double: the feet are within 300 mm of the body, where a
+    float carries about 3e-5 mm, and a hypot and a sum add a few of those."""
+    for scale in np.linspace(0.75, 1.25, 11):
+        native = (ctypes.c_float * 24)()
+        native_library().stanceFeet(stance, scale, native)
+        np.testing.assert_allclose(np.array(native[:]).reshape(6, 4), fg.stance_feet(stance, scale), rtol=0, atol=1e-4,
+                                   err_msg=f"scale {scale}")
+
+
+@pytest.mark.parametrize("scale", [0.75, 1.0, 1.25])
+def test_the_crab_points_every_leg_straight_out_at_the_default_stance_s_reach(scale):
+    """Each crab foot lies on the line through its coxa mount across the body (the lateral x axis), outward, as far from
+    the mount as the default stance's foot at the same scale and height: the coxas turn every leg straight out to its
+    side, and the femur and tibia stand as in the default stance."""
+    default, crab = fg.stance_feet(fg.STANCE_DEFAULT, scale), fg.stance_feet(fg.STANCE_CRAB, scale)
+    np.testing.assert_allclose(default, np.column_stack([fg.DEFAULT_FEET[:, :2] * scale, fg.DEFAULT_FEET[:, 2:]]))
+    np.testing.assert_allclose(crab[:, 2:], default[:, 2:])
+    np.testing.assert_allclose(crab[:, 1], fg.MOUNT_Y)
+    np.testing.assert_array_equal(np.sign(crab[:, 0] - fg.MOUNT_X), np.sign(fg.MOUNT_X))
+    reach = lambda feet: np.hypot(feet[:, 0] - fg.MOUNT_X, feet[:, 1] - fg.MOUNT_Y)  # noqa: E731
+    np.testing.assert_allclose(reach(crab), reach(default))
+    kin = fg.Kinematics()
+    crab_angles = kin.inverse_kinematics(fg.BodyState(feet=crab)).reshape(6, 3)
+    default_angles = kin.inverse_kinematics(fg.BodyState(feet=default)).reshape(6, 3)
+    np.testing.assert_allclose(crab_angles[:, 0], [-45.0, 0.0, 45.0, 45.0, 0.0, -45.0], atol=1e-9)
+    np.testing.assert_allclose(crab_angles[:, 1:], default_angles[:, 1:], atol=1e-9)
 
 
 @pytest.mark.parametrize("progress", [0.0, 0.1, 0.37, 0.5, 0.83, 0.999, 1.0])
@@ -404,8 +450,26 @@ def test_nominal_stance_ik_meets_the_firmware_host_test():
     per_leg = angles.reshape(6, 3)
     for a, b in ((0, 2), (3, 5)):
         np.testing.assert_allclose(per_leg[a, 1:], per_leg[b, 1:], atol=0.01)
-    limits = np.array(_array(_read(KINEMATICS_H), "JOINT_LIMIT_DEG"))
+    limits = _joint_limits(_read(KINEMATICS_H))
     assert np.all(np.abs(per_leg) <= limits)
+
+
+def test_the_joint_travel_copies_are_the_firmware_s():
+    """kinematics.h's joint travel, as the animation checker and the envelope take it, and the MuJoCo model's ranges,
+    in build_model.py and in the model.xml generated from it; and the coxa travel TUNED and WALK_NN keep."""
+    text = _read(KINEMATICS_H)
+    np.testing.assert_array_equal(JOINT_LIMIT_DEG, _joint_limits(text))
+    assert JOINT_LIMIT_DEG.shape == (6, 3)
+    assert TRAINED_COXA_LIMIT_DEG == _constexpr(text, "TRAINED_COXA_LIMIT_DEG")
+    np.testing.assert_allclose(np.degrees(build_model.COXA_RANGE), JOINT_LIMIT_DEG[:, 0], rtol=0, atol=1e-9)
+    # The femur's and tibia's are written in radians to 3 and 1 decimals, 1.571 and 2.6: 90.01 and 148.97 deg.
+    femur_tibia = np.degrees([build_model.FEMUR_RANGE, build_model.TIBIA_RANGE])
+    np.testing.assert_allclose(np.tile(femur_tibia, (6, 1)), JOINT_LIMIT_DEG[:, 1:], atol=0.05)
+    model = HexapodSim().model
+    for leg in range(6):
+        joint = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"coxa_{leg}")
+        coxa = build_model.COXA_RANGE[leg]
+        np.testing.assert_allclose(model.jnt_range[joint], [-coxa, coxa])
 
 
 # ------------------------------------------------------------------ behaviour, ported from test_gait.cpp

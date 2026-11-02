@@ -15,16 +15,17 @@ A gait that drove two legs through each other would therefore run in the sim wit
 
 For each gait, every stick command `(lx, ly, rx)` on a grid over [-1, 1]^3 goes through `command_to_walk_gait`, the firmware gait port generates the feet at evenly spaced phases of one cycle, and the port's IK turns them into joint angles.
 The command is taken as already reached and the feet as already on their resting stance, so the command ramp, the stop/start easing and stance changes are outside the sweep.
-`ServoController::setAngles` clips every joint to `JOINT_LIMIT_DEG` (coxa 31.5, femur 90, tibia 149 deg) before it reaches a servo, so the default check runs on the clamped angles the robot actually reaches; the `commanded` rows use the raw IK angles for comparison.
+`ServoController::setAngles` clips every joint to its travel before it reaches a servo, a coxa to its leg's travel within its servo's safe pulses (+-90 deg at a corner and +-45 deg in the middle, TUNED's to 31.5 deg), a femur to 90 and a tibia to 149 deg, so the default check runs on the clamped angles the robot actually reaches; the `commanded` rows use the raw IK angles for comparison.
 The angles give each leg's chain mount -> hip -> knee -> tip, built with the same conventions as `Kinematics.forward_kinematics_local`; the test checks that the chain's tip reproduces the IK's target foot wherever the foot is reachable.
 Neighbouring legs are the ring 0-1-2-5-4-3: the same-side pairs 0-1, 1-2, 3-4, 4-5 and the pairs across the body 0-3 and 2-5.
 Each neighbouring pair's coxa, femur and tibia segments and foot point are compared by exact segment-segment distance.
-Centre clearance is the least distance between centre lines; surface clearance subtracts the radii `build_model.py` gives the links (coxa 8, femur 7, tibia 5 mm, foot sphere 6 mm) and is negative on contact.
+Centre clearance is the least distance between centre lines; surface clearance subtracts the radii of `src/robot/clearance.py` (coxa 20.8, femur 15.5, tibia 5 mm, foot sphere 6 mm: the MuJoCo model's capsules, widened where the parts around the servos are thicker) and is negative on contact.
 
 ## Results
 
 Default sweep: 9^3 stick commands x 40 phases, step-height stick `s1 = 0`, body-height stick `h = 0`.
 Travel is the share of samples with any joint commanded beyond its travel; hits are stick commands that touch somewhere in the cycle.
+The tables were measured with the coxa clipped at 31.5 deg and the MuJoCo model's capsule radii (coxa 8, femur 7, tibia 5 mm), before the coxa's travel widened to its servo's safe pulses and the radii to the parts around the servos.
 The commands below are in the stick mapping before 2026-10-19, when +lx strafed left and +rx turned counter-clockwise; under today's (`docs/conventions.md`) the same motion is the stick with `lx` and `rx` negated.
 
 | gait | travel | clamped surface (mm) | clamped hits | worst clamped command (lx, ly, rx) @ phase, legs, segments | commanded surface (mm) | commanded hits |
@@ -42,16 +43,18 @@ A finer grid, 17^3 commands x 80 phases, moves the minimum by at most 0.2 mm: tr
 ## Verdict
 
 With the servos stopped at their travel, no stick command in any gait brings two neighbouring legs into contact: the least surface clearance is 9.5 mm over the whole swept envelope, 10.4 mm at default height and lift.
-No clamp task is needed for leg-leg contact.
+The firmware now checks a pose for leg-leg contact itself (`firmware/include/leg_clearance.h`, the port of `src/robot/clearance.py`): the animation player and the joint drag move two legs within `LEG_CLEARANCE_MM`, 5 mm, of each other only to part them, and the robot's animation validation refuses a clip that brings them that close.
 The margin comes from the travel clamp, though, not from the gait.
-The raw IK angles collide on 104 to 287 of the 729 commands, femur against femur of neighbours such as legs 0-1 at (+0.25, -1.00, +1.00) in today's mapping, because combined forward, lateral and yaw strokes ask a coxa to swing up to 89.5 deg (tripod), far past its 31.5 deg travel.
+With the model's capsules, the raw IK angles collided on 104 to 287 of the 729 commands, femur against femur of neighbours such as legs 0-1 at (+0.25, -1.00, +1.00) in today's mapping, because combined forward, lateral and yaw strokes asked a coxa to swing up to 89.5 deg (tripod), far past the 31.5 deg travel it had then.
 Same-side neighbours are mounted only 45 deg apart, so the travel alone does not rule contact out; it is the clamped sweep that shows the legs stay apart within it.
-Widening `JOINT_LIMIT_DEG` for the coxa, or adding a mode that bypasses `setAngles`, needs this sweep re-run before it ships.
-`test_leg_clearance.py` keeps the tripod and TUNED sweeps on a 5^3 grid above 5 mm, so a gait change that brings the legs together fails there.
+The coxa's travel has since widened to its servo's safe pulses, so these sweeps, measured at 31.5 deg, no longer describe the robot's walk until they are re-run at the new travel.
+`test_leg_clearance.py` keeps the tripod and TUNED sweeps on a 5^3 grid at least `LEG_CLEARANCE_MM`, 5 mm, apart, so a gait change that brings the legs together fails there.
+It also sweeps every classic timing in both stances at the longest stride, at the neutral posture and the posture cube's corners pulled onto the walkable boundary (`--stance`, `--stride`, `--fd`), where the least clearance is 6.2 mm (BI, legs 1-2) in the default stance and 6.0 mm (BI, legs 3-4) in the crab.
+The walkable envelope is bounded by the same check (`src/robot/gait_envelope.py`), with the corner coxas' 90 deg the binding limit wherever the legs meet first: it ends the default stance's longest forward stroke at 129 of the 508 grid postures that stride forward, its lateral one at 14 of 506 and its longest turn at 290 of 528, and the crab's forward stroke at 62 of 528 and its turn at 459 of 526; the static margin ends the crab's forward stroke at 466 of the 528 and its sideways one at 28 of 505.
 
 ## Limits
 
-The links are the capsules of the MuJoCo model, not the real servo housings and brackets, which are bulkier near the hip and knee; the 9.5 mm margin holds for the model and is unverified against the CAD.
+The links are capsules sized from the meshes the app draws and the MG92B's datasheet size, not measured on the robot, and a capsule is round where the tibia blade is up to 40 mm deep in its leg's plane; the margins hold for the capsules and are unverified against the robot.
 The sweep keeps the body level, as the WALK gait does; the body roll, pitch and yaw that STAND's sticks and the animations command, and the command transitions, are not covered.
 Clamping a joint at travel means the foot no longer follows the planned path, so on the 47 to 76 % of samples beyond travel the robot is not walking the gait the command asked for; that is a feasibility problem in its own right, separate from clearance.
 

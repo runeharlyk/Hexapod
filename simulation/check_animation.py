@@ -5,6 +5,8 @@ time something other than a foot touches the ground, and whether the robot tippe
     uv run python check_animation.py                  # every file in ../animations
     uv run python check_animation.py ../animations/play_dead.json
 
+An animation that brings two legs within the leg clearance (animation.clearance_error) is refused
+as invalid without being simulated, as the robot's player would hold it short of the touch.
 Exits 1 when any animation is invalid or falls, so it can gate CI. A statically stable hexapod
 rarely tips; the tilt and knock columns are the numbers to read for everything short of that.
 """
@@ -43,7 +45,7 @@ class Report:
 
 def check(anim: an.Animation, sim: HexapodSim, kin: Kinematics, settle: float = 1.0) -> Report:
     report = Report(anim.name)
-    report.error = an.validate(anim)
+    report.error = an.validate(anim) or an.clearance_error(anim, kin)
     if report.error:
         return report
     sim.reset_to_stand()

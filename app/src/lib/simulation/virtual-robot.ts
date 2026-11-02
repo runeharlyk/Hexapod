@@ -22,7 +22,14 @@ export type Command = [number, number, number, number, number, number, number, n
 
 export interface VirtualRobot {
   setMode(mode: number): void
-  setGait(gait: number): void
+  /** A gait by its GaitEnum value; false when the robot refuses it, as AUTO and TUNED in the crab. */
+  setGait(gait: number): boolean
+  /** The gait the robot reports, by its GaitEnum value: the last one it took. */
+  gait(): number
+  /** A stance by its StanceEnum value, which the robot takes on its next tick, or refuses. */
+  setStance(stance: number): void
+  /** The stance in force, by its StanceEnum value. */
+  stance(): number
   playAnimation(name: string, values: ReadonlyMap<ParamId, number>): void
   stopAnimation(): void
   animationStatus(): AnimationStatus
@@ -35,6 +42,12 @@ export interface VirtualRobot {
   servoAngles(): Float32Array
   /** The joint angles of the firmware's stand, for spawning; leaves the robot as new. */
   standPose(): Float32Array
+  /**
+   * Whether moving the legs from one pose to another, joint angles in degrees with coxa, femur and tibia per leg in leg
+   * order, keeps them apart as the robot judges a dragged joint (leg_clearance.h keepsLegsApart): the pose moved to keeps
+   * the firmware's clearance, or, from a pose already within it, brings no pair closer.
+   */
+  keepsLegsApart(fromDeg: readonly number[], toDeg: readonly number[]): boolean
 }
 
 const STAND = 3
@@ -46,7 +59,10 @@ export async function loadVirtualRobot(): Promise<VirtualRobot> {
   const servoAngles = () => m.HEAPF32.slice(m._servoAngles() / 4, m._servoAngles() / 4 + 18)
   return {
     setMode: mode => m._setMode(mode),
-    setGait: gait => m._setGait(gait),
+    setGait: gait => m._setGait(gait) !== 0,
+    gait: () => m._gait(),
+    setStance: stance => m._setStance(stance),
+    stance: () => m._stance(),
     playAnimation: (name, values) => {
       const bytes = AnimationPlay.encode({
         name,
@@ -75,6 +91,11 @@ export async function loadVirtualRobot(): Promise<VirtualRobot> {
       const pose = servoAngles()
       m._reset()
       return pose
+    },
+    keepsLegsApart: (fromDeg, toDeg) => {
+      m.HEAPF32.set(fromDeg, m._clearanceAngles() / 4)
+      m.HEAPF32.set(toDeg, m._clearanceAngles() / 4 + 18)
+      return m._dragKeepsLegsApart() !== 0
     }
   }
 }

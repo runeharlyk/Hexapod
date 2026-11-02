@@ -8,6 +8,7 @@
   import { loadModel } from '$lib/utilities/model-utilities'
   import { modeToWire, urdfJointOrder } from '$lib/motion'
   import { GaitType } from '$lib/gait'
+  import { stanceFromWire, stanceToWire } from '$lib/stance'
   import { loadSimulation } from '$lib/simulation/load'
   import { HexapodSim } from '$lib/simulation/hexapod-sim'
   import type { VirtualRobot } from '$lib/simulation/virtual-robot'
@@ -56,7 +57,8 @@
           pendingAnimation = undefined
           robot?.setMode(modeToWire(m))
         }),
-        simulation.gait.subscribe(g => robot?.setGait(Object.values(GaitType).indexOf(g)))
+        simulation.gait.subscribe(g => robot?.setGait(Object.values(GaitType).indexOf(g))),
+        simulation.stance.subscribe(s => robot?.setStance(stanceToWire(s)))
       ]
       lastFrame = performance.now()
       status = 'running'
@@ -118,6 +120,7 @@
     robot.command(get(simulation.command))
     const before = sim.controlTicks
     sim.step((now - lastFrame) / 1000)
+    if (sim.controlTicks > before) followReports(robot)
     if (sim.controlTicks > before && pendingAnimation) {
       const action = pendingAnimation
       pendingAnimation = undefined
@@ -141,6 +144,15 @@
     update()
     followRobot()
     fallen = sim.hasFallen()
+  }
+
+  // The gait and the stance shown are those the robot reports, as the controller shows the real robot's: the robot takes
+  // a request on its next tick, refuses AUTO and TUNED in the crab, and switches either to TRI_GATE for the crab.
+  function followReports(robot: VirtualRobot) {
+    const gait = Object.values(GaitType)[robot.gait()]
+    if (gait !== undefined && gait !== get(simulation.gait)) simulation.gait.set(gait)
+    const stance = stanceFromWire(robot.stance())
+    if (stance !== undefined && stance !== get(simulation.stance)) simulation.stance.set(stance)
   }
 
   // The camera travels with the robot, so a walking robot stays in view at the chosen angle.

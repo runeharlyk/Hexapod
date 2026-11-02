@@ -1,12 +1,13 @@
 <script lang="ts">
   import { RotateCcw, RotateCw, Settings as SettingsIcon } from '$lib/components/icons'
   import LegDiagram from '$lib/components/LegDiagram.svelte'
+  import { COXA_SAFE_PULSE, coxaHoldsZero, coxaPulseAtZero } from '$lib/calibration/leg-pose'
   import Section from '$lib/components/layout/Section.svelte'
   import SettingsForm from '$lib/components/layout/SettingsForm.svelte'
   import ChangedNote from '$lib/components/layout/ChangedNote.svelte'
   import { Settings } from '$lib/components/layout/settings.svelte'
   import { topicSource } from '$lib/robot/settings-sources'
-  import { ServoSettings } from '$lib/platform_shared/api'
+  import { ServoSettings, type Servo } from '$lib/platform_shared/api'
   import { shortestFloat32 } from '$lib/utilities'
   import { derived } from 'svelte/store'
 
@@ -43,6 +44,19 @@
   const aboveZero = (input: HTMLInputElement, conversion: number) => {
     const check = (value: number) => input.setCustomValidity(value > 0 ? '' : 'Above 0')
     check(conversion)
+    return { update: check }
+  }
+
+  // The robot refuses a coxa whose travel misses angle 0 (Servo_isValid), so the coxa's centre angle field says so
+  // itself, whichever of the servo's values put angle 0 outside the safe pulses.
+  const holdsZero = (input: HTMLInputElement, servo: Servo | null) => {
+    const check = (servo: Servo | null) =>
+      input.setCustomValidity(
+        !servo || coxaHoldsZero(servo) ?
+          ''
+        : `Angle 0 at ${Math.round(coxaPulseAtZero(servo))}, outside ${COXA_SAFE_PULSE.join(' to ')}`
+      )
+    check(servo)
     return { update: check }
   }
 
@@ -93,10 +107,10 @@
                   name="servos.{index}.centerPwm"
                   aria-label="Servo {index} centre PWM"
                   aria-describedby="servo-limits"
-                  title="80 to 600"
+                  title={index % 3 === 0 ? COXA_SAFE_PULSE.join(' to ') : '80 to 600'}
                   required
-                  min="80"
-                  max="600"
+                  min={index % 3 === 0 ? COXA_SAFE_PULSE[0] : 80}
+                  max={index % 3 === 0 ? COXA_SAFE_PULSE[1] : 600}
                   step="any"
                   bind:value={servo.centerPwm}
                 />
@@ -132,6 +146,7 @@
                   max="180"
                   step="any"
                   bind:value={servo.centerAngle}
+                  use:holdsZero={index % 3 === 0 ? { ...servo } : null}
                 />
                 <ChangedNote {notes} field="servos.{index}.centerAngle" />
               </td>
@@ -157,8 +172,9 @@
       </table>
     </div>
     <p id="servo-limits" class="text-base-content/70 text-xs">
-      Centre PWM 80 to 600: the app's own guard, narrower than the 0 to 4095 the robot accepts.
-      Centre angle -180 to 180. Conversion above 0, up to 100 pulses per degree.
+      Centre PWM 80 to 600: the app's own guard, narrower than the 0 to 4095 the robot accepts; a
+      coxa's 103 to 512, the servo's safe 500 to 2500 us, which the robot holds it to, at its centre
+      and at angle 0. Centre angle -180 to 180. Conversion above 0, up to 100 pulses per degree.
     </p>
   {/snippet}
 </SettingsForm>

@@ -381,7 +381,7 @@ void test_stick_maps_to_the_fixture_gait_command() {
     const Fixture f = readFixture();
     TEST_ASSERT_EQUAL_MESSAGE(3, f.commands.size(), "sign_convention.json missing or unreadable");
     for (const Command& c : f.commands) {
-        const WalkTarget w = classicWalkTarget(GaitType::TRI_GATE, c.lx, c.ly, c.rx, 0, 0, 0, 0, 0);
+        const WalkTarget w = classicWalkTarget(GaitType::TRI_GATE, c.lx, c.ly, c.rx, 0, 0, 0, 0, 0, Stance::DEFAULT);
         TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.05f, c.stepX, w.stepX, c.name.c_str());
         TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.05f, c.stepY, w.stepY, c.name.c_str());
         TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.0005f, c.stepAngle, w.stepAngle, c.name.c_str());

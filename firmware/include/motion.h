@@ -6,6 +6,7 @@
 #include <utility>
 #include <esp_log.h>
 #include <kinematics.h>
+#include <leg_clearance.h>
 #include <peripherals/servo_controller.h>
 #include <peripherals/peripherals.h>
 #include <utils/timing.h>
@@ -25,12 +26,16 @@
 
 /** The goal status the motion pushes: a few pushes a tick at most, to the app's bridge. */
 using GoalStatusBus = EventBus<socket_message_GoalStatus, 4, 2, 1>;
+/** The stance the motion takes, pushed on each change, to the app's bridge. */
+using StanceBus = EventBus<StanceMsg, 4, 2, 1>;
 
 class MotionService {
   public:
     MotionService(ServoController *servoController, Peripherals *peripherals)
         : _servoController(servoController), _peripherals(peripherals) {
-        scaleStance(feetScale(_feetDistance), default_feet_pos);
+        stanceFeet(Stance::DEFAULT, feetScale(_feetDistance), default_feet_pos);
+        _inbox.noteFeet(default_feet_pos);
+        crabRestCoxas(kinematics, _crabRestCoxas);
     }
 
     void begin() {
@@ -45,11 +50,19 @@ class MotionService {
         body_state.updateFeet(default_feet_pos);
         EventBus<ModeMsg>::publish({motionState});
         EventBus<GaitMsg>::publish({gait_state.gait_type});
+        StanceBus::publish({_stance});
     }
 
   private:
-    // Control task, at the start of the tick after the gait arrived; the goal it ends was ended on arrival.
+    // Control task, at the start of the tick after the gait arrived; the goal it ends was ended on arrival. A gait that
+    // walks the default stance alone is refused in the crab, and the gait in force published again as its reply: a
+    // client's is checked before it is published (requestGait), so one gets here only past a crab taken since.
     void handleInputGait(GaitType gait) {
+        if (defaultStanceOnly(gait) && crab()) {
+            _gaitRefused = gait;
+            selectGait(_requestedGait);
+            return;
+        }
         _requestedGait = gait;
         // Swapping a schedule mid-stride is the hazard updateAutoGait() documents: offset[] reassigns
         // every leg's phase at once, so a leg at the top of its swing becomes a stance leg and its
@@ -57,6 +70,59 @@ class MotionService {
         // updateAutoGait() handles from the stepping loops.
         if (!gaitSwappable()) return;
         applyRequestedGait();
+    }
+
+    // Control task: a gait the motion chose itself, a goal's or the crab's, selected and published as one a client
+    // asked for; MotionService takes its own selection rather than the publish, which is not delivered back.
+    void selectGait(GaitType gait) {
+        _inbox.selectGait(gait);
+        EventBus<GaitMsg>::publish({gait}, _gaitSubHandle);
+    }
+
+    // Control task, at the start of the tick after the stance arrived, once its modes and gait were taken; the goal it
+    // ends was ended on arrival. The policy was trained on the default stance, so the crab is refused in WALK_NN and in
+    // an ANIMATE that hands back to it. TUNED and AUTO walk the default stance alone, so the crab first selects
+    // TRI_GATE, which TUNED's walk stops for. The feet then step to the stance once no walk steps them: a walk stops
+    // for it as for a posture (applyWalkTarget), a stand takes it once the feet are still (takeStandPosture), and the
+    // modes that stand on no gait leave the feet where they are until a stand or a walk takes it. The crab is refused
+    // too where a corner coxa's calibration cannot turn it as far as the crab walks it (crabWithinTravel).
+    void handleInputStance(Stance stance) {
+        if (stance == _stance) return;
+        const bool walkNn =
+            motionState == MOTION_STATE::WALK_NN || (_borrowedMode && _previousMode == MOTION_STATE::WALK_NN);
+        if (stance == Stance::CRAB && (walkNn || !crabWithinTravel())) {
+            // Answered with the stance in force, so a client that showed the crab comes back to it; the inbox noted the
+            // crab as it handed it over, and has the stance in force again.
+            _crabRefused = walkNn ? CrabRefusal::WALK_NN : CrabRefusal::TRAVEL;
+            noteStance();
+            StanceBus::publish({_stance});
+            return;
+        }
+        if (stance == Stance::CRAB && defaultStanceOnly(_requestedGait)) {
+            if (motionState == MOTION_STATE::WALK && gait_state.gait_type == GaitType::TUNED)
+                stopLocomotionCommand(false);
+            selectGait(GaitType::TRI_GATE);
+            handleInputGait(GaitType::TRI_GATE);
+        }
+        _stance = stance;
+        noteStance();
+        StanceBus::publish({stance});
+        if (motionState == MOTION_STATE::WALK) applyWalkTarget();
+    }
+
+    // Whether every corner coxa turns, within its own calibration's safe pulses, as far as the crab walks it.
+    bool crabWithinTravel() const {
+        JointTravel travel[6];
+        for (int leg = 0; leg < 6; ++leg) travel[leg] = _servoController->coxaTravelOf(leg);
+        return ::crabWithinTravel(_crabRestCoxas, travel);
+    }
+
+    // Control task: a calibration that arrives while the crab is in force and leaves a corner coxa short of it steps
+    // the feet back to the default stance, as a client's DEFAULT would, through the inbox.
+    void leaveCrabBeyondTravel() {
+        if (_stance != Stance::CRAB || crabWithinTravel()) return;
+        _leavingCrab = true;
+        requestStance(Stance::DEFAULT);
     }
 
     // Loads _requestedGait into the live schedule. Only safe while the gait is not stepping.
@@ -74,7 +140,8 @@ class MotionService {
     void handleInputMode(ModeMsg const &m) {
         _handbackSent = false;
         const ModeArbiterDecision d = decideMode({motionState, _borrowedMode, _previousMode, m.mode, m.kind,
-                                                  _animation.busy() || _enterFromHeld, _idleHeld});
+                                                  _animation.busy() || _enterFromHeld, _idleHeld, crab()});
+        if (d.action == ModeArbiterDecision::RESTATE && m.mode == MOTION_STATE::WALK_NN) _walkNnRefused = true;
         _borrowedMode = d.borrowed;
         _previousMode = d.previous;
         if (d.cancelPending) _animation.cancelPendingPlay();
@@ -114,10 +181,11 @@ class MotionService {
         // the stance takes again, stepped, once WALK_NN is left.
         if (mode == MOTION_STATE::WALK_NN) {
             std::copy(&DEFAULT_STANCE[0][0], &DEFAULT_STANCE[0][0] + 6 * 4, &default_feet_pos[0][0]);
+            _inbox.noteFeet(default_feet_pos);
             _policy.reset(gait, DEFAULT_STANCE);
         }
 #endif
-        if (leavingPolicy && mode != MOTION_STATE::WALK_NN) updateFeetDistanceTarget(_feetDistance);
+        if (leavingPolicy && mode != MOTION_STATE::WALK_NN) updateFeetTarget(_feetDistance, _feetStance);
         // ANIMATE drives no gait, so a half-stride left in gait_state would resume after it.
         if (!isWalkingMode(mode)) stopLocomotionCommand(!actuated(mode) || mode == MOTION_STATE::ANIMATE);
         // WALK_NN keeps the command, and its policy moves the ride height and the feet; a stride or a posture left
@@ -163,7 +231,13 @@ class MotionService {
         if (_inbox.animating()) _animation.setPuppet(p);
     }
 
-    void validateAnimation(const char *name, socket_message_AnimationReport &r) { _animation.validate(name, r); }
+    // Adapter task: a clip validated on the feet the robot stands on, as the control task noted them last; the live
+    // feet the control task rewrites are never read here.
+    void validateAnimation(const char *name, socket_message_AnimationReport &r) {
+        float feet[6][4];
+        _inbox.feet(feet);
+        _animation.validate(name, r, feet);
+    }
 
     // Adapter task: a joint dragged on the app's 3D model, in degrees as the robot reports its angles. It moves that
     // servo alone, in IDLE alone (MotionInbox::postJoint), from the control task's next tick. A servo that does not
@@ -172,6 +246,22 @@ class MotionService {
         if (servo < 0 || servo >= NUM_SERVO || !std::isfinite(degrees)) return;
         _inbox.postJoint(servo, degrees);
     }
+
+    // Adapter task: a gait a client asked for, published for the control task and every client unless the robot does
+    // not offer it in the crab (MotionInbox::gaitOffered). A refused one is logged and published nowhere, and the
+    // control task answers it with the gait in force at its next tick. False when refused.
+    bool requestGait(GaitType gait) {
+        if (!_inbox.gaitOffered(gait)) {
+            ESP_LOGW("MotionService", "Gait %d refused: the crab walks the classic gaits alone", (int)gait);
+            _inbox.postGaitRefused();
+            return false;
+        }
+        EventBus<GaitMsg>::publish({gait});
+        return true;
+    }
+
+    // Adapter task: a stance a client asked for, taken by the control task at its next tick (handleInputStance).
+    void requestStance(Stance stance) { _inbox.postStance(stance); }
 
     // Adapter task: the reply to the calibration page's "Centre all servos", 200 when the control task centres every
     // servo at its next tick, 409 when the robot is not idle or a mode is on its way.
@@ -186,16 +276,23 @@ class MotionService {
         const MOTION_STATE mode = motionState;
         steering = isWalkingMode(mode) && (c.lx != 0.f || c.ly != 0.f || c.rx != 0.f);
         CommandMsg clamped = c;
-        clampPosture(clamped.s1, clamped.h, clamped.fd);
+        clampPosture(clamped.s1, clamped.h, clamped.fd, _stance);
         // The searched gait rides at its own height, outside the grid the envelope was measured on.
         const bool tuned = mode == MOTION_STATE::WALK && gait_state.gait_type == GaitType::TUNED;
+        // A crab taken during TUNED's walk selected TRI_GATE and stopped it: TUNED steps no command more, and the stick
+        // and the posture wait for the swap, as a classic walk's wait for its settle.
+        if (tuned && crab()) {
+            lastWalkCommand_ = clamped;
+            return;
+        }
         // A classic walk takes its posture between steps only (settleWalkPosture); every other mode takes it now.
         if (mode != MOTION_STATE::WALK || tuned) {
             float h = c.h, fd = c.fd;
             if (mode == MOTION_STATE::WALK_NN) {
                 h = clamped.h;
             } else if (!tuned) {
-                clampStandPosture(kinematics, h, fd);
+                // A stand takes the stance in force with its posture; every other mode keeps the feet's.
+                clampStandPosture(kinematics, h, fd, mode == MOTION_STATE::STAND ? _stance : _feetStance);
             }
             _walkPostureValid = false;
             if (mode == MOTION_STATE::STAND) {
@@ -206,7 +303,7 @@ class MotionService {
                 _standPosturePending = true;
             } else {
                 _standPosturePending = false;
-                if (mode != MOTION_STATE::WALK_NN) updateFeetDistanceTarget(fd);
+                if (mode != MOTION_STATE::WALK_NN) updateFeetTarget(fd, _feetStance);
                 target_body_state.zm = bodyHeightMm(h);
             }
         }
@@ -332,6 +429,16 @@ class MotionService {
         for (int i = 0; i < mail.modes.count; ++i) handleInputMode(mail.modes.items[i]);
         reportHandheldDriving(mail.handheldDriving);
         if (mail.gait) handleInputGait(*mail.gait);
+        if (mail.stance) {
+            const Stance before = _stance;
+            handleInputStance(*mail.stance);
+            // Said once the default stance posted for the calibration is taken, not when a client's crab replaced it.
+            _crabLeftLogDue =
+                std::exchange(_leavingCrab, false) && before == Stance::CRAB && _stance == Stance::DEFAULT;
+        }
+        leaveCrabBeyondTravel();
+        // A client's gait refused on arrival is answered with the gait in force, the one this tick took included.
+        if (mail.gaitRefused) EventBus<GaitMsg>::publish({_requestedGait}, _gaitSubHandle);
         if (mail.command) handleCommand(*mail.command, mail.commandMs);
         takeGoalMail(mail);
         resetCommandIfTimedOut();
@@ -379,6 +486,7 @@ class MotionService {
                 updateAutoGait();
                 _commandRamp.step(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
                 gait.step(gait_state, body_state, dt);
+                noteFeetOffCrab();
                 updateOdometry(dt, imuFresh);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 noteRestPosture();
@@ -419,12 +527,19 @@ class MotionService {
                 updateAutoGait();
                 _commandRamp.step(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
                 gait.step(gait_state, body_state, dt);
+                noteFeetOffCrab();
                 updateOdometry(dt, imuFresh);
                 stepGoal(dt);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
             }
         }
+        // TUNED's gait, walking or ramping out in a stand, and WALK_NN's policy keep the coxa travel they were searched
+        // and trained in; every other pose takes the servo's own.
+        const bool trained =
+            state == MOTION_STATE::WALK_NN ||
+            (gait_state.gait_type == GaitType::TUNED && (state == MOTION_STATE::WALK || state == MOTION_STATE::STAND));
+        _coxaTravel = trained ? CoxaTravel::TRAINED : CoxaTravel::SERVO;
         return true;
     }
 
@@ -441,10 +556,29 @@ class MotionService {
                                                        : "");
         }
         if (_gaitTaken) ESP_LOGI("MotionService", "Gait %d", (int)*_gaitTaken);
+        if (const std::optional<GaitType> refused = std::exchange(_gaitRefused, std::nullopt))
+            ESP_LOGW("MotionService", "Gait %d refused: the crab walks the classic gaits alone", (int)*refused);
+        switch (std::exchange(_crabRefused, CrabRefusal::NONE)) {
+            case CrabRefusal::NONE: break;
+            case CrabRefusal::WALK_NN:
+                ESP_LOGW("MotionService", "Crab refused: WALK_NN walks the stance it was trained on");
+                break;
+            case CrabRefusal::TRAVEL:
+                ESP_LOGW("MotionService", "Crab refused: a corner coxa's calibration cannot turn it %.1f deg",
+                         CRAB_COXA_MAX_DEG);
+                break;
+        }
+        if (std::exchange(_crabLeftLogDue, false))
+            ESP_LOGW("MotionService", "Crab left: a corner coxa's new calibration cannot turn it %.1f deg",
+                     CRAB_COXA_MAX_DEG);
+        if (std::exchange(_walkNnRefused, false))
+            ESP_LOGW("MotionService", "WALK_NN refused: the policy walks the default stance alone");
         if (std::exchange(_tunedLogDue, false)) logTunedCommand(_tunedVelocity, target_gait_state);
     }
 
     float *getAngles() { return msgAngles.angles; }
+    // The coxa travel the servos hold the angles of the last pose within, and the angles IDLE then holds.
+    CoxaTravel coxaTravel() const { return _coxaTravel; }
 
     // The locomotion command the gait eases toward, the command it walks now, the body pose the motion eases
     // toward, and the body pose and feet the last tick solved the legs for, for the virtual robot's tests.
@@ -452,6 +586,12 @@ class MotionService {
     const gait_state_t &gaitState() const { return gait_state; }
     const BodyStateMsg &bodyCommand() const { return target_body_state; }
     const BodyStateMsg &bodyState() const { return body_state; }
+    // The stance in force, and the one whose feet the gait stands on or steps to.
+    Stance stance() const { return _stance; }
+    Stance feetStance() const { return _feetStance; }
+    // The goal the control task walks, as it last stepped it, and the stick the walk walks, a goal's included.
+    const GoalController &goal() const { return _goal; }
+    const CommandMsg &walkCommand() const { return lastWalkCommand_; }
 
     // Any task: the pose of the last tick, whole.
     OdometryEstimate odometry() const { return _inbox.odometry(); }
@@ -462,9 +602,10 @@ class MotionService {
     bool resetOdometry() { return _inbox.requestOdometryReset(); }
 
     // Adapter task: the reply to a goal, 202 when the control task is to walk it from its next tick. A malformed goal
-    // or style is 400, a robot that is neither standing nor walking 409, a style whose speed envelope is empty 422:
-    // TUNED, which has none, or a posture none of whose cells walks the goal's axes, and a goal while the handheld
-    // drives 423. The style's posture is clamped as the sliders' is and its sticks are the goal's. A goal accepted
+    // or style is 400, a robot that is neither standing nor walking 409, and so is a style judged in a stance another
+    // client changed meanwhile; a style whose speed envelope is empty 422: TUNED, which has none, AUTO in the crab, or
+    // a posture none of whose cells walks the goal's axes, and a goal while the handheld drives 423. The style's
+    // posture is clamped as the sliders' is, in the stance selected, and its sticks are the goal's. A goal accepted
     // while another runs replaces it.
     int startGoal(const Goal &goal, const CommandMsg &style, GaitType gait, GoalOwner owner) {
         CommandMsg s = style;
@@ -473,12 +614,21 @@ class MotionService {
         // The mode the robot reports: a script waits for the stand it asked for to be reported before it sends a goal.
         const MOTION_STATE mode = _inbox.appliedMode();
         if (mode != MOTION_STATE::STAND && mode != MOTION_STATE::WALK) return 409;
-        clampPosture(s.s1, s.h, s.fd);
-        if (!goalTops(goal.kind, gait, {s.s1, s.h, s.fd}, s.stride).walkable()) return 422;
+        // The goal walks the stance selected, a stance asked for before it included; postGoal refuses it if that has
+        // changed by the time it is posted.
+        const Stance stance = _inbox.stanceSelected();
+        clampPosture(s.s1, s.h, s.fd, stance);
+        if (!goalTops(goal.kind, gait, {s.s1, s.h, s.fd}, s.stride, stance).walkable()) return 422;
         // A full stick walks the gait's top speed, which the goal's speed is a share of.
         s.lx = s.ly = s.rx = s.ry = 0.f;
         s.s = 1.f;
-        return _inbox.postGoal(goal, s, gait, owner, millis()) ? 202 : 423;
+        switch (_inbox.postGoal(goal, s, gait, stance, owner, millis())) {
+            case MotionInbox::GoalPost::ACCEPTED: return 202;
+            case MotionInbox::GoalPost::NOT_OFFERED: return 422;
+            case MotionInbox::GoalPost::STANCE_CHANGED: return 409;
+            case MotionInbox::GoalPost::HANDHELD_DRIVES: return 423;
+        }
+        return 423;
     }
 
     // Any task.
@@ -533,6 +683,11 @@ class MotionService {
     AnimationRunner _animation;
     MOTION_STATE _previousMode = MOTION_STATE::STAND;
     bool _borrowedMode = false;
+    // Control task: the stance in force, published, the stance whose feet the gait stands on or steps to
+    // (updateFeetTarget), and whether the feet stand on the crab's or step from them.
+    Stance _stance = Stance::DEFAULT;
+    Stance _feetStance = Stance::DEFAULT;
+    bool _crabFeet = false;
     bool _handbackSent = false;              // a hand-back is queued; cleared by any mode taken
     bool _animating = false;                 // control task only: whether the last tick ran ANIMATE
     bool _idling = false;                    // control task only: whether the last tick ran IDLE
@@ -573,7 +728,8 @@ class MotionService {
     // A foot that lifts in the stop's tail still sets down off its stance, so the stop is taken to step a little
     // further than its ramp. On the virtual robot's TRI and BI goals, 1.05 to 1.15 reach a metre at full speed in one
     // pass and every centimetre and few-degree goal at half speed; 1.0 needs a second pass at full speed, 1.2 misses
-    // 5 deg turns, and above 1.05 a TRI metre's predicted progress steps back more often.
+    // 5 deg turns, and above 1.05 a TRI metre's predicted progress steps back more often. Fitted on the strokes of the
+    // 31.5 deg coxa's envelope and not fitted again.
     static constexpr float STOP_TAIL = 1.05f;
 
     static constexpr float smoothing_factor = BODY_SMOOTHING;
@@ -605,13 +761,15 @@ class MotionService {
     struct Posture {
         float s1, h, fd;
     };
-    // The posture the classic walk stands in, valid once it was taken between steps (settleWalkPosture) or from the
-    // stand the walk was entered from (takeRestPosture).
+    // The posture and stance the classic walk stands in, valid once it was taken between steps (settleWalkPosture) or
+    // from the stand the walk was entered from (takeRestPosture).
     Posture _walkPosture {};
+    Stance _walkStance = Stance::DEFAULT;
     bool _walkPostureValid = false;
     // The posture of a stand at rest, its lift as an s1, for a walk entered next: the targets the stand holds. Anything
     // that moves the robot in WALK before the first classic command takes it consumes it (clears _atRest).
     Posture _restPosture {};
+    Stance _restStance = Stance::DEFAULT;
     bool _atRest = false;
     // A posture is waiting for the gait to stop, then for the robot to settle; the walk is held at zero meanwhile.
     bool _posturePending = false;
@@ -636,6 +794,14 @@ class MotionService {
     // write.
     MotionInbox::Modes _modesTaken;
     std::optional<GaitType> _gaitTaken;
+    // Refused this tick, logged after its servo write.
+    std::optional<GaitType> _gaitRefused;
+    enum class CrabRefusal : uint8_t { NONE, WALK_NN, TRAVEL };
+    CrabRefusal _crabRefused = CrabRefusal::NONE;
+    bool _leavingCrab = false; // the default stance is posted for a crab its calibration no longer reaches
+    bool _crabLeftLogDue = false;
+    float _crabRestCoxas[6] = {}; // crabRestCoxas'
+    bool _walkNnRefused = false;
     float _tunedVelocity[3] = {0.f, 0.f, 0.f};
     bool _tunedLogDue = false;
     // The dead-man stop is in force: it fired, and no command or goal has come since.
@@ -645,6 +811,7 @@ class MotionService {
     CommandMsg lastCommand{};
 
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, .limp = 0};
+    CoxaTravel _coxaTravel = CoxaTravel::SERVO;
 
   public:
     // Any task: the mode the control task applied last, the one the robot reports.
@@ -687,18 +854,25 @@ class MotionService {
     void applyWalkTarget() {
         if (motionState != MOTION_STATE::WALK || gait_state.gait_type == GaitType::TUNED) return;
         const CommandMsg &c = lastWalkCommand_;
-        if (!_walkPostureValid || postureOffset(c) > POSTURE_DEADBAND) _posturePending = true;
+        if (!_walkPostureValid || postureOffset(c) > POSTURE_DEADBAND || _walkStance != _stance) _posturePending = true;
         const bool held = _posturePending || _postureSettling;
         const Posture p = held ? Posture {c.s1, c.h, c.fd} : _walkPosture;
+        // Not held, the walk stands in the stance in force (_walkStance is _stance).
+        const Stance stance = _stance;
         // Held, the stick still tells AUTO how fast the walk will be, so the gait is chosen while the walk waits.
         const float stride = _stride;
         const AutoDemand demand = autoDemand(c.lx, c.ly, c.rx, c.s, p.s1, p.h, p.fd, stride);
         _walkSpeed01 = demand.speed01;
         _autoGait = selectAutoGait(demand, gait_state.gait_type, p.s1, p.h, p.fd, stride);
-        const WalkTarget w =
+        WalkTarget w =
             _requestedGait == GaitType::AUTO
                 ? autoWalkTarget(gait_state.gait_type, demand, c.lx, c.ly, c.rx, p.s1, p.h, p.fd, stride)
-                : classicWalkTarget(gait_state.gait_type, c.lx, c.ly, c.rx, c.s, p.s1, p.h, p.fd, stride);
+                : classicWalkTarget(gait_state.gait_type, c.lx, c.ly, c.rx, c.s, p.s1, p.h, p.fd, stride, stance);
+        // A goal walking its sticks strides no further than what remains of it; a client's walk keeps its stride.
+        if (_goalStarted && goalActive() && _inbox.goalDrives()) {
+            const StrokeCap cap = _goal.strokeCap();
+            w = withStrokeCap(gait_state.gait_type, w, cap.axis, cap.limit, p.s1, p.h, p.fd, stance);
+        }
         target_gait_state.step_x = held ? 0.f : w.stepX;
         target_gait_state.step_y = held ? 0.f : w.stepY;
         target_gait_state.step_angle = held ? 0.f : w.stepAngle;
@@ -706,23 +880,36 @@ class MotionService {
     }
 
     // Control task, IDLE, after the tick's modes and the centring before them: the joints dragged while the robot
-    // idled. A joint writes its own servo alone, so every other servo holds the pulse it had when the motion stopped, or
-    // stays limp; a joint posted before a mode leaving IDLE was applied never gets here. The angles the servos hold, within travel as
-    // the controller held the motion's last pose, are published on entering IDLE and after each tick that writes, as the
-    // app's 3D view draws them, and never on a timer.
+    // idled. A joint writes its own servo alone, so every other servo holds the pulse it had when the motion stopped,
+    // or stays limp; a joint posted before a mode leaving IDLE was applied never gets here. The angles the servos hold,
+    // within travel as the controller held the motion's last pose, are published on entering IDLE and after each tick
+    // that writes, as the app's 3D view draws them, and never on a timer. A joint that would bring two legs within
+    // LEG_CLEARANCE_MM (leg_clearance.h), or a pair already within it any closer, pair by pair, judged
+    // against the angles held with the joints written before it, is refused (keepsLegsApart): its servo keeps its
+    // angle, and the angles held are published so a client that drew the drag sees it undone.
     void driveIdleServos(const MotionInbox::Mail &mail, bool entering) {
         if (entering)
             for (int servo = 0; servo < NUM_SERVO; ++servo)
-                msgAngles.angles[servo] = withinTravel(msgAngles.angles[servo], servo % 3);
-        bool written = false;
+                msgAngles.angles[servo] = _servoController->withinTravel(servo, msgAngles.angles[servo], _coxaTravel);
+        bool written = false, refused = false;
         for (int servo = 0; servo < NUM_SERVO; ++servo) {
             if (!(mail.joints.servos & (1u << servo))) continue;
+            float pose[NUM_SERVO];
+            std::copy_n(msgAngles.angles, NUM_SERVO, pose);
+            pose[servo] = _servoController->withinTravel(servo, mail.joints.degrees[servo]);
+            if (!keepsLegsApart(msgAngles.angles, pose)) {
+                refused = true;
+                continue;
+            }
             _servoController->setJointAngle(servo, mail.joints.degrees[servo]);
-            msgAngles.angles[servo] = withinTravel(mail.joints.degrees[servo], servo % 3);
+            msgAngles.angles[servo] = pose[servo];
             written = true;
         }
-        if (written) holdIdle();
-        if (entering || written) publishState();
+        if (written) {
+            _coxaTravel = CoxaTravel::SERVO;
+            holdIdle();
+        }
+        if (entering || written || refused) publishState();
     }
 
     // Control task, IDLE, before the tick's modes: every servo to its centre pulse, published as the centre pose.
@@ -783,6 +970,7 @@ class MotionService {
             _posturePending = false;
             const CommandMsg c = lastWalkCommand_;
             _walkPosture = {c.s1, c.h, c.fd};
+            _walkStance = _stance;
             _walkPostureValid = true;
             _settleStage = SettleStage::LOWER_LIFT;
             target_gait_state.step_height = DEFAULT_STEP_HEIGHT_MM;
@@ -794,11 +982,11 @@ class MotionService {
                 if (!liftArrived() || !feetAtRest()) return;
                 const float heldHeight = target_body_state.zm / bodyHeightMm(1.f);
                 _heightAfterStance = _walkPosture.h > heldHeight;
-                if (!(_heightAfterStance ? standFeasible(kinematics, heldHeight, _walkPosture.fd)
-                                         : standFeasible(kinematics, _walkPosture.h, _feetDistance)))
+                if (!(_heightAfterStance ? standFeasible(kinematics, heldHeight, _walkPosture.fd, _walkStance)
+                                         : standFeasible(kinematics, _walkPosture.h, _feetDistance, _feetStance)))
                     _heightAfterStance = !_heightAfterStance;
                 if (!_heightAfterStance) target_body_state.zm = bodyHeightMm(_walkPosture.h);
-                updateFeetDistanceTarget(_walkPosture.fd);
+                updateFeetTarget(_walkPosture.fd, _walkStance);
                 _settleStage = SettleStage::MOVE;
                 return;
             }
@@ -827,13 +1015,13 @@ class MotionService {
         bool walkable() const { return speed > 0.f && turn > 0.f; }
     };
 
-    // AUTO's full stick walks BI's top speed (autoDemand); a sideways goal's stick is the lateral one. TUNED has no
-    // envelope.
-    static GoalTops goalTops(GoalKind kind, GaitType gait, const Posture &p, float stride) {
+    // AUTO's full stick walks BI's top speed (autoDemand) in the default stance, the one it walks; a sideways goal's
+    // stick is the lateral one. TUNED has no envelope.
+    static GoalTops goalTops(GoalKind kind, GaitType gait, const Posture &p, float stride, Stance stance) {
         const GaitType walked = gait == GaitType::AUTO ? GaitType::BI_GATE : gait;
         const int axis = kind == GoalKind::SIDEWAYS ? 1 : 0;
-        return {envelopeAt(walked, axis, p.s1, p.h, p.fd, stride).vMax,
-                envelopeAt(walked, 2, p.s1, p.h, p.fd, stride).vMax};
+        return {envelopeAt(walked, axis, p.s1, p.h, p.fd, stride, stance).vMax,
+                envelopeAt(walked, 2, p.s1, p.h, p.fd, stride, stance).vMax};
     }
 
     static void setPose(socket_message_GoalStatus &s, const OdometryEstimate &pose) {
@@ -856,9 +1044,13 @@ class MotionService {
             _goalTakenMs = millis();
             const MOTION_STATE mode = motionState;
             // The mode can have changed since the reply, on another task.
-            _goalState = cancelled                                                   ? GoalState::CANCELLED
-                         : mode == MOTION_STATE::STAND || mode == MOTION_STATE::WALK ? GoalState::SETTLING
-                                                                                     : GoalState::REFUSED;
+            // A gait the crab does not walk is refused here too, as handleInputGait refuses one: postGoal refuses it
+            // against the crab it finds, and a crab posted after it ends it. A goal judged in a stance not in force,
+            // a crab posted with it that this tick refused, is refused too: its style was judged on other feet.
+            const bool offered = (!defaultStanceOnly(_goalTaken.gait) || !crab()) && _goalTaken.stance == _stance;
+            _goalState = cancelled                                                                ? GoalState::CANCELLED
+                         : offered && (mode == MOTION_STATE::STAND || mode == MOTION_STATE::WALK) ? GoalState::SETTLING
+                                                                                                  : GoalState::REFUSED;
             if (_goalState == GoalState::SETTLING && mode == MOTION_STATE::STAND)
                 EventBus<ModeMsg>::publish({MOTION_STATE::WALK});
             // The goal commands the walk from here on, so a dead-man stop is over, and the stop watches the link again
@@ -907,7 +1099,7 @@ class MotionService {
             if (_posturePending || _postureSettling || !_walkPostureValid) return;
             if (_goalTaken.gait != GaitType::AUTO && gait_state.gait_type != _goalTaken.gait) return;
             const GoalTops tops =
-                goalTops(_goalTaken.goal.kind, _goalTaken.gait, _walkPosture, _goalTaken.style.stride);
+                goalTops(_goalTaken.goal.kind, _goalTaken.gait, _walkPosture, _goalTaken.style.stride, _walkStance);
             _goal.start(_goalTaken.goal, restPose(), tops.speed, tops.turn);
             _goalStarted = true;
         } else {
@@ -932,12 +1124,14 @@ class MotionService {
         if (gait_state.gait_type == GaitType::TUNED) stopLocomotionCommand(false);
         const bool newGait = _requestedGait != _goalTaken.gait;
         _requestedGait = _goalTaken.gait;
-        _inbox.selectGait(_goalTaken.gait);
         lastWalkCommand_ = _goalTaken.style;
         walkClassic(_goalTaken.style);
         _goalStyleTaken = true;
-        // For the app and the controller; MotionService would take its own selection for a wire gait change.
-        if (newGait) EventBus<GaitMsg>::publish({_goalTaken.gait}, _gaitSubHandle);
+        // For the app and the controller.
+        if (newGait)
+            selectGait(_goalTaken.gait);
+        else
+            _inbox.selectGait(_goalTaken.gait);
     }
 
     // Control task: pushes the status on a change of goal or state, or a step of progress.
@@ -1016,9 +1210,11 @@ class MotionService {
     void noteRestPosture() {
         const bool atRest = !gaitIsCommanded(gait_state) && feetAtRest() &&
                             std::fabs(body_state.zm - target_body_state.zm) < POSTURE_SETTLED_MM && liftArrived();
-        if (atRest)
+        if (atRest) {
             _restPosture = {target_gait_state.step_height / 20.f - 1.f, target_body_state.zm / bodyHeightMm(1.f),
                             _feetDistance};
+            _restStance = _feetStance;
+        }
         _atRest = atRest;
     }
 
@@ -1030,20 +1226,28 @@ class MotionService {
         if (_walkPostureValid || _postureSettling || !std::exchange(_atRest, false)) return;
         const Posture rest = _restPosture;
         if (std::fabs(c.h - rest.h) > POSTURE_DEADBAND || std::fabs(c.fd - rest.fd) > POSTURE_DEADBAND ||
-            c.s1 < rest.s1 - POSTURE_DEADBAND || !postureWalkable(c.s1, rest.h, rest.fd))
+            c.s1 < rest.s1 - POSTURE_DEADBAND || _restStance != _stance ||
+            !postureWalkable(c.s1, rest.h, rest.fd, _stance))
             return;
         _walkPosture = {c.s1, rest.h, rest.fd};
+        _walkStance = _stance;
         _walkPostureValid = true;
         _posturePending = false;
         target_gait_state.step_height = (c.s1 + 1.f) * 20.f;
     }
 
-    // Control task, STAND.
+    // Control task, STAND: a posture commanded, or the stance in force where the feet stand on another, once the feet
+    // are still.
     void takeStandPosture() {
-        if (!_standPosturePending || gaitIsCommanded(gait_state) || !feetAtRest() || !liftArrived()) return;
-        _standPosturePending = false;
+        if (!(_standPosturePending || _feetStance != _stance) || gaitIsCommanded(gait_state) || !feetAtRest() ||
+            !liftArrived())
+            return;
+        if (!std::exchange(_standPosturePending, false)) {
+            updateFeetTarget(_feetDistance, _stance);
+            return;
+        }
         const Posture p = _standPosture;
-        updateFeetDistanceTarget(p.fd);
+        updateFeetTarget(p.fd, _stance);
         target_body_state.zm = bodyHeightMm(p.h);
     }
 
@@ -1114,11 +1318,29 @@ class MotionService {
         target_body_state.zm = 0;
     }
 
-    void updateFeetDistanceTarget(float normalizedFeetDistance) {
+    // The feet the gait stands on, and steps to when they stand elsewhere: the stance's at the feet distance.
+    void updateFeetTarget(float normalizedFeetDistance, Stance stance) {
         _feetDistance = normalizedFeetDistance;
-        scaleStance(feetScale(normalizedFeetDistance), default_feet_pos);
+        _feetStance = stance;
+        stanceFeet(stance, feetScale(normalizedFeetDistance), default_feet_pos);
+        _inbox.noteFeet(default_feet_pos);
         gait.setDefaultFootTarget(default_feet_pos);
+        // The crab is in force whenever the feet are sent to it, so the inbox has it noted already.
+        if (stance == Stance::CRAB) _crabFeet = true;
     }
+
+    // Control task, after a step of the gait: feet that have stepped from the crab onto the default stance are off it.
+    void noteFeetOffCrab() {
+        if (!_crabFeet || _feetStance == Stance::CRAB || gait.hasPendingStanceChange()) return;
+        _crabFeet = false;
+        noteStance();
+    }
+
+    // Control task: the crab is in force, or the feet still stand on or step from it. TUNED, AUTO and WALK_NN walk the
+    // default stance alone, and are refused meanwhile.
+    bool crab() const { return _stance == Stance::CRAB || _crabFeet; }
+
+    void noteStance() { _inbox.noteStance(_stance, crab()); }
 
     float getMotionDeltaSeconds() {
         const unsigned long now = micros();

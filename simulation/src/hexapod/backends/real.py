@@ -50,7 +50,7 @@ from google.protobuf.message import DecodeError
 from .. import speed_model
 from ..servos import NUM_SERVOS, ServoCalibration
 from .base import (Gait, Goal, GoalStatus, Mode, Odometry, RobotDisconnected, RobotError, RobotState, RobotTimeout,
-                   Style, Velocity)
+                   Stance, Style, Velocity)
 from .messages import pb
 from .serial_link import READY_TIMEOUT_S, SerialLink, is_serial_port
 
@@ -174,6 +174,7 @@ class RealBackend:
         self._imu = False
         self._mode: Mode | None = None
         self._gait: Gait | None = None
+        self._stance: Stance | None = None
         self._yaw: float | None = None
         self._roll: float | None = None
         self._features: dict = {}
@@ -234,7 +235,7 @@ class RealBackend:
 
     async def _open(self) -> dict[str, asyncio.Future]:
         await self._transport.open()
-        acks = {name: await self._subscribe(name) for name in ("mode", "gait", "imu", "goal_status")}
+        acks = {name: await self._subscribe(name) for name in ("mode", "gait", "stance", "imu", "goal_status")}
         self._tasks = [self._loop.create_task(task()) for task in (self._read, self._keep_alive, self._refresh_mode)]
         return acks
 
@@ -303,7 +304,7 @@ class RealBackend:
                     if not ack.done():
                         ack.set_result(self._heard[tag] > heard)
                 return
-            if kind in ("mode", "gait", "goal_status") or kind in SETTINGS_TOPICS:
+            if kind in ("mode", "gait", "stance", "goal_status") or kind in SETTINGS_TOPICS:
                 self._heard[_tag(kind)] += 1
             if kind in SETTINGS_TOPICS:
                 self._settings_heard[kind] = getattr(message, kind)
@@ -314,6 +315,8 @@ class RealBackend:
                 self._hear_handheld(message.mode.handheld)
             elif kind == "gait":
                 self._gait = Gait(message.gait.gait)
+            elif kind == "stance":
+                self._stance = Stance(message.stance.stance)
             elif kind == "imu":
                 self._yaw = IMU_YAW_SIGN * math.degrees(message.imu.z)
                 self._roll = IMU_ROLL_FROM_PITCH * math.degrees(message.imu.y)
@@ -437,9 +440,45 @@ class RealBackend:
         self._run(self._send(pb.Message(mode=pb.ModeData(mode=int(mode)))))
         self._wait(lambda: self._mode is mode, f"the robot did not report {mode.name}")
 
+    # The robot echoes every gait request (MotionService::requestGait publishes an accepted one, and answers a refused
+    # one, AUTO or TUNED in the crab, with the gait in force), the gait already in force too.
     def set_gait(self, gait: Gait) -> None:
-        self._run(self._send(pb.Message(gait=pb.GaitData(gait=int(gait)))))
-        self._wait(lambda: self._gait is gait, f"the robot did not report {gait.name}")
+        self._ask_state("gait", pb.Message(gait=pb.GaitData(gait=int(gait))), lambda: self._gait, gait, gait.name,
+                        echoed=True)
+
+    # The robot answers a stance it refuses, the crab in WALK_NN, with the stance in force, and a stance already in
+    # force with nothing (MotionService::handleInputStance).
+    def set_stance(self, stance: Stance) -> None:
+        self._ask_state("stance", pb.Message(stance=pb.StanceData(stance=int(stance))), lambda: self._stance, stance,
+                        f"the {stance.name.lower()} stance", echoed=False)
+
+    # Sends a request for a state topic's value and waits for the robot to report it, or to push anything newer on the
+    # topic: a refusal is answered with the value in force, and another client's request may follow ours. Decided under
+    # the one lock as the wait wakes, so the value asked for, once in force, is taken whatever was pushed before it.
+    # A topic the robot `echoed` every request on is decided on a frame heard after the send alone: taken at once for the
+    # value already in force, a request would leave its echo owed, which the next one would take for its own answer,
+    # a refusal; the request answered by its echo, none is left owed.
+    def _ask_state(self, topic: str, message: pb.Message, current, wanted, what: str, echoed: bool) -> None:
+        tag = _tag(topic)
+        with self._changed:
+            heard = self._heard[tag]
+        self._run(self._send(message))
+        taken = None
+
+        def decided() -> bool:
+            nonlocal taken
+            answered = self._heard[tag] > heard
+            if echoed and not answered:
+                return False
+            if current() is wanted:
+                taken = True
+            elif answered:
+                taken = False
+            return taken is not None
+
+        self._wait(decided, f"the robot did not report {what}")
+        if not taken:
+            raise RobotError(f"the robot refused {what}, or another request overrode it")
 
     def set_height(self, height: float) -> None:
         with self._changed:
@@ -469,7 +508,7 @@ class RealBackend:
                 raise self._error
             return RobotState(t=time.monotonic(), mode=self._mode, gait=self._gait,
                               yaw=self._yaw if self._imu else None, link_drops=self._drops,
-                              roll=self._roll if self._imu else None, handheld=self._handheld)
+                              roll=self._roll if self._imu else None, handheld=self._handheld, stance=self._stance)
 
     # Subscribes to the mode again, for its snapshot. A firmware from before the snapshots answers nothing but pushes
     # every change, so the mode last heard is then as current as any. From a firmware that answers subscribes, an ack

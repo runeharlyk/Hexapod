@@ -8,6 +8,7 @@ import {
   Message,
   ModeData,
   OtaStatusData,
+  StanceData,
   SubscribeNotification,
   type MessageFns
 } from '../../src/lib/platform_shared/message'
@@ -61,6 +62,7 @@ const BOOT_VALUES: Record<string, unknown> = {
   mode: ModeData.create(),
   angles: AnglesData.create(),
   gait: GaitData.create(),
+  stance: StanceData.create(),
   wifiStatus: WifiStatus.create(),
   apStatus: APStatus.create(),
   otaStatus: OtaStatusData.create(),
@@ -85,13 +87,15 @@ const requestKeyOf = (request: CorrelationRequest) =>
  * current value and then the subscribe echoed as the ack, a subscribe to a stream with the ack alone, and a repeated
  * subscribe again without doubling the pushes. Every state topic of platform_shared/topics.json holds a value from the
  * start, or construction fails, as the firmware's table does without a snapshot. A request goes to its responder, else
- * to the fallback, and with neither is answered 501, as by a firmware that does not know it. Pings get pongs.
+ * to the fallback, and with neither is answered 501, as by a firmware that does not know it. Pings get pongs. Any other
+ * frame, a command such as a mode, is recorded and goes to the command taker, if one was given (`takeCommands`).
  */
 export class FakeRobot {
   private readonly values = new Map<number, { key: string; value: unknown }>()
   private readonly clients = new Map<Client, Set<number>>()
   private readonly responders = new Map<RequestKey, Responder>()
   private fallback: Responder = () => ({ statusCode: 501 })
+  private commandTaker: ((message: Message) => void) | undefined
   private readonly dropping = new Map<number, number>()
   private acking = true
   private stalled = false
@@ -133,7 +137,14 @@ export class FakeRobot {
       this.send(client, null, Message.create({ pongmsg: {} }))
     } else if (message.correlationRequest) {
       void this.answer(client, message.correlationRequest)
+    } else {
+      this.commandTaker?.(message)
     }
+  }
+
+  /** A state topic's current value. */
+  value<F extends StateTopic>(topic: F): ValueOf<F> {
+    return this.values.get(tagOf(topic as MessageFns<unknown>))!.value as ValueOf<F>
   }
 
   /** A state topic changes: stored, and pushed to its subscribers. */
@@ -152,6 +163,11 @@ export class FakeRobot {
 
   respond(key: RequestKey, responder: Responder) {
     this.responders.set(key, responder)
+  }
+
+  /** Takes every command frame, one that is neither a subscription, a ping nor a request, with `taker`. */
+  takeCommands(taker: (message: Message) => void) {
+    this.commandTaker = taker
   }
 
   /** Answers every request that has no responder of its own. */

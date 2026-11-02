@@ -70,19 +70,20 @@ def _library() -> ctypes.CDLL:
         _build()
     lib = ctypes.CDLL(str(LIBRARY))
     floats = lambda n: [ctypes.c_float] * n  # noqa: E731
-    lib.setMode.argtypes = lib.setGait.argtypes = [ctypes.c_int]
+    lib.setMode.argtypes = lib.setGait.argtypes = lib.setStance.argtypes = [ctypes.c_int]
     lib.command.argtypes = floats(9)
     lib.setImu.argtypes = floats(9)
-    lib.servosDriven.restype = lib.resetOdometry.restype = ctypes.c_bool
+    lib.servosDriven.restype = lib.resetOdometry.restype = lib.setGait.restype = ctypes.c_bool
     lib.servoAngles.restype = ctypes.POINTER(ctypes.c_float)
     lib.servoWrites.restype = lib.jointWrites.restype = ctypes.c_uint
     lib.setJoint.argtypes = [ctypes.c_int, ctypes.c_float]
     lib.telemetrySample.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_int]
     lib.telemetrySample.restype = ctypes.c_int
-    lib.classicWalkTarget.argtypes = [ctypes.c_int, *floats(8), ctypes.POINTER(ctypes.c_float)]
+    lib.classicWalkTarget.argtypes = [ctypes.c_int, *floats(8), ctypes.c_int, ctypes.POINTER(ctypes.c_float)]
     lib.autoWalk.argtypes = [ctypes.c_int, *floats(8), ctypes.POINTER(ctypes.c_float)]
     lib.autoWalk.restype = ctypes.c_int
-    lib.clampPosture.argtypes = [ctypes.POINTER(ctypes.c_float)]
+    lib.clampPosture.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_int]
+    lib.stanceFeet.argtypes = [ctypes.c_int, ctypes.c_float, ctypes.POINTER(ctypes.c_float)]
     lib.goalMove.argtypes = [ctypes.c_int, *floats(4), ctypes.c_int, *floats(4)]
     lib.goalMove.restype = ctypes.c_int
     lib.goalStatus.argtypes = lib.odometry.argtypes = [ctypes.POINTER(ctypes.c_float)]
@@ -110,8 +111,17 @@ class VirtualRobot:
     def set_mode(self, mode: int) -> None:
         self._lib.setMode(mode)
 
-    def set_gait(self, gait: int) -> None:
-        self._lib.setGait(gait)
+    def set_gait(self, gait: int) -> bool:
+        """A GaitData message by its GaitEnum value; False when the robot refuses it, AUTO and TUNED in the crab."""
+        return self._lib.setGait(gait)
+
+    def set_stance(self, stance: int) -> None:
+        """A StanceData message by its StanceEnum value, taken at the next tick."""
+        self._lib.setStance(stance)
+
+    def stance(self) -> int:
+        """The stance in force, by its StanceEnum value."""
+        return self._lib.stance()
 
     def command(self, lx=0.0, ly=0.0, rx=0.0, ry=0.0, h=0.0, s=0.0, s1=0.0, fd=0.0, stride=0.0) -> None:
         """A ControllerInputData message, as main.cpp's handler turns it into a CommandMsg."""

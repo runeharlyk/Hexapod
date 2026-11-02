@@ -8,6 +8,9 @@
 //
 // Rules:
 // - An APPLIED message is MotionService reporting its own decision and is never a request: ignored.
+// - An explicit WALK_NN while the crab stance is in force, or the feet still stand on or step from it, is refused: the
+//   standing mode is restated as APPLIED, so the client that asked learns the answer. The policy was trained on the
+//   default stance alone, and takes its feet in one tick.
 // - A borrow (a play asking for ANIMATE) from a mode that is not actuated is refused: the loaded play
 //   is cancelled and the standing mode is restated as APPLIED, so the client that asked for the play
 //   learns the answer. A DEACTIVATED handled while the clip loaded therefore wins over the play.
@@ -49,6 +52,7 @@ struct ModeArbiterInput {
     ModeMsgKind kind;
     bool busy; // AnimationRunner::busy(): playing, a play pending, or a pose away from stance; or an ease out of IDLE
     bool idleHeld = false; // IDLE holds servos at a pose no motion set: written there, or ANIMATE's
+    bool crab = false;     // the crab stance is in force, or the feet still stand on or step from it
 };
 
 struct ModeArbiterDecision {
@@ -86,6 +90,10 @@ inline ModeArbiterDecision decideMode(const ModeArbiterInput &in) {
             d.mode = in.previous;
             d.borrowed = false;
         }
+        return d;
+    }
+    if (in.requested == MOTION_STATE::WALK_NN && in.crab) {
+        d.action = D::RESTATE;
         return d;
     }
     if (in.current == MOTION_STATE::IDLE && in.idleHeld && actuated(in.requested) &&

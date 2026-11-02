@@ -41,8 +41,12 @@ class VirtualRobot {
         if (c.sanitize()) EventBus<CommandMsg>::publish(c);
     }
     void setMode(MOTION_STATE mode) { EventBus<ModeMsg>::publish({mode}); }
-    void setGait(GaitType gait) { EventBus<GaitMsg>::publish({gait}); }
+    // As main.cpp's gait and stance handlers: a gait the crab does not walk is refused, false, and published nowhere.
+    bool setGait(GaitType gait) { return _robot.requestGait(gait); }
+    void setStance(Stance stance) { _robot.requestStance(stance); }
     void setImu(const Peripherals::Imu &imu) { Peripherals::setImu(imu); }
+    // As the settings service publishes a calibration it stored.
+    void calibrate(const ServoSettings &settings) { ServoSettingsBus::publish(settings); }
     // As the animation adapters call the motion: the clip is loaded from ANIMATION_DIRECTORY, and a play the motion
     // accepts borrows ANIMATE through the bus.
     void animationPlay(const AnimationCommandMsg &play) { _robot.animationPlay(play); }
@@ -97,6 +101,16 @@ class VirtualRobot {
     unsigned jointWrites() const { return ServoController::output().jointWrites; }
     unsigned centrings() const { return ServoController::output().centrings; }
     GaitType gait() const { return static_cast<GaitType>(_sample.gait); }
+    // The stance in force, and the one whose feet the gait stands on or steps to.
+    Stance stance() const { return _robot.motion().stance(); }
+    Stance feetStance() const { return _robot.motion().feetStance(); }
+    // The top speed, in m/s, the goal walking now was started with, and the stroke it caps its walk to.
+    float goalTopSpeed() const { return _robot.motion().goal().topSpeed(); }
+    StrokeCap goalStrokeCap() const { return _robot.motion().goal().strokeCap(); }
+    // The stick the walk walks, a goal's included.
+    const CommandMsg &walkCommand() const { return _robot.motion().walkCommand(); }
+    // The coxa travel the servos hold the last pose within.
+    CoxaTravel coxaTravel() const { return _robot.motion().coxaTravel(); }
     // The stroke and cadence the gait is easing toward, as the motion holds them now.
     const gait_state_t &gaitCommand() const { return _robot.motion().gaitCommand(); }
     // The stroke and cadence the gait walks this tick.

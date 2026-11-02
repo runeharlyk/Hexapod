@@ -80,6 +80,10 @@
    "SERVO_WRITE_SKIPPED": 3,
    "SERVO_WRITE_RESTARTED": 4
   },
+  "socket_message.StanceEnum": {
+   "STANCE_DEFAULT": 0,
+   "STANCE_CRAB": 1
+  },
   "socket_message.SystemCommand": {
    "SYS_NONE": 0,
    "SYS_RESTART": 1,
@@ -526,6 +530,7 @@
    "mode": "130 socket_message.ModeData",
    "input": "140 socket_message.ControllerInputData",
    "gait": "160 socket_message.GaitData",
+   "stance": "161 socket_message.StanceData",
    "angles": "170 socket_message.AnglesData",
    "servo_pwm": "210 socket_message.ServoPWMData",
    "servo_state": "211 socket_message.ServoStateData",
@@ -587,6 +592,9 @@
   },
   "socket_message.ServoStateData": {
    "active": "1 bool"
+  },
+  "socket_message.StanceData": {
+   "stance": "1 socket_message.StanceEnum"
   },
   "socket_message.StaticSystemInformation": {
    "esp_platform": "1 string",

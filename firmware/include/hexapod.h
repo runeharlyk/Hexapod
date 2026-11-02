@@ -35,7 +35,7 @@ class Hexapod {
 
     void updateActuators() {
         if (updatedMotion) {
-            _servoController.setAngles(_motionService.getAngles());
+            _servoController.setAngles(_motionService.getAngles(), _motionService.coxaTravel());
             _servoController.updateServoState();
         }
         _motionService.logMail();
@@ -46,6 +46,8 @@ class Hexapod {
     void animationPose(const PoseMsg &p) { _motionService.handleAnimationPose(p); }
     void animationControlLost() { _motionService.animationControlLost(); }
     void setJoint(int servo, float degrees) { _motionService.setJoint(servo, degrees); }
+    bool requestGait(GaitType gait) { return _motionService.requestGait(gait); }
+    void requestStance(Stance stance) { _motionService.requestStance(stance); }
     int centreServos() { return _motionService.requestCentreServos(); }
     void validateAnimation(const char *name, socket_message_AnimationReport &r) {
         _motionService.validateAnimation(name, r);

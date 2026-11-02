@@ -44,6 +44,7 @@ from src.sim.firmware_policy import FirmwarePolicy, PolicyParams, dmp_angles
 from src.sim.domain_rand import DomainRandomizer, Ranges
 from src.sim.terrain import randomize_hfield, KINDS as TERRAIN_KINDS
 from src.sim.rollout_weights import SCORE_W_STUCK, SCORE_W_KNOCK
+from src.robot.animation import TRAINED_COXA_LIMIT_DEG
 from src.robot.gait_schedule import GaitSchedule
 from src.robot.firmware_gait import (
     GaitController,
@@ -333,6 +334,13 @@ class HexapodMjEnv(gym.Env):
                                  "reflexes or arc stance, and always self-levels")
             self.firmware = FirmwarePolicy(firmware_policy_params(control_mode, self.obs_history,
                                                                   BaseGait(gait_schedule)))
+        # The robot's servos hold WALK_NN's coxae within the travel the policy is trained in (kinematics.h
+        # TRAINED_COXA_LIMIT_DEG), narrower than the model's; the other modes take the model's own.
+        self._joint_limits = self.sim.joint_limits
+        if self.firmware is not None:
+            lo, hi = self._joint_limits
+            coxa = np.radians(TRAINED_COXA_LIMIT_DEG)
+            lo[0::3], hi[0::3] = np.maximum(lo[0::3], -coxa), np.minimum(hi[0::3], coxa)
         self.action_space = gym.spaces.Box(-1.0, 1.0, shape=(self.act_dim,), dtype=np.float32)
 
         self.prev_action = np.zeros(self.act_dim, dtype=np.float32)
@@ -477,8 +485,8 @@ class HexapodMjEnv(gym.Env):
             effective = self._cmd_buffer[idx]
         else:
             effective = joint_cmd
-        self.sim.set_joint_targets(effective)
-        lo, hi = self.sim.joint_limits
+        lo, hi = self._joint_limits
+        self.sim.set_joint_targets(np.clip(effective, lo, hi) if self.firmware is not None else effective)
         self._joint_over = np.maximum(np.maximum(lo - effective, effective - hi), 0.0)
 
         if self.randomize:

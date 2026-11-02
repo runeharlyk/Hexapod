@@ -42,9 +42,9 @@ BodyStateMsg restingStance(GaitController &gait, gait_state_t still) {
 
 constexpr int SAMPLE_TICKS = 5; // the gyro's 40 Hz in the 200 Hz control loop
 
-// A gait, the tripod unless named, walked alone at one cycle per second, its feet and stance flags fed to the
-// odometries as MotionService feeds them, after each step; when `gyro` is set, the DMP's yaw turns at it and the fused
-// one gets a packet on every fifth tick.
+// A gait, the tripod unless named, walked alone at one cycle per second on the stance's feet, the default unless named,
+// its feet and stance flags fed to the odometries as MotionService feeds them, after each step; when `gyro` is set, the
+// DMP's yaw turns at it and the fused one gets a packet on every fifth tick.
 struct GaitWalk {
     GaitController gait;
     gait_state_t state {};
@@ -55,13 +55,17 @@ struct GaitWalk {
     float dmpYaw = 0;
     int ticksRun = 0;
 
-    GaitWalk(float stepX, float stepY, float stepAngle, GaitType type = GaitType::TRI_GATE) {
+    GaitWalk(float stepX, float stepY, float stepAngle, GaitType type = GaitType::TRI_GATE,
+             Stance feet = Stance::DEFAULT) {
         state.gait_type = type;
         state.step_speed = 1;
         state.step_height = 15;
         state.step_depth = 0.002f;
         state.phase_rate = 1;
         gait.setGait(state);
+        float home[6][4];
+        stanceFeet(feet, 1.0f, home);
+        gait.snapDefaultFootTarget(home);
         body = restingStance(gait, state);
         state.step_x = stepX;
         state.step_y = stepY;
@@ -132,6 +136,18 @@ void test_a_sideways_walk_lands_on_the_commanded_displacement() {
     TEST_ASSERT_FLOAT_WITHIN(0.01f * expected, expected, leg.x);
     TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0, leg.y);
     TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0, leg.yaw);
+}
+
+// The crab's feet stand on the lines across the body through their coxa mounts, and stroke along them sideways: the fit
+// on its feet lands where the default stance's does.
+void test_a_crab_walk_sideways_lands_on_the_commanded_displacement() {
+    GaitWalk walk(STEP_MM, 0, 0, GaitType::TRI_GATE, Stance::CRAB);
+    const OdometryEstimate leg = walk.walkCycles(CYCLES);
+    const float expected = CYCLES * walk.perCycle(STEP_MM) / 1000.0f;
+    TEST_ASSERT_FLOAT_WITHIN(0.01f * expected, expected, leg.x);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0, leg.y);
+    TEST_ASSERT_FLOAT_WITHIN(1e-4f, 0, leg.yaw);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f * expected, expected, leg.distance);
 }
 
 // Each foot strokes along a straight chord tangent to its circle, so its bearing turns a little slower toward the
@@ -364,6 +380,9 @@ namespace {
 constexpr float REST_MM = 0.5f, REST_RAD = 0.005f;
 constexpr std::array<std::array<float, 3>, 3> STROKES {
     std::array<float, 3> {0, STEP_MM, 0}, {0, 0, STEP_ANGLE_RAD}, {0, STEP_MM, STEP_ANGLE_RAD}};
+// The crab's: sideways, its walking axis, and a turn and an arc on it.
+constexpr std::array<std::array<float, 3>, 3> CRAB_STROKES {
+    std::array<float, 3> {STEP_MM, 0, 0}, {0, 0, STEP_ANGLE_RAD}, {STEP_MM, 0, STEP_ANGLE_RAD}};
 
 void assertSettlesAt(const OdometryEstimate &predicted, const OdometryEstimate &settled, const char *msg) {
     TEST_ASSERT_FLOAT_WITHIN_MESSAGE(REST_MM / 1000, predicted.x, settled.x, msg);
@@ -378,12 +397,12 @@ void assertSettlesAt(const OdometryEstimate &predicted, const OdometryEstimate &
 // feet down in each, which restStep's fits from one foot's joining to the next match to within 0.5 mm and 0.005 rad
 // (measured over 200 stop phases of every classic gait: 0.27 mm and 0.002 rad at worst). One fit over the whole ease
 // missed by 2.9 mm.
-void test_the_rest_step_predicts_where_a_stopped_gait_settles() {
+void assertRestStepPredictsTheStop(Stance feet, const std::array<std::array<float, 3>, 3> &strokes) {
     for (const GaitType type : {GaitType::TRI_GATE, GaitType::BI_GATE, GaitType::WAVE, GaitType::RIPPLE}) {
-        const BodyStateMsg HOME = GaitWalk(0, 0, 0, type).body; // the stance the gait eases home to
-        for (const std::array<float, 3> &stroke : STROKES) {
+        const BodyStateMsg HOME = GaitWalk(0, 0, 0, type, feet).body; // the stance the gait eases home to
+        for (const std::array<float, 3> &stroke : strokes) {
             for (int k = 1; k <= 8; ++k) {
-                GaitWalk walk(stroke[0], stroke[1], stroke[2], type);
+                GaitWalk walk(stroke[0], stroke[1], stroke[2], type, feet);
                 walk.run(ticksFor(1.0f) + k * TICKS_PER_SECOND / 8);
                 std::array<bool, 6> stance;
                 for (int leg = 0; leg < 6; ++leg) stance[leg] = walk.gait.inStance(walk.state, leg);
@@ -391,13 +410,22 @@ void test_the_rest_step_predicts_where_a_stopped_gait_settles() {
                     walk.odometry.estimate(), KinematicOdometry::restStep(walk.body, stance, HOME.feet, ALL_DOWN));
                 walk.state.step_x = walk.state.step_y = walk.state.step_angle = 0;
                 walk.run(ticksFor(FEET_EASE_S + 0.1f));
-                char msg[80];
-                std::snprintf(msg, sizeof(msg), "gait %d stroke %.0f %.2f, stopped at %d/8 of a cycle", (int)type,
-                              stroke[1], stroke[2], k);
+                char msg[96];
+                std::snprintf(msg, sizeof(msg), "gait %d stroke %.0f %.0f %.2f, stopped at %d/8 of a cycle", (int)type,
+                              stroke[0], stroke[1], stroke[2], k);
                 assertSettlesAt(predicted, walk.odometry.estimate(), msg);
             }
         }
     }
+}
+
+void test_the_rest_step_predicts_where_a_stopped_gait_settles() {
+    assertRestStepPredictsTheStop(Stance::DEFAULT, STROKES);
+}
+
+// The same on the crab's feet, stopped from its sideways walk, a turn and an arc.
+void test_the_rest_step_predicts_where_a_stopped_crab_settles() {
+    assertRestStepPredictsTheStop(Stance::CRAB, CRAB_STROKES);
 }
 
 // A planted foot the stop lifts first holds the body where it stands, and a foot in its swing that the stop does not
@@ -539,27 +567,36 @@ void tearDown() {
 }
 
 // The body travel the gait's stance strokes command is integrated tick by tick from the stroke and cadence it walks.
+// While the stroke grows from rest, the planted feet also move with its growth, by d(stroke / 2) (1 - 2p) at stance
+// progress p, which stroke x cadence leaves out: at most half the stroke over the start. Once the stroke is reached the
+// two agree.
 void test_a_tripod_walk_forward_moves_the_odometry_forward_and_straight() {
     VirtualRobot robot;
     standUp(robot);
     robot.setMode(MOTION_STATE::WALK);
-    float commandedMm = 0;
-    for (int t = 0; t < ticksFor(WALK_S); ++t) {
-        if (t % COMMAND_PERIOD_TICKS == 0) robot.command(FORWARD);
-        robot.tick();
-        const gait_state_t &g = robot.gaitState();
-        TEST_ASSERT_EQUAL(GaitType::TRI_GATE, g.gait_type);
-        if (gaitIsCommanded(g)) commandedMm += g.step_y * g.phase_rate * DT / g.stand_frac;
-    }
-    const float commanded = commandedMm / 1000.0f;
+    const auto walk = [&robot](float seconds) {
+        float commandedMm = 0;
+        for (int t = 0; t < ticksFor(seconds); ++t) {
+            if (t % COMMAND_PERIOD_TICKS == 0) robot.command(FORWARD);
+            robot.tick();
+            const gait_state_t &g = robot.gaitState();
+            TEST_ASSERT_EQUAL(GaitType::TRI_GATE, g.gait_type);
+            if (gaitIsCommanded(g)) commandedMm += g.step_y * g.phase_rate * DT / g.stand_frac;
+        }
+        return commandedMm / 1000.0f;
+    };
+    const float commanded = walk(WALK_S);
     const OdometryEstimate e = robot.odometry();
     TEST_ASSERT_GREATER_THAN_FLOAT(0.1f, commanded);
-    TEST_ASSERT_FLOAT_WITHIN(0.03f * commanded, commanded, e.y);
+    TEST_ASSERT_FLOAT_WITHIN(0.5f * robot.gaitState().step_y / 1000.0f, commanded, e.y);
     TEST_ASSERT_FLOAT_WITHIN(0.01f * e.y, 0, e.x);
     // On a gyro reading zero the fused heading stays; the feet's own turns by about -0.015 rad as every walk starts,
     // and by none in the steady walk.
     TEST_ASSERT_FLOAT_WITHIN(0.005f, 0, e.yaw);
     TEST_ASSERT_FLOAT_WITHIN(0.02f, 0, e.kinematicYaw);
+    TEST_ASSERT_TRUE(robot.resetOdometry());
+    const float steady = walk(WALK_S);
+    TEST_ASSERT_FLOAT_WITHIN(1e-3f * steady, steady, robot.odometry().y);
 }
 
 // A stance change steps every foot to a new place, but each one only through the air: the robot does not travel.
@@ -699,6 +736,7 @@ int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_a_straight_walk_lands_on_the_commanded_displacement);
     RUN_TEST(test_a_sideways_walk_lands_on_the_commanded_displacement);
+    RUN_TEST(test_a_crab_walk_sideways_lands_on_the_commanded_displacement);
     RUN_TEST(test_a_turn_in_place_lands_on_the_commanded_yaw);
     RUN_TEST(test_an_arc_lands_on_the_commanded_pose);
     RUN_TEST(test_a_foot_lifted_3_mm_or_more_is_ignored);
@@ -714,6 +752,7 @@ int main(int, char **) {
     RUN_TEST(test_an_easing_body_yaw_is_not_learned_as_bias);
     RUN_TEST(test_feet_moving_on_the_floor_teach_no_bias);
     RUN_TEST(test_the_rest_step_predicts_where_a_stopped_gait_settles);
+    RUN_TEST(test_the_rest_step_predicts_where_a_stopped_crab_settles);
     RUN_TEST(test_the_rest_step_holds_on_a_foot_that_does_not_stay_and_not_on_a_swinging_one);
     RUN_TEST(test_a_pause_restarts_the_stillness_the_bias_waits_for);
     RUN_TEST(test_a_slow_walk_teaches_no_bias);

@@ -7,6 +7,12 @@ import type { Pose, Stance, Vec3 } from './model'
 
 export type ParamValues = ReadonlyMap<ParamId, number> | undefined
 
+/**
+ * The clamp mask's bit for angles that bring two legs within the firmware's clearance (animation.h LEGS_TOUCH), which
+ * the robot's player never drives; the robot's animation status and validation report carry it too.
+ */
+export const LEGS_TOUCH = 1 << 18
+
 export enum State {
   IDLE,
   ENTRY,
@@ -42,7 +48,9 @@ export interface AnimationEngine {
     stance: Stance,
     baseZ?: number
   ): Pose | null
-  /** 18 servo angles in degrees and the 18-bit mask of joints at a limit or of a foot leg out of reach. */
+  /**
+   * 18 servo angles in degrees and their mask: a bit per joint at a limit or of a foot leg out of reach, and LEGS_TOUCH.
+   */
   poseToAngles(pose: Pose, stance: Stance): { angles: number[]; mask: number }
   /** The joints of a foot offset, in degrees, solved on body at the ride-height base. */
   legJointsDeg(

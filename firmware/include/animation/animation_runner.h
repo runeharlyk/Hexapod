@@ -18,6 +18,7 @@
 // ends and the Entry-to-Playing seam is continuous however short the Entry.
 
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <new>
 #include <esp_heap_caps.h>
@@ -111,10 +112,10 @@ class AnimationRunner {
     // A puppeteer's pose, approached at the servo's top speed.
     void setPuppet(const PoseMsg &p) { postPuppet(p, true); }
 
-    // Validate a file for a request handler. It has its own buffer, so it never overwrites a clip
-    // that is loaded and waiting for the control task, and its own lock, so the clamp sweep does not
-    // hold up a play.
-    void validate(const char *name, socket_message_AnimationReport &report) {
+    // Validate a file for a request handler on `feet`, the stance the robot stands on, a copy the caller owns. It has
+    // its own buffer, so it never overwrites a clip that is loaded and waiting for the control task, and its own lock,
+    // so the clamp sweep does not hold up a play.
+    void validate(const char *name, socket_message_AnimationReport &report, const float (&feet)[6][4]) {
         if (!buffersReady_) {
             report.ok = false;
             strncpy(report.error, "no PSRAM for the animation buffers", sizeof(report.error) - 1);
@@ -128,7 +129,15 @@ class AnimationRunner {
         if (!report.ok) {
             strncpy(report.error, error, sizeof(report.error) - 1);
         } else {
-            report.clamped_mask = sweepClampMask(*scratch_);
+            Touch touch;
+            report.clamped_mask = sweepClampMask(*scratch_, feet, touch);
+            // A frame that brings two legs together is refused, as simulation's animation.clearance_error refuses it.
+            if (touch.found) {
+                report.ok = false;
+                snprintf(report.error, sizeof(report.error), "legs %s and %s touch at t=%.3f s on a %+.0f mm base",
+                         LEG_NAMES[leg_clearance::PAIRS[touch.pair][0]], LEG_NAMES[leg_clearance::PAIRS[touch.pair][1]],
+                         (double)touch.t, (double)touch.baseZ);
+            }
         }
         xSemaphoreGive(validateMutex_);
         logStackOnce(validateStackLogged_, "validate");
@@ -145,6 +154,7 @@ class AnimationRunner {
         busy_.store(!anim::atStance(current_), std::memory_order_release);
         havePuppet_ = !pendingPlay_.load(std::memory_order_acquire);
         if (havePuppet_) puppetTarget_ = anim::Pose {};
+        startClearPose();
     }
 
     // Control task, on the first ANIMATE tick after an IDLE whose servos were written: the pose is the angles they
@@ -170,6 +180,7 @@ class AnimationRunner {
         busy_.store(true, std::memory_order_release);
         havePuppet_ = true;
         puppetTarget_ = anim::Pose {};
+        startClearPose();
     }
 
     // Control task, on the first tick after ANIMATE: drop any play or pose and return the player to
@@ -190,7 +201,9 @@ class AnimationRunner {
     }
 
     // Control task, every tick in ANIMATE. sliderZm is the STAND ride-height target. Fills body (the
-    // offsets and the base applied to the stance) and the 18 angles.
+    // offsets and the base applied to the stance) and the 18 angles; a pose that brings two legs within
+    // LEG_CLEARANCE_MM is not driven: the angles step toward it at the servo's speed only while the legs stay apart
+    // (anim::ClearPose), the status reports LEGS_TOUCH, and body's feet are those of the angles driven.
     void tick(float dt, float sliderZm, BodyStateMsg &body, float angles[18]) {
         const int64_t startUs = esp_timer_get_time();
         // Taken before the requests so a play or stop consumed this tick counts as a change.
@@ -215,24 +228,35 @@ class AnimationRunner {
         } else if (havePuppet_) {
             approachPuppet();
         }
-        busy_.store(player_->state() != anim::State::IDLE || !anim::atStance(current_), std::memory_order_release);
         anim::Pose out = current_;
         out.body[anim::Z] += baseZm_;
+        const uint32_t touchedBefore = clampMask_ & anim::LEGS_TOUCH;
         clampMask_ = anim::poseToAngles(out, *kin_, stance_, angles);
+        clearPose_.hold(clampMask_, angles, PUPPET_JOINT_STEP_DEG);
+        // Held short of a pose or catching up with it, the legs are still apart from where the pose has them: reported
+        // as touching, and busy, so a borrowed mode is not handed back until the angles have caught up.
+        if (clearPose_.holding()) clampMask_ |= anim::LEGS_TOUCH;
+        busy_.store(player_->state() != anim::State::IDLE || !anim::atStance(current_) || clearPose_.holding(),
+                    std::memory_order_release);
         anim::bodyState(out.body, stance_, body);
-        for (int i = 0; i < 6; ++i)
-            if (!out.legs[i].joints)
-                for (int k = 0; k < 3; ++k) body.feet[i][k] += out.legs[i].v[k];
-        publishStatus(before != player_->state() || clipBefore != player_->clip());
+        // Held short of the pose, the feet are those of the angles driven, so a mode taken now starts from them.
+        if (clearPose_.holding())
+            anim::feetAt(body, angles);
+        else
+            for (int i = 0; i < 6; ++i)
+                if (!out.legs[i].joints)
+                    for (int k = 0; k < 3; ++k) body.feet[i][k] += out.legs[i].v[k];
+        // A pose that starts or stops bringing two legs together is a change even to an idle player's puppet.
+        publishStatus(before != player_->state() || clipBefore != player_->clip() ||
+                      touchedBefore != (clampMask_ & anim::LEGS_TOUCH));
         recordTickCost(startUs);
     }
 
     // Whether leaving ANIMATE now would move a leg: the player is not idle, a play is loaded and
-    // waiting, or the pose is away from stance. A borrowed mode is handed back only once this clears,
-    // not on a finish edge, so a play cancelled before it started cannot strand the borrow; a swap
-    // deferred by lock contention keeps pendingPlay_ set, so the first tick of a borrow does not
-    // misfire. The player and pose part is computed by the control task each tick, so the mode
-    // worker never reads them across tasks.
+    // waiting, the pose is away from stance, or the angles are held apart from the pose. A borrowed mode is handed back
+    // only once this clears, not on a finish edge, so a play cancelled before it started cannot strand the borrow; a
+    // swap deferred by lock contention keeps pendingPlay_ set, so the first tick of a borrow does not misfire. The
+    // player and pose part is computed by the control task each tick, so the mode worker never reads them across tasks.
     bool busy() const { return busy_.load(std::memory_order_acquire) || pendingPlay_.load(std::memory_order_acquire); }
 
   private:
@@ -272,6 +296,7 @@ class AnimationRunner {
     float baseZm_ = 0.0f;
     float entryStartBase_ = 0.0f; // the base when the current Entry began
     uint32_t clampMask_ = 0;
+    anim::ClearPose clearPose_; // keeps the driven angles from bringing two legs together
     unsigned long lastStatusMs_ = 0;
     std::atomic<bool> playStackLogged_ {false};
     std::atomic<bool> validateStackLogged_ {false};
@@ -312,6 +337,16 @@ class AnimationRunner {
     bool easingFromHeld() const {
         return player_->state() == anim::State::IDLE && jointStepDeg_ == IDLE_EASE_JOINT_STEP_DEG &&
                !anim::atStance(current_);
+    }
+
+    // Control task, entering ANIMATE: the pose the servos hold as the runner takes them over is the clear pose to hold
+    // until a frame keeps the legs apart.
+    void startClearPose() {
+        anim::Pose out = current_;
+        out.body[anim::Z] += baseZm_;
+        float angles[18];
+        anim::poseToAngles(out, *kin_, stance_, angles);
+        clearPose_.start(angles);
     }
 
     void consumeRequests() {
@@ -399,10 +434,22 @@ class AnimationRunner {
         return from + fmaxf(-jointStepDeg_, fminf(jointStepDeg_, step));
     }
 
+    // The first frame of the validator's sweep that brings two legs together, and their pair (leg_clearance::PAIRS).
+    struct Touch {
+        bool found = false;
+        float t = 0.0f;
+        float baseZ = 0.0f;
+        int pair = 0;
+    };
+
+    // Legs 0-5 as the app names them (docs/conventions.md), which a refusal names a pair by.
+    static constexpr const char *LEG_NAMES[6] = {"RF", "RM", "RR", "LF", "LM", "LR"};
+
     // The validator's clamp sweep: every keyframe plus 32 evenly spaced times per segment, on every
     // base the runner may add: the clip's ride height, or both ends of the STAND slider for a clip
-    // that follows it, as simulation/test_animation_library.py checks.
-    uint32_t sweepClampMask(const anim::Clip &clip) {
+    // that follows it, as simulation/test_animation_library.py checks. `touch` is the first frame
+    // that brings two legs together.
+    uint32_t sweepClampMask(const anim::Clip &clip, const float (*feet)[4], Touch &touch) {
         const float sliderEnds[2] = {-SLIDER_RANGE_MM, SLIDER_RANGE_MM};
         const float *bases = clip.hasRideHeight ? &clip.rideHeight : sliderEnds;
         const int baseCount = clip.hasRideHeight ? 1 : 2;
@@ -415,19 +462,22 @@ class AnimationRunner {
                 const float t1 = i + 1 < clip.keyframeCount ? clip.keyframes[i + 1].time : t0;
                 const int samples = i + 1 < clip.keyframeCount ? 32 : 1;
                 for (int s = 0; s < samples; ++s)
-                    mask |= clampMaskAt(clip, params, t0 + (t1 - t0) * (float)s / 32.0f, bases[b]);
+                    mask |= clampMaskAt(clip, params, t0 + (t1 - t0) * (float)s / 32.0f, bases[b], feet, touch);
             }
-            mask |= clampMaskAt(clip, params, clip.duration(), bases[b]);
+            mask |= clampMaskAt(clip, params, clip.duration(), bases[b], feet, touch);
         }
         return mask;
     }
 
-    uint32_t clampMaskAt(const anim::Clip &clip, const float *params, float t, float baseZ) {
+    uint32_t clampMaskAt(const anim::Clip &clip, const float *params, float t, float baseZ, const float (*feet)[4],
+                         Touch &touch) {
         anim::Pose pose;
-        anim::evaluate(clip, params, t, *kin_, stance_, pose, baseZ);
+        anim::evaluate(clip, params, t, *kin_, feet, pose, baseZ);
         pose.body[anim::Z] += baseZ;
         float angles[18];
-        return anim::poseToAngles(pose, *kin_, stance_, angles);
+        const uint32_t mask = anim::poseToAngles(pose, *kin_, feet, angles);
+        if (mask & anim::LEGS_TOUCH && !touch.found) touch = {true, t, baseZ, leg_clearance::closest(angles).pair};
+        return mask;
     }
 
     void publishStatus(bool changed) {

@@ -45,16 +45,25 @@ constexpr void get_transformation_matrix(const BodyStateMsg &b, float T[4][4]) {
     T[3][3] = 1;
 }
 
-// Per-joint travel in degrees, order coxa, femur, tibia. Mirrors COXA/FEMUR/TIBIA_RANGE in
-// simulation/src/resources/build_model.py, which derives them from the servo's real travel; the app's joint drag holds
-// to a copy (app/src/lib/joint-drive.ts JOINT_LIMIT_DEG, kept equal by its unit test).
-static constexpr float JOINT_LIMIT_DEG[3] = {31.5f, 90.0f, 149.0f};
+// Each leg's joint travel in degrees, in leg order, coxa, femur and tibia each, as everything without a servo
+// calibration takes it: the walkable envelope and the stand's feasibility (gait_speed.h), the animation player's clamp,
+// the servos (ServoController, within each coxa's calibrated safe pulses as well), and the copies in
+// simulation/src/robot/animation.py, COXA/FEMUR/TIBIA_RANGE in simulation/src/resources/build_model.py, the app's joint
+// drag (app/src/lib/joint-drive.ts) and its model.xacro, each kept equal by a test.
+// A coxa is bounded by its servo's travel and by the legs meeting each other (leg_clearance.h), nothing else, except a
+// middle coxa, whose servo connections meet the body:
+// - a corner coxa (legs 0, 2, 3, 5) turns +-90 deg, the servo's travel; turning freely, the right front coxa met the
+//   middle leg at 160 counts and the body near the servo's own end at 526 (bench, 2026-11-01);
+// - a middle coxa (legs 1, 4) turns +-45 deg: leg 1's met the body at -48 and +66.5 deg (195 and 424 counts about its
+//   centre of 291, bench, 2026-11-01), and 45 is the short side less 3 deg; leg 4 is taken to mirror leg 1, unmeasured.
+static constexpr float JOINT_LIMIT_DEG[6][3] = {{90.0f, 90.0f, 149.0f}, {45.0f, 90.0f, 149.0f}, {90.0f, 90.0f, 149.0f},
+                                                {90.0f, 90.0f, 149.0f}, {45.0f, 90.0f, 149.0f}, {90.0f, 90.0f, 149.0f}};
 
-// The angle a servo is driven to for a commanded joint angle (joint 0 coxa, 1 femur, 2 tibia): held within the
-// joint's travel, whichever mode commanded it.
-inline float withinTravel(float angleDeg, int joint) {
-    return CLIP(angleDeg, -JOINT_LIMIT_DEG[joint], JOINT_LIMIT_DEG[joint]);
-}
+// The coxa travel TUNED was searched and WALK_NN's policy trained within, which the servos keep for them until they are
+// searched or trained again: without it TUNED drives legs 1 and 2 into each other (simulation/leg_clearance.py). The
+// research and TUNED-search tools read the coxa's travel from the MuJoCo model, now each leg's JOINT_LIMIT_DEG, so a
+// search run again yields a gait this still clips at 31.5 deg until TUNED's limit is revisited.
+static constexpr float TRAINED_COXA_LIMIT_DEG = 31.5f;
 
 class Kinematics {
   private:

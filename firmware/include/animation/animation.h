@@ -9,10 +9,12 @@
 // Units: body angles rad, lengths mm, joint angles deg in the IK output convention, time seconds.
 // File values are 32-bit floats and so is every value here.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <kinematics.h>
+#include <leg_clearance.h>
 #include <message_types.h>
 #include <utils/math_utils.h>
 
@@ -223,6 +225,21 @@ inline void bodyState(const float body6[6], const float stance[6][4], BodyStateM
     b.updateFeet(stance);
 }
 
+// Sets b's feet to those Kinematics::inverseKinematics solves back to `angles` (deg, IK order) at b's body pose: each
+// leg's tip in the body frame (leg_clearance::legChain), brought into the frame the feet are given in through the
+// inverse of the body's transform.
+inline void feetAt(BodyStateMsg &b, const float angles[18]) {
+    float T[4][4];
+    get_transformation_matrix(b, T);
+    for (int leg = 0; leg < 6; ++leg) {
+        leg_clearance::Vec3 chain[4];
+        leg_clearance::legChain(leg, &angles[leg * 3], chain);
+        const float d[3] = {chain[3].x - T[0][3], chain[3].y - T[1][3], chain[3].z - T[2][3]};
+        for (int k = 0; k < 3; ++k) b.feet[leg][k] = T[0][k] * d[0] + T[1][k] * d[1] + T[2][k] * d[2];
+        b.feet[leg][3] = 1.0f;
+    }
+}
+
 // The joints of one foot leg, solved on the body the runner outputs: the offsets plus the ride-height
 // base on z, so a joint leg meets its foot endpoint at any base.
 inline void legJointsDeg(Kinematics &kin, const float body6[6], const float foot[3], int leg, const float stance[6][4],
@@ -317,8 +334,12 @@ inline void evaluate(const Clip &c, const float params[PARAM_COUNT], float t, Ki
     }
 }
 
-// 18 servo angles (deg, IK order) and an 18-bit mask: bit leg*3+joint for a joint pinned at its
-// limit, and the femur and tibia bits of a foot leg the IK cannot reach.
+// poseToAngles' mask bit for angles within travel that bring two legs within LEG_CLEARANCE_MM (leg_clearance.h), which
+// the player never drives (ClearPose).
+constexpr uint32_t LEGS_TOUCH = 1u << 18;
+
+// 18 servo angles (deg, IK order) and a mask: bit leg*3+joint for a joint pinned at its limit, the
+// femur and tibia bits of a foot leg the IK cannot reach, and LEGS_TOUCH.
 inline uint32_t poseToAngles(const Pose &p, Kinematics &kin, const float stance[6][4], float angles[18]) {
     BodyStateMsg b;
     bodyState(p.body, stance, b);
@@ -335,15 +356,72 @@ inline uint32_t poseToAngles(const Pose &p, Kinematics &kin, const float stance[
         }
     }
     for (int j = 0; j < 18; ++j) {
-        const float limit = JOINT_LIMIT_DEG[j % 3];
+        const float limit = JOINT_LIMIT_DEG[j / 3][j % 3];
         const float clamped = CLIP(angles[j], -limit, limit);
         if (clamped != angles[j]) {
             mask |= 1u << j;
             angles[j] = clamped;
         }
     }
+    if (!legsClear(angles)) mask |= LEGS_TOUCH;
     return mask;
 }
+
+// The angles the player drives, so that no frame drives two legs into each other: a pose's own while it keeps every
+// leg pair LEG_CLEARANCE_MM apart; from a pose that does not (LEGS_TOUCH in its mask) on, the driven angles step toward
+// the pose at most stepDeg a joint a call, and only by steps that keep the legs apart (keepsLegsApart, pair by pair:
+// none into the margin, and within it none that brings that pair closer), until they have caught up with a clear pose.
+// A step of every joint at once that would not keep them apart falls back to each joint's own step, so legs reach a
+// clear pose around the touch when a path along the joints exists, and legs taken over inside the margin step apart.
+// The steps keep a pose that runs on while the legs are held from being jumped to once it clears. Firmware only: the
+// reference player in simulation/src/robot/animation.py drives every pose, and the animation checker refuses a clip
+// that touches instead.
+class ClearPose {
+  public:
+    // The pose the servos hold as the player takes them over.
+    void start(const float angles[18]) {
+        std::copy_n(angles, 18, last_);
+        catchingUp_ = false;
+    }
+
+    // `angles` in: the pose's, with its mask; out: the angles to drive.
+    void hold(uint32_t mask, float angles[18], float stepDeg) {
+        if (!catchingUp_ && !(mask & LEGS_TOUCH)) {
+            std::copy_n(angles, 18, last_);
+            return;
+        }
+        float next[18];
+        stepToward(angles, stepDeg, next);
+        if (keepsLegsApart(last_, next)) {
+            std::copy_n(next, 18, last_);
+        } else {
+            for (int j = 0; j < 18; ++j) {
+                if (next[j] == last_[j]) continue;
+                float joint[18];
+                std::copy_n(last_, 18, joint);
+                joint[j] = next[j];
+                if (keepsLegsApart(last_, joint)) last_[j] = next[j];
+            }
+        }
+        catchingUp_ = (mask & LEGS_TOUCH) || !std::equal(last_, last_ + 18, angles);
+        std::copy_n(last_, 18, angles);
+    }
+
+    // Whether the last angles driven are not the pose's own, or the pose touches: held short of it or catching up.
+    bool holding() const { return catchingUp_; }
+
+  private:
+    float last_[18] = {};
+    bool catchingUp_ = false;
+
+    // Every joint from the last angles toward `angles` by at most `step`, landing on them when within it.
+    void stepToward(const float angles[18], float step, float next[18]) const {
+        for (int j = 0; j < 18; ++j) {
+            const float d = angles[j] - last_[j];
+            next[j] = fabsf(d) <= step ? angles[j] : last_[j] + CLIP(d, -step, step);
+        }
+    }
+};
 
 inline void capturePose(const BodyStateMsg &b, const float stance[6][4], Pose &out) {
     out.body[ROLL] = b.omega;
