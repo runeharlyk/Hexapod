@@ -92,7 +92,19 @@ test('offline Simulation plays and stops bundled animations', async ({ page }) =
   const advance = async (milliseconds: number) => {
     for (let elapsed = 0; elapsed < milliseconds; elapsed += 50) await page.clock.fastForward(50)
   }
-  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1000)
+  // The page's clock runs on between reading it and pausing it, which a busy runner can stretch past the lead; a pause
+  // in the past is refused, so it is asked again with twice the lead. A longer jump still steps the physics one capped
+  // frame (MAX_FRAME_SECONDS).
+  const pauseSoon = async () => {
+    for (let lead = 1000; ; lead *= 2) {
+      try {
+        return await page.clock.pauseAt((await page.evaluate(() => Date.now())) + lead)
+      } catch (error) {
+        if (lead >= 8000 || !String(error).includes('Cannot fast-forward to the past')) throw error
+      }
+    }
+  }
+  await pauseSoon()
   await play.click()
   await advance(100)
   await expect(page.getByText('Playing wave', { exact: true })).toBeVisible()
