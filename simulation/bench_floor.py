@@ -353,7 +353,7 @@ def odometry_closure(ticks) -> tuple[float, float]:
 
 
 # The routines whose start motion the session's track holds once: each velocity run walks its own stick. The goal runs
-# open alike, on a goal walk from standing, and the metre runs repeat one another and the square its own sides.
+# open alike, on a goal walk from standing, and the metre runs repeat one another.
 UNIQUE_START = ("turn", "tri")
 
 
