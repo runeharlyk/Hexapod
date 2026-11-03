@@ -55,7 +55,8 @@ constexpr void get_transformation_matrix(const BodyStateMsg &b, float T[4][4]) {
 // - a corner coxa (legs 0, 2, 3, 5) turns +-90 deg, the servo's travel; turning freely, the right front coxa met the
 //   middle leg at 160 counts and the body near the servo's own end at 526 (bench, 2026-11-01);
 // - a middle coxa (legs 1, 4) turns +-45 deg: leg 1's met the body at -48 and +66.5 deg (195 and 424 counts about its
-//   centre of 291, bench, 2026-11-01), and 45 is the short side less 3 deg; leg 4's has the same range (bench, 2026-11-03).
+//   centre of 291, bench, 2026-11-01), and 45 is the short side less 3 deg; leg 4's has the same range (bench,
+//   2026-11-03).
 static constexpr float JOINT_LIMIT_DEG[6][3] = {{90.0f, 90.0f, 149.0f}, {45.0f, 90.0f, 149.0f}, {90.0f, 90.0f, 149.0f},
                                                 {90.0f, 90.0f, 149.0f}, {45.0f, 90.0f, 149.0f}, {90.0f, 90.0f, 149.0f}};
 
