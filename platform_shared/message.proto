@@ -54,6 +54,7 @@ message ControllerInputData {
   float s1 = 5;
   float feet_distance = 6;
   float stride = 7;  // -1 the shortest stroke, 0 (unsent) each gait's speed-optimal one, 1 the longest
+  bool hold_heading = 8;  // a classic walk with its turn stick centred holds its heading on the fused odometry's yaw
 }
 
 // Pushed as the robot applies a mode, and as the ESP-NOW handheld starts or stops driving: while it drives, the other

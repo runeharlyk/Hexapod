@@ -373,7 +373,8 @@
    "speed": "4 float",
    "s1": "5 float",
    "feet_distance": "6 float",
-   "stride": "7 float"
+   "stride": "7 float",
+   "hold_heading": "8 bool"
   },
   "socket_message.CoreDumpErase": {},
   "socket_message.CoreDumpGet": {},
