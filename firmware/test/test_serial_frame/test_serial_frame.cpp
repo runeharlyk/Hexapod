@@ -55,7 +55,8 @@ std::vector<Vector> readVectors() {
         Vector v;
         v.name = after(json, "\"name\":", '"', '"', at);
         v.stream = fromHex(after(json, "\"stream\":", '"', '"', at));
-        for (const std::string& hex : strings(after(json, "\"frames\":", '[', ']', at))) v.frames.push_back(fromHex(hex));
+        for (const std::string& hex : strings(after(json, "\"frames\":", '[', ']', at)))
+            v.frames.push_back(fromHex(hex));
         vectors.push_back(v);
     }
     return vectors;
@@ -64,11 +65,12 @@ std::vector<Vector> readVectors() {
 std::vector<Bytes> decode(const Bytes& stream, size_t chunk) {
     std::vector<Bytes> frames;
     serial_frame::Decoder decoder([&](const uint8_t* m, size_t n) { frames.emplace_back(m, m + n); });
-    for (size_t i = 0; i < stream.size(); i += chunk) decoder.feed(stream.data() + i, std::min(chunk, stream.size() - i));
+    for (size_t i = 0; i < stream.size(); i += chunk)
+        decoder.feed(stream.data() + i, std::min(chunk, stream.size() - i));
     return frames;
 }
 
-}  // namespace
+} // namespace
 
 void setUp() {}
 void tearDown() {}
@@ -89,9 +91,9 @@ void test_a_single_frame_encodes_to_its_vector() {
         if (v.frames.size() != 1) continue;
         const Bytes encoded = serial_frame::encode(v.frames[0].data(), v.frames[0].size());
         // Vectors with text around the frame contain the encoding rather than equal it.
-        TEST_ASSERT_TRUE_MESSAGE(std::search(v.stream.begin(), v.stream.end(), encoded.begin(), encoded.end()) !=
-                                     v.stream.end(),
-                                 v.name.c_str());
+        TEST_ASSERT_TRUE_MESSAGE(
+            std::search(v.stream.begin(), v.stream.end(), encoded.begin(), encoded.end()) != v.stream.end(),
+            v.name.c_str());
         checked++;
     }
     TEST_ASSERT_GREATER_THAN(3, checked);
@@ -104,7 +106,7 @@ void test_a_reader_starting_mid_frame_finds_the_next_frames() {
     for (char c : std::string("ESP-ROM:esp32s3-20210327\r\n")) stream.push_back(c);
     stream.insert(stream.end(), second.begin(), second.end());
     stream.insert(stream.end(), first.begin(), first.end());
-    TEST_ASSERT_TRUE((decode(stream, 3) == std::vector<Bytes>{b, a}));
+    TEST_ASSERT_TRUE((decode(stream, 3) == std::vector<Bytes> {b, a}));
 }
 
 // A short write on the robot cuts a frame off; the frame after it must still arrive.
@@ -114,7 +116,7 @@ void test_a_truncated_frame_costs_only_itself() {
     stream.resize(stream.size() - 3);
     const Bytes second = serial_frame::encode(b.data(), b.size());
     stream.insert(stream.end(), second.begin(), second.end());
-    TEST_ASSERT_TRUE((decode(stream, 5) == std::vector<Bytes>{b}));
+    TEST_ASSERT_TRUE((decode(stream, 5) == std::vector<Bytes> {b}));
 }
 
 void test_a_message_over_the_limit_is_not_encoded() {

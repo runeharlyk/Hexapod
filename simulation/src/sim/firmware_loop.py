@@ -48,10 +48,10 @@ class FirmwareLoop:
             self._mode_undelivered = True
 
     def walk(self, lx: float, ly: float, rx: float, s: float = 0.0, s1: float = 0.0, h: float = 0.0,
-             stride: float = 0.0, fd: float = 0.0) -> None:
-        """WALK with these sticks."""
+             stride: float = 0.0, fd: float = 0.0, hold_heading: bool = False) -> None:
+        """WALK with these sticks, holding the heading while the turn stick is centred with `hold_heading`."""
         self.set_mode(WALK)
-        self._send(dict(lx=lx, ly=ly, rx=rx, s=s, s1=s1, h=h, stride=stride, fd=fd))
+        self._send(dict(lx=lx, ly=ly, rx=rx, s=s, s1=s1, h=h, stride=stride, fd=fd, hold_heading=hold_heading))
 
     def hold(self, h: float = 0.0, s1: float = 0.0, fd: float = 0.0, stride: float = 0.0) -> None:
         """STAND with centred sticks: the posture only."""

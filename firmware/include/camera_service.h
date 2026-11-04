@@ -100,7 +100,7 @@ inline bool init(StatefulService<CameraSettings> &stored) {
     config.fb_count = 2;
     config.fb_location = CAMERA_FB_IN_PSRAM;
     config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
-    config.sccb_i2c_port = 1;  // main peripheral bus owns I2C_NUM_0; keep SCCB on port 1
+    config.sccb_i2c_port = 1; // main peripheral bus owns I2C_NUM_0; keep SCCB on port 1
 
     xSemaphoreTake(sensorMutex, portMAX_DELAY);
     const esp_err_t err = esp_camera_init(&config);

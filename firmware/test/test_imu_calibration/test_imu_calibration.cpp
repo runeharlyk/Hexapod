@@ -22,15 +22,17 @@ void fillResting(int16_t bias) {
 
 const int16_t LEVEL[3] = {0, 0, 16384};
 
-}  // namespace
+} // namespace
 
 void setUp() { fillResting(0); }
 void tearDown() {}
 
-void test_a_resting_level_robot_may_be_calibrated() { TEST_ASSERT_TRUE(imu_calibration::check(gyro, N, LEVEL) == Check::OK); }
+void test_a_resting_level_robot_may_be_calibrated() {
+    TEST_ASSERT_TRUE(imu_calibration::check(gyro, N, LEVEL) == Check::OK);
+}
 
 void test_a_large_bias_alone_is_no_motion() {
-    fillResting(328);  // 20 deg/s, the MPU6050's worst-case zero-rate offset
+    fillResting(328); // 20 deg/s, the MPU6050's worst-case zero-rate offset
     TEST_ASSERT_TRUE(imu_calibration::check(gyro, N, LEVEL) == Check::OK);
 }
 

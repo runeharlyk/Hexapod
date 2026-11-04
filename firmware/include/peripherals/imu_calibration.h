@@ -40,4 +40,4 @@ inline Check check(const int16_t (*gyro)[3], size_t count, const int16_t accel[3
     return Check::OK;
 }
 
-}  // namespace imu_calibration
+} // namespace imu_calibration

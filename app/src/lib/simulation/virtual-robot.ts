@@ -17,8 +17,22 @@ export interface SimImu {
   gyroRad: [number, number, number]
 }
 
-/** The fields of a ControllerInputData message, in CommandMsg order: lx, ly, rx, ry, h, s, s1, fd, stride. */
-export type Command = [number, number, number, number, number, number, number, number, number]
+/**
+ * The fields of a ControllerInputData message, in CommandMsg order: lx, ly, rx, ry, h, s, s1, fd, stride, and whether a
+ * classic walk holds its heading.
+ */
+export type Command = [
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  boolean
+]
 
 export interface VirtualRobot {
   setMode(mode: number): void
@@ -79,7 +93,8 @@ export async function loadVirtualRobot(): Promise<VirtualRobot> {
       const pointer = m._animationBuffer(0)
       return AnimationStatus.decode(m.HEAPU8.subarray(pointer, pointer + size))
     },
-    command: c => m._command(...c),
+    command: ([lx, ly, rx, ry, h, s, s1, fd, stride, holdHeading]) =>
+      m._command(lx, ly, rx, ry, h, s, s1, fd, stride, holdHeading ? 1 : 0),
     setImu: ({ rpyRad, gravityUp, gyroRad }) => m._setImu(...rpyRad, ...gravityUp, ...gyroRad),
     tick: () => m._tick(),
     servosDriven: () => m._servosDriven() !== 0,

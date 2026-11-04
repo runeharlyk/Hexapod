@@ -16,6 +16,7 @@
 #include <imu_frame.h>
 #include <odometry.h>
 #include <goal_controller.h>
+#include <heading_hold.h>
 #include <event_bus.h>
 #include <message_types.h>
 #include <policy_runner.h>
@@ -349,8 +350,8 @@ class MotionService {
                     // s1 trims foot lift around the searched value rather than setting it from
                     // zero; the old (s1+1)*20 mapping tops out at 40 mm and cannot express 68 mm.
                     target_gait_state.step_height =
-                        CLIP(tuned_gait::STEP_HEIGHT_MM + c.s1 * TUNED_LIFT_TRIM_MM,
-                             tuned_gait::STEP_HEIGHT_MIN_MM, tuned_gait::STEP_HEIGHT_MAX_MM);
+                        CLIP(tuned_gait::STEP_HEIGHT_MM + c.s1 * TUNED_LIFT_TRIM_MM, tuned_gait::STEP_HEIGHT_MIN_MM,
+                             tuned_gait::STEP_HEIGHT_MAX_MM);
                     target_gait_state.step_depth = tuned_gait::STEP_DEPTH_MM;
                     target_gait_state.step_speed = c.s + 1.f;
                     target_gait_state.phase_rate =
@@ -376,9 +377,8 @@ class MotionService {
         if (now - _lastTunedLog < 1000) return;
         _lastTunedLog = now;
         ESP_LOGI("MotionService",
-                 "TUNED cmd v=[%.3f %.3f %.3f] -> step x/y %.1f/%.1f angle %.3f lift %.1f rate %.2f zm %.1f",
-                 cmd[0], cmd[1], cmd[2], g.step_x, g.step_y, g.step_angle, g.step_height, g.phase_rate,
-                 target_body_state.zm);
+                 "TUNED cmd v=[%.3f %.3f %.3f] -> step x/y %.1f/%.1f angle %.3f lift %.1f rate %.2f zm %.1f", cmd[0],
+                 cmd[1], cmd[2], g.step_x, g.step_y, g.step_angle, g.step_height, g.phase_rate, target_body_state.zm);
     }
 
     // The speed the last stick asks for, as a share of BI's top speed at the posture: AUTO's speed signal, the same
@@ -447,7 +447,10 @@ class MotionService {
         if (mail.odometryReset) {
             _odometry.reset();
             _inbox.noteOdometry(_odometry.estimate());
+            // The heading held was the old frame's.
+            releaseHeading();
         }
+        if (state != MOTION_STATE::WALK) releaseHeading();
         if (state != MOTION_STATE::STAND && state != MOTION_STATE::WALK) {
             _atRest = false;
             // The odometry holds its pose; whatever moves the feet meanwhile is no travel it can measure.
@@ -530,6 +533,7 @@ class MotionService {
                 noteFeetOffCrab();
                 updateOdometry(dt, imuFresh);
                 stepGoal(dt);
+                holdHeading(dt);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
             }
@@ -688,12 +692,12 @@ class MotionService {
     Stance _stance = Stance::DEFAULT;
     Stance _feetStance = Stance::DEFAULT;
     bool _crabFeet = false;
-    bool _handbackSent = false;              // a hand-back is queued; cleared by any mode taken
-    bool _animating = false;                 // control task only: whether the last tick ran ANIMATE
-    bool _idling = false;                    // control task only: whether the last tick ran IDLE
+    bool _handbackSent = false; // a hand-back is queued; cleared by any mode taken
+    bool _animating = false;    // control task only: whether the last tick ran ANIMATE
+    bool _idling = false;       // control task only: whether the last tick ran IDLE
     bool _idleHeld = false; // control task only: IDLE holds servos at a pose no motion set, written there or ANIMATE's
-    bool _enterFromHeld = false; // control task only: ANIMATE is entered from such an IDLE
-    bool _handheldReported = false;          // control task only: whether the handheld drove, as last reported
+    bool _enterFromHeld = false;    // control task only: ANIMATE is entered from such an IDLE
+    bool _handheldReported = false; // control task only: whether the handheld drove, as last reported
 
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
     BodyStateMsg target_body_state = {0, 0, 0, 0, 0, 0};
@@ -706,6 +710,8 @@ class MotionService {
     gait_state_t target_gait_state = gait_state;
     GaitCommandRamp _commandRamp; // control task
     FusedOdometry _odometry;      // control task
+    HeadingHold _headingHold;     // control task
+    float _headingTurn = 0;       // control task: the turn stick the hold adds to the client's walk
 
     // What the other tasks post for the control task to take. A goal is asked for on an adapter task and walked by the
     // control task; whoever ends it early, on any task, asks the control task to through the inbox.
@@ -808,7 +814,7 @@ class MotionService {
     bool commandTimedOut = false;
     bool steering = false;
     // The last command taken, for the telemetry.
-    CommandMsg lastCommand{};
+    CommandMsg lastCommand {};
 
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, .limp = 0};
     CoxaTravel _coxaTravel = CoxaTravel::SERVO;
@@ -861,13 +867,15 @@ class MotionService {
         const Stance stance = _stance;
         // Held, the stick still tells AUTO how fast the walk will be, so the gait is chosen while the walk waits.
         const float stride = _stride;
-        const AutoDemand demand = autoDemand(c.lx, c.ly, c.rx, c.s, p.s1, p.h, p.fd, stride);
+        // A dead-man or a stop clears the command and with it the hold, before holdHeading lets its turn go.
+        const float rx = c.holdHeading ? c.rx + _headingTurn : c.rx;
+        const AutoDemand demand = autoDemand(c.lx, c.ly, rx, c.s, p.s1, p.h, p.fd, stride);
         _walkSpeed01 = demand.speed01;
         _autoGait = selectAutoGait(demand, gait_state.gait_type, p.s1, p.h, p.fd, stride);
         WalkTarget w =
             _requestedGait == GaitType::AUTO
-                ? autoWalkTarget(gait_state.gait_type, demand, c.lx, c.ly, c.rx, p.s1, p.h, p.fd, stride)
-                : classicWalkTarget(gait_state.gait_type, c.lx, c.ly, c.rx, c.s, p.s1, p.h, p.fd, stride, stance);
+                ? autoWalkTarget(gait_state.gait_type, demand, c.lx, c.ly, rx, p.s1, p.h, p.fd, stride)
+                : classicWalkTarget(gait_state.gait_type, c.lx, c.ly, rx, c.s, p.s1, p.h, p.fd, stride, stance);
         // A goal walking its sticks strides no further than what remains of it; a client's walk keeps its stride.
         if (_goalStarted && goalActive() && _inbox.goalDrives()) {
             const StrokeCap cap = _goal.strokeCap();
@@ -1114,6 +1122,24 @@ class MotionService {
         _goalState = _goal.state();
         if (!goalActive()) releaseGoalWalk();
         reportGoal();
+    }
+
+    // Control task, WALK, after the odometry and the goal: the turn the heading hold adds to a client's classic walk
+    // (HeadingHold). A goal holds its own heading, and TUNED takes its sticks as a velocity when they arrive, so
+    // neither is held.
+    void holdHeading(float dt) {
+        const CommandMsg &c = lastWalkCommand_;
+        const bool asked = c.holdHeading && !goalActive() && gait_state.gait_type != GaitType::TUNED;
+        const float turn = _headingHold.update(c.lx, c.ly, c.rx, asked, _odometry.estimate().yaw, dt);
+        if (turn == _headingTurn) return;
+        _headingTurn = turn;
+        applyWalkTarget();
+    }
+
+    // Control task.
+    void releaseHeading() {
+        _headingHold.release();
+        _headingTurn = 0;
     }
 
     // Control task, the first WALK tick of a goal: its posture goes through the walk's posture paths (a walk from a

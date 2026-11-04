@@ -8,6 +8,7 @@ export interface ControllerInput {
   s1: number
   feetDistance: number
   stride: number
+  holdHeading: boolean
 }
 
 export type GithubAsset = {

@@ -118,7 +118,6 @@ float learnedBias(const GaitWalk &walk) { return learnedBias(walk.fused, walk.dm
 
 } // namespace
 
-
 void test_a_straight_walk_lands_on_the_commanded_displacement() {
     GaitWalk walk(0, STEP_MM, 0);
     const OdometryEstimate leg = walk.walkCycles(CYCLES);
@@ -535,7 +534,6 @@ void standUp(VirtualRobot &robot) {
     robot.setMode(MOTION_STATE::STAND);
     run(robot, CENTRED, 1.0f);
 }
-
 
 // The standing time the bias is learned within: SETTLE_S of stillness, then some gyro samples.
 constexpr float LEARN_S = 0.5f;

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { MotionModes, modeToWire } from '../../src/lib/motion'
-import { AnglesData, ModeData } from '../../src/lib/platform_shared/message'
+import { AnglesData, GaitData, GaitEnum, ModeData } from '../../src/lib/platform_shared/message'
 import { FakeRobot, serveRobot } from '../fake-robot/playwright'
 
 const base = process.env.BASE_PATH ?? ''
@@ -76,6 +76,42 @@ test('walking keeps speed and gait available while other sliders expand on deman
   await page.getByText('Adjustments', { exact: true }).click()
   await expect(page.getByLabel('Body height', { exact: true })).toBeVisible()
   await expect(page.getByLabel('Step height', { exact: true })).toBeVisible()
+})
+
+test('the heading hold rides on the walk commands, and is off for TUNED, which holds none', async ({
+  page
+}) => {
+  const robot = new FakeRobot()
+  robot.set(ModeData, ModeData.create({ mode: modeToWire(MotionModes.WALK) }))
+  robot.set(GaitData, { gait: GaitEnum.BI_GATE })
+  await serveRobot(page, robot)
+  await page.goto(`${base}/controller`)
+  await page.getByText('Adjustments', { exact: true }).click()
+  const hold = page.getByLabel('Hold heading while the turn stick is centred', { exact: true })
+  await expect(hold).not.toBeChecked()
+
+  // A walk key is ignored while a control has the focus, as typing would be; it is held until the walk is sent.
+  const walkForwardSends = async (holdHeading: boolean) => {
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+    const before = robot.received.length
+    await page.keyboard.down('KeyW')
+    await expect
+      .poll(() =>
+        robot.received
+          .slice(before)
+          .filter(frame => (frame.input?.left?.y ?? 0) > 0)
+          .map(frame => frame.input?.holdHeading)
+      )
+      .toContain(holdHeading)
+    await page.keyboard.up('KeyW')
+  }
+
+  await walkForwardSends(false)
+  await hold.check()
+  await walkForwardSends(true)
+
+  robot.set(GaitData, { gait: GaitEnum.TUNED })
+  await expect(hold).toBeDisabled()
 })
 
 test('mode selection sends a request and displays the confirmed state; deactivate remains direct', async ({

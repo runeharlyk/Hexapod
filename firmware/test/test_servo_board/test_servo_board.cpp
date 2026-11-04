@@ -19,7 +19,7 @@ constexpr uint8_t MODE1_AI = 0x20;
 constexpr uint8_t LED0_ON_L = 0x06;
 constexpr uint8_t ALL_LED_OFF_H = 0xFD;
 constexpr uint8_t PRE_SCALE = 0xFE;
-constexpr uint8_t PRESCALE_50HZ = 121;  // round(25 MHz / (4096 * 50 Hz)) - 1
+constexpr uint8_t PRESCALE_50HZ = 121; // round(25 MHz / (4096 * 50 Hz)) - 1
 
 constexpr uint8_t CHANNELS = 11;
 const uint16_t POSE[CHANNELS] = {300, 310, 320, 330, 340, 350, 360, 370, 380, 390, 400};
@@ -76,7 +76,7 @@ void failThreeWrites(ServoBoard& board) {
     TEST_ASSERT_FALSE(board.answering());
 }
 
-}  // namespace
+} // namespace
 
 void setUp() {
     bus().reset();

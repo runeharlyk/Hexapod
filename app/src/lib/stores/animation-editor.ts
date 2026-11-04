@@ -29,6 +29,7 @@ import {
 import { LEGS_TOUCH, loadAnimationEngine, type AnimationEngine } from '$lib/animation/engine'
 import type { AnimationPreview } from './animation'
 import type { DraftRef } from '$lib/animation/library'
+import type { Command } from '$lib/simulation/virtual-robot'
 
 export const kinematics = new Kinematics(config)
 
@@ -269,7 +270,7 @@ export const createEditor = (initial: Animation = blankAnimation(), autosaveKey?
       autosaved.set(store(autosaveKey, s))
     })
   }
-  let controller = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+  let controller!: Command
   outControllerData.subscribe(d => (controller = d))
 
   const fail = (error: string) => {

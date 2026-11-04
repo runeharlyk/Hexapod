@@ -13,7 +13,7 @@ PeripheralSettings withFrequency(int32_t frequency) {
     return settings;
 }
 
-}  // namespace
+} // namespace
 
 void setUp() {}
 void tearDown() {}

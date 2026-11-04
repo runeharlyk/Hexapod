@@ -291,7 +291,7 @@ class AnimationRunner {
     bool puppetPaced_ = false; // the pending pose is a puppeteer's, approached at PUPPET_JOINT_STEP_DEG
     bool havePuppet_ = false;
     anim::Pose puppetTarget_;
-    anim::Pose current_; // offsets; the base is added on output
+    anim::Pose current_;                         // offsets; the base is added on output
     float jointStepDeg_ = PUPPET_JOINT_STEP_DEG; // the most a joint the puppet path turns moves in a tick
     float baseZm_ = 0.0f;
     float entryStartBase_ = 0.0f; // the base when the current Entry began
@@ -424,8 +424,8 @@ class AnimationRunner {
                 continue;
             }
             for (int k = 0; k < 3; ++k)
-                leg.v[k] = leg.joints ? approachJoint(leg.v[k], target.v[k])
-                                      : lerpf(leg.v[k], target.v[k], STAND_SMOOTHING);
+                leg.v[k] =
+                    leg.joints ? approachJoint(leg.v[k], target.v[k]) : lerpf(leg.v[k], target.v[k], STAND_SMOOTHING);
         }
     }
 

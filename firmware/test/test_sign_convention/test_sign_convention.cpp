@@ -139,8 +139,8 @@ Fixture readFixture() {
     std::stringstream text;
     text << file.rdbuf();
     const std::string json = text.str();
-    Reader r{json};
-    Fixture f{};
+    Reader r {json};
+    Fixture f {};
 
     f.legs = r.strings("\"legs\"");
     const std::vector<float> stance = r.numbers("\"stance_mm\"", '[', ']', 18);
@@ -206,7 +206,7 @@ Fixture readFixture() {
 int sign(float value, float zero) { return value > zero ? 1 : (value < -zero ? -1 : 0); }
 
 gait_state_t tripod(float stepX, float stepY, float stepAngle, float stepHeight) {
-    gait_state_t gait{};
+    gait_state_t gait {};
     gait.gait_type = GaitType::TRI_GATE;
     gait.step_x = stepX;
     gait.step_y = stepY;
@@ -222,16 +222,16 @@ gait_state_t tripod(float stepX, float stepY, float stepAngle, float stepHeight)
 BodyStateMsg restingStance(GaitController& controller) {
     gait_state_t still = tripod(0.0f, 0.0f, 0.0f, 0.0f);
     controller.setGait(still);
-    BodyStateMsg body{};
+    BodyStateMsg body {};
     controller.generateFeet(still, body);
     return body;
 }
 
 struct Walked {
-    float footPerTick[6][2];  // mean stance-foot displacement per tick, body frame
+    float footPerTick[6][2]; // mean stance-foot displacement per tick, body frame
     int stanceTicks[6];
-    float bodyPerTick[2];  // body translation the stance feet imply
-    float yawPerTick;      // body rotation the stance feet imply, positive counter-clockwise from above
+    float bodyPerTick[2]; // body translation the stance feet imply
+    float yawPerTick;     // body rotation the stance feet imply, positive counter-clockwise from above
 };
 
 // Walks the command on gait.h's resting stance for the fixture's ticks and fits the rigid body motion
@@ -260,7 +260,7 @@ Walked walk(const Fixture& f, const Command& c) {
     };
 
     float sum[6][2] = {};
-    Walked w{};
+    Walked w {};
     for (int tick = 0; tick < f.ticks; ++tick) {
         const float phaseBefore = controller.getPhase();
         float before[6][2];
@@ -343,7 +343,7 @@ std::pair<BodyOverFeet, BodyOverFeet> stand(const Fixture& f, const StandStick& 
     return {rest, bodyOverFeet(robot.bodyState())};
 }
 
-}  // namespace
+} // namespace
 
 void setUp() { host_bus::resetAll(); }
 void tearDown() {}

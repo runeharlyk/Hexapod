@@ -2,7 +2,7 @@ import type { ControllerInputData } from '$lib/platform_shared/message'
 import type { Command } from '$lib/simulation/virtual-robot'
 import type { ControllerInput } from '$lib/types/models'
 
-/** The controller's sticks and sliders as the firmware's command. */
+/** The controller's sticks, sliders and heading hold as the firmware's command. */
 export const commandOf = (i: ControllerInput): Command => [
   i.left.x,
   i.left.y,
@@ -12,7 +12,8 @@ export const commandOf = (i: ControllerInput): Command => [
   i.speed,
   i.s1,
   i.feetDistance,
-  i.stride
+  i.stride,
+  i.holdHeading
 ]
 
 /** The message a command is sent to the robot as. */
@@ -23,5 +24,6 @@ export const toControllerInput = (c: Command): ControllerInputData => ({
   speed: c[5],
   s1: c[6],
   feetDistance: c[7],
-  stride: c[8]
+  stride: c[8],
+  holdHeading: c[9]
 })

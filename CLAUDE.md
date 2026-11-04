@@ -117,6 +117,7 @@ See `docs/connectivity.md` for the full matrix, options and decisions.
 ## Conventions
 
 - **C++ formatting**: `firmware/.clang-format` (Google base, 4-space indent, 120 col, left pointer alignment). `SortIncludes: false` — include order is intentional.
+  CI checks every tracked firmware source with clang-format 18.1.8, whose output differs from other releases; format with `uvx --from clang-format==18.1.8 clang-format -i <files>`, and `firmware/.clang-format-ignore` skips the generated headers.
 - **TS/Svelte formatting**: Prettier + ESLint (run `pnpm lint` / `pnpm format` from `app/`).
 - Commit messages use a leading emoji (✨ feature, ⚡ perf, 🎨 format, etc.).
 </content>

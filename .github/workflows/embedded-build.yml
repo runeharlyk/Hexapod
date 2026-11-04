@@ -33,6 +33,24 @@ permissions:
   contents: read
 
 jobs:
+  format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Pinned, as clang-format's output changes between releases; firmware/.clang-format-ignore skips the generated
+      # headers.
+      - name: Install clang-format
+        run: pip install clang-format==18.1.8
+
+      - name: Firmware sources formatted
+        run: git ls-files 'firmware/*.h' 'firmware/*.hpp' 'firmware/*.c' 'firmware/*.cpp' | xargs clang-format --dry-run --Werror
+
   native-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15

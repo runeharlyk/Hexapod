@@ -37,17 +37,17 @@ class BLE : public CommAdapterBase {
     bool hasClient() const override { return _deviceConnected; }
 
   private:
-    NimBLEServer *_server{nullptr};
-    NimBLECharacteristic *_txCharacteristic{nullptr};
-    NimBLECharacteristic *_rxCharacteristic{nullptr};
-    volatile bool _deviceConnected{false};
-    uint16_t _connHandle{BLE_HS_CONN_HANDLE_NONE};
+    NimBLEServer *_server {nullptr};
+    NimBLECharacteristic *_txCharacteristic {nullptr};
+    NimBLECharacteristic *_rxCharacteristic {nullptr};
+    volatile bool _deviceConnected {false};
+    uint16_t _connHandle {BLE_HS_CONN_HANDLE_NONE};
 
-    QueueHandle_t _messageQueue{nullptr};
-    TaskHandle_t _processingTask{nullptr};
-    bool _taskRunning{false};
+    QueueHandle_t _messageQueue {nullptr};
+    TaskHandle_t _processingTask {nullptr};
+    bool _taskRunning {false};
     // Serializes send() so concurrent emitters' chunks can't interleave on the wire.
-    SemaphoreHandle_t _txMutex{nullptr};
+    SemaphoreHandle_t _txMutex {nullptr};
 
     // Reassembles the length-prefixed chunks a >MTU message is split into. BLE_Process task only; other
     // tasks go through requestRxReset(). A zero-length queued message is the reset marker.

@@ -25,9 +25,7 @@ inline PeripheralSettings PeripheralSettings_defaults() {
     return settings;
 }
 
-inline void PeripheralSettings_read(const PeripheralSettings &settings, PeripheralSettings &proto) {
-    proto = settings;
-}
+inline void PeripheralSettings_read(const PeripheralSettings &settings, PeripheralSettings &proto) { proto = settings; }
 
 inline StateUpdateResult PeripheralSettings_update(const PeripheralSettings &proto, PeripheralSettings &settings) {
     // Any GPIO on the S3, and the I2C standard/fast/fast-plus range. A clock above I2C_MAX_FREQUENCY,
