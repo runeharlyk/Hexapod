@@ -349,8 +349,8 @@ class MotionService {
                     // s1 trims foot lift around the searched value rather than setting it from
                     // zero; the old (s1+1)*20 mapping tops out at 40 mm and cannot express 68 mm.
                     target_gait_state.step_height =
-                        CLIP(tuned_gait::STEP_HEIGHT_MM + c.s1 * TUNED_LIFT_TRIM_MM,
-                             tuned_gait::STEP_HEIGHT_MIN_MM, tuned_gait::STEP_HEIGHT_MAX_MM);
+                        CLIP(tuned_gait::STEP_HEIGHT_MM + c.s1 * TUNED_LIFT_TRIM_MM, tuned_gait::STEP_HEIGHT_MIN_MM,
+                             tuned_gait::STEP_HEIGHT_MAX_MM);
                     target_gait_state.step_depth = tuned_gait::STEP_DEPTH_MM;
                     target_gait_state.step_speed = c.s + 1.f;
                     target_gait_state.phase_rate =
@@ -376,9 +376,8 @@ class MotionService {
         if (now - _lastTunedLog < 1000) return;
         _lastTunedLog = now;
         ESP_LOGI("MotionService",
-                 "TUNED cmd v=[%.3f %.3f %.3f] -> step x/y %.1f/%.1f angle %.3f lift %.1f rate %.2f zm %.1f",
-                 cmd[0], cmd[1], cmd[2], g.step_x, g.step_y, g.step_angle, g.step_height, g.phase_rate,
-                 target_body_state.zm);
+                 "TUNED cmd v=[%.3f %.3f %.3f] -> step x/y %.1f/%.1f angle %.3f lift %.1f rate %.2f zm %.1f", cmd[0],
+                 cmd[1], cmd[2], g.step_x, g.step_y, g.step_angle, g.step_height, g.phase_rate, target_body_state.zm);
     }
 
     // The speed the last stick asks for, as a share of BI's top speed at the posture: AUTO's speed signal, the same
@@ -688,12 +687,12 @@ class MotionService {
     Stance _stance = Stance::DEFAULT;
     Stance _feetStance = Stance::DEFAULT;
     bool _crabFeet = false;
-    bool _handbackSent = false;              // a hand-back is queued; cleared by any mode taken
-    bool _animating = false;                 // control task only: whether the last tick ran ANIMATE
-    bool _idling = false;                    // control task only: whether the last tick ran IDLE
+    bool _handbackSent = false; // a hand-back is queued; cleared by any mode taken
+    bool _animating = false;    // control task only: whether the last tick ran ANIMATE
+    bool _idling = false;       // control task only: whether the last tick ran IDLE
     bool _idleHeld = false; // control task only: IDLE holds servos at a pose no motion set, written there or ANIMATE's
-    bool _enterFromHeld = false; // control task only: ANIMATE is entered from such an IDLE
-    bool _handheldReported = false;          // control task only: whether the handheld drove, as last reported
+    bool _enterFromHeld = false;    // control task only: ANIMATE is entered from such an IDLE
+    bool _handheldReported = false; // control task only: whether the handheld drove, as last reported
 
     BodyStateMsg body_state = {0, 0, 0, 0, 0, 0};
     BodyStateMsg target_body_state = {0, 0, 0, 0, 0, 0};
@@ -808,7 +807,7 @@ class MotionService {
     bool commandTimedOut = false;
     bool steering = false;
     // The last command taken, for the telemetry.
-    CommandMsg lastCommand{};
+    CommandMsg lastCommand {};
 
     ServoAnglesMsg msgAngles = {.angles = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, .limp = 0};
     CoxaTravel _coxaTravel = CoxaTravel::SERVO;

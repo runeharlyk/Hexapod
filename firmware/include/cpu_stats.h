@@ -17,7 +17,7 @@ class CpuMonitor {
     // Recomputes the window. The baselines below are not shared state -- exactly one task may call
     // this; every other reader takes latest().
     Usage sample() {
-        Usage usage{0.f, 0.f, 0.f};
+        Usage usage {0.f, 0.f, 0.f};
         int64_t now = esp_timer_get_time();
         uint32_t idle0 = idleRuntime(0);
         uint32_t idle1 = idleRuntime(1);
@@ -69,6 +69,6 @@ class CpuMonitor {
     uint32_t lastIdle0_ = 0;
     uint32_t lastIdle1_ = 0;
 
-    Usage latest_{0.f, 0.f, 0.f};
+    Usage latest_ {0.f, 0.f, 0.f};
     portMUX_TYPE lock_ = portMUX_INITIALIZER_UNLOCKED;
 };

@@ -35,7 +35,7 @@ struct OtaReply {
 class OtaSession {
   public:
     static constexpr uint32_t TIMEOUT_MS = 30000;
-    static constexpr OtaReply OK{200, ""};
+    static constexpr OtaReply OK {200, ""};
 
     // A client is its adapter and its id on that adapter: ids repeat across transports.
     struct Client {
@@ -97,7 +97,7 @@ class OtaSession {
     bool running() const { return running_; }
 
   private:
-    static constexpr OtaReply NOT_RUNNING{409, "No update running"};
+    static constexpr OtaReply NOT_RUNNING {409, "No update running"};
 
     bool owns(Client client) const { return running_ && client == client_; }
 
@@ -115,8 +115,8 @@ class OtaSession {
     OtaFlash& flash_;
     std::atomic<bool>& busy_;
     std::mutex mutex_;
-    std::atomic<bool> running_{false};
-    Client client_{nullptr, -1};
+    std::atomic<bool> running_ {false};
+    Client client_ {nullptr, -1};
     uint32_t size_ = 0;
     uint32_t written_ = 0;
     uint32_t nextChunk_ = 0;

@@ -9,7 +9,7 @@
 namespace anim {
 
 inline void fromProto(const animation_Animation &m, Clip &c) {
-    c = Clip{};
+    c = Clip {};
     strncpy(c.name, m.name, NAME_LEN_MAX);
     strncpy(c.description, m.description, DESCRIPTION_LEN_MAX);
     c.schema = m.schema;
@@ -51,7 +51,7 @@ inline void fromProto(const animation_Animation &m, Clip &c) {
     for (int i = 0; i < c.overlayCount && i < OVERLAY_MAX; ++i) {
         const animation_Overlay &src = m.overlays[i];
         Overlay &o = c.overlays[i];
-        o.kind = src.which_channel == animation_Overlay_body_axis_tag   ? CHANNEL_BODY
+        o.kind = src.which_channel == animation_Overlay_body_axis_tag      ? CHANNEL_BODY
                  : src.which_channel == animation_Overlay_foot_channel_tag ? CHANNEL_FOOT
                                                                            : CHANNEL_NONE;
         o.channel = o.kind == CHANNEL_BODY   ? (int)src.channel.body_axis
@@ -69,4 +69,4 @@ inline void fromProto(const animation_Animation &m, Clip &c) {
     }
 }
 
-}  // namespace anim
+} // namespace anim

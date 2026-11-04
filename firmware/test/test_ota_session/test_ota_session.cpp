@@ -43,17 +43,17 @@ std::vector<uint8_t> appImage(size_t size) {
 }
 
 int adapterA, adapterB;
-const OtaSession::Client ALICE{&adapterA, 3};
-const OtaSession::Client SERIAL_CLIENT{&adapterB, 3};  // the same id on another transport
+const OtaSession::Client ALICE {&adapterA, 3};
+const OtaSession::Client SERIAL_CLIENT {&adapterB, 3}; // the same id on another transport
 
-}  // namespace
+} // namespace
 
 void setUp() {}
 void tearDown() {}
 
 void test_an_update_in_order_activates_the_image() {
     FakeFlash flash;
-    std::atomic<bool> busy{false};
+    std::atomic<bool> busy {false};
     OtaSession session(flash, busy);
     const auto image = appImage(1000);
 
@@ -69,7 +69,7 @@ void test_an_update_in_order_activates_the_image() {
 
 void test_a_chunk_out_of_order_aborts_and_keeps_the_running_firmware() {
     FakeFlash flash;
-    std::atomic<bool> busy{false};
+    std::atomic<bool> busy {false};
     OtaSession session(flash, busy);
     const auto image = appImage(1024);
 
@@ -84,7 +84,7 @@ void test_a_chunk_out_of_order_aborts_and_keeps_the_running_firmware() {
 
 void test_more_data_than_announced_or_too_little_is_refused() {
     FakeFlash flash;
-    std::atomic<bool> busy{false};
+    std::atomic<bool> busy {false};
     OtaSession session(flash, busy);
     const auto image = appImage(600);
 
@@ -99,10 +99,10 @@ void test_more_data_than_announced_or_too_little_is_refused() {
 
 void test_a_factory_image_is_refused_at_its_first_chunk() {
     FakeFlash flash;
-    std::atomic<bool> busy{false};
+    std::atomic<bool> busy {false};
     OtaSession session(flash, busy);
     auto image = appImage(512);
-    image[32] = 0x50;  // the bootloader's descriptor, as firmware.factory.bin starts with
+    image[32] = 0x50; // the bootloader's descriptor, as firmware.factory.bin starts with
 
     session.start(512, ALICE, 0);
     TEST_ASSERT_EQUAL(415, session.chunk(0, image.data(), 512, ALICE, 0).status);
@@ -112,7 +112,7 @@ void test_a_factory_image_is_refused_at_its_first_chunk() {
 void test_an_image_the_robot_rejects_is_not_activated() {
     FakeFlash flash;
     flash.validates = false;
-    std::atomic<bool> busy{false};
+    std::atomic<bool> busy {false};
     OtaSession session(flash, busy);
     const auto image = appImage(512);
 
@@ -125,7 +125,7 @@ void test_an_image_the_robot_rejects_is_not_activated() {
 
 void test_only_the_starting_client_drives_an_update() {
     FakeFlash flash;
-    std::atomic<bool> busy{false};
+    std::atomic<bool> busy {false};
     OtaSession session(flash, busy);
     const auto image = appImage(512);
 
@@ -138,7 +138,7 @@ void test_only_the_starting_client_drives_an_update() {
 
 void test_an_update_over_http_blocks_one_over_the_link() {
     FakeFlash flash;
-    std::atomic<bool> busy{true};  // ota_service's upload holds the slot
+    std::atomic<bool> busy {true}; // ota_service's upload holds the slot
     OtaSession session(flash, busy);
     TEST_ASSERT_EQUAL(409, session.start(512, ALICE, 0).status);
     TEST_ASSERT_FALSE(flash.begun);
@@ -147,7 +147,7 @@ void test_an_update_over_http_blocks_one_over_the_link() {
 
 void test_a_silent_update_expires_and_frees_the_slot() {
     FakeFlash flash;
-    std::atomic<bool> busy{false};
+    std::atomic<bool> busy {false};
     OtaSession session(flash, busy);
     session.start(512, ALICE, 1000);
     session.expire(1000 + OtaSession::TIMEOUT_MS);
@@ -160,7 +160,7 @@ void test_a_silent_update_expires_and_frees_the_slot() {
 
 void test_an_image_larger_than_the_slot_is_refused_up_front() {
     FakeFlash flash;
-    std::atomic<bool> busy{false};
+    std::atomic<bool> busy {false};
     OtaSession session(flash, busy);
     TEST_ASSERT_EQUAL(413, session.start(flash.slot + 1, ALICE, 0).status);
     TEST_ASSERT_FALSE(flash.begun);
@@ -172,7 +172,7 @@ void test_an_image_larger_than_the_slot_is_refused_up_front() {
 void test_a_partition_table_without_an_update_slot_is_not_a_501() {
     FakeFlash flash;
     flash.slot = 0;
-    std::atomic<bool> busy{false};
+    std::atomic<bool> busy {false};
     OtaSession session(flash, busy);
     const OtaReply reply = session.start(512, ALICE, 0);
     TEST_ASSERT_EQUAL(507, reply.status);

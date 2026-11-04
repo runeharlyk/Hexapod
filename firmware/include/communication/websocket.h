@@ -22,7 +22,7 @@ class Websocket : public CommAdapterBase {
     mutable std::mutex socketsMutex_;
     std::set<int> openSockets_;
     static constexpr uint32_t STALL_LIMIT_MS = 10000;
-    StallTracker stalls_{STALL_LIMIT_MS};
+    StallTracker stalls_ {STALL_LIMIT_MS};
 
     void onWsOpen(httpd_req_t* req);
     void onWsClose(int sockfd);

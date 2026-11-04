@@ -23,8 +23,7 @@ static esp_err_t web_send(httpd_req_t *req, const WebAsset &asset) {
     if (WWW_OPT.add_vary) httpd_resp_set_hdr(req, "Vary", "Accept-Encoding");
 
     char known[sizeof(etag)];
-    if (httpd_req_get_hdr_value_str(req, "If-None-Match", known, sizeof(known)) == ESP_OK &&
-        strcmp(known, etag) == 0) {
+    if (httpd_req_get_hdr_value_str(req, "If-None-Match", known, sizeof(known)) == ESP_OK && strcmp(known, etag) == 0) {
         httpd_resp_set_status(req, "304 Not Modified");
         return httpd_resp_send(req, nullptr, 0);
     }

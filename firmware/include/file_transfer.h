@@ -145,7 +145,7 @@ inline int scan(const char *full, const char *rel, const api_FileEntry *after, a
     return (int)kept;
 }
 
-}  // namespace detail
+} // namespace detail
 
 // One page of a directory's entries: directories first, then files, each group in byte order of the name. A name
 // too long for FileEntry cannot be told to the client, who could not address it, so it is neither listed nor
@@ -195,4 +195,4 @@ inline int mkdir(const char *rel, const char *root = MOUNT_POINT) {
     return FileSystem::mkdirRecursive(full.c_str()) ? 200 : 500;
 }
 
-}  // namespace file_transfer
+} // namespace file_transfer

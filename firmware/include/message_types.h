@@ -61,10 +61,10 @@ struct ServoStateMsg {
 };
 
 struct IMUAnglesMsg {
-    float rpy[3]{0, 0, 0};
-    float temperature{-1};
-    float heading{0};  // magnetometer compass heading in degrees; 0 when no magnetometer
-    bool success{false};
+    float rpy[3] {0, 0, 0};
+    float temperature {-1};
+    float heading {0}; // magnetometer compass heading in degrees; 0 when no magnetometer
+    bool success {false};
 };
 
 // Who sent a command: the ESP-NOW handheld controller with a stick off centre, the handheld at rest, or any other

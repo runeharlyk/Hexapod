@@ -18,7 +18,7 @@ api_WifiSettings withNetworks(std::initializer_list<const char*> ssids) {
     return settings;
 }
 
-}  // namespace
+} // namespace
 
 void setUp() {}
 void tearDown() {}
@@ -37,7 +37,7 @@ void test_a_new_secret_network_is_added_once() {
 void test_a_network_deleted_in_the_app_stays_deleted_until_the_secret_changes() {
     api_WifiSettings settings = withNetworks({});
     applyFactoryNetwork(settings, "home", "secret123");
-    settings.wifi_networks_count = 0;  // the user removed it
+    settings.wifi_networks_count = 0; // the user removed it
     TEST_ASSERT_FALSE(applyFactoryNetwork(settings, "home", "secret123"));
     TEST_ASSERT_EQUAL(0, settings.wifi_networks_count);
     TEST_ASSERT_TRUE(applyFactoryNetwork(settings, "home", "new-password"));

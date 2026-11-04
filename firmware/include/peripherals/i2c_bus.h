@@ -87,7 +87,7 @@ class I2CBus {
         if (_initialized) {
             for (Device& d : _devices) {
                 if (d.handle) i2c_master_bus_rm_device(d.handle);
-                d = Device{};
+                d = Device {};
             }
             i2c_del_master_bus(_bus);
             _bus = NULL;
@@ -96,7 +96,6 @@ class I2CBus {
     }
 
     bool isInitialized() const { return _initialized; }
-
 
     esp_err_t writeBytes(uint8_t addr, const uint8_t* data, size_t len) {
         return transfer(addr, [&](i2c_master_dev_handle_t dev) {
@@ -223,7 +222,7 @@ class I2CBus {
         void sda(bool high) { gpio_set_level(sdaPin, high); }
         void scl(bool high) { gpio_set_level(sclPin, high); }
         bool sdaLow() const { return gpio_get_level(sdaPin) == 0; }
-        void halfPeriod() { esp_rom_delay_us(5); }  // 100 kHz, the usual rate for a bus clear
+        void halfPeriod() { esp_rom_delay_us(5); } // 100 kHz, the usual rate for a bus clear
     };
 
     /**
@@ -236,7 +235,7 @@ class I2CBus {
         const uint32_t freq = _freq;
         const i2c_port_t port = _port;
         end();
-        BusPins pins{sda, scl};
+        BusPins pins {sda, scl};
         pins.sda(true);
         pins.scl(true);
         gpio_set_direction(sda, GPIO_MODE_INPUT_OUTPUT_OD);
@@ -260,7 +259,7 @@ class I2CBus {
             slot = &_devices[_nextEviction];
             _nextEviction = (_nextEviction + 1) % MAX_DEVICES;
             i2c_master_bus_rm_device(slot->handle);
-            *slot = Device{};
+            *slot = Device {};
         }
         i2c_device_config_t dev_cfg = {};
         dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;

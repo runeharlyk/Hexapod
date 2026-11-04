@@ -22,7 +22,7 @@ void addTxt(MDNSSettings& settings, const char* key, const char* value) {
     std::strncpy(txt.value, value, sizeof(txt.value) - 1);
 }
 
-}  // namespace
+} // namespace
 
 void setUp() {}
 void tearDown() {}

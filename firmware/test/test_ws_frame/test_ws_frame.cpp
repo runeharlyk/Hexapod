@@ -13,7 +13,7 @@ std::vector<uint8_t> header(size_t length) {
     return std::vector<uint8_t>(out, out + ws_frame::binaryHeader(out, length));
 }
 
-}  // namespace
+} // namespace
 
 void setUp() {}
 void tearDown() {}

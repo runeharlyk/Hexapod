@@ -32,15 +32,17 @@ class Peripherals {
     void begin() {
         if (!I2CBus::instance().isInitialized()) {
             PeripheralSettings cfg = PeripheralSettings_defaults();
-            PeripheralSettingsBus::peek(cfg);  // stored config if the service published first
+            PeripheralSettingsBus::peek(cfg); // stored config if the service published first
             ESP_LOGI(TAG, "I2C bus sda=%d scl=%d %d Hz", (int)cfg.sda, (int)cfg.scl, (int)cfg.frequency);
             I2CBus::instance().begin(static_cast<gpio_num_t>(cfg.sda), static_cast<gpio_num_t>(cfg.scl),
                                      (uint32_t)cfg.frequency);
         }
 #if FT_ENABLED(USE_MPU6050)
         _imuReady = _imu.begin();
-        if (!_imuReady) ESP_LOGW(TAG, "MPU6050 init failed");
-        else ESP_LOGI(TAG, "MPU6050 ready");
+        if (!_imuReady)
+            ESP_LOGW(TAG, "MPU6050 init failed");
+        else
+            ESP_LOGI(TAG, "MPU6050 ready");
         ImuCalibration calibration;
         if (_imuReady && ImuCalibrationBus::peek(calibration) && calibration.accel_offsets_count == 3) {
             const int16_t accel[3] = {(int16_t)calibration.accel_offsets[0], (int16_t)calibration.accel_offsets[1],
@@ -53,8 +55,10 @@ class Peripherals {
 #endif
 #if FT_ENABLED(USE_MAG)
         _magReady = _mag.begin();
-        if (!_magReady) ESP_LOGW(TAG, "HMC5883 init failed");
-        else ESP_LOGI(TAG, "HMC5883 ready");
+        if (!_magReady)
+            ESP_LOGW(TAG, "HMC5883 init failed");
+        else
+            ESP_LOGI(TAG, "HMC5883 ready");
 #endif
     }
 
@@ -213,11 +217,11 @@ class Peripherals {
     static constexpr const char *TAG = "Peripherals";
 #if FT_ENABLED(USE_MPU6050)
     MPU6050Driver _imu;
-    bool _imuReady{false};
-    std::atomic<bool> _calibrating{false};
+    bool _imuReady {false};
+    std::atomic<bool> _calibrating {false};
 #endif
 #if FT_ENABLED(USE_MAG)
     HMC5883Driver _mag;
-    bool _magReady{false};
+    bool _magReady {false};
 #endif
 };

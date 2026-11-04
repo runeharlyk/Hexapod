@@ -25,7 +25,7 @@ inline void mat_mult_f32_portable(const float *A, const float *B, float *result,
 
 #define CLIP(val, low, high) ((val) < (low) ? (low) : ((val) > (high) ? (high) : (val)))
 
-#ifndef ARRAY_SIZE  // NimBLE's nimble_npl_os.h also defines this
+#ifndef ARRAY_SIZE // NimBLE's nimble_npl_os.h also defines this
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof(arr[0]))
 #endif
 
