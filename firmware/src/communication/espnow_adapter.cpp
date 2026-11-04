@@ -40,7 +40,7 @@ static void handlePacket(const uint8_t* data, int len) {
     prev = pkt.buttons;
 
     if ((pkt.buttons & (BTN_LEFT | BTN_RIGHT)) == (BTN_LEFT | BTN_RIGHT)) {
-        if (rising) {  // both held = emergency stop
+        if (rising) { // both held = emergency stop
             s_mode.store(MOTION_STATE::DEACTIVATED, std::memory_order_relaxed);
             EventBus<ModeMsg>::publish({MOTION_STATE::DEACTIVATED});
         }
@@ -68,8 +68,8 @@ void EspNowAdapter::onRecv(const esp_now_recv_info_t* info, const uint8_t* data,
     if (!announced && info && info->src_addr) {
         announced = true;
         const uint8_t* m = info->src_addr;
-        ESP_LOGI(TAG, "controller heard: %02x:%02x:%02x:%02x:%02x:%02x len=%d ver=%u", m[0], m[1], m[2], m[3],
-                 m[4], m[5], len, len > 0 ? data[0] : 0);
+        ESP_LOGI(TAG, "controller heard: %02x:%02x:%02x:%02x:%02x:%02x len=%d ver=%u", m[0], m[1], m[2], m[3], m[4],
+                 m[5], len, len > 0 ? data[0] : 0);
     }
     handlePacket(data, len);
 }
@@ -90,9 +90,11 @@ void EspNowAdapter::begin() {
     peer.encrypt = false;
     if (esp_now_add_peer(&peer) != ESP_OK) ESP_LOGW(TAG, "broadcast peer not added; beacon disabled");
 
-    const esp_timer_create_args_t beaconArgs {
-        .callback = &EspNowAdapter::sendBeacon, .arg = nullptr, .dispatch_method = ESP_TIMER_TASK,
-        .name = "espnow_beacon", .skip_unhandled_events = true};
+    const esp_timer_create_args_t beaconArgs {.callback = &EspNowAdapter::sendBeacon,
+                                              .arg = nullptr,
+                                              .dispatch_method = ESP_TIMER_TASK,
+                                              .name = "espnow_beacon",
+                                              .skip_unhandled_events = true};
     esp_timer_handle_t beacon = nullptr;
     if (esp_timer_create(&beaconArgs, &beacon) == ESP_OK) {
         esp_timer_start_periodic(beacon, HEXAPOD_BEACON_PERIOD_MS * 1000);
@@ -108,8 +110,8 @@ void EspNowAdapter::begin() {
     // A STA join retunes the radio, so re-check on every connect and disconnect rather than only
     // here -- at boot the join is still seconds away and this would always take the "free to pin"
     // branch, then be overridden without a word.
-    WiFi.onEvent([](int32_t, void *) { applyChannel(); }, WIFI_EVENT_STA_CONNECTED);
-    WiFi.onEvent([](int32_t, void *) { applyChannel(); }, WIFI_EVENT_STA_DISCONNECTED);
+    WiFi.onEvent([](int32_t, void*) { applyChannel(); }, WIFI_EVENT_STA_CONNECTED);
+    WiFi.onEvent([](int32_t, void*) { applyChannel(); }, WIFI_EVENT_STA_DISCONNECTED);
     applyChannel();
 }
 
@@ -150,8 +152,7 @@ void EspNowAdapter::applyChannel() {
     esp_err_t err = esp_wifi_set_channel(ESPNOW_WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
     if (err != ESP_OK) {
         // Usually a scan or join in flight; the next STA event re-runs this.
-        ESP_LOGI(TAG, "channel %u busy, deferring the move to %d (%s)", ch, ESPNOW_WIFI_CHANNEL,
-                 esp_err_to_name(err));
+        ESP_LOGI(TAG, "channel %u busy, deferring the move to %d (%s)", ch, ESPNOW_WIFI_CHANNEL, esp_err_to_name(err));
         return;
     }
     ESP_LOGI(TAG, "moved radio from channel %u to %d for the controller", ch, ESPNOW_WIFI_CHANNEL);

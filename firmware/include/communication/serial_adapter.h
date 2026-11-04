@@ -39,10 +39,9 @@ class SerialAdapter : public CommAdapterBase {
     static void rxTask(void* arg);
     void readLoop();
 
-    serial_frame::Decoder decoder_{[this](const uint8_t* message, size_t len) {
-        handleIncoming(message, len, CLIENT_ID);
-    }};
+    serial_frame::Decoder decoder_ {
+        [this](const uint8_t* message, size_t len) { handleIncoming(message, len, CLIENT_ID); }};
     std::atomic<bool> hostPresent_ {false}; // written by the rx task, read by emitters and hasClient()
 };
 
-#endif  // FT_ENABLED(USE_SERIAL_LINK)
+#endif // FT_ENABLED(USE_SERIAL_LINK)

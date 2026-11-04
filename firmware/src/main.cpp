@@ -88,8 +88,8 @@ EspOtaFlash otaFlash;
 // Some 24 KB: above CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL, so the allocation lands in PSRAM and the
 // scarce internal RAM stays with WiFi, BLE and the camera.
 Telemetry *telemetry = new Telemetry();
-OtaSession otaSession{otaFlash, ota_service::inProgress};
-Websocket wsSocket{server, "/api/ws"};
+OtaSession otaSession {otaFlash, ota_service::inProgress};
+Websocket wsSocket {server, "/api/ws"};
 BLE bleAdapter;
 #if FT_ENABLED(USE_SERIAL_LINK)
 SerialAdapter serialAdapter;
@@ -107,8 +107,8 @@ static temperature_sensor_handle_t coreTempSensor = nullptr;
 
 // Control-loop iterations since boot. The OTA image is only confirmed once this shows the loop has
 // been running for a while, not merely that app_main was reached.
-static std::atomic<uint32_t> controlTicks{0};
-static constexpr uint32_t TICKS_BEFORE_IMAGE_CONFIRM = 200;  // 1 s of the 5 ms loop
+static std::atomic<uint32_t> controlTicks {0};
+static constexpr uint32_t TICKS_BEFORE_IMAGE_CONFIRM = 200; // 1 s of the 5 ms loop
 
 static void initCoreTempSensor() {
     temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
@@ -400,7 +400,7 @@ static void registerHandlers(CommAdapterBase &c) {
     // websocket and BLE decoders run on separate tasks, so a single shared buffer would tear.
     auto scanBuffer = std::make_shared<std::array<api_WifiNetworkScan, WIFI_SCAN_RESULT_CAPACITY>>();
     c.on<socket_message_CorrelationRequest>([adapter = &c, scanBuffer](const socket_message_CorrelationRequest &req,
-                                                                      int clientId) {
+                                                                       int clientId) {
         socket_message_CorrelationResponse res = socket_message_CorrelationResponse_init_zero;
         res.correlation_id = req.correlation_id;
         res.status_code = 200;
@@ -464,8 +464,10 @@ static void registerHandlers(CommAdapterBase &c) {
                 res.which_response = socket_message_CorrelationResponse_wifi_network_list_tag;
                 res.response.wifi_network_list.networks = scanBuf;
                 res.response.wifi_network_list.networks_count = count < 0 ? 0 : count;
-                if (count == -1) res.status_code = 202;       // scan running; client polls again
-                else if (count == -2) res.status_code = 503;  // radio busy (STA connecting); give up
+                if (count == -1)
+                    res.status_code = 202; // scan running; client polls again
+                else if (count == -2)
+                    res.status_code = 503; // radio busy (STA connecting); give up
                 break;
             }
             case socket_message_CorrelationRequest_ap_settings_update_tag: {
@@ -580,9 +582,10 @@ static void registerHandlers(CommAdapterBase &c) {
                             "correlation");
                     }
                     res.status_code = check == imu_calibration::Check::OK ? 200 : 422;
-                    ESP_LOGI(TAG, "IMU calibration: %s", check == imu_calibration::Check::OK       ? "done"
-                                                         : check == imu_calibration::Check::MOVING ? "robot moving"
-                                                                                                   : "robot tilted");
+                    ESP_LOGI(TAG, "IMU calibration: %s",
+                             check == imu_calibration::Check::OK       ? "done"
+                             : check == imu_calibration::Check::MOVING ? "robot moving"
+                                                                       : "robot tilted");
                 }
                 break;
             }
@@ -616,10 +619,10 @@ static void registerHandlers(CommAdapterBase &c) {
                 const api_FileWriteChunk &w = req.request.file_write_chunk;
                 std::string full;
                 res.which_response = socket_message_CorrelationResponse_empty_tag;
-                res.status_code = file_transfer::resolve(w.path, full)
-                                      ? file_transfer::write(full.c_str(), w.offset, w.total_size, w.content.bytes,
-                                                             w.content.size)
-                                      : 400;
+                res.status_code =
+                    file_transfer::resolve(w.path, full)
+                        ? file_transfer::write(full.c_str(), w.offset, w.total_size, w.content.bytes, w.content.size)
+                        : 400;
                 break;
             }
             case socket_message_CorrelationRequest_file_read_chunk_tag: {
@@ -847,7 +850,8 @@ static void addBridge(int32_t tag, Fn fn) {
         ESP_LOGD(TAG, "bridge tag %d %s", (int)tag, wanted ? "attached" : "detached");
         if (wanted)
             handle = Bus::subscribe(fn);
-        else handle.unsubscribe();
+        else
+            handle.unsubscribe();
     };
 }
 
@@ -1125,7 +1129,7 @@ static void sendTelemetry() {
         return;
     }
     telemetry->setRecording(true);
-    static socket_message_TelemetryBatch batch;  // about 1 KB, kept off the service task's stack
+    static socket_message_TelemetryBatch batch; // about 1 KB, kept off the service task's stack
     while (telemetry->takeBatch(batch)) emitAll(batch);
 }
 
@@ -1193,7 +1197,7 @@ static void serviceLoop(void *) {
     setupComm();
 
 #if FT_ENABLED(USE_ESPNOW)
-    espNow.begin();  // needs the radio started, so after wifiService/apService
+    espNow.begin(); // needs the radio started, so after wifiService/apService
 #endif
 
     // After BLE so the controller claims its internal DMA first; camera init is non-fatal.
@@ -1241,7 +1245,7 @@ static void serviceLoop(void *) {
 
 extern "C" void app_main() {
     ESP_LOGI(TAG, "Booting %s (ESP-IDF)", APP_NAME);
-    esp_log_level_set("NimBLE", ESP_LOG_WARN);  // NimBLE logs every notify at INFO — a flood
+    esp_log_level_set("NimBLE", ESP_LOG_WARN); // NimBLE logs every notify at INFO — a flood
     initNvs();
 
     if (!FileSystem::init()) {
@@ -1254,8 +1258,8 @@ extern "C" void app_main() {
     initCoreTempSensor();
     servoSettingsService.begin();
     peripheralSettingsService.begin();
-    imuCalibrationService.begin();  // before the control task applies the offsets
-    cameraSettingsService.begin();  // before the service task starts the camera with them
+    imuCalibrationService.begin(); // before the control task applies the offsets
+    cameraSettingsService.begin(); // before the service task starts the camera with them
     checkCoreDump();
 
     xTaskCreate(serviceLoop, "service", 8192, nullptr, 2, nullptr);

@@ -117,4 +117,4 @@ class Decoder {
     }
 };
 
-}  // namespace serial_frame
+} // namespace serial_frame

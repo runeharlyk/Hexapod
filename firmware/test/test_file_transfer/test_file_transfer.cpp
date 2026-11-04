@@ -67,7 +67,7 @@ std::vector<std::string> names(const api_FileList &list) {
 
 constexpr size_t PAGE = sizeof(api_FileList::entries) / sizeof(api_FileEntry);
 
-}  // namespace
+} // namespace
 
 namespace FileSystem {
 
@@ -85,7 +85,7 @@ bool replaceFile(const char *from, const char *to) {
     return !error;
 }
 
-}  // namespace FileSystem
+} // namespace FileSystem
 
 void setUp() {
     moveRefused = false;
@@ -172,7 +172,7 @@ void test_a_chunk_past_the_total_or_past_the_end_is_refused() {
     TEST_ASSERT_EQUAL(400, file_transfer::write(path.c_str(), 0, 2, a, 3));
     TEST_ASSERT_EQUAL(0, contents(path).size());
     TEST_ASSERT_EQUAL(200, file_transfer::write(path.c_str(), 0, 6, a, 3));
-    TEST_ASSERT_EQUAL(400, file_transfer::write(path.c_str(), 4, 6, a, 2));  // gap after byte 3
+    TEST_ASSERT_EQUAL(400, file_transfer::write(path.c_str(), 4, 6, a, 2)); // gap after byte 3
     const std::string part = file_transfer::partPath(path.c_str());
     TEST_ASSERT_EQUAL(3, contents(part).size());
     static uint8_t big[file_transfer::CHUNK_MAX + 1];
@@ -272,14 +272,16 @@ void test_every_page_of_a_mixed_directory_matches_the_sorted_listing_at_any_offs
         bool directory;
         uint32_t size;
     };
-    std::vector<Expected> expected;  // in listing order once sorted
+    std::vector<Expected> expected; // in listing order once sorted
     for (size_t i = 0; i < count; ++i) {
-        const size_t shuffled = (i * 37) % count;  // 37 is coprime with 115: a permutation, not creation order
+        const size_t shuffled = (i * 37) % count; // 37 is coprime with 115: a permutation, not creation order
         const bool directory = shuffled % 3 == 0;
         char name[16];
         snprintf(name, sizeof(name), "%c%03u", shuffled % 2 ? 'a' : 'B', (unsigned)shuffled);
-        if (directory) makeDirectory(std::string("/") + name);
-        else touch(std::string("/") + name, shuffled);
+        if (directory)
+            makeDirectory(std::string("/") + name);
+        else
+            touch(std::string("/") + name, shuffled);
         expected.push_back({name, directory, directory ? 0u : (uint32_t)shuffled});
     }
     std::sort(expected.begin(), expected.end(), [](const Expected &a, const Expected &b) {
@@ -311,11 +313,11 @@ void test_an_entry_is_a_directory_by_its_d_type_or_else_by_stat() {
     const std::string dir = std::string(ROOT) + "/dir", file = std::string(ROOT) + "/file",
                       missing = std::string(ROOT) + "/missing";
     // A d_type is taken as it is, without a stat(), which would contradict it here or find nothing.
-    TEST_ASSERT_TRUE(file_transfer::detail::isDirectory(TypedEntry{DT_DIR}, missing.c_str()));
-    TEST_ASSERT_FALSE(file_transfer::detail::isDirectory(TypedEntry{DT_REG}, dir.c_str()));
-    TEST_ASSERT_TRUE(file_transfer::detail::isDirectory(TypedEntry{DT_UNKNOWN}, dir.c_str()));
-    TEST_ASSERT_FALSE(file_transfer::detail::isDirectory(TypedEntry{DT_UNKNOWN}, file.c_str()));
-    const dirent untyped{};
+    TEST_ASSERT_TRUE(file_transfer::detail::isDirectory(TypedEntry {DT_DIR}, missing.c_str()));
+    TEST_ASSERT_FALSE(file_transfer::detail::isDirectory(TypedEntry {DT_REG}, dir.c_str()));
+    TEST_ASSERT_TRUE(file_transfer::detail::isDirectory(TypedEntry {DT_UNKNOWN}, dir.c_str()));
+    TEST_ASSERT_FALSE(file_transfer::detail::isDirectory(TypedEntry {DT_UNKNOWN}, file.c_str()));
+    const dirent untyped {};
     TEST_ASSERT_TRUE(file_transfer::detail::isDirectory(untyped, dir.c_str()));
     TEST_ASSERT_FALSE(file_transfer::detail::isDirectory(untyped, file.c_str()));
 }

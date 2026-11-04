@@ -34,7 +34,7 @@ bool decodeFixture(const char *name, animation_Animation &out) {
     return pb_decode(&stream, animation_Animation_fields, &out);
 }
 
-}  // namespace
+} // namespace
 
 void setUp() {}
 void tearDown() {}
@@ -345,7 +345,7 @@ void test_pose_to_angles_clamps_overrides_and_flags_unreachable_feet() {
     TEST_ASSERT_EQUAL_UINT32((1u << 4) | (1u << 5), reachMask);
     anim::Pose stance;
     TEST_ASSERT_EQUAL_UINT32(0, anim::poseToAngles(stance, kin, STANCE, angles));
-    BodyStateMsg b{};
+    BodyStateMsg b {};
     b.updateFeet(STANCE);
     float expected[18];
     kin.inverseKinematics(b, expected);
@@ -353,7 +353,7 @@ void test_pose_to_angles_clamps_overrides_and_flags_unreachable_feet() {
 }
 
 void test_capture_pose_reads_offsets_from_a_body_state() {
-    BodyStateMsg b{};
+    BodyStateMsg b {};
     b.updateFeet(STANCE);
     b.omega = 0.1f;
     b.zm = 15.0f;
@@ -408,7 +408,7 @@ void test_player_matches_every_fixture_trace() {
         const PlayerCase &c = fixtures().player[ci];
         anim::Player player(kin);
         player.setStance(STANCE);
-        BodyStateMsg live{};
+        BodyStateMsg live {};
         live.updateFeet(STANCE);
         live.omega = c.body[0];
         live.phi = c.body[1];
@@ -424,8 +424,10 @@ void test_player_matches_every_fixture_trace() {
         for (size_t step = 0; step < c.trace.size(); ++step) {
             for (const PlayerEvent &e : c.events) {
                 if (e.step != (int)step) continue;
-                if (e.play) player.play(&clipByName(e.animation), e.params.values, e.params.count, nullptr);
-                else player.stop();
+                if (e.play)
+                    player.play(&clipByName(e.animation), e.params.values, e.params.count, nullptr);
+                else
+                    player.stop();
             }
             const anim::Pose &pose = player.update(c.dt);
             float angles[18];

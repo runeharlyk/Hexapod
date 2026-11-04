@@ -36,7 +36,7 @@
  */
 namespace ota_service {
 
-inline std::atomic<bool> inProgress{false};
+inline std::atomic<bool> inProgress {false};
 
 // Frees internal RAM for the download task. Its 8 KB stack must be internal, as flash writes turn off
 // the cache PSRAM is reached through, and once the camera is up the robot has about 5 KB left.
@@ -290,7 +290,7 @@ inline esp_err_t download(httpd_req_t *req) {
     }
 
     stopMotion();
-    auto *args = new DownloadTaskArgs{url->valuestring};
+    auto *args = new DownloadTaskArgs {url->valuestring};
     cJSON_Delete(body);
 
     // TLS handshake plus the OTA buffers need a deep stack; 8 KB matches IDF's own OTA examples.

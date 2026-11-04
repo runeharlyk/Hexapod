@@ -21,7 +21,7 @@ constexpr float STAND[6][4] = {{122, 152, -66, 1},  {171, 0, -66, 1},  {122, -15
 constexpr float DT = 0.005f; // the control-task period
 
 gait_state_t makeGait(GaitType type, float stepX, float stepY, float stepAngle) {
-    gait_state_t gait{};
+    gait_state_t gait {};
     gait.gait_type = type;
     gait.step_x = stepX;
     gait.step_y = stepY;
@@ -33,11 +33,10 @@ gait_state_t makeGait(GaitType type, float stepX, float stepY, float stepAngle) 
 }
 
 BodyStateMsg makeBody() {
-    BodyStateMsg body{};
+    BodyStateMsg body {};
     body.updateFeet(STAND);
     return body;
 }
-
 
 // Mirrors the GaitType::TUNED path in MotionService::handleCommand. Kept here rather than shared
 // because MotionService itself drags in esp_log.h and the peripheral drivers; the constants it uses
@@ -52,17 +51,17 @@ TunedCommand makeTuned(float ly, float lx, float rx, float s1) {
     float a[6];
     tuned_gait::velocity_to_gait(cmd, a);
 
-    TunedCommand out{};
+    TunedCommand out {};
     out.gait.gait_type = GaitType::TUNED;
     out.gait.step_x = a[0] * tuned_gait::STEP_XY_MM;
     out.gait.step_y = a[1] * tuned_gait::STEP_XY_MM;
     out.gait.step_angle = a[2] * tuned_gait::STEP_ANGLE_RAD;
     out.gait.step_speed = 1.0f;
-    out.gait.step_height = CLIP(tuned_gait::STEP_HEIGHT_MM + s1 * TUNED_LIFT_TRIM_MM,
-                                tuned_gait::STEP_HEIGHT_MIN_MM, tuned_gait::STEP_HEIGHT_MAX_MM);
+    out.gait.step_height = CLIP(tuned_gait::STEP_HEIGHT_MM + s1 * TUNED_LIFT_TRIM_MM, tuned_gait::STEP_HEIGHT_MIN_MM,
+                                tuned_gait::STEP_HEIGHT_MAX_MM);
     out.gait.step_depth = tuned_gait::STEP_DEPTH_MM;
-    out.gait.phase_rate = tuned_gait::PHASE_RATE_MIN +
-                          (a[5] + 1.f) * 0.5f * (tuned_gait::PHASE_RATE_MAX - tuned_gait::PHASE_RATE_MIN);
+    out.gait.phase_rate =
+        tuned_gait::PHASE_RATE_MIN + (a[5] + 1.f) * 0.5f * (tuned_gait::PHASE_RATE_MAX - tuned_gait::PHASE_RATE_MIN);
     // Ride height is what makes the searched foot lift reachable at all, so a sweep that leaves it
     // at zero measures a robot this gait never runs as.
     out.zm = -tuned_gait::RIDE_MM;
@@ -125,8 +124,7 @@ void test_tripod_keeps_three_feet_loaded() {
 
     for (int i = 0; i < 6; ++i) {
         // Duty: every leg spends the same fraction of the cycle in swing, 1 - stand_frac.
-        TEST_ASSERT_FLOAT_WITHIN(0.01f, 1.0f - gait.stand_frac,
-                                 static_cast<float>(swingSamples[i]) / SAMPLES);
+        TEST_ASSERT_FLOAT_WITHIN(0.01f, 1.0f - gait.stand_frac, static_cast<float>(swingSamples[i]) / SAMPLES);
     }
 }
 
@@ -299,7 +297,7 @@ void test_stance_sweeps_the_foot_against_the_commanded_direction() {
 void test_stance_levels_the_foot_at_lift_off_in_every_direction() {
     const float d = 42.4264f;
     const float strokes[][2] = {{60, 0}, {0, 60}, {d, d}, {d, -d}, {-d, d}, {-d, -d}};
-    for (const auto &stroke : strokes) {
+    for (const auto& stroke : strokes) {
         gait_state_t gait = makeGait(GaitType::TRI_GATE, stroke[0], stroke[1], 0.0f);
         gait.step_depth = 5.0f;
         GaitController controller;
@@ -396,12 +394,11 @@ void test_inverse_kinematics_holds_the_nominal_stance() {
     // The stance is mirror-symmetric about the body x axis, so the left and right legs of each
     // pair must carry the same femur/tibia angles.
     const int mirrored[3][2] = {{0, 2}, {3, 5}};
-    for (const auto &pair : mirrored) {
+    for (const auto& pair : mirrored) {
         TEST_ASSERT_FLOAT_WITHIN(0.01f, angles[pair[0] * 3 + 1], angles[pair[1] * 3 + 1]);
         TEST_ASSERT_FLOAT_WITHIN(0.01f, angles[pair[0] * 3 + 2], angles[pair[1] * 3 + 2]);
     }
 }
-
 
 // --- Locomotion command ramp (issue #7) -------------------------------------------------------
 // The command used to be written straight into gait_state, so a stick slammed forward changed the
@@ -413,7 +410,7 @@ namespace {
 gait_state_t rampState() {
     return {15, 0, 0, 0, 1, 0.002f, default_stand_frac, GaitType::TRI_GATE, {0, 0.5f, 0, 0.5f, 0, 0.5f}, 0};
 }
-}  // namespace
+} // namespace
 
 void test_command_ramp_moves_toward_target_without_jumping() {
     gait_state_t cur = rampState();
@@ -433,7 +430,7 @@ void test_command_ramp_converges_on_the_command() {
     target.step_y = 100.0f;
     target.step_angle = 0.4f;
 
-    for (int i = 0; i < 200; i++) approachGaitCommand(cur, target, 0.005f, 0.15f);  // 1 s
+    for (int i = 0; i < 200; i++) approachGaitCommand(cur, target, 0.005f, 0.15f); // 1 s
 
     TEST_ASSERT_FLOAT_WITHIN(0.5f, target.step_x, cur.step_x);
     TEST_ASSERT_FLOAT_WITHIN(0.5f, target.step_y, cur.step_y);
@@ -447,8 +444,8 @@ void test_command_ramp_is_independent_of_loop_rate() {
     gait_state_t target = rampState();
     target.step_y = 100.0f;
 
-    for (int i = 0; i < 20; i++) approachGaitCommand(fine, target, 0.005f, 0.15f);  // 20 x 5 ms
-    approachGaitCommand(coarse, target, 0.100f, 0.15f);                             // 1 x 100 ms
+    for (int i = 0; i < 20; i++) approachGaitCommand(fine, target, 0.005f, 0.15f); // 20 x 5 ms
+    approachGaitCommand(coarse, target, 0.100f, 0.15f);                            // 1 x 100 ms
 
     TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f, fine.step_y, coarse.step_y, "ramp depends on tick size");
 }
@@ -492,7 +489,6 @@ void test_command_ramp_leaves_the_gait_schedule_alone() {
     TEST_ASSERT_EQUAL_FLOAT(0.5f, cur.offset[1]);
 }
 
-
 // --- Stance repositioning (issue #9) ----------------------------------------------------------
 // With no locomotion command but a changed stance target, step() runs the gait anyway so each foot
 // is lifted and placed on its own swing instead of dragged. Nothing covered this path before: every
@@ -529,7 +525,6 @@ void test_stance_change_walks_the_feet_to_the_new_target() {
         TEST_ASSERT_TRUE_MESSAGE(maxLift[i] > 1.0f, "a foot slid to the new stance instead of stepping");
     }
 }
-
 
 void test_settled_legs_hold_station_while_others_reposition() {
     // Only one foot is off target. The other five are already standing where they belong, so they
@@ -730,8 +725,7 @@ void test_tuned_gait_records_lateral_femur_cost() {
     float full[3] = {0, 0, 0};
     float fpeak[3] = {0, 0, 0};
     sweepTunedCycle(-1.0f, 1.0f, 0.5f, -1.0f, full, fpeak);
-    TEST_ASSERT_TRUE_MESSAGE(full[1] > 0.0f,
-                             "full three-axis command now fits -- the lateral caveat can be dropped");
+    TEST_ASSERT_TRUE_MESSAGE(full[1] > 0.0f, "full three-axis command now fits -- the lateral caveat can be dropped");
 }
 
 // On a single axis at a time the whole gait is executable, coxa included. Combined forward+turn is
@@ -743,9 +737,9 @@ void test_tuned_gait_is_feasible_on_single_axis_commands() {
     float worst[3] = {0, 0, 0};
     float peak[3] = {0, 0, 0};
     for (float v : sticks) {
-        sweepTunedCycle(v, 0.f, 0.f, -1.0f, worst, peak);   // forward only
-        sweepTunedCycle(0.f, -v, 0.f, -1.0f, worst, peak);  // lateral only, to the left
-        sweepTunedCycle(0.f, 0.f, -v, -1.0f, worst, peak);  // turn only, counter-clockwise
+        sweepTunedCycle(v, 0.f, 0.f, -1.0f, worst, peak);  // forward only
+        sweepTunedCycle(0.f, -v, 0.f, -1.0f, worst, peak); // lateral only, to the left
+        sweepTunedCycle(0.f, 0.f, -v, -1.0f, worst, peak); // turn only, counter-clockwise
     }
     sweepTunedCycle(0.f, -1.0f, 0.f, -1.0f, worst, peak); // lateral saturates at only ~28 mm stride
     TEST_ASSERT_TRUE_MESSAGE(worst[0] <= 0.0f, "coxa exceeds travel on a single-axis command");
@@ -761,7 +755,7 @@ void test_tuned_gait_records_combined_command_overshoot() {
     int n = 0;
     n += std::snprintf(msg + n, sizeof(msg) - n, "coxa overshoot (s1=-1) fwd/turn:");
     const float pairs[][2] = {{0.22f, 1.0f}, {0.32f, 0.5f}, {0.41f, 0.25f}, {0.41f, 1.0f}};
-    for (auto &pr : pairs) {
+    for (auto& pr : pairs) {
         float worst[3] = {0, 0, 0};
         float peak[3] = {0, 0, 0};
         sweepTunedCycle(pr[0], 0.f, -pr[1], -1.0f, worst, peak); // a counter-clockwise turn
@@ -786,7 +780,7 @@ void test_tuned_default_lift_trim_still_exceeds_femur_travel() {
 namespace {
 // Walks a stop-slow-stop-fast-stop profile and reports the worst per-tick foot movement anywhere in
 // it. With autoSwitch the schedule may change; where it may change is the thing under test.
-float runGaitProfile(bool autoSwitch, GaitType fixedGait, int &switches) {
+float runGaitProfile(bool autoSwitch, GaitType fixedGait, int& switches) {
     GaitController controller;
     controller.snapDefaultFootTarget(STAND);
     gait_state_t gait = makeGait(autoSwitch ? GaitType::RIPPLE : fixedGait, 0, 0, 0);
@@ -805,8 +799,8 @@ float runGaitProfile(bool autoSwitch, GaitType fixedGait, int &switches) {
     for (int leg = 0; leg < 5; ++leg) {
         target.step_y = targets[leg] * 100.0f;
         for (int t = 0; t < 600; ++t) {
-            const bool stepping = std::fabs(gait.step_x) >= 2.0f || std::fabs(gait.step_y) >= 2.0f ||
-                                  gait.step_angle != 0.0f;
+            const bool stepping =
+                std::fabs(gait.step_x) >= 2.0f || std::fabs(gait.step_y) >= 2.0f || gait.step_angle != 0.0f;
             if (autoSwitch && !stepping) {
                 // A slow gait for the slow stroke and a fast one for the fast, as AUTO picks them.
                 const GaitType next = target.step_y > 50.0f ? GaitType::BI_GATE : GaitType::RIPPLE;
@@ -833,7 +827,7 @@ float runGaitProfile(bool autoSwitch, GaitType fixedGait, int &switches) {
     }
     return worst;
 }
-}  // namespace
+} // namespace
 
 void test_auto_gait_switch_adds_no_discontinuity() {
     // Starting to walk always snaps some legs into mid-swing, because at phase 0 any leg whose
@@ -847,8 +841,8 @@ void test_auto_gait_switch_adds_no_discontinuity() {
     const float baseline = bipodOnly > rippleOnly ? bipodOnly : rippleOnly;
 
     char dbg[128];
-    snprintf(dbg, sizeof(dbg), "switches=%d auto=%.2f bipod=%.2f ripple=%.2f mm", switches, withSwitching,
-             bipodOnly, rippleOnly);
+    snprintf(dbg, sizeof(dbg), "switches=%d auto=%.2f bipod=%.2f ripple=%.2f mm", switches, withSwitching, bipodOnly,
+             rippleOnly);
     TEST_ASSERT_TRUE_MESSAGE(switches >= 2, dbg);
     TEST_ASSERT_TRUE_MESSAGE(withSwitching <= baseline + 1.0f, dbg);
 }
@@ -869,13 +863,13 @@ void test_released_command_stops_the_cycle() {
     controller.snapDefaultFootTarget(STAND);
 
     BodyStateMsg body = makeBody();
-    for (int t = 0; t < 400; ++t) {  // 2 s of walking with yaw
+    for (int t = 0; t < 400; ++t) { // 2 s of walking with yaw
         approachGaitCommand(cur, target, DT, 0.15f);
         controller.step(cur, body, DT);
     }
 
-    target.step_x = target.step_y = target.step_angle = 0.0f;  // MotionService's stop
-    for (int t = 0; t < 600; ++t) {                            // 3 s to settle
+    target.step_x = target.step_y = target.step_angle = 0.0f; // MotionService's stop
+    for (int t = 0; t < 600; ++t) {                           // 3 s to settle
         approachGaitCommand(cur, target, DT, 0.15f);
         controller.step(cur, body, DT);
     }
@@ -955,7 +949,7 @@ void test_command_ramp_lands_exactly_on_a_released_command() {
     cur.phase_rate = 1.35f;
     gait_state_t target = rampState();
 
-    for (int i = 0; i < 600; i++) approachGaitCommand(cur, target, DT, 0.15f);  // 3 s
+    for (int i = 0; i < 600; i++) approachGaitCommand(cur, target, DT, 0.15f); // 3 s
 
     TEST_ASSERT_EQUAL_FLOAT(target.step_x, cur.step_x);
     TEST_ASSERT_EQUAL_FLOAT(target.step_y, cur.step_y);
@@ -1301,7 +1295,7 @@ void test_gait_trace_ends_at_rest_on_the_stance() {
     }
 }
 
-int main(int, char **) {
+int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_tripod_keeps_three_feet_loaded);
     RUN_TEST(test_every_schedule_but_the_bipod_is_its_own_mirror_half_a_cycle_on);

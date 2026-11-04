@@ -132,8 +132,10 @@ void WiFiService::manageSTA() {
     if (_failedAttempts < 0xFF) _failedAttempts++;
 
     wifi_mode_t mode = WiFi.getMode();
-    if (mode == WIFI_MODE_AP) WiFi.mode(WIFI_MODE_APSTA);
-    else if (mode == WIFI_MODE_NULL) WiFi.mode(WIFI_MODE_STA);
+    if (mode == WIFI_MODE_AP)
+        WiFi.mode(WIFI_MODE_APSTA);
+    else if (mode == WIFI_MODE_NULL)
+        WiFi.mode(WIFI_MODE_STA);
 
     // A failed attempt moves on to the next saved network; one that joins is tried first next time.
     _nextNetwork = _connectingTo + 1;

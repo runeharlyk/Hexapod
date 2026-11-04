@@ -12,7 +12,7 @@ namespace {
 std::vector<uint8_t> appImageHead() {
     std::vector<uint8_t> head(64, 0);
     head[0] = 0xE9;
-    head[12] = 9;  // chip id ESP32-S3
+    head[12] = 9; // chip id ESP32-S3
     const uint32_t magic = 0xABCD5432;
     for (int i = 0; i < 4; ++i) head[32 + i] = (magic >> (8 * i)) & 0xFF;
     return head;
@@ -28,7 +28,7 @@ std::vector<uint8_t> factoryImageHead() {
     return head;
 }
 
-}  // namespace
+} // namespace
 
 void setUp() {}
 void tearDown() {}
@@ -45,7 +45,7 @@ void test_a_factory_image_is_refused() {
 
 void test_a_file_that_is_no_image_is_refused() {
     auto head = appImageHead();
-    head[0] = 0x7F;  // an ELF file, say
+    head[0] = 0x7F; // an ELF file, say
     TEST_ASSERT_FALSE(ota_image::isAppImage(head.data(), head.size()));
 }
 

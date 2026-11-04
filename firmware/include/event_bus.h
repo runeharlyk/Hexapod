@@ -86,7 +86,6 @@ class EventBus {
     inline static std::atomic<size_t> subCount {0};
     inline static std::atomic<bool> taskStarted {false};
 
-
     static void dispatch(const Msg& m, size_t ex) {
         TickType_t now = xTaskGetTickCount();
         Sub* ready[MaxSubs];
@@ -143,8 +142,8 @@ class EventBus {
                 // One worker per bus type adds up to more internal RAM than the camera leaves, so the
                 // stacks live in PSRAM. A subscriber must therefore never touch flash: the IDF asserts
                 // that a flash access does not run on an external stack.
-                if (xTaskCreatePinnedToCoreWithCaps(worker, "evtbus", 4096, nullptr, 6, nullptr, 1, MALLOC_CAP_SPIRAM) !=
-                    pdPASS) {
+                if (xTaskCreatePinnedToCoreWithCaps(worker, "evtbus", 4096, nullptr, 6, nullptr, 1,
+                                                    MALLOC_CAP_SPIRAM) != pdPASS) {
                     ESP_LOGE("EventBus", "No memory for a bus worker; messages wait for the next try");
                     taskStarted.store(false, std::memory_order_release);
                 }
@@ -266,7 +265,6 @@ class EventBus {
         return push(m, h.valid() ? h.idx : NO_EX);
     }
 
-
     static bool peek(Msg& out) {
         if (!hasLatest.load(std::memory_order_acquire)) return false;
         portENTER_CRITICAL(&mux);
@@ -274,7 +272,6 @@ class EventBus {
         portEXIT_CRITICAL(&mux);
         return true;
     }
-
 
     static bool hasSubscribers() { return subCount.load(std::memory_order_acquire) > 0; }
 };

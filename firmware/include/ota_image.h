@@ -21,4 +21,4 @@ inline bool isAppImage(const uint8_t *head, size_t len) {
     return magic == APP_DESC_MAGIC;
 }
 
-}  // namespace ota_image
+} // namespace ota_image

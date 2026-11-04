@@ -102,7 +102,7 @@ void test_a_first_chunk_without_an_mbuf_loses_the_frame_whole_and_keeps_the_link
     TEST_ASSERT_TRUE(link.received.empty());
 }
 
-}  // namespace
+} // namespace
 
 void setUp() {}
 void tearDown() {}

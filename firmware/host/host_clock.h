@@ -14,4 +14,4 @@ inline int64_t &nowUs() {
 
 inline void advance(int64_t us) { nowUs() += us; }
 
-}  // namespace host_clock
+} // namespace host_clock

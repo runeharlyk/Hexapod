@@ -63,13 +63,13 @@ struct LegTarget {
 struct Keyframe {
     float time = 0.0f;
     int ease = LINEAR;
-    float body[6] = {0, 0, 0, 0, 0, 0};  // roll, pitch, yaw, x, y, z offsets
-    int legCount = 0;                    // 0 = every foot holds stance, else 6
+    float body[6] = {0, 0, 0, 0, 0, 0}; // roll, pitch, yaw, x, y, z offsets
+    int legCount = 0;                   // 0 = every foot holds stance, else 6
     LegTarget legs[6];
 };
 
 struct Overlay {
-    ChannelKind kind = CHANNEL_NONE;  // channel is a BodyAxis for CHANNEL_BODY, else leg*3 + axis
+    ChannelKind kind = CHANNEL_NONE; // channel is a BodyAxis for CHANNEL_BODY, else leg*3 + axis
     int channel = 0;
     float amplitude = 0.0f;
     float frequency = 1.0f;
@@ -112,7 +112,7 @@ struct Clip {
     float exitSeconds() const { return exitTime > 0.0f ? exitTime : DEFAULT_EXIT_S; }
 };
 
-inline LegTarget legTarget(const Keyframe &k, int leg) { return k.legCount > 0 ? k.legs[leg] : LegTarget{}; }
+inline LegTarget legTarget(const Keyframe &k, int leg) { return k.legCount > 0 ? k.legs[leg] : LegTarget {}; }
 
 inline bool validName(const char *name) {
     const size_t n = strlen(name);
@@ -292,8 +292,10 @@ inline void evaluate(const Clip &c, const float params[PARAM_COUNT], float t, Ki
         const Overlay &o = c.overlays[i];
         if (!(o.start <= t && t <= o.end)) continue;
         const float v = o.amplitude * params[OVERLAY_AMPLITUDE] * sinf(2.0f * (float)M_PI * o.frequency * t + o.phase);
-        if (o.kind == CHANNEL_BODY) body[o.channel] += v;
-        else footOverlay[o.channel / 3][o.channel % 3] += v;
+        if (o.kind == CHANNEL_BODY)
+            body[o.channel] += v;
+        else
+            footOverlay[o.channel / 3][o.channel % 3] += v;
     }
     for (int a = 0; a < 6; ++a) body[a] *= params[BODY_PARAM_FOR_AXIS[a]];
     for (int a = 0; a < 6; ++a) out.body[a] = body[a];
@@ -492,7 +494,8 @@ class Player {
 
     const Pose &update(float dt, float baseZ = 0.0f) {
         if (state_ == State::IDLE) return lastPose_;
-        if (state_ == State::ENTRY || state_ == State::EXIT) advanceBlend(dt);
+        if (state_ == State::ENTRY || state_ == State::EXIT)
+            advanceBlend(dt);
         else if (state_ == State::HOLD)
             evaluate(*clip_, params_, clip_->duration(), kin_, stance_, lastPose_, baseZ);
         else
@@ -553,7 +556,8 @@ class Player {
         blendT_ += dt;
         const float u = fminf(1.0f, blendT_ / blendSeconds_);
         const float e = easeValue(EASE_IN_OUT, u);
-        for (int a = 0; a < 6; ++a) lastPose_.body[a] = blendFrom_.body[a] + (blendTo_.body[a] - blendFrom_.body[a]) * e;
+        for (int a = 0; a < 6; ++a)
+            lastPose_.body[a] = blendFrom_.body[a] + (blendTo_.body[a] - blendFrom_.body[a]) * e;
         for (int i = 0; i < 6; ++i) {
             const LegTarget &la = blendFrom_.legs[i];
             const LegTarget &lb = blendTo_.legs[i];
@@ -595,10 +599,11 @@ class Player {
             return;
         }
         evaluate(*clip_, params_, duration, kin_, stance_, lastPose_, baseZ);
-        if (clip_->holdEnd) state_ = State::HOLD;
+        if (clip_->holdEnd)
+            state_ = State::HOLD;
         else
             stop(baseZ);
     }
 };
 
-}  // namespace anim
+} // namespace anim

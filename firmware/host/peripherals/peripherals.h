@@ -15,9 +15,9 @@ using ImuCalibration = socket_message_ImuCalibration;
 class Peripherals {
   public:
     struct Imu {
-        float rpyRad[3] = {0, 0, 0};       // roll, pitch, yaw in radians, as the MPU6050 driver reports them
-        float gravityUp[3] = {0, 0, 1};    // body-frame unit vector, DMP convention (world up)
-        float gyroRad[3] = {0, 0, 0};      // body-frame rates, rad/s
+        float rpyRad[3] = {0, 0, 0};    // roll, pitch, yaw in radians, as the MPU6050 driver reports them
+        float gravityUp[3] = {0, 0, 1}; // body-frame unit vector, DMP convention (world up)
+        float gyroRad[3] = {0, 0, 0};   // body-frame rates, rad/s
     };
 
     static void setImu(const Imu &imu) { state() = imu; }

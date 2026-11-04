@@ -33,7 +33,7 @@ class SpscRing {
     size_t size() const { return _head.load(std::memory_order_acquire) - _tail.load(std::memory_order_acquire); }
 
   private:
-    std::array<T, N> _slots{};
-    std::atomic<size_t> _head{0};
-    std::atomic<size_t> _tail{0};
+    std::array<T, N> _slots {};
+    std::atomic<size_t> _head {0};
+    std::atomic<size_t> _tail {0};
 };

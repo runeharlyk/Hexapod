@@ -29,7 +29,8 @@ inline void correct(const float raw[3], const Offset& offset, float corrected[3]
 
 // Degrees in [0, 360): the angle of the field in the chip's XY plane plus the declination (radians, east positive).
 // Clockwise from north only if the chip's +x points forward and +y to the left; that is opposite in sign to the body
-// yaw (counter-clockwise), and the chip's mounting rotation relative to the body frame is unverified (docs/conventions.md).
+// yaw (counter-clockwise), and the chip's mounting rotation relative to the body frame is unverified
+// (docs/conventions.md).
 inline float headingDegrees(const float field[3], float declination) {
     constexpr float TWO_PI = 2 * std::numbers::pi_v<float>;
     float heading = std::fmod(std::atan2(field[1], field[0]) + declination, TWO_PI);

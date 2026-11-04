@@ -18,13 +18,13 @@ socket_message_TickSample tick(uint32_t seq) {
     return t;
 }
 
-}  // namespace
+} // namespace
 
 void setUp() {}
 void tearDown() {}
 
 void test_nothing_is_recorded_while_nobody_listens() {
-    auto owned = std::make_unique<Telemetry>();  // about 24 KB, as on the robot where it lives in PSRAM
+    auto owned = std::make_unique<Telemetry>(); // about 24 KB, as on the robot where it lives in PSRAM
     Telemetry& telemetry = *owned;
     for (uint32_t i = 0; i < 20; ++i) telemetry.record(tick(i));
     socket_message_TelemetryBatch batch;
@@ -32,7 +32,7 @@ void test_nothing_is_recorded_while_nobody_listens() {
 }
 
 void test_ticks_leave_in_order_in_whole_batches() {
-    auto owned = std::make_unique<Telemetry>();  // about 24 KB, as on the robot where it lives in PSRAM
+    auto owned = std::make_unique<Telemetry>(); // about 24 KB, as on the robot where it lives in PSRAM
     Telemetry& telemetry = *owned;
     telemetry.setRecording(true);
     const uint32_t n = Telemetry::BATCH_TICKS;
@@ -50,7 +50,7 @@ void test_ticks_leave_in_order_in_whole_batches() {
 }
 
 void test_a_full_ring_counts_what_it_refuses() {
-    auto owned = std::make_unique<Telemetry>();  // about 24 KB, as on the robot where it lives in PSRAM
+    auto owned = std::make_unique<Telemetry>(); // about 24 KB, as on the robot where it lives in PSRAM
     Telemetry& telemetry = *owned;
     telemetry.setRecording(true);
     for (uint32_t i = 0; i < Telemetry::RING_TICKS + 7; ++i) telemetry.record(tick(i));
@@ -62,7 +62,7 @@ void test_a_full_ring_counts_what_it_refuses() {
 }
 
 void test_a_new_recording_starts_with_fresh_ticks() {
-    auto owned = std::make_unique<Telemetry>();  // about 24 KB, as on the robot where it lives in PSRAM
+    auto owned = std::make_unique<Telemetry>(); // about 24 KB, as on the robot where it lives in PSRAM
     Telemetry& telemetry = *owned;
     telemetry.setRecording(true);
     for (uint32_t i = 0; i < 3; ++i) telemetry.record(tick(i));
@@ -78,7 +78,7 @@ void test_a_new_recording_starts_with_fresh_ticks() {
 // One producer and one consumer on separate threads, as the control and service tasks run: every
 // tick arrives exactly once, in order, or is counted as dropped.
 void test_two_tasks_lose_no_tick_unaccounted() {
-    auto owned = std::make_unique<Telemetry>();  // about 24 KB, as on the robot where it lives in PSRAM
+    auto owned = std::make_unique<Telemetry>(); // about 24 KB, as on the robot where it lives in PSRAM
     Telemetry& telemetry = *owned;
     telemetry.setRecording(true);
     constexpr uint32_t TICKS = 200000;

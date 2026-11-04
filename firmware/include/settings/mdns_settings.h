@@ -45,9 +45,7 @@ inline MDNSSettings MDNSSettings_defaults() {
     return settings;
 }
 
-inline void MDNSSettings_read(const MDNSSettings& settings, MDNSSettings& proto) {
-    proto = settings;
-}
+inline void MDNSSettings_read(const MDNSSettings& settings, MDNSSettings& proto) { proto = settings; }
 
 inline bool MDNSTxtRecord_equals(const MDNSTxtRecord& a, const MDNSTxtRecord& b) {
     return strncmp(a.key, b.key, sizeof(a.key)) == 0 && strncmp(a.value, b.value, sizeof(a.value)) == 0;

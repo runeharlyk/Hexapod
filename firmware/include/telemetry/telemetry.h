@@ -10,7 +10,8 @@
 class Telemetry {
   public:
     static constexpr size_t RING_TICKS = 128;
-    static constexpr size_t BATCH_TICKS = sizeof(socket_message_TelemetryBatch::ticks) / sizeof(socket_message_TickSample);
+    static constexpr size_t BATCH_TICKS =
+        sizeof(socket_message_TelemetryBatch::ticks) / sizeof(socket_message_TickSample);
 
     void setRecording(bool recording) { _recording.store(recording, std::memory_order_relaxed); }
     bool recording() const { return _recording.load(std::memory_order_relaxed); }
@@ -36,7 +37,7 @@ class Telemetry {
 
   private:
     SpscRing<socket_message_TickSample, RING_TICKS> _ring;
-    std::atomic<bool> _recording{false};
-    std::atomic<uint32_t> _dropped{0};
+    std::atomic<bool> _recording {false};
+    std::atomic<uint32_t> _dropped {0};
     uint32_t _batchSeq = 0;
 };

@@ -44,4 +44,4 @@ bool send(const uint8_t* data, size_t len, Notify&& notify, Pause&& pause, EndLi
     return true;
 }
 
-}  // namespace ble_frame
+} // namespace ble_frame
