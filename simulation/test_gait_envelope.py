@@ -249,7 +249,8 @@ def top_speed(gait_type, axis, s1, h, fd, servo_rad_s, stance=fg.STANCE_DEFAULT)
     for yaw) and the stroke that reaches it; (0, 0) when no stroke is feasible."""
     d = ge.STAND_FRAC[gait_type]
     best = (0.0, 0.0)
-    for stroke, kappa_swing, kappa_stance in ge._feasible_strokes(axis, float(s1), float(h), float(fd), stance):
+    for stroke, kappa_swing, kappa_stance in ge.feasible_strokes_at(axis, *ge.posture(float(s1), float(h), float(fd)),
+                                                                    stance):
         cadence = min(servo_rad_s / max(kappa_swing / (1.0 - d), kappa_stance / d), ge.CADENCE_MAX)
         speed = stroke * cadence / d
         if speed > best[0]:

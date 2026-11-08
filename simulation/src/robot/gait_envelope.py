@@ -259,10 +259,10 @@ def geometry_factors(axis: str, stroke: float, lift: float, zm: float, feet_scal
 
 
 @lru_cache(maxsize=None)
-def _feasible_strokes(axis: str, s1: float, h: float, fd: float,
-                      stance: int = fg.STANCE_DEFAULT) -> tuple[tuple[float, float, float], ...]:
-    """(stroke, kappa_swing, kappa_stance) for each stroke up to the first infeasible one."""
-    lift, zm, feet_scale = posture(s1, h, fd)
+def feasible_strokes_at(axis: str, lift: float, zm: float, feet_scale: float,
+                        stance: int = fg.STANCE_DEFAULT) -> tuple[tuple[float, float, float], ...]:
+    """(stroke, kappa_swing, kappa_stance) for each stroke up to the first infeasible one, at a lift (mm), body height
+    zm (mm) and feet scale."""
     feasible = []
     for stroke in STROKES[axis]:
         kappa_swing, kappa_stance, ok = geometry_factors(axis, float(stroke), lift, zm, feet_scale, stance)
@@ -273,10 +273,10 @@ def _feasible_strokes(axis: str, s1: float, h: float, fd: float,
 
 
 @lru_cache(maxsize=None)
-def longest_stroke(axis: str, s1: float, h: float, fd: float, stance: int = fg.STANCE_DEFAULT) -> float:
-    """The longest feasible stroke: the sweep's last feasible one, refined to REFINED_STEP by bisection. 0 when no
-    stroke is feasible."""
-    feasible = _feasible_strokes(axis, s1, h, fd, stance)
+def longest_stroke_at(axis: str, lift: float, zm: float, feet_scale: float, stance: int = fg.STANCE_DEFAULT) -> float:
+    """The longest feasible stroke at a lift, body height and feet scale: the sweep's last feasible one, refined to
+    REFINED_STEP by bisection. 0 when no stroke is feasible."""
+    feasible = feasible_strokes_at(axis, lift, zm, feet_scale, stance)
     if not feasible:
         return 0.0
     step = REFINED_STEP[axis]
@@ -284,7 +284,6 @@ def longest_stroke(axis: str, s1: float, h: float, fd: float, stance: int = fg.S
     if feasible[-1][0] == STROKES[axis][-1]:
         return low * step
     high = low + round((STROKES[axis][1] - STROKES[axis][0]) / step)
-    lift, zm, feet_scale = posture(s1, h, fd)
     while high - low > 1:
         middle = (low + high) // 2
         if geometry_factors(axis, middle * step, lift, zm, feet_scale, stance)[2]:
@@ -294,22 +293,37 @@ def longest_stroke(axis: str, s1: float, h: float, fd: float, stance: int = fg.S
     return low * step
 
 
+def longest_stroke(axis: str, s1: float, h: float, fd: float, stance: int = fg.STANCE_DEFAULT) -> float:
+    """longest_stroke_at at a grid posture."""
+    return longest_stroke_at(axis, *posture(s1, h, fd), stance)
+
+
 def is_walkable(s1: float, h: float, fd: float, stance: int = fg.STANCE_DEFAULT) -> bool:
     """Whether the posture can stride WALKABLE_STROKE_MM along the axis the stance walks within joint travel, reach,
     the legs' clearance and the static margin."""
-    strokes = _feasible_strokes(WALK_AXIS[stance], float(s1), float(h), float(fd), stance)
+    return walkable_at(*posture(float(s1), float(h), float(fd)), stance)
+
+
+def walkable_at(lift: float, zm: float, feet_scale: float, stance: int = fg.STANCE_DEFAULT) -> bool:
+    """is_walkable at a lift, body height and feet scale."""
+    strokes = feasible_strokes_at(WALK_AXIS[stance], lift, zm, feet_scale, stance)
     return bool(strokes) and strokes[-1][0] >= WALKABLE_STROKE_MM
 
 
-def _geometry_samples(axis: str, s1: float, h: float, fd: float, stance: int) -> tuple[float, list[float], list[float]]:
-    """(longest stroke, kappa_swing, kappa_stance) at STROKE_SAMPLES strokes up to it."""
-    stroke_max = longest_stroke(axis, s1, h, fd, stance)
+def geometry_samples_at(axis: str, lift: float, zm: float, feet_scale: float,
+                        stance: int) -> tuple[float, list[float], list[float]]:
+    """(longest stroke, kappa_swing, kappa_stance) at STROKE_SAMPLES strokes up to it, at a lift, body height and feet
+    scale."""
+    stroke_max = longest_stroke_at(axis, lift, zm, feet_scale, stance)
     if stroke_max == 0.0:
         return 0.0, [0.0] * STROKE_SAMPLES, [0.0] * STROKE_SAMPLES
-    lift, zm, feet_scale = posture(s1, h, fd)
     feet = fg.stance_feet(stance, feet_scale)
     factors = [kappas(axis, stroke_max * (k + 1) / STROKE_SAMPLES, lift, zm, feet) for k in range(STROKE_SAMPLES)]
     return stroke_max, [f[0] for f in factors], [f[1] for f in factors]
+
+
+def _geometry_samples(axis: str, s1: float, h: float, fd: float, stance: int) -> tuple[float, list[float], list[float]]:
+    return geometry_samples_at(axis, *posture(s1, h, fd), stance)
 
 
 def _round_cells(cells: list, field: int) -> list:

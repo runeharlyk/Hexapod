@@ -1,4 +1,5 @@
 # Generated headers are regenerated, never formatted (CLAUDE.md).
+include/gait_climb.h
 include/gait_envelope.h
 include/gait_tuned.h
 include/policy/hexapod_policy.h
