@@ -19,7 +19,7 @@
   import type { ControllerInput, vector } from '$lib/types/models'
   import { MotionModes, UNKNOWN_MODE_HINT, servoCount } from '$lib/motion'
   import { headingHoldApplies, strideApplies } from '$lib/gait'
-  import { Stance, gaitsOffered, modesOffered } from '$lib/stance'
+  import { Stance, climbApplies, gaitsOffered, modesOffered } from '$lib/stance'
   import { notifications } from '$lib/components/toasts/notifications'
   import { gamepadAxes, gamepadButtons, hasGamepad } from '$lib/stores/gamepad'
   import { gamepadSticks, shapeStick } from '$lib/utilities/stick'
@@ -177,14 +177,17 @@
     })
   }
 
-  const handleHoldHeading = (event: Event) => {
+  const handleToggle = (event: Event, key: 'holdHeading' | 'climb') => {
     const checked = (event.target as HTMLInputElement).checked
     input.update(i => {
-      i.holdHeading = checked
+      i[key] = checked
       syncCommand(i)
       return i
     })
   }
+
+  // A climbing walk stands in the climb's posture, whatever the posture sliders say.
+  const climbing = $derived($input.climb && climbApplies($drivenGait, $drivenStance))
 
   const goalText = $derived($drivenGoal ? goalLine($drivenGoal) : null)
 
@@ -331,7 +334,7 @@
             <div class="min-w-0">{@render slider('feetDistance', 'Feet distance')}</div>
           {/if}
           {#if controls.walk}
-            <div class="min-w-0">{@render slider('s1', 'Step height')}</div>
+            <div class="min-w-0">{@render slider('s1', 'Step height', climbing)}</div>
             <div class="min-w-0">
               {@render slider('stride', 'Stride', !strideApplies($drivenGait))}
             </div>
@@ -341,9 +344,19 @@
                 class="toggle toggle-sm toggle-primary"
                 checked={$input.holdHeading}
                 disabled={!headingHoldApplies($drivenGait)}
-                onchange={handleHoldHeading}
+                onchange={e => handleToggle(e, 'holdHeading')}
               />
               Hold heading while the turn stick is centred
+            </label>
+            <label class="col-span-2 flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                class="toggle toggle-sm toggle-primary"
+                checked={$input.climb}
+                disabled={!climbApplies($drivenGait, $drivenStance)}
+                onchange={e => handleToggle(e, 'climb')}
+              />
+              Climb: high steps on a raised body
             </label>
           {/if}
         </div>
