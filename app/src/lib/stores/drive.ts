@@ -15,7 +15,7 @@ import type { VirtualRobot } from '$lib/simulation/virtual-robot'
  * robot, and none follows it. The view sets the gait and the stance to those its robot reports (SimulationView.svelte).
  */
 export const simulation = {
-  command: writable<Command>([0, 0, 0, 0, 0, 0, 0, 0, 0, false]),
+  command: writable<Command>([0, 0, 0, 0, 0, 0, 0, 0, 0, false, false]),
   mode: writable(MotionModes.DEACTIVATED),
   gait: writable(GaitType.TRI_GATE),
   stance: writable(Stance.DEFAULT),
@@ -75,7 +75,7 @@ const centred = (c: Command): Command => [0, 0, 0, 0, ...c.slice(4)] as Command
 export const driveSimulation = (on: boolean) => {
   outControllerData.update(centred)
   simulation.command.update(centred)
-  const [, , , , height, speed, s1, feetDistance, stride, holdHeading] = get(
+  const [, , , , height, speed, s1, feetDistance, stride, holdHeading, climb] = get(
     on ? simulation.command : outControllerData
   )
   input.set({
@@ -86,7 +86,8 @@ export const driveSimulation = (on: boolean) => {
     s1,
     feetDistance,
     stride,
-    holdHeading
+    holdHeading,
+    climb
   })
   drivesSimulation.set(on)
 }

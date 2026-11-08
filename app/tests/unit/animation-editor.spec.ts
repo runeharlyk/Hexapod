@@ -179,7 +179,7 @@ describe('editor store', () => {
   it('mirrors on the robot at the slider height, else at the file ride height', () => {
     ed.setMeta({ rideHeight: 0 })
     ed.setBody(0, 5, 10)
-    outControllerData.set([0, 0, 0, 0, 0.6, 0, 0, 0, 0, false])
+    outControllerData.set([0, 0, 0, 0, 0.6, 0, 0, 0, 0, false, false])
     try {
       expect(get(ed.frame).preview.body.zm).toBeCloseTo(10, 6)
       ed.setShowOnRobot(true)
@@ -188,7 +188,7 @@ describe('editor store', () => {
       ed.setShowOnRobot(false)
       expect(get(ed.frame).preview.body.zm).toBeCloseTo(10, 6)
     } finally {
-      outControllerData.set([0, 0, 0, 0, 0, 0, 0, 0, 0, false])
+      outControllerData.set([0, 0, 0, 0, 0, 0, 0, 0, 0, false, false])
     }
   })
 

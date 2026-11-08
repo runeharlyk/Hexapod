@@ -100,7 +100,7 @@ const walk = (command: Command) => {
   robot.setMode(WALK)
   const { lx, ly, rx } = command.stick
   const step = () => {
-    robot.command([lx, ly, rx, 0, 0, 0, 0, 0, 0, false])
+    robot.command([lx, ly, rx, 0, 0, 0, 0, 0, 0, false, false])
     robot.tick()
     return feet()
   }
@@ -164,8 +164,8 @@ const stand = ({ lx, ly, rx, ry }: StandStick['stick']) => {
     }
     return bodyOverFeet(feet())
   }
-  const rest = hold([0, 0, 0, 0, 0, 0, 0, 0, 0, false])
-  return { rest, held: hold([lx, ly, rx, ry, 0, 0, 0, 0, 0, false]) }
+  const rest = hold([0, 0, 0, 0, 0, 0, 0, 0, 0, false, false])
+  return { rest, held: hold([lx, ly, rx, ry, 0, 0, 0, 0, 0, false, false]) }
 }
 
 describe('sign convention', () => {

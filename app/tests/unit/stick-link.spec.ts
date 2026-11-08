@@ -8,8 +8,8 @@ import { MotionModes } from '$lib/motion'
 import type { ControllerInputData } from '$lib/platform_shared/message'
 import type { Command } from '$lib/simulation/virtual-robot'
 
-const CENTRED: Command = [0, 0, 0, 0, 0, 0, 0, 0, 0, false]
-const stick = (ly: number): Command => [0, ly, 0, 0, 0, 0, 0, 0, 0, false]
+const CENTRED: Command = [0, 0, 0, 0, 0, 0, 0, 0, 0, false, false]
+const stick = (ly: number): Command => [0, ly, 0, 0, 0, 0, 0, 0, 0, false, false]
 
 describe('followSticks', () => {
   const commands = writable<Command>(CENTRED)
