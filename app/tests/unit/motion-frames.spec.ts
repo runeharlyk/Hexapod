@@ -253,7 +253,7 @@ describe.each(RIGS)('motion frames over %s', (_, makeRig) => {
   // The review's case: driving at the stick rate, the user lets go while the last stick is still being written. The
   // centred frame is the stop; dropped, the robot walks on until the firmware's dead-man.
   it('stops the robot when the stick is released while a frame is being written', async () => {
-    const CENTRED: Command = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+    const CENTRED: Command = [0, 0, 0, 0, 0, 0, 0, 0, 0, false]
     const commands = writable<Command>(CENTRED)
     const stop = followSticks({
       commands,
@@ -261,12 +261,12 @@ describe.each(RIGS)('motion frames over %s', (_, makeRig) => {
       linked: writable(true),
       send: input => broker.emitVolatile(ControllerInputData, input)
     })
-    commands.set([0, 0.5, 0, 0, 0, 0, 0, 0, 0])
+    commands.set([0, 0.5, 0, 0, 0, 0, 0, 0, 0, false])
     await new Promise(resolve => setTimeout(resolve, STICK_INTERVAL_MS + 10))
     await vi.waitFor(() => expect(forward(rig.received())).toEqual([0.5]))
 
     rig.hold()
-    commands.set([0, 0.75, 0, 0, 0, 0, 0, 0, 0])
+    commands.set([0, 0.75, 0, 0, 0, 0, 0, 0, 0, false])
     await new Promise(resolve => setTimeout(resolve, STICK_INTERVAL_MS + 10))
     commands.set(CENTRED)
     rig.release()

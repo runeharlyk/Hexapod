@@ -21,6 +21,7 @@ Paths are relative to `firmware/` unless they start at the repository root.
 | Leg-to-leg clearance of a pose | `include/leg_clearance.h` |
 | Odometry (stance-feet fit, gyro fusion) | `include/odometry.h` |
 | Goal controller (distance, turn and arc moves on the odometry) | `include/goal_controller.h`, the goal parts of `include/motion.h` |
+| Heading hold of a walk driven by the sticks | `include/heading_hold.h`, `holdHeading` in `include/motion.h` |
 | Learned policy (WALK_NN) | `include/policy_runner.h`, generated `include/policy/hexapod_policy.h` |
 | Animation player and mode arbitration | `include/animation/` (`animation.h`, `animation_codec.h`, `animation_runner.h`, `animation_store.h`, `mode_arbiter.h`) |
 | Servo output (two PCA9685 boards) | `include/peripherals/servo_controller.h`, `include/peripherals/drivers/pca9685.h` |
@@ -313,6 +314,13 @@ When a goal ends the robot stands at rest with no cadence left.
 
 The status (`GoalStatus`: id, state, kind, target, progress, x, y, yaw, passes) is an observable: `observeStatus` pushes it as `Message` 300 on every state change and every 5 % of progress, never on a timer, and a subscribe to it is answered with the current one.
 The states are `IDLE`, `SETTLING`, `RUNNING`, `REACHED`, `CANCELLED`, `TIMED_OUT` and `REFUSED`; `SETTLING` is both the start (posture and gait) and the rest before each judging.
+
+### Heading hold
+
+A client's `ControllerInputData` with `hold_heading` (field 8) set asks a classic walk to hold its heading on the fused odometry's yaw while its turn stick is centred; the app's walk adjustments carry a toggle for it, and the ESP-NOW handheld never sets it.
+`HeadingHold` takes the heading once the walk stick is off centre and the turn stick has been centred for `SETTLE_S` (two of the command ramp's time constants, as a let-go turn coasts on), then adds a turn stick against the yaw's error by the goals' law (`HEADING_GAIN`, at most `HEADING_STICK_MAX`) outside a 1 deg deadband.
+A turn stick, a centred walk stick, a command without the flag, a goal, TUNED, an odometry reset or a mode other than `WALK` lets the heading go, and the dead-man stop clears it with the command.
+In MuJoCo a full forward stick on BI turned 8.4 deg in 8 s without the hold and 0.5 deg with it (`simulation/test_heading_hold.py`); TRI and WAVE drift under 0.5 deg there, inside the deadband, so the hold steers them nothing.
 
 ## Sensors
 

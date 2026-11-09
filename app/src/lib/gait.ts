@@ -12,3 +12,6 @@ export enum GaitType {
 
 // TUNED replays a searched joint trajectory at a fixed stroke, so the stride slider has no effect on it.
 export const strideApplies = (gait: GaitType) => gait !== GaitType.TUNED
+
+// TUNED takes its sticks as a velocity when they arrive, so the robot holds no heading on it (heading_hold.h).
+export const headingHoldApplies = (gait: GaitType) => gait !== GaitType.TUNED

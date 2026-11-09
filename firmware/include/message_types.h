@@ -76,6 +76,8 @@ struct CommandMsg {
     float lx, ly, rx, ry, h, s, s1, fd, stride;
     // After the fields, so an initializer that omits it is a client's command.
     CommandOrigin origin = CommandOrigin::CLIENT;
+    // Whether a classic walk on these sticks holds its heading while the turn stick is centred (heading_hold.h).
+    bool holdHeading = false;
 
     // Every field is a normalized stick or slider in [-1, 1]. Input arrives from the network, so a
     // command carrying NaN or infinity is rejected (returns false) and the rest are clamped, since

@@ -103,7 +103,8 @@ API int animationStatus() {
 }
 
 // A ControllerInputData message, as a client sends it.
-API void command(float lx, float ly, float rx, float ry, float h, float s, float s1, float fd, float stride) {
+API void command(float lx, float ly, float rx, float ry, float h, float s, float s1, float fd, float stride,
+                 int holdHeading) {
     socket_message_ControllerInputData in = socket_message_ControllerInputData_init_zero;
     in.has_left = in.has_right = true;
     in.left = {lx, ly};
@@ -113,6 +114,7 @@ API void command(float lx, float ly, float rx, float ry, float h, float s, float
     in.s1 = s1;
     in.feet_distance = fd;
     in.stride = stride;
+    in.hold_heading = holdHeading != 0;
     instance().input(in);
 }
 

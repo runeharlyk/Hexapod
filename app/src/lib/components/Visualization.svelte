@@ -73,7 +73,7 @@
   let virtualRobot: VirtualRobot | undefined
   // Shown on the canvas as data-virtual-robot="ready" once the virtual robot runs, from when a drag is judged here too.
   let virtualRobotReady = $state(false)
-  let sticks: Command = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+  let sticks: Command = [0, 0, 0, 0, 0, 0, 0, 0, 0, false]
   let pendingSeconds = 0
   let lastFrame = 0
   const MAX_FRAME_SECONDS = 0.05

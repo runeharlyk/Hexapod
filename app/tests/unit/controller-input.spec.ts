@@ -3,14 +3,15 @@ import { commandOf, toControllerInput } from '../../src/lib/controller-input'
 import { Message } from '../../src/lib/platform_shared/message'
 import type { ControllerInput } from '../../src/lib/types/models'
 
-const controls = (stride: number): ControllerInput => ({
+const controls = (stride: number, holdHeading = false): ControllerInput => ({
   left: { x: 0.1, y: 0.2 },
   right: { x: 0.3, y: 0.4 },
   height: 0.5,
   speed: 0.6,
   s1: 0.7,
   feetDistance: 0.8,
-  stride
+  stride,
+  holdHeading
 })
 
 // What the robot decodes from the message the controls are sent as.
@@ -18,8 +19,19 @@ const received = (input: ControllerInput) =>
   Message.decode(Message.encode({ input: toControllerInput(commandOf(input)) }).finish()).input
 
 describe('controller input', () => {
-  it('lists the controls in the firmware command order, the stride last', () => {
-    expect(commandOf(controls(-0.9))).toEqual([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, -0.9])
+  it('lists the controls in the firmware command order, the stride and then the heading hold last', () => {
+    expect(commandOf(controls(-0.9, true))).toEqual([
+      0.1,
+      0.2,
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.7,
+      0.8,
+      -0.9,
+      true
+    ])
   })
 
   it('sends the stride slider in the message the robot decodes, beside every other control', () => {
@@ -33,5 +45,10 @@ describe('controller input', () => {
     expect(decoded?.s1).toBeCloseTo(0.7, 6)
     expect(decoded?.feetDistance).toBeCloseTo(0.8, 6)
     expect(decoded?.stride).toBeCloseTo(-0.9, 6)
+  })
+
+  it('sends the heading hold the robot decodes, and none while it is off', () => {
+    expect(received(controls(0, true))?.holdHeading).toBe(true)
+    expect(received(controls(0, false))?.holdHeading).toBe(false)
   })
 })

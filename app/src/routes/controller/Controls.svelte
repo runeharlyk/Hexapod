@@ -18,7 +18,7 @@
   import { goalLine } from '$lib/stores/goal'
   import type { ControllerInput, vector } from '$lib/types/models'
   import { MotionModes, UNKNOWN_MODE_HINT, servoCount } from '$lib/motion'
-  import { strideApplies } from '$lib/gait'
+  import { headingHoldApplies, strideApplies } from '$lib/gait'
   import { Stance, gaitsOffered, modesOffered } from '$lib/stance'
   import { notifications } from '$lib/components/toasts/notifications'
   import { gamepadAxes, gamepadButtons, hasGamepad } from '$lib/stores/gamepad'
@@ -177,6 +177,15 @@
     })
   }
 
+  const handleHoldHeading = (event: Event) => {
+    const checked = (event.target as HTMLInputElement).checked
+    input.update(i => {
+      i.holdHeading = checked
+      syncCommand(i)
+      return i
+    })
+  }
+
   const goalText = $derived($drivenGoal ? goalLine($drivenGoal) : null)
 
   // Each mode shows only the controls it reads, beside the mode selector (lib/mode-controls.ts).
@@ -326,6 +335,16 @@
             <div class="min-w-0">
               {@render slider('stride', 'Stride', !strideApplies($drivenGait))}
             </div>
+            <label class="col-span-2 flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                class="toggle toggle-sm toggle-primary"
+                checked={$input.holdHeading}
+                disabled={!headingHoldApplies($drivenGait)}
+                onchange={handleHoldHeading}
+              />
+              Hold heading while the turn stick is centred
+            </label>
           {/if}
         </div>
       </div>
