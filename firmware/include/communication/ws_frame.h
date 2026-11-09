@@ -45,10 +45,10 @@ struct Reply {
 // payload.
 inline Reply controlReply(Opcode received, const uint8_t* payload, size_t len) {
     switch (received) {
-        case CLOSE: return {CLOSE, payload, len < 2 ? size_t{0} : size_t{2}, true};
+        case CLOSE: return {CLOSE, payload, len < 2 ? size_t {0} : size_t {2}, true};
         case PING: return {PONG, payload, len, false};
         default: return {NONE, nullptr, 0, false};
     }
 }
 
-}  // namespace ws_frame
+} // namespace ws_frame

@@ -22,13 +22,13 @@
 #define BTN_C (1u << 4)     // auxiliary button C
 
 typedef struct __attribute__((packed)) {
-    uint8_t version;  // == CONTROLLER_PACKET_VERSION
-    uint8_t buttons;  // bitmask of BTN_* (1 = pressed)
-    int16_t left_x;   // normalized -AXIS_FULL_SCALE..+AXIS_FULL_SCALE
+    uint8_t version; // == CONTROLLER_PACKET_VERSION
+    uint8_t buttons; // bitmask of BTN_* (1 = pressed)
+    int16_t left_x;  // normalized -AXIS_FULL_SCALE..+AXIS_FULL_SCALE
     int16_t left_y;
     int16_t right_x;
     int16_t right_y;
-    uint32_t seq;     // monotonically increasing send counter
+    uint32_t seq; // monotonically increasing send counter
 } controller_packet_t;
 
 /*

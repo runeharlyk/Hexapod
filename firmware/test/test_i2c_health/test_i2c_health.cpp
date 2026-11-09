@@ -49,7 +49,7 @@ struct OpenDrainBus {
     void halfPeriod() {}
 };
 
-}  // namespace
+} // namespace
 
 void setUp() {}
 void tearDown() {}
@@ -189,7 +189,7 @@ void test_a_device_that_never_lets_go_gets_nine_pulses() {
 void test_a_free_bus_gets_only_a_stop() {
     OpenDrainBus bus;
     TEST_ASSERT_EQUAL_INT(0, i2c_health::clockOut(bus));
-    TEST_ASSERT_EQUAL_INT(1, bus.pulses);  // the STOP's own clock rise
+    TEST_ASSERT_EQUAL_INT(1, bus.pulses); // the STOP's own clock rise
     TEST_ASSERT_EQUAL_INT(1, bus.stops);
     TEST_ASSERT_EQUAL_INT(0, bus.starts);
 }

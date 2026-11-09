@@ -63,4 +63,4 @@ bool SerialAdapter::send(const uint8_t* data, size_t len, int cid) {
     return true;
 }
 
-#endif  // FT_ENABLED(USE_SERIAL_LINK)
+#endif // FT_ENABLED(USE_SERIAL_LINK)

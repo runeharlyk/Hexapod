@@ -25,7 +25,7 @@ VirtualRobot &instance() {
     return *robot;
 }
 
-}  // namespace
+} // namespace
 
 extern "C" {
 
@@ -98,9 +98,9 @@ API int animationStatus() {
     EventBus<socket_message_AnimationStatus>::peek(status);
     animationBytes.resize(socket_message_AnimationStatus_size);
     pb_ostream_t stream = pb_ostream_from_buffer(animationBytes.data(), animationBytes.size());
-    return pb_encode(&stream, socket_message_AnimationStatus_fields, &status) ? static_cast<int>(stream.bytes_written) : 0;
+    return pb_encode(&stream, socket_message_AnimationStatus_fields, &status) ? static_cast<int>(stream.bytes_written)
+                                                                              : 0;
 }
-
 
 // A ControllerInputData message, as a client sends it.
 API void command(float lx, float ly, float rx, float ry, float h, float s, float s1, float fd, float stride) {
@@ -118,8 +118,7 @@ API void command(float lx, float ly, float rx, float ry, float h, float s, float
 
 // Roll, pitch and yaw in radians as the MPU6050 driver reports them, the body-frame gravity unit vector
 // pointing up, and the body-frame rates in rad/s.
-API void setImu(float roll, float pitch, float yaw, float gx, float gy, float gz, float wx, float wy,
-                                 float wz) {
+API void setImu(float roll, float pitch, float yaw, float gx, float gy, float gz, float wx, float wy, float wz) {
     instance().setImu({{roll, pitch, yaw}, {gx, gy, gz}, {wx, wy, wz}});
 }
 

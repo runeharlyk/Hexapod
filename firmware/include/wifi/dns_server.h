@@ -138,7 +138,7 @@ class DNSServer {
             if ((buffer[p] & 0xC0) != 0) return 0;
             p += 1 + buffer[p];
         }
-        p += 1 + 4;  // root label, QTYPE, QCLASS
+        p += 1 + 4; // root label, QTYPE, QCLASS
         return p <= len ? p - headerSize : 0;
     }
 
@@ -163,13 +163,13 @@ class DNSServer {
 
         uint8_t response[DNS_MAX_PACKET_SIZE];
         memcpy(response, buffer, questionEnd);
-        response[2] = 0x80 | (buffer[2] & 0x01);  // QR, standard query, echo RD
-        response[3] = 0x80;                       // RA, RCODE NOERROR
+        response[2] = 0x80 | (buffer[2] & 0x01); // QR, standard query, echo RD
+        response[3] = 0x80;                      // RA, RCODE NOERROR
         response[4] = 0x00;
-        response[5] = 0x01;  // QDCOUNT
+        response[5] = 0x01; // QDCOUNT
         response[6] = 0x00;
-        response[7] = answerIt ? 0x01 : 0x00;  // ANCOUNT
-        memset(response + 8, 0, 4);            // NSCOUNT, ARCOUNT
+        response[7] = answerIt ? 0x01 : 0x00; // ANCOUNT
+        memset(response + 8, 0, 4);           // NSCOUNT, ARCOUNT
 
         int responseLen = questionEnd;
         if (answerIt) {

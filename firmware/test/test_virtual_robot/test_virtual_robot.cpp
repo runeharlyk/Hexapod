@@ -23,7 +23,7 @@
 namespace {
 
 constexpr int TICKS_PER_SECOND = 200;
-constexpr int COMMAND_PERIOD_TICKS = 4;  // the app's 20 ms stick period
+constexpr int COMMAND_PERIOD_TICKS = 4; // the app's 20 ms stick period
 constexpr float STEPPING_DEG_PER_TICK = 0.05f;
 
 int ticksFor(float seconds) { return static_cast<int>(std::lround(seconds * TICKS_PER_SECOND)); }
@@ -47,7 +47,7 @@ void standUp(VirtualRobot &robot) {
     largestStep(robot, ticksFor(1.0f));
 }
 
-const CommandMsg FORWARD{0, 1, 0, 0, 0, 0, 0, 0};
+const CommandMsg FORWARD {0, 1, 0, 0, 0, 0, 0, 0};
 
 constexpr int HANDHELD_PERIOD_TICKS = 4; // the handheld's 50 Hz while a stick is off centre
 constexpr int APP_HEARTBEAT_TICKS = 40;  // app/src/lib/control-link.ts COMMAND_HEARTBEAT_MS
@@ -58,7 +58,7 @@ controller_packet_t handheldFrame(float lx, float ly, float rx = 0, float ry = 0
     return {CONTROLLER_PACKET_VERSION, 0, axis(lx), axis(ly), axis(rx), axis(ry), 0};
 }
 
-}  // namespace
+} // namespace
 
 void setUp() { host_bus::resetAll(); }
 // The IMU stand-in is process-wide, so a test that tilts it must not hand the tilt on, even when it fails.
@@ -1564,8 +1564,9 @@ void test_a_walk_after_walk_nn_takes_its_posture_again() {
 }
 
 // What WALK_NN reads of a command, which the app's controls in that mode follow (app/src/lib/mode-controls.ts): the
-// policy walks the sticks' lx, ly and rx alone. It walks the stance it was trained on and rides at its own height, lift,
-// stride and cadence, so the feet distance, height, speed, step height, stride and the right stick's ry change nothing.
+// policy walks the sticks' lx, ly and rx alone. It walks the stance it was trained on and rides at its own height,
+// lift, stride and cadence, so the feet distance, height, speed, step height, stride and the right stick's ry change
+// nothing.
 void test_walk_nn_reads_the_sticks_alone() {
     const CommandMsg walking {0.3f, 0.6f, 0.2f, 0, 0, 0, 0, 0, 0};
     const auto base = traceHeld(MOTION_STATE::WALK_NN, walking, ticksFor(2.0f));
@@ -1575,8 +1576,8 @@ void test_walk_nn_reads_the_sticks_alone() {
         bool read;
     };
     const Field fields[] = {
-        {"lx", &CommandMsg::lx, true},  {"ly", &CommandMsg::ly, true}, {"rx", &CommandMsg::rx, true},
-        {"ry", &CommandMsg::ry, false}, {"h", &CommandMsg::h, false},  {"s", &CommandMsg::s, false},
+        {"lx", &CommandMsg::lx, true},  {"ly", &CommandMsg::ly, true},  {"rx", &CommandMsg::rx, true},
+        {"ry", &CommandMsg::ry, false}, {"h", &CommandMsg::h, false},   {"s", &CommandMsg::s, false},
         {"s1", &CommandMsg::s1, false}, {"fd", &CommandMsg::fd, false}, {"stride", &CommandMsg::stride, false}};
     for (const Field &f : fields) {
         CommandMsg changed = walking;
@@ -1757,10 +1758,10 @@ const char *stopName(Stop stop) {
 constexpr float STEP_BOUND_DEG = 4.0f;
 
 struct StopRun {
-    float walkPeak = 0.0f; // the largest joint step in a tick of the steady walk
-    HeldRun stop;          // the stop, from its first tick until the feet are home
+    float walkPeak = 0.0f;            // the largest joint step in a tick of the steady walk
+    HeldRun stop;                     // the stop, from its first tick until the feet are home
     bool cadenceFollowsStroke = true; // the cadence scaled with the share of the stroke left
-    bool cadenceLeft = false; // the gait stopped stepping with an explicit cadence still set
+    bool cadenceLeft = false;         // the gait stopped stepping with an explicit cadence still set
 };
 
 // Walks `stick` at its posture from a stand in that posture, then stops it the way `stop` does, `phase` ticks later in
@@ -2291,7 +2292,8 @@ PairRun idleAndStandFromAnimate(bool playing, AfterPair next) {
 
 // IDLE and then STAND taken in one tick while ANIMATE runs, a play or the ease out of IDLE, as a script sending them
 // back to back does, are the IDLE that ends what ANIMATE ran and holds its pose and the STAND that eases from there, as
-// when taken a tick apart: the robot is not left in ANIMATE, so a stop, a STAND and a WALK sent after the pair each act.
+// when taken a tick apart: the robot is not left in ANIMATE, so a stop, a STAND and a WALK sent after the pair each
+// act.
 void test_idle_and_stand_in_one_tick_from_animate_ease_to_the_stand() {
     for (const bool playing : {true, false}) {
         for (const AfterPair next : {AfterPair::STOP, AfterPair::STAND, AfterPair::WALK}) {
@@ -2303,7 +2305,8 @@ void test_idle_and_stand_in_one_tick_from_animate_ease_to_the_stand() {
             TEST_MESSAGE(msg);
             TEST_ASSERT_EQUAL_MESSAGE(MOTION_STATE::ANIMATE, run.before, msg);
             TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(IDLE_EASE_STEP_DEG + CAP_TOLERANCE_DEG, run.largestStep, msg);
-            TEST_ASSERT_EQUAL_MESSAGE(next == AfterPair::WALK ? MOTION_STATE::WALK : MOTION_STATE::STAND, run.last, msg);
+            TEST_ASSERT_EQUAL_MESSAGE(next == AfterPair::WALK ? MOTION_STATE::WALK : MOTION_STATE::STAND, run.last,
+                                      msg);
         }
     }
 }

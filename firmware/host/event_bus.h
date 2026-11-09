@@ -44,7 +44,7 @@ inline void resetAll() {
     for (void (*reset)() : resets()) reset();
 }
 
-}  // namespace host_bus
+} // namespace host_bus
 
 template <typename Msg, size_t QueueDepth = 10, size_t MaxSubs = 4, size_t BatchSize = 2>
 class EventBus {
@@ -75,12 +75,12 @@ class EventBus {
 
     // Counts the resets that cleared a slot, so a Handle can tell its own subscription from a later one in it.
     static std::array<uint32_t, MaxSubs> &generations() {
-        static std::array<uint32_t, MaxSubs> table{};
+        static std::array<uint32_t, MaxSubs> table {};
         return table;
     }
 
     static std::array<bool, MaxSubs> &permanent() {
-        static std::array<bool, MaxSubs> table{};
+        static std::array<bool, MaxSubs> table {};
         return table;
     }
 
@@ -122,8 +122,8 @@ class EventBus {
 
   public:
     class Handle {
-        size_t idx{NO_EX};
-        uint32_t generation{0};
+        size_t idx {NO_EX};
+        uint32_t generation {0};
         friend class EventBus;
         Handle(size_t i, uint32_t g) : idx(i), generation(g) {}
 

@@ -21,9 +21,9 @@ class ServoController {
     static constexpr uint32_t ALL_SERVOS = (1u << NUM_SERVO) - 1;
 
     struct Output {
-        bool awake = false;    // activated, so the PCA9685s run
-        unsigned writes = 0;   // poses sent since boot
-        uint32_t driven = 0;   // a bit per servo written since the boards were activated; the rest are limp
+        bool awake = false;       // activated, so the PCA9685s run
+        unsigned writes = 0;      // poses sent since boot
+        uint32_t driven = 0;      // a bit per servo written since the boards were activated; the rest are limp
         unsigned jointWrites = 0; // single joints written, in IDLE
         unsigned centrings = 0;   // every servo sent to its centre pulse, in IDLE
         float angles[NUM_SERVO] = {};

@@ -7,4 +7,4 @@ namespace FileSystem {
 
 bool mkdirRecursive(const char *) { return true; }
 
-}  // namespace FileSystem
+} // namespace FileSystem

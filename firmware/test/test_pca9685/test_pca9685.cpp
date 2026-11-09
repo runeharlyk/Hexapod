@@ -27,7 +27,7 @@ void startWithAStaleSleepingChip() {
     bus.registers[ADDR][LED0_OFF_H] = 0x01;
 }
 
-}  // namespace
+} // namespace
 
 void setUp() { startWithAStaleSleepingChip(); }
 void tearDown() {}

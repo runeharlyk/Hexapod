@@ -65,7 +65,7 @@ class ServoController {
         _signalSub = EventBus<ServoSignalMsg>::subscribe([this](ServoSignalMsg const &m) { servoEvent(m); });
         _calibrationSub = ServoSettingsBus::subscribe([this](api_ServoSettings const &s) { applyCalibration(s); });
         api_ServoSettings pending;
-        if (ServoSettingsBus::peek(pending)) applyCalibration(pending);  // if the service published first
+        if (ServoSettingsBus::peek(pending)) applyCalibration(pending); // if the service published first
     }
 
     // Control task, as every call below that writes the cached pulses or the driven servos is; the servo page's switch
@@ -158,8 +158,8 @@ class ServoController {
                      "joint travel exceeded: coxa %lu femur %lu tibia %lu commands clamped; "
                      "peak |cmd| coxa %.1f (leg %u) femur %.1f (leg %u) tibia %.1f (leg %u) deg",
                      (unsigned long)_clampedSinceLog[0], (unsigned long)_clampedSinceLog[1],
-                     (unsigned long)_clampedSinceLog[2], _peakAbs[0], (unsigned)_peakLeg[0],
-                     _peakAbs[1], (unsigned)_peakLeg[1], _peakAbs[2], (unsigned)_peakLeg[2]);
+                     (unsigned long)_clampedSinceLog[2], _peakAbs[0], (unsigned)_peakLeg[0], _peakAbs[1],
+                     (unsigned)_peakLeg[1], _peakAbs[2], (unsigned)_peakLeg[2]);
         } else {
             ESP_LOGD(TAG, "joint travel ok; peak |cmd| coxa %.1f femur %.1f/%.1f tibia %.1f/%.1f deg", _peakAbs[0],
                      _peakAbs[1], JOINT_LIMIT_DEG[0][1], _peakAbs[2], JOINT_LIMIT_DEG[0][2]);
@@ -252,8 +252,8 @@ class ServoController {
         _writeUs = 0;
     }
 
-    // Control task, after the tick's writes: what they did, and the pulses they wrote or meant to write in servo order, of
-    // the servos written alone.
+    // Control task, after the tick's writes: what they did, and the pulses they wrote or meant to write in servo order,
+    // of the servos written alone.
     void fillTelemetry(socket_message_TickSample &tick) const {
         tick.servo_write_right = _rightWrite;
         tick.servo_write_left = _leftWrite;
@@ -362,8 +362,8 @@ class ServoController {
     uint32_t _writtenThisTick = 0; // a bit per servo this tick wrote, for its telemetry
 
     SERVO_CONTROL_STATE control_state = SERVO_CONTROL_STATE::DEACTIVATED;
-    bool is_active{false};
-    int64_t _lastClampLog{0};
+    bool is_active {false};
+    int64_t _lastClampLog {0};
     // Per joint type: coxa, femur, tibia. Reset each log window.
     uint32_t _clampedSinceLog[3] = {0, 0, 0};
     uint32_t _nonFiniteSinceLog = 0;

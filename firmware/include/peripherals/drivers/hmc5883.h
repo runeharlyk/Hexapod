@@ -81,14 +81,12 @@ class HMC5883Driver {
     // 1 Gauss = 100 uT, so 1 LSB = 100/1090 uT at the default gain.
     static constexpr float LSB_TO_UT = 100.0f / 1090.0f;
 
-    bool writeReg(uint8_t reg, uint8_t value) {
-        return I2CBus::instance().writeReg(_addr, reg, &value, 1) == ESP_OK;
-    }
+    bool writeReg(uint8_t reg, uint8_t value) { return I2CBus::instance().writeReg(_addr, reg, &value, 1) == ESP_OK; }
 
     uint8_t _addr;
     float _declination;
-    bool _initialized{false};
+    bool _initialized {false};
     compass::Offset _offset;
-    float _raw[3]{0, 0, 0};
-    float _heading{0};
+    float _raw[3] {0, 0, 0};
+    float _heading {0};
 };
