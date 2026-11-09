@@ -22,7 +22,7 @@ Its built with:
 - Two PCA9685
 - 18 MG92B servos
 - A MPU6050 + HMC5883L
-- Two 18650 in a 2s2p configuration
+- Two 18650 in a 2s configuration
 - 7 buck converters
 
 
