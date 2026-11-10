@@ -408,7 +408,10 @@ class MotionService {
         const GaitType next = _autoGait;
         if (next == gait_state.gait_type) return;
         loadGait(next);
-        ESP_LOGI("MotionService", "Auto gait -> %d at %.2f of BI's top speed", (int)next, commandSpeed01());
+        if (walkPostureOf(lastWalkCommand_).climb)
+            ESP_LOGI("MotionService", "Auto gait -> %d for the climb", (int)next);
+        else
+            ESP_LOGI("MotionService", "Auto gait -> %d at %.2f of BI's top speed", (int)next, commandSpeed01());
     }
 
     // A stance change steps the feet with a zero stroke, so a gait that is not commanded can still have a foot in the
@@ -766,6 +769,8 @@ class MotionService {
     GaitType _autoGait = GaitType::RIPPLE;
     struct Posture {
         float s1, h, fd;
+        // The climb walk's one posture (gait_climb.h): its lift on its body over its stance, whatever s1, h and fd say.
+        bool climb = false;
     };
     // The posture and stance the classic walk stands in, valid once it was taken between steps (settleWalkPosture) or
     // from the stand the walk was entered from (takeRestPosture).
@@ -862,24 +867,31 @@ class MotionService {
         const CommandMsg &c = lastWalkCommand_;
         if (!_walkPostureValid || postureOffset(c) > POSTURE_DEADBAND || _walkStance != _stance) _posturePending = true;
         const bool held = _posturePending || _postureSettling;
-        const Posture p = held ? Posture {c.s1, c.h, c.fd} : _walkPosture;
+        const Posture p = held ? walkPostureOf(c) : _walkPosture;
         // Not held, the walk stands in the stance in force (_walkStance is _stance).
         const Stance stance = _stance;
         // Held, the stick still tells AUTO how fast the walk will be, so the gait is chosen while the walk waits.
         const float stride = _stride;
         // A dead-man or a stop clears the command and with it the hold, before holdHeading lets its turn go.
         const float rx = c.holdHeading ? c.rx + _headingTurn : c.rx;
-        const AutoDemand demand = autoDemand(c.lx, c.ly, rx, c.s, p.s1, p.h, p.fd, stride);
-        _walkSpeed01 = demand.speed01;
-        _autoGait = selectAutoGait(demand, gait_state.gait_type, p.s1, p.h, p.fd, stride);
-        WalkTarget w =
-            _requestedGait == GaitType::AUTO
-                ? autoWalkTarget(gait_state.gait_type, demand, c.lx, c.ly, rx, p.s1, p.h, p.fd, stride)
-                : classicWalkTarget(gait_state.gait_type, c.lx, c.ly, rx, c.s, p.s1, p.h, p.fd, stride, stance);
-        // A goal walking its sticks strides no further than what remains of it; a client's walk keeps its stride.
-        if (_goalStarted && goalActive() && _inbox.goalDrives()) {
-            const StrokeCap cap = _goal.strokeCap();
-            w = withStrokeCap(gait_state.gait_type, w, cap.axis, cap.limit, p.s1, p.h, p.fd, stance);
+        WalkTarget w {};
+        if (p.climb) {
+            // AUTO climbs on WAVE, the gait that stands on the most feet; no goal climbs (takeGoalStyle).
+            _walkSpeed01 = 0.f;
+            _autoGait = GaitType::WAVE;
+            w = climbWalkTarget(gait_state.gait_type, c.lx, c.ly, rx, c.s, stride);
+        } else {
+            const AutoDemand demand = autoDemand(c.lx, c.ly, rx, c.s, p.s1, p.h, p.fd, stride);
+            _walkSpeed01 = demand.speed01;
+            _autoGait = selectAutoGait(demand, gait_state.gait_type, p.s1, p.h, p.fd, stride);
+            w = _requestedGait == GaitType::AUTO
+                    ? autoWalkTarget(gait_state.gait_type, demand, c.lx, c.ly, rx, p.s1, p.h, p.fd, stride)
+                    : classicWalkTarget(gait_state.gait_type, c.lx, c.ly, rx, c.s, p.s1, p.h, p.fd, stride, stance);
+            // A goal walking its sticks strides no further than what remains of it; a client's walk keeps its stride.
+            if (_goalStarted && goalActive() && _inbox.goalDrives()) {
+                const StrokeCap cap = _goal.strokeCap();
+                w = withStrokeCap(gait_state.gait_type, w, cap.axis, cap.limit, p.s1, p.h, p.fd, stance);
+            }
         }
         target_gait_state.step_x = held ? 0.f : w.stepX;
         target_gait_state.step_y = held ? 0.f : w.stepY;
@@ -958,14 +970,27 @@ class MotionService {
     }
 
     float postureOffset(const CommandMsg &c) const {
+        const Posture p = walkPostureOf(c);
+        if (p.climb != _walkPosture.climb) return INFINITY;
         return std::max(
-            {std::fabs(c.s1 - _walkPosture.s1), std::fabs(c.h - _walkPosture.h), std::fabs(c.fd - _walkPosture.fd)});
+            {std::fabs(p.s1 - _walkPosture.s1), std::fabs(p.h - _walkPosture.h), std::fabs(p.fd - _walkPosture.fd)});
     }
+
+    // The posture a classic walk on the command stands in: the climb's in the default stance, the sliders' otherwise.
+    // The climb's s1 is the classic envelope's top lift, which no lookup reads (applyWalkTarget, walkLiftMm).
+    Posture walkPostureOf(const CommandMsg &c) const {
+        if (c.climb && _stance == Stance::DEFAULT)
+            return {1.f, gait_climb::BODY_HEIGHT, gait_climb::FEET_DISTANCE, true};
+        return {c.s1, c.h, c.fd};
+    }
+
+    // The lift a classic walk steps at in the posture.
+    static float walkLiftMm(const Posture &p) { return p.climb ? gait_climb::LIFT_MM : (p.s1 + 1.f) * 20.f; }
 
     // Control task, classic walk. Takes a pending posture once the gait has stopped stepping, as a stand takes one,
     // and releases the walk once the robot has settled into it. Each stage waits for the one before to arrive:
-    // - the lift comes down to the stand's, since the walk's own, up to 40 mm, leaves the femur's travel when the
-    //   stance is stepped into;
+    // - the lift comes down to the stand's, since the walk's own, up to 40 mm or the climb's higher LIFT_MM, leaves
+    //   the femur's travel when the stance is stepped into;
     // - the stance and the body height move, the stance stepped at the lower of the two heights, since a foot lifted
     //   under a raised body leaves it too: a body going up waits for the stance, one going down leads it, unless the
     //   legs could not stand through that order;
@@ -976,8 +1001,7 @@ class MotionService {
             // Settling holds the walk at zero throughout (applyWalkTarget).
             _postureSettling = true;
             _posturePending = false;
-            const CommandMsg c = lastWalkCommand_;
-            _walkPosture = {c.s1, c.h, c.fd};
+            _walkPosture = walkPostureOf(lastWalkCommand_);
             _walkStance = _stance;
             _walkPostureValid = true;
             _settleStage = SettleStage::LOWER_LIFT;
@@ -1005,7 +1029,7 @@ class MotionService {
                     target_body_state.zm = bodyHeightMm(_walkPosture.h);
                     return;
                 }
-                target_gait_state.step_height = (_walkPosture.s1 + 1.f) * 20.f;
+                target_gait_state.step_height = walkLiftMm(_walkPosture);
                 _settleStage = SettleStage::RAISE_LIFT;
                 return;
             }
@@ -1251,15 +1275,16 @@ class MotionService {
     void takeRestPosture(const CommandMsg &c) {
         if (_walkPostureValid || _postureSettling || !std::exchange(_atRest, false)) return;
         const Posture rest = _restPosture;
-        if (std::fabs(c.h - rest.h) > POSTURE_DEADBAND || std::fabs(c.fd - rest.fd) > POSTURE_DEADBAND ||
-            c.s1 < rest.s1 - POSTURE_DEADBAND || _restStance != _stance ||
-            !postureWalkable(c.s1, rest.h, rest.fd, _stance))
+        // A stand never rests in the climb's posture, whose lift is the walk's alone.
+        if (walkPostureOf(c).climb || std::fabs(c.h - rest.h) > POSTURE_DEADBAND ||
+            std::fabs(c.fd - rest.fd) > POSTURE_DEADBAND || c.s1 < rest.s1 - POSTURE_DEADBAND ||
+            _restStance != _stance || !postureWalkable(c.s1, rest.h, rest.fd, _stance))
             return;
         _walkPosture = {c.s1, rest.h, rest.fd};
         _walkStance = _stance;
         _walkPostureValid = true;
         _posturePending = false;
-        target_gait_state.step_height = (c.s1 + 1.f) * 20.f;
+        target_gait_state.step_height = walkLiftMm(_walkPosture);
     }
 
     // Control task, STAND: a posture commanded, or the stance in force where the feet stand on another, once the feet

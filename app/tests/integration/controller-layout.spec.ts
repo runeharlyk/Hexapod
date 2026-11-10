@@ -1,6 +1,13 @@
 import { expect, test, type Page } from '@playwright/test'
 import { MotionModes, modeToWire } from '../../src/lib/motion'
-import { AnglesData, GaitData, GaitEnum, ModeData } from '../../src/lib/platform_shared/message'
+import {
+  AnglesData,
+  GaitData,
+  GaitEnum,
+  ModeData,
+  StanceData,
+  StanceEnum
+} from '../../src/lib/platform_shared/message'
 import { FakeRobot, serveRobot } from '../fake-robot/playwright'
 
 const base = process.env.BASE_PATH ?? ''
@@ -78,6 +85,28 @@ test('walking keeps speed and gait available while other sliders expand on deman
   await expect(page.getByLabel('Step height', { exact: true })).toBeVisible()
 })
 
+// Whether a forward walk sends the flag at the value. A walk key is ignored while a control has the focus, as typing
+// would be; it is held until the walk is sent.
+const walkForwardSends = async (
+  page: Page,
+  robot: FakeRobot,
+  flag: 'holdHeading' | 'climb',
+  value: boolean
+) => {
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+  const before = robot.received.length
+  await page.keyboard.down('KeyW')
+  await expect
+    .poll(() =>
+      robot.received
+        .slice(before)
+        .filter(frame => (frame.input?.left?.y ?? 0) > 0)
+        .map(frame => frame.input?.[flag])
+    )
+    .toContain(value)
+  await page.keyboard.up('KeyW')
+}
+
 test('the heading hold rides on the walk commands, and is off for TUNED, which holds none', async ({
   page
 }) => {
@@ -90,28 +119,41 @@ test('the heading hold rides on the walk commands, and is off for TUNED, which h
   const hold = page.getByLabel('Hold heading while the turn stick is centred', { exact: true })
   await expect(hold).not.toBeChecked()
 
-  // A walk key is ignored while a control has the focus, as typing would be; it is held until the walk is sent.
-  const walkForwardSends = async (holdHeading: boolean) => {
-    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
-    const before = robot.received.length
-    await page.keyboard.down('KeyW')
-    await expect
-      .poll(() =>
-        robot.received
-          .slice(before)
-          .filter(frame => (frame.input?.left?.y ?? 0) > 0)
-          .map(frame => frame.input?.holdHeading)
-      )
-      .toContain(holdHeading)
-    await page.keyboard.up('KeyW')
-  }
-
-  await walkForwardSends(false)
+  await walkForwardSends(page, robot, 'holdHeading', false)
   await hold.check()
-  await walkForwardSends(true)
+  await walkForwardSends(page, robot, 'holdHeading', true)
 
   robot.set(GaitData, { gait: GaitEnum.TUNED })
   await expect(hold).toBeDisabled()
+})
+
+test('the climb rides on the walk commands and stands in for the step height, in the default stance alone', async ({
+  page
+}) => {
+  const robot = new FakeRobot()
+  robot.set(ModeData, ModeData.create({ mode: modeToWire(MotionModes.WALK) }))
+  robot.set(GaitData, { gait: GaitEnum.WAVE })
+  robot.set(StanceData, { stance: StanceEnum.STANCE_DEFAULT })
+  await serveRobot(page, robot)
+  await page.goto(`${base}/controller`)
+  await page.getByText('Adjustments', { exact: true }).click()
+  const climb = page.getByLabel('Climb: high steps on a raised body', { exact: true })
+  const stepHeight = page.getByLabel('Step height', { exact: true })
+  await expect(climb).not.toBeChecked()
+  await expect(stepHeight).toBeEnabled()
+
+  await walkForwardSends(page, robot, 'climb', false)
+  await climb.check()
+  await expect(stepHeight).toBeDisabled()
+  await walkForwardSends(page, robot, 'climb', true)
+
+  robot.set(StanceData, { stance: StanceEnum.STANCE_CRAB })
+  await expect(climb).toBeDisabled()
+  await expect(stepHeight).toBeEnabled()
+  robot.set(StanceData, { stance: StanceEnum.STANCE_DEFAULT })
+  await expect(climb).toBeEnabled()
+  robot.set(GaitData, { gait: GaitEnum.TUNED })
+  await expect(climb).toBeDisabled()
 })
 
 test('mode selection sends a request and displays the confirmed state; deactivate remains direct', async ({

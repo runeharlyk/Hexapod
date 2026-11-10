@@ -71,7 +71,7 @@ def _library() -> ctypes.CDLL:
     lib = ctypes.CDLL(str(LIBRARY))
     floats = lambda n: [ctypes.c_float] * n  # noqa: E731
     lib.setMode.argtypes = lib.setGait.argtypes = lib.setStance.argtypes = [ctypes.c_int]
-    lib.command.argtypes = [*floats(9), ctypes.c_int]
+    lib.command.argtypes = [*floats(9), ctypes.c_int, ctypes.c_int]
     lib.setImu.argtypes = floats(9)
     lib.servosDriven.restype = lib.resetOdometry.restype = lib.setGait.restype = ctypes.c_bool
     lib.servoAngles.restype = ctypes.POINTER(ctypes.c_float)
@@ -124,9 +124,9 @@ class VirtualRobot:
         return self._lib.stance()
 
     def command(self, lx=0.0, ly=0.0, rx=0.0, ry=0.0, h=0.0, s=0.0, s1=0.0, fd=0.0, stride=0.0,
-                hold_heading=False) -> None:
+                hold_heading=False, climb=False) -> None:
         """A ControllerInputData message, as main.cpp's handler turns it into a CommandMsg."""
-        self._lib.command(lx, ly, rx, ry, h, s, s1, fd, stride, int(hold_heading))
+        self._lib.command(lx, ly, rx, ry, h, s, s1, fd, stride, int(hold_heading), int(climb))
 
     def set_imu(self, rpy_rad, gravity_up, gyro_rad) -> None:
         """The IMU as Peripherals reports it: roll, pitch and yaw in radians, world up in the body frame, and

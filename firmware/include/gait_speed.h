@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <gait_climb.h>
 #include <gait_envelope.h>
 #include <kinematics.h>
 #include <leg_clearance.h>
@@ -30,6 +31,11 @@ static_assert(gait_envelope::STANCES == (int)Stance::CRAB + 1, "gait_envelope.h 
 constexpr float STATIC_MARGIN_MM = 25.0f;
 static_assert(gait_envelope::STATIC_MARGIN_MM == STATIC_MARGIN_MM,
               "gait_envelope.h keeps another static margin than gait_speed.h: run simulation/export_envelope.py");
+static_assert(gait_climb::STROKE_SAMPLES == gait_envelope::STROKE_SAMPLES &&
+                  gait_climb::TRAVEL_MARGIN_DEG == gait_envelope::TRAVEL_MARGIN_DEG &&
+                  gait_climb::CLEARANCE_MM == gait_envelope::CLEARANCE_MM &&
+                  gait_climb::STATIC_MARGIN_MM == gait_envelope::STATIC_MARGIN_MM,
+              "gait_climb.h was measured by other checks than gait_envelope.h: run simulation/export_climb.py");
 
 struct AxisEnvelope {
     float vMax;    // mm/s (forward, lateral) or rad/s (yaw): the stroke at its top cadence
@@ -146,18 +152,11 @@ inline bool postureWalkable(float s1, float h, float fd, Stance stance) {
     return cellWalkable(locate(s1), locate(h), locate(fd), stance);
 }
 
-// The stroke `stride` picks on an axis (0 forward, 1 lateral, 2 yaw) at a posture in a stance, with its top cadence and
-// the top speed the two make. Stride 0 is the speed-optimal stroke, the shortest stroke sample whose top speed is
-// within SPEED_TIE of the highest, +1 the longest stroke, and -1 MIN_STRIDE_SHARE of the speed-optimal one, linear in
-// between. The envelope is empty where the posture cannot walk the axis, and for GaitType::TUNED/AUTO.
-inline AxisEnvelope envelopeAt(GaitType gait, int axis, float s1, float h, float fd, float stride, Stance feet) {
+// The stroke `stride` picks for a classic gait on an axis whose longest stroke is `strokeMax` and whose kappa samples
+// are `swing` and `stance`, with its top cadence and the top speed the two make (envelopeAt).
+inline AxisEnvelope envelopeOf(GaitType gait, float strokeMax, const float (&swing)[gait_speed_detail::SAMPLES],
+                               const float (&stance)[gait_speed_detail::SAMPLES], float stride) {
     using namespace gait_speed_detail;
-    if (!isClassic(gait)) return {};
-    const float strokeMax = strokeMaxAt(axis, s1, h, fd, feet);
-    if (strokeMax <= 0.0f) return {};
-    const Kappas kappas = kappasAt(axis, locate(s1), locate(h), locate(fd), feet);
-    const auto& swing = kappas.swing;
-    const auto& stance = kappas.stance;
     float speed[SAMPLES], fastest = 0.0f;
     for (int n = 0; n < SAMPLES; ++n) {
         const float fraction = (float)(n + 1) / SAMPLES;
@@ -174,6 +173,26 @@ inline AxisEnvelope envelopeAt(GaitType gait, int axis, float s1, float h, float
     const float fraction = stroke / strokeMax;
     const float cadence = topCadence(gait, kappaAtStroke(swing, fraction), kappaAtStroke(stance, fraction));
     return {stroke * cadence / gait_envelope::STAND_FRAC[(int)gait], stroke, cadence};
+}
+
+// The stroke `stride` picks on an axis (0 forward, 1 lateral, 2 yaw) at a posture in a stance, with its top cadence and
+// the top speed the two make. Stride 0 is the speed-optimal stroke, the shortest stroke sample whose top speed is
+// within SPEED_TIE of the highest, +1 the longest stroke, and -1 MIN_STRIDE_SHARE of the speed-optimal one, linear in
+// between. The envelope is empty where the posture cannot walk the axis, and for GaitType::TUNED/AUTO.
+inline AxisEnvelope envelopeAt(GaitType gait, int axis, float s1, float h, float fd, float stride, Stance feet) {
+    using namespace gait_speed_detail;
+    if (!isClassic(gait)) return {};
+    const float strokeMax = strokeMaxAt(axis, s1, h, fd, feet);
+    if (strokeMax <= 0.0f) return {};
+    const Kappas kappas = kappasAt(axis, locate(s1), locate(h), locate(fd), feet);
+    return envelopeOf(gait, strokeMax, kappas.swing, kappas.stance, stride);
+}
+
+// The climb walk's envelope on an axis: envelopeAt at the climb's one posture (gait_climb.h), in the default stance.
+inline AxisEnvelope climbEnvelopeAt(GaitType gait, int axis, float stride) {
+    if (!gait_speed_detail::isClassic(gait) || axis < 0 || axis > 2) return {};
+    return envelopeOf(gait, gait_climb::STROKE_MAX[axis], gait_climb::KAPPA_SWING[axis], gait_climb::KAPPA_STANCE[axis],
+                      stride);
 }
 
 // Scales a posture's deviation from the neutral one along its own direction, to the outermost point `feasible`
@@ -316,14 +335,15 @@ inline void stickShares(float lx, float ly, float rx, float s, float (&share)[3]
 // firmware's own walk. The axes' speeds as shares of their top speeds sum to the total share, the faster axis below its
 // own share and the slower one above it, and an axis of small weight, as a goal's cross-track correction, slows the
 // others by about its weight alone.
-inline WalkTarget walkAtShares(GaitType gait, const float (&share)[3], float lx, float ly, float rx, float s1, float h,
-                               float fd, float stride, Stance stance) {
+// `envelope(axis)` is the axis's AxisEnvelope.
+template <typename Envelope>
+WalkTarget walkAtSharesOf(const float (&share)[3], float lx, float ly, float rx, Envelope envelope) {
     float used[3] = {}; // the shares of the axes the posture can walk
     float stroke[3] = {}, cadence[3] = {};
     float total = 0.0f;
     for (int axis = 0; axis < 3; ++axis) {
         if (share[axis] <= 0.0f) continue;
-        const AxisEnvelope e = envelopeAt(gait, axis, s1, h, fd, stride, stance);
+        const AxisEnvelope e = envelope(axis);
         // Defensive: a walkable posture promises only the axis its stance walks, though no walkable cell of either
         // stance's table has an empty one.
         if (e.stroke <= 0.0f) continue;
@@ -345,6 +365,12 @@ inline WalkTarget walkAtShares(GaitType gait, const float (&share)[3], float lx,
             total / cycleTime};
 }
 
+inline WalkTarget walkAtShares(GaitType gait, const float (&share)[3], float lx, float ly, float rx, float s1, float h,
+                               float fd, float stride, Stance stance) {
+    return walkAtSharesOf(share, lx, ly, rx,
+                          [&](int axis) { return envelopeAt(gait, axis, s1, h, fd, stride, stance); });
+}
+
 } // namespace gait_speed_detail
 
 inline WalkTarget classicWalkTarget(GaitType gait, float lx, float ly, float rx, float s, float s1, float h, float fd,
@@ -354,6 +380,15 @@ inline WalkTarget classicWalkTarget(GaitType gait, float lx, float ly, float rx,
     float share[3];
     stickShares(lx, ly, rx, s, share);
     return walkAtShares(gait, share, lx, ly, rx, s1, h, fd, stride, stance);
+}
+
+// classicWalkTarget at the climb's one posture (gait_climb.h), in the default stance.
+inline WalkTarget climbWalkTarget(GaitType gait, float lx, float ly, float rx, float s, float stride) {
+    using namespace gait_speed_detail;
+    if (!isClassic(gait)) return {};
+    float share[3];
+    stickShares(lx, ly, rx, s, share);
+    return walkAtSharesOf(share, lx, ly, rx, [&](int axis) { return climbEnvelopeAt(gait, axis, stride); });
 }
 
 // The walk `w` with every stroke scaled down alike until its stroke along `axis` (0 forward and 1 lateral in mm, 2 yaw

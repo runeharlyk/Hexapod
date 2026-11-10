@@ -3,7 +3,7 @@ import { commandOf, toControllerInput } from '../../src/lib/controller-input'
 import { Message } from '../../src/lib/platform_shared/message'
 import type { ControllerInput } from '../../src/lib/types/models'
 
-const controls = (stride: number, holdHeading = false): ControllerInput => ({
+const controls = (stride: number, holdHeading = false, climb = false): ControllerInput => ({
   left: { x: 0.1, y: 0.2 },
   right: { x: 0.3, y: 0.4 },
   height: 0.5,
@@ -11,7 +11,8 @@ const controls = (stride: number, holdHeading = false): ControllerInput => ({
   s1: 0.7,
   feetDistance: 0.8,
   stride,
-  holdHeading
+  holdHeading,
+  climb
 })
 
 // What the robot decodes from the message the controls are sent as.
@@ -19,8 +20,8 @@ const received = (input: ControllerInput) =>
   Message.decode(Message.encode({ input: toControllerInput(commandOf(input)) }).finish()).input
 
 describe('controller input', () => {
-  it('lists the controls in the firmware command order, the stride and then the heading hold last', () => {
-    expect(commandOf(controls(-0.9, true))).toEqual([
+  it('lists the controls in the firmware command order, the stride, the heading hold and the climb last', () => {
+    expect(commandOf(controls(-0.9, true, false))).toEqual([
       0.1,
       0.2,
       0.3,
@@ -30,7 +31,8 @@ describe('controller input', () => {
       0.7,
       0.8,
       -0.9,
-      true
+      true,
+      false
     ])
   })
 
@@ -50,5 +52,10 @@ describe('controller input', () => {
   it('sends the heading hold the robot decodes, and none while it is off', () => {
     expect(received(controls(0, true))?.holdHeading).toBe(true)
     expect(received(controls(0, false))?.holdHeading).toBe(false)
+  })
+
+  it('sends the climb the robot decodes, apart from the heading hold, and none while it is off', () => {
+    expect(received(controls(0, false, true))).toMatchObject({ holdHeading: false, climb: true })
+    expect(received(controls(0, true, false))).toMatchObject({ holdHeading: true, climb: false })
   })
 })

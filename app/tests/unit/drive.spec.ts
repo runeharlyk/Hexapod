@@ -39,8 +39,8 @@ import { MotionModes } from '../../src/lib/motion'
 import { Stance } from '../../src/lib/stance'
 import type { Command } from '../../src/lib/simulation/virtual-robot'
 
-const CENTRED: Command = [0, 0, 0, 0, 0, 0, 0, 0, 0, false]
-const DEFLECTED: Command = [0.5, 0.4, -0.3, 0.2, 0.1, 0, 0, 0, 0, false]
+const CENTRED: Command = [0, 0, 0, 0, 0, 0, 0, 0, 0, false, false]
+const DEFLECTED: Command = [0.5, 0.4, -0.3, 0.2, 0.1, 0, 0, 0, 0, false, false]
 const sticks = (c: Command) => c.slice(0, 4)
 
 // Lets the robot's pushes, which arrive on later microtasks, land.
@@ -161,14 +161,15 @@ describe('the controls', () => {
     expect(emit).not.toHaveBeenCalled()
   })
 
-  it("show each robot's own sliders and heading hold, so neither takes the other's on its next stick", () => {
+  it("show each robot's own sliders, heading hold and climb, so neither takes the other's on its next stick", () => {
     const robotSliders = {
       height: 0.3,
       speed: 0.5,
       s1: 0.2,
       feetDistance: -0.1,
       stride: 0.4,
-      holdHeading: true
+      holdHeading: true,
+      climb: true
     }
     const simSliders = {
       height: -0.2,
@@ -176,11 +177,12 @@ describe('the controls', () => {
       s1: 0.6,
       feetDistance: 0.3,
       stride: -0.5,
-      holdHeading: false
+      holdHeading: false,
+      climb: false
     }
     const sliders = () => {
-      const { height, speed, s1, feetDistance, stride, holdHeading } = get(input)
-      return { height, speed, s1, feetDistance, stride, holdHeading }
+      const { height, speed, s1, feetDistance, stride, holdHeading, climb } = get(input)
+      return { height, speed, s1, feetDistance, stride, holdHeading, climb }
     }
     simulation.command.set(CENTRED)
     input.update(i => ({ ...i, ...robotSliders }))
@@ -193,7 +195,8 @@ describe('the controls', () => {
       s1: 0,
       feetDistance: 0,
       stride: 0,
-      holdHeading: false
+      holdHeading: false,
+      climb: false
     })
     input.update(i => ({ ...i, ...simSliders }))
     drive(commandOf(get(input)))

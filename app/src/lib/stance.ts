@@ -34,6 +34,13 @@ export const gaitsOffered = (stance: Stance): GaitType[] =>
     gait => stance === Stance.DEFAULT || !DEFAULT_STANCE_GAITS.includes(gait)
   )
 
+/**
+ * Whether a walk climbs when asked: the classic gaits do in the default stance, in the climb's own posture (firmware
+ * gait_climb.h); TUNED and the crab walk their own posture instead.
+ */
+export const climbApplies = (gait: GaitType, stance: Stance | null) =>
+  gait !== GaitType.TUNED && stance === Stance.DEFAULT
+
 /** The modes the mode selector offers in a stance: those the robot takes in it. */
 export const modesOffered = (stance: Stance): MotionModes[] =>
   Object.values(MotionModes).filter(

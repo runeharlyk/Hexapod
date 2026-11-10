@@ -8,7 +8,7 @@ export const jointNames = persistentStore('joint_names', <string[]>[])
 
 export const model = writable<URDFRobot>()
 
-export const outControllerData = writable<Command>([0, 0, 0, 0, 0, 0, 0, 0, 0, false])
+export const outControllerData = writable<Command>([0, 0, 0, 0, 0, 0, 0, 0, 0, false, false])
 
 export const input: Writable<ControllerInput> = writable({
   left: { x: 0, y: 0 },
@@ -18,5 +18,6 @@ export const input: Writable<ControllerInput> = writable({
   s1: 0,
   feetDistance: 0,
   stride: 0,
-  holdHeading: false
+  holdHeading: false,
+  climb: false
 })
