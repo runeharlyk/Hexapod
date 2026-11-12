@@ -23,6 +23,7 @@ Paths are relative to `firmware/` unless they start at the repository root.
 | Goal controller (distance, turn and arc moves on the odometry) | `include/goal_controller.h`, the goal parts of `include/motion.h` |
 | Heading hold of a walk driven by the sticks | `include/heading_hold.h`, `holdHeading` in `include/motion.h` |
 | Climb walk (a high lift on a raised body) | `climbWalkTarget` in `include/gait_speed.h`, generated `include/gait_climb.h`, `walkPostureOf` in `include/motion.h` |
+| Gestures (a hand over the robot starts a goal move) | `include/gesture.h`, `include/gesture_service.h`, `include/peripherals/drivers/paj7620.h` |
 | Learned policy (WALK_NN) | `include/policy_runner.h`, generated `include/policy/hexapod_policy.h` |
 | Animation player and mode arbitration | `include/animation/` (`animation.h`, `animation_codec.h`, `animation_runner.h`, `animation_store.h`, `mode_arbiter.h`) |
 | Servo output (two PCA9685 boards) | `include/peripherals/servo_controller.h`, `include/peripherals/drivers/pca9685.h` |
@@ -66,6 +67,7 @@ Other tasks are created by the components that need them:
 - `serial_rx` (priority 4), which reads and decodes the USB serial link;
 - `dns_server` for the soft AP's captive-portal resolver;
 - `imu_cal` (core 1, priority 4, 4 KB stack), started for an IMU calibration request and ended with the calibration, so its I2C transfers run on the core the bus's interrupt is bound to ([I2C scan](#i2c-scan)); the transport task waits for it at most 10 s, within the app's 15 s request timeout, and answers 504 past that, and a calibration that ends later is dropped;
+- `gesture` (core 1, priority 1, 3 KB stack in PSRAM), started by the control task after the robot's start when the PAJ7620U2 answers, which polls it every 50 ms ([Gestures](#gestures));
 - `ota_download` while an HTTPS firmware download runs (the camera is released first to free its internal RAM); the restart after an update runs from a one-shot `esp_timer` created at boot, so it needs no memory when the update ends;
 - the ESP-IDF tasks for WiFi, the event loop, NimBLE and `esp_http_server`.
 
@@ -333,6 +335,19 @@ AUTO climbs on WAVE; the crab and TUNED walk their own posture when asked to cli
 Walking steadily, every full stick in every classic gait keeps the joints within travel and the servos' speed; BI turning at full stick moves a tibia 4.37 deg in one tick of its first steps, past the servo's 3.75 (`test_climb`).
 In MuJoCo, against a sharp-edged step and from six start distances over a stride, the climb on WAVE got onto 70 mm from all six, and the classic walk at its tallest lift on a raised body (s1 1, h -0.5) from two at most (`simulation/test_climb.py`); both stop at 80 mm.
 The climb cannot feel the ground: it steps every foot as high, and stepping down off a step lands the feet where the walk expects a floor.
+
+### Gestures
+
+A PAJ7620U2 on top of the robot, facing up on the shared I2C bus at 0x73 (`USE_GESTURE`), turns a hand moved over it into a goal move.
+A sweep walks 40 cm the way the hand went, and a circle turns the robot half a turn its way; the hand coming toward the chip, going away from it, or a wave moves nothing.
+Each move is a goal with no owner (`GoalOwner {}`), so no client's silence or departure ends it, and it walks TRI at half speed with the sliders centred, which selects TRI for whoever is connected.
+Only a robot standing still takes a gesture: in `STAND` or `WALK`, its gait at rest and its feet home, with no goal running or accepted since (`MotionService::still`, noted by the control task every tick); anything else is answered 409 and logged.
+A gesture made during a walk is therefore dropped, as the chip riding on the body reads it poorly, and an operator's stick, a stop or the handheld ends a gesture's move as it ends any goal.
+`gesture::Filter` keeps the vendor's entry and quit delays without their waits: a sweep or a circle is acted on 800 ms after it was seen unless the hand came toward the chip, went away or waved meanwhile, as a hand reaching down to lift the robot may cross the chip first, and nothing is taken for 1 s after any of those.
+The task polls the flag registers rather than waiting on the chip's INT pin, so the sensor needs four wires and no GPIO; a sensor that does not answer its part ID at boot is logged once and no task starts.
+`GESTURE_SENSOR_QUARTERS` sets how the chip is mounted: the quarter turns clockwise, seen from above, from the robot's forward to the chip's UP sweep.
+The flag bits follow the vendor's sample and Leika's driver; neither the bit names nor the circles' direction has been checked on this robot.
+`test/test_gesture/` drives the driver against the register fake and walks each move on the virtual robot.
 
 ## Sensors
 
