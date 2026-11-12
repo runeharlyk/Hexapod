@@ -7,10 +7,11 @@
   import Loading from '$lib/components/layout/Loading.svelte'
   import {
     AnalyticsData,
-    SystemCommandData,
     SystemCommand,
     type StaticSystemInformation
   } from '$lib/platform_shared/message'
+  import { notifications } from '$lib/components/toasts/notifications'
+  import { runSystemCommand } from '$lib/system-command'
   import { dataBroker } from '$lib/transport/databroker'
   import { ask } from '$lib/transport/reply'
   import { convertSeconds } from '$lib/utilities'
@@ -47,7 +48,11 @@
     analytics = info?.analyticsData
   }
 
-  const sendCommand = (command: SystemCommand) => dataBroker.emit(SystemCommandData, { command })
+  const sendCommand = async (command: Parameters<typeof runSystemCommand>[0]) => {
+    const result = await runSystemCommand(command)
+    if (result.ok) notifications.success(result.message, 5000)
+    else notifications.error(result.error, 6000)
+  }
 
   const postFactoryReset = () => sendCommand(SystemCommand.SYS_RESET)
 

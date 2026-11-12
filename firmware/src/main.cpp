@@ -6,7 +6,6 @@
 #include <esp_heap_caps.h>
 #include <esp_idf_version.h>
 #include <esp_flash.h>
-#include <esp_sleep.h>
 #include <esp_task_wdt.h>
 #include <esp_littlefs.h>
 #include <esp_mac.h>
@@ -29,7 +28,9 @@
 #include <feature_flags.h>
 #include <controller_input.h>
 #include <communication/espnow_adapter.h>
+#include <after_reply.h>
 #include <ota_service.h>
+#include <system_command.h>
 #include <peripherals_settings_service.h>
 #include <imu_calibration_service.h>
 #include <ota_flash.h>
@@ -293,16 +294,20 @@ static ImuCalibrationRun calibrateImuOnCore1(ImuCalibration &result, imu_calibra
 
 // Settings are persisted as binary protobuf under FS_CONFIG_DIRECTORY (the files keep their legacy
 // .json names), so erasing NVS alone leaves WiFi credentials and servo calibration in place after a
-// factory reset.
-static void eraseConfigDirectory() {
+// factory reset. True when no file is left; a missing directory holds none.
+static bool eraseConfigDirectory() {
     DIR *dir = opendir(FS_CONFIG_DIRECTORY);
-    if (!dir) return;
+    if (!dir) return true;
+    bool erased = true;
     for (struct dirent *entry = readdir(dir); entry; entry = readdir(dir)) {
         if (entry->d_type == DT_DIR) continue;
         std::string path = std::string(FS_CONFIG_DIRECTORY "/") + entry->d_name;
-        if (unlink(path.c_str()) != 0) ESP_LOGW(TAG, "Failed to erase %s", path.c_str());
+        if (unlink(path.c_str()) == 0) continue;
+        ESP_LOGW(TAG, "Failed to erase %s", path.c_str());
+        erased = false;
     }
     closedir(dir);
+    return erased;
 }
 
 // Drops the servos before the chip goes down: the PCA9685 keeps its last outputs across an ESP reset
@@ -312,6 +317,16 @@ static void deactivateServos() {
     EventBus<ModeMsg>::publish({MOTION_STATE::DEACTIVATED});
     vTaskDelay(pdMS_TO_TICKS(50));
 }
+
+// The robot a system command acts on (system_command.h).
+struct SystemCommandTarget {
+    void deactivateServos() { ::deactivateServos(); }
+    bool eraseSettings() {
+        const bool files = eraseConfigDirectory();
+        const bool nvs = nvs_flash_erase() == ESP_OK;
+        return files && nvs;
+    }
+};
 
 static void registerHandlers(CommAdapterBase &c) {
     c.on<socket_message_ControllerInputData>([](const socket_message_ControllerInputData &in, int) {
@@ -374,26 +389,6 @@ static void registerHandlers(CommAdapterBase &c) {
             }
         }
         robot.animationPose(pose);
-    });
-
-    c.on<socket_message_SystemCommandData>([](const socket_message_SystemCommandData &cmd, int) {
-        switch (cmd.command) {
-            case socket_message_SystemCommand_SYS_RESTART:
-                deactivateServos();
-                esp_restart();
-                break;
-            case socket_message_SystemCommand_SYS_RESET:
-                deactivateServos();
-                eraseConfigDirectory();
-                nvs_flash_erase();
-                esp_restart();
-                break;
-            case socket_message_SystemCommand_SYS_SLEEP:
-                deactivateServos();
-                esp_deep_sleep_start();
-                break;
-            default: break;
-        }
     });
 
     // Owned per adapter: the response holds a pointer into it until adapter->emit returns, and the
@@ -738,6 +733,15 @@ static void registerHandlers(CommAdapterBase &c) {
                             sizeof(res.error_message) - 1);
                 else if (res.status_code == 500)
                     strncpy(res.error_message, "Erasing the core dump failed", sizeof(res.error_message) - 1);
+                break;
+            }
+            case socket_message_CorrelationRequest_system_command_tag: {
+                res.which_response = socket_message_CorrelationResponse_empty_tag;
+                SystemCommandTarget target;
+                const SystemCommandOutcome outcome = runSystemCommand(req.request.system_command.command, target);
+                res.status_code = outcome.status;
+                strncpy(res.error_message, outcome.reason, sizeof(res.error_message) - 1);
+                after_reply::schedule(outcome.after);
                 break;
             }
             // A request this firmware does not know. No other reply is a 501, so the app reads it as firmware too old
@@ -1193,6 +1197,7 @@ static void serviceLoop(void *) {
     apService.loop();
     logHeap("softap");
 
+    after_reply::prepare();
     setupServer();
     setupComm();
 
