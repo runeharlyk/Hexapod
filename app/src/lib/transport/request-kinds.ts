@@ -19,6 +19,7 @@ export const REQUEST_KINDS: Record<RequestKey, RequestKind> = {
   featuresDataRequest: 'read',
   i2cScanDataRequest: 'read',
   systemInformationRequest: 'read',
+  systemCommand: 'action',
   wifiSettingsUpdate: 'setting',
   wifiNetworksGet: 'read',
   apSettingsUpdate: 'setting',
