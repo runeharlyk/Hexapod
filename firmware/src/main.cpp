@@ -45,6 +45,9 @@
 #include <communication/serial_adapter.h>
 #include <www_mount.hpp>
 #include <hexapod.h>
+#if FT_ENABLED(USE_GESTURE)
+#include <gesture_service.h>
+#endif
 #include <servo_angles_wire.h>
 #include <peripherals/i2c_bus.h>
 #include <peripherals/i2c_scan.h>
@@ -1135,6 +1138,9 @@ static void sendTelemetry() {
 
 static void controlLoop(void *) {
     robot.initialize();
+#if FT_ENABLED(USE_GESTURE)
+    gesture_service::start(robot);
+#endif
     // A tick that does not end leaves the servos holding their last pulses, and a DEACTIVATED published meanwhile is
     // never applied. The task watchdog restarts the board instead, whose start puts both PCA9685 boards to sleep with
     // every channel off. Watched from here, after the IMU's start (about 0.5 s); a tick that is not hung stalls for

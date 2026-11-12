@@ -135,6 +135,8 @@ class VirtualRobot {
         return _robot.startGoal(goal, style, gait, owner);
     }
     void goalCancel() { _robot.cancelGoal(); }
+    // Standing still at the last tick, with no goal running or accepted since.
+    bool still() const { return _robot.still(); }
     socket_message_GoalStatus goalStatus() const { return _robot.motion().goalStatus(); }
     // A transport's client has gone.
     void clientGone(GoalOwner owner) { _robot.goalClientGone(owner); }

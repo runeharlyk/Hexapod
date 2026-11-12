@@ -377,6 +377,18 @@ class MotionInbox {
         return _odometry;
     }
 
+    // Control task, every tick: whether the robot stands still in STAND or WALK, its gait at rest and no goal running.
+    void noteStill(bool still) {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _still = still;
+    }
+
+    // Any task: whether the robot stood still at the last tick and no goal has been accepted since.
+    bool still() const {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _still && !_goalDrives;
+    }
+
     // Control task: the pose the odometry moved to.
     void noteOdometry(const OdometryEstimate &pose) {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -468,6 +480,7 @@ class MotionInbox {
     bool _gaitRefused = false;
     std::optional<bool> _servoSwitch;
     OdometryEstimate _odometry {};
+    bool _still = false; // as the control task noted it last
     // The arrival of the handheld's last frame with a stick off centre, until the first take past its window.
     unsigned long _handheldMovedMs = 0;
     bool _handheldMoved = false;

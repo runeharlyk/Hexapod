@@ -63,6 +63,7 @@ class Hexapod {
         _servoController.fillTelemetry(tick);
     }
     bool resting() const { return _motionService.resting(); }
+    bool still() const { return _motionService.still(); }
     const MotionService &motion() const { return _motionService; }
     bool resetOdometry() { return _motionService.resetOdometry(); }
     int startGoal(const Goal &goal, const CommandMsg &style, GaitType gait, GoalOwner owner) {

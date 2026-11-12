@@ -19,6 +19,7 @@ void printFeatureConfiguration() {
     ESP_LOGI("Features", "USE_MAG:     %s", USE_MAG ? "enabled" : "disabled");
     ESP_LOGI("Features", "USE_MDNS:    %s", USE_MDNS ? "enabled" : "disabled");
     ESP_LOGI("Features", "USE_ESPNOW:  %s", USE_ESPNOW ? "enabled" : "disabled");
+    ESP_LOGI("Features", "USE_GESTURE: %s", USE_GESTURE ? "enabled" : "disabled");
     ESP_LOGI("Features", "EMBED_WEBAPP:%s", EMBED_WEBAPP ? "enabled" : "disabled");
     ESP_LOGI("Features", "==========================================================");
 }

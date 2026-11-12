@@ -456,6 +456,7 @@ class MotionService {
         if (state != MOTION_STATE::WALK) releaseHeading();
         if (state != MOTION_STATE::STAND && state != MOTION_STATE::WALK) {
             _atRest = false;
+            _inbox.noteStill(false);
             // The odometry holds its pose; whatever moves the feet meanwhile is no travel it can measure.
             _odometry.pause();
         }
@@ -496,6 +497,7 @@ class MotionService {
                 updateOdometry(dt, imuFresh);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 noteRestPosture();
+                noteStill();
                 break;
             }
 #if FT_ENABLED(USE_POLICY)
@@ -536,6 +538,7 @@ class MotionService {
                 noteFeetOffCrab();
                 updateOdometry(dt, imuFresh);
                 stepGoal(dt);
+                noteStill();
                 holdHeading(dt);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
                 break;
@@ -834,6 +837,9 @@ class MotionService {
         const MOTION_STATE mode = _inbox.appliedMode();
         return mode == MOTION_STATE::DEACTIVATED || mode == MOTION_STATE::IDLE;
     }
+
+    // Any task: standing still in STAND or WALK at the last tick, with no goal running or accepted since.
+    bool still() const { return _inbox.still(); }
 
   private:
     static bool isWalkingMode(MOTION_STATE mode) { return mode == MOTION_STATE::WALK || mode == MOTION_STATE::WALK_NN; }
@@ -1311,6 +1317,9 @@ class MotionService {
                 if (std::fabs(body_state.feet[i][j] - default_feet_pos[i][j]) >= FEET_AT_REST_MM) return false;
         return true;
     }
+
+    // Control task, STAND and WALK, once the gait and the goal have stepped.
+    void noteStill() { _inbox.noteStill(!goalActive() && !gaitIsCommanded(gait_state) && feetAtRest()); }
 
     bool liftArrived() const {
         return std::fabs(gait_state.step_height - target_gait_state.step_height) < POSTURE_SETTLED_MM;

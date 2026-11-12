@@ -35,6 +35,11 @@
 #define USE_POLICY 0
 #endif
 
+// The PAJ7620U2 gesture sensor on top (include/gesture_service.h); a robot without it runs as before.
+#ifndef USE_GESTURE
+#define USE_GESTURE 0
+#endif
+
 #ifndef ESPNOW_WIFI_CHANNEL
 #define ESPNOW_WIFI_CHANNEL 1
 #endif
