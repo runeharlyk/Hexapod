@@ -3,6 +3,7 @@ import { playAnimation, stopAnimation, requestGait, requestMode, requestStance }
 import { GaitType } from '$lib/gait'
 import { Stance } from '$lib/stance'
 import { MotionModes } from '$lib/motion'
+import { haptics } from '$lib/utilities/haptics'
 import type { Command } from '$lib/simulation/virtual-robot'
 import { gait, goalStatus, mode, stance } from '$lib/robot/state'
 import { input, outControllerData } from './model-store'
@@ -47,8 +48,15 @@ export const drivenGoal = derived([drivesSimulation, goalStatus], ([sim, goal]) 
 export const drive = (command: Command) =>
   (get(drivesSimulation) ? simulation.command : outControllerData).set(command)
 
-export const driveMode = (next: MotionModes) =>
-  get(drivesSimulation) ? simulation.mode.set(next) : requestMode(next)
+/**
+ * Asks for a mode, felt on the phone only when it differs from the current one: a gamepad button held while a stick
+ * moves asks again on every change.
+ */
+export const driveMode = (next: MotionModes) => {
+  if (next !== get(drivenMode))
+    (next === MotionModes.DEACTIVATED ? haptics.stop : haptics.modeChange)()
+  return get(drivesSimulation) ? simulation.mode.set(next) : requestMode(next)
+}
 
 export const driveGait = (next: GaitType) =>
   get(drivesSimulation) ? simulation.gait.set(next) : requestGait(next)

@@ -44,7 +44,7 @@ const FIELDLESS_REQUESTS: ReadonlySet<string> = (() => {
 
 // Requests with fields that firmware up to v0.1.1 does not know and that later firmware never refuses with a bare 400
 // (firmware/src/main.cpp gives each such refusal its reason): a bare 400 to these, too, is read as firmware too old.
-const NEWER_THAN_V0_1_1: ReadonlySet<string> = new Set(['fileList'])
+const NEWER_THAN_V0_1_1: ReadonlySet<string> = new Set(['fileList', 'systemCommand'])
 
 const requestKey = (payload: object) =>
   Object.entries(payload).find(([, value]) => value !== undefined)?.[0]

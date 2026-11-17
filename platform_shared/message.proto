@@ -383,6 +383,7 @@ message CorrelationRequest {
     FeaturesDataRequest features_data_request = 10;
     I2CScanDataRequest i2c_scan_data_request = 20;
     SystemInformationRequest system_information_request = 40;
+    SystemCommandData system_command = 41;
     api.WifiSettings wifi_settings_update = 51;
     api.WifiNetworksRequest wifi_networks_get = 52;
     api.APSettings ap_settings_update = 61;
@@ -458,13 +459,15 @@ message OtaStatusData {
   string error = 3;
 }
 
-// SYS_NONE=0 is a no-op so an empty frame can't trigger a reboot.
+// SYS_NONE=0 is refused, so an empty request can't trigger a reboot.
 enum SystemCommand {
   SYS_NONE = 0;
   SYS_RESTART = 1;
   SYS_RESET = 2;
   SYS_SLEEP = 3;
 }
+// A request, answered before the robot acts on it: a restart or a sleep happens a moment after the reply has gone out,
+// and a reset answers whether its erase succeeded before it restarts.
 message SystemCommandData {
   SystemCommand command = 1;
 }
@@ -515,9 +518,9 @@ message AnimationEntry {
 message AnimationList { repeated AnimationEntry entries = 1; }
 
 message Message {
-  // RSSIData, which nothing ever sent.
-  reserved 260;
-  reserved "rssi";
+  // RSSIData, which nothing ever sent, and the system command, now a correlation request.
+  reserved 120, 260;
+  reserved "system_command", "rssi";
   oneof message {
     // A subscribe; the robot echoes it to the client as the ack, after a state topic's current value
     // (platform_shared/topics.json).
@@ -537,7 +540,6 @@ message Message {
     ServoPWMData servo_pwm = 210;
     ServoStateData servo_state = 211;
     JointAngleData joint_angle = 212;
-    SystemCommandData system_command = 120;
     api.WifiStatus wifi_status = 250;  // observable status: pushed on change (connect/disconnect)
     api.APStatus ap_status = 251;      // observable status: pushed on AP up/down/station change
     OtaStatusData ota_status = 270;    // observable status: pushed while a firmware update runs

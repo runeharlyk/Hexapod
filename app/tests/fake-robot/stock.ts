@@ -501,6 +501,8 @@ export const stockRobot = () => {
     }
   }))
   robot.respond('coreDumpGet', () => ({ coreDumpReport: STOCK.coreDump }))
+  // Answered as the firmware does, before it would act on the command; this one never goes down.
+  robot.respond('systemCommand', () => ({ empty: {} }))
   robot.respond('taskStatsRequest', () => ({
     taskStats: {
       windowUs: 2000000,

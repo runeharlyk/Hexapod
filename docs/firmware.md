@@ -66,7 +66,7 @@ Other tasks are created by the components that need them:
 - `serial_rx` (priority 4), which reads and decodes the USB serial link;
 - `dns_server` for the soft AP's captive-portal resolver;
 - `imu_cal` (core 1, priority 4, 4 KB stack), started for an IMU calibration request and ended with the calibration, so its I2C transfers run on the core the bus's interrupt is bound to ([I2C scan](#i2c-scan)); the transport task waits for it at most 10 s, within the app's 15 s request timeout, and answers 504 past that, and a calibration that ends later is dropped;
-- `ota_download` while an HTTPS firmware download runs (the camera is released first to free its internal RAM); the restart after an update runs from a one-shot `esp_timer` created at boot, so it needs no memory when the update ends;
+- `ota_download` while an HTTPS firmware download runs (the camera is released first to free its internal RAM); the restart after an update, and the restart or deep sleep a system command asks for, run 1.5 s after the reply from a one-shot `esp_timer` created at boot (`include/after_reply.h`), so they need no memory when they fire;
 - the ESP-IDF tasks for WiFi, the event loop, NimBLE and `esp_http_server`.
 
 The control loop owns `MotionService`, `Peripherals` and `ServoController` through `Hexapod` (`include/hexapod.h`).
@@ -424,7 +424,8 @@ Outgoing data takes one of four shapes, chosen by the kind of data:
   State is never sent on a timer.
 - **Settings** (servo, peripheral, camera, WiFi, AP and mDNS) are state topics written by an update request, which is answered with the stored group; there is no get request.
   A push carries the whole group, which the app's form folds into a draft field by field, so a push never overwrites a field being edited.
-- **Commands** (sticks, mode, dragged joints, restart, sleep) are fire-and-forget.
+- **Commands** (sticks, mode, dragged joints) are fire-and-forget.
+  Restart, factory reset and sleep are requests instead, answered before the robot acts on them (`include/system_command.h`): a reset's reply says whether every setting was erased, and it restarts either way.
 
 Streams and observable state reach the transports through bridges in `setupComm()` (`addBridge`, `observeStatus<T>()`).
 A bridge holds its EventBus subscription only while some client on some transport subscribes to its tag, so nothing is converted for nobody.
