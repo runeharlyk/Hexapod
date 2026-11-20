@@ -12,6 +12,7 @@
 #include <utils/timing.h>
 #include <utils/math_utils.h>
 #include <gait.h>
+#include <gait_morph.h>
 #include <gait_speed.h>
 #include <imu_frame.h>
 #include <odometry.h>
@@ -491,7 +492,7 @@ class MotionService {
                 // handleInputGait gets honoured -- otherwise leaving WALK would strand it.
                 updateAutoGait();
                 _commandRamp.step(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
-                gait.step(gait_state, body_state, dt);
+                stepFeet(dt);
                 noteFeetOffCrab();
                 updateOdometry(dt, imuFresh);
                 kinematics.inverseKinematics(body_state, msgAngles.angles);
@@ -532,7 +533,7 @@ class MotionService {
                 // Before the ramp: it clears the 2 mm deadband in one tick, closing the window.
                 updateAutoGait();
                 _commandRamp.step(gait_state, target_gait_state, dt, GAIT_COMMAND_TAU_S);
-                gait.step(gait_state, body_state, dt);
+                stepFeet(dt);
                 noteFeetOffCrab();
                 updateOdometry(dt, imuFresh);
                 stepGoal(dt);
@@ -660,7 +661,8 @@ class MotionService {
         tick.command_age_ms = lastCommandMillis == 0 ? 0 : millis() - lastCommandMillis;
         tick.link_lost = commandTimedOut;
         tick.mode = static_cast<uint32_t>(motionState);
-        tick.gait = static_cast<uint32_t>(gait_state.gait_type);
+        // The morph changes gait under the schedule loaded at the last stop, which says what it walked then.
+        tick.gait = static_cast<uint32_t>(_morph.running() ? _morph.label() : gait_state.gait_type);
         const OdometryEstimate odometry = _odometry.estimate();
         tick.odom_x = odometry.x;
         tick.odom_y = odometry.y;
@@ -684,6 +686,9 @@ class MotionService {
     EventBus<ServoStateMsg>::Handle _servoSwitchSubHandle;
     Kinematics kinematics;
     GaitController gait;
+    // AUTO's walk, which changes gait while walking; it steps the feet from a standstill until the walk stops.
+    GaitMorph _morph;
+    auto_morph::Planner _autoPlanner;
 #if FT_ENABLED(USE_POLICY)
     PolicyRunner _policy;
 #endif
@@ -838,6 +843,19 @@ class MotionService {
   private:
     static bool isWalkingMode(MOTION_STATE mode) { return mode == MOTION_STATE::WALK || mode == MOTION_STATE::WALK_NN; }
 
+    // Control task: AUTO walks on the morph from a standstill in the default stance, off the climb, until its walk
+    // stops; every other walk, a stance change and the ease home after any walk step on the classic gait.
+    void stepFeet(float dt) {
+        if (!gaitIsCommanded(gait_state)) _morph.stop();
+        const bool starts = !_morph.running() && gaitIsCommanded(gait_state) && motionState == MOTION_STATE::WALK &&
+                            _requestedGait == GaitType::AUTO && _stance == Stance::DEFAULT &&
+                            !walkPostureOf(lastWalkCommand_).climb && !gait.cycling() && !gait.hasPendingStanceChange();
+        if (_morph.running() || starts)
+            _morph.step(gait_state, body_state, default_feet_pos, dt);
+        else
+            gait.step(gait_state, body_state, dt);
+    }
+
     // Only safe while the gait is not stepping.
     void loadGait(GaitType next) {
         // The searched gait rides at its own height and lift, so the classic walk's posture is unknown either side.
@@ -883,14 +901,27 @@ class MotionService {
         } else {
             const AutoDemand demand = autoDemand(c.lx, c.ly, rx, c.s, p.s1, p.h, p.fd, stride);
             _walkSpeed01 = demand.speed01;
-            _autoGait = selectAutoGait(demand, gait_state.gait_type, p.s1, p.h, p.fd, stride);
-            w = _requestedGait == GaitType::AUTO
-                    ? autoWalkTarget(gait_state.gait_type, demand, c.lx, c.ly, rx, p.s1, p.h, p.fd, stride)
-                    : classicWalkTarget(gait_state.gait_type, c.lx, c.ly, rx, c.s, p.s1, p.h, p.fd, stride, stance);
             // A goal walking its sticks strides no further than what remains of it; a client's walk keeps its stride.
-            if (_goalStarted && goalActive() && _inbox.goalDrives()) {
-                const StrokeCap cap = _goal.strokeCap();
-                w = withStrokeCap(gait_state.gait_type, w, cap.axis, cap.limit, p.s1, p.h, p.fd, stance);
+            const bool capped = _goalStarted && goalActive() && _inbox.goalDrives();
+            const StrokeCap cap = capped ? _goal.strokeCap() : StrokeCap {};
+            // AUTO picked on a classic gait already stepping walks it on until it stops (stepFeet), and a classic gait
+            // picked on the morph walks AUTO on until it stops: the classic stroke on the morph's last plan would walk
+            // BI's two feet at any speed the stick asks. A centred stick stops the morph on the plan it walked: a plan
+            // for no speed has no stroke for the feet still stepping.
+            if (_morph.running() || (_requestedGait == GaitType::AUTO && !gait.cycling())) {
+                if (demand.speed01 > 0.f) {
+                    auto_morph::Plan plan = _autoPlanner.plan(demand, c.lx, c.ly, rx, p.s1, p.h, p.fd, stride);
+                    if (capped) plan = auto_morph::withStrokeCap(plan, cap.axis, cap.limit, p.s1, p.h, p.fd);
+                    _morph.setPlan(plan);
+                    _autoGait = plan.label;
+                    w = plan.walk;
+                }
+            } else {
+                _autoGait = selectAutoGait(demand, gait_state.gait_type, p.s1, p.h, p.fd, stride);
+                w = _requestedGait == GaitType::AUTO
+                        ? autoWalkTarget(gait_state.gait_type, demand, c.lx, c.ly, rx, p.s1, p.h, p.fd, stride)
+                        : classicWalkTarget(gait_state.gait_type, c.lx, c.ly, rx, c.s, p.s1, p.h, p.fd, stride, stance);
+                if (capped) w = withStrokeCap(gait_state.gait_type, w, cap.axis, cap.limit, p.s1, p.h, p.fd, stance);
             }
         }
         target_gait_state.step_x = held ? 0.f : w.stepX;
@@ -1047,13 +1078,19 @@ class MotionService {
         bool walkable() const { return speed > 0.f && turn > 0.f; }
     };
 
-    // AUTO's full stick walks BI's top speed (autoDemand) in the default stance, the one it walks; a sideways goal's
-    // stick is the lateral one. TUNED has no envelope.
+    // AUTO's is the speed its stick scale's span takes to (auto_morph::StickScale), in the default stance, the one it
+    // walks: a goal slows and stops on the stick's run below the gap, where it walks in proportion to the stick. A
+    // sideways goal's stick is the lateral one. TUNED has no envelope.
     static GoalTops goalTops(GoalKind kind, GaitType gait, const Posture &p, float stride, Stance stance) {
-        const GaitType walked = gait == GaitType::AUTO ? GaitType::BI_GATE : gait;
-        const int axis = kind == GoalKind::SIDEWAYS ? 1 : 0;
-        return {envelopeAt(walked, axis, p.s1, p.h, p.fd, stride, stance).vMax,
-                envelopeAt(walked, 2, p.s1, p.h, p.fd, stride, stance).vMax};
+        const auto top = [&](int axis) {
+            const float v =
+                envelopeAt(gait == GaitType::AUTO ? GaitType::BI_GATE : gait, axis, p.s1, p.h, p.fd, stride, stance)
+                    .vMax;
+            if (gait != GaitType::AUTO || v <= 0.f) return v;
+            const float tri = envelopeAt(GaitType::TRI_GATE, axis, p.s1, p.h, p.fd, stride, stance).vMax;
+            return auto_morph::StickScale(tri / v).span() * v;
+        };
+        return {top(kind == GoalKind::SIDEWAYS ? 1 : 0), top(2)};
     }
 
     static void setPose(socket_message_GoalStatus &s, const OdometryEstimate &pose) {
@@ -1129,7 +1166,9 @@ class MotionService {
         }
         if (!_goalStarted) {
             if (_posturePending || _postureSettling || !_walkPostureValid) return;
-            if (_goalTaken.gait != GaitType::AUTO && gait_state.gait_type != _goalTaken.gait) return;
+            // The schedule loaded can be the goal's gait already while AUTO's morph still walks another.
+            if (_goalTaken.gait != GaitType::AUTO && (gait_state.gait_type != _goalTaken.gait || _morph.running()))
+                return;
             const GoalTops tops =
                 goalTops(_goalTaken.goal.kind, _goalTaken.gait, _walkPosture, _goalTaken.style.stride, _walkStance);
             _goal.start(_goalTaken.goal, restPose(), tops.speed, tops.turn);
@@ -1222,7 +1261,8 @@ class MotionService {
     // Control task: which legs the gait has in stance after its last step.
     std::array<bool, 6> stanceFlags() const {
         std::array<bool, 6> stance;
-        for (int leg = 0; leg < 6; ++leg) stance[leg] = gait.inStance(gait_state, leg);
+        for (int leg = 0; leg < 6; ++leg)
+            stance[leg] = _morph.running() ? _morph.inStance(leg) : gait.inStance(gait_state, leg);
         return stance;
     }
 
@@ -1233,7 +1273,8 @@ class MotionService {
     OdometryEstimate restPose() const {
         const float phase = stopPhase();
         std::array<bool, 6> stays;
-        for (int leg = 0; leg < 6; ++leg) stays[leg] = gait.phaseToLift(gait_state, leg) > phase;
+        for (int leg = 0; leg < 6; ++leg)
+            stays[leg] = (_morph.running() ? _morph.phaseToLift(leg) : gait.phaseToLift(gait_state, leg)) > phase;
         return KinematicOdometry::advance(
             _odometry.estimate(), KinematicOdometry::restStep(body_state, stanceFlags(), default_feet_pos, stays));
     }
