@@ -121,11 +121,14 @@ inline float kappaAtStroke(const float (&samples)[SAMPLES], float fraction) {
 }
 
 // The fastest cadence at which no joint passes the servo's speed: a stroke's peak joint rate per unit of swing and of
-// stance progress, over the share of the cycle each takes, capped where the generator stopped measuring.
-inline float topCadence(GaitType gait, float kappaSwing, float kappaStance) {
-    const float d = gait_envelope::STAND_FRAC[(int)gait];
+// stance progress, over the share of the cycle each takes at the duty d, capped where the generator stopped measuring.
+inline float topCadenceAtDuty(float d, float kappaSwing, float kappaStance) {
     return std::min(gait_envelope::SERVO_RAD_S / std::max(kappaSwing / (1.0f - d), kappaStance / d),
                     gait_envelope::CADENCE_MAX);
+}
+
+inline float topCadence(GaitType gait, float kappaSwing, float kappaStance) {
+    return topCadenceAtDuty(gait_envelope::STAND_FRAC[(int)gait], kappaSwing, kappaStance);
 }
 
 // An axis's kappa samples at the posture, interpolated between the grid points.
@@ -152,16 +155,17 @@ inline bool postureWalkable(float s1, float h, float fd, Stance stance) {
     return cellWalkable(locate(s1), locate(h), locate(fd), stance);
 }
 
-// The stroke `stride` picks for a classic gait on an axis whose longest stroke is `strokeMax` and whose kappa samples
-// are `swing` and `stance`, with its top cadence and the top speed the two make (envelopeAt).
-inline AxisEnvelope envelopeOf(GaitType gait, float strokeMax, const float (&swing)[gait_speed_detail::SAMPLES],
-                               const float (&stance)[gait_speed_detail::SAMPLES], float stride) {
+// The stroke `stride` picks for a timing of duty `d` on an axis whose longest stroke is `strokeMax` and whose kappa
+// samples are `swing` and `stance`, with its top cadence and the top speed the two make (envelopeAt).
+inline AxisEnvelope envelopeOfDuty(float d, float strokeMax, const float (&swing)[gait_speed_detail::SAMPLES],
+                                   const float (&stance)[gait_speed_detail::SAMPLES], float stride) {
     using namespace gait_speed_detail;
     float speed[SAMPLES], fastest = 0.0f;
     for (int n = 0; n < SAMPLES; ++n) {
         const float fraction = (float)(n + 1) / SAMPLES;
         // The top speed is stroke * cadence / d, and d is the gait's alone.
-        speed[n] = (float)(n + 1) * topCadence(gait, kappaAtStroke(swing, fraction), kappaAtStroke(stance, fraction));
+        speed[n] =
+            (float)(n + 1) * topCadenceAtDuty(d, kappaAtStroke(swing, fraction), kappaAtStroke(stance, fraction));
         fastest = std::max(fastest, speed[n]);
     }
     int optimal = 0;
@@ -171,8 +175,14 @@ inline AxisEnvelope envelopeOf(GaitType gait, float strokeMax, const float (&swi
     const float stroke = stride >= 0.0f ? optimalStroke + stride * (strokeMax - optimalStroke)
                                         : optimalStroke * (1.0f + stride * (1.0f - MIN_STRIDE_SHARE));
     const float fraction = stroke / strokeMax;
-    const float cadence = topCadence(gait, kappaAtStroke(swing, fraction), kappaAtStroke(stance, fraction));
-    return {stroke * cadence / gait_envelope::STAND_FRAC[(int)gait], stroke, cadence};
+    const float cadence = topCadenceAtDuty(d, kappaAtStroke(swing, fraction), kappaAtStroke(stance, fraction));
+    return {stroke * cadence / d, stroke, cadence};
+}
+
+// envelopeOfDuty for a classic gait, at its own duty.
+inline AxisEnvelope envelopeOf(GaitType gait, float strokeMax, const float (&swing)[gait_speed_detail::SAMPLES],
+                               const float (&stance)[gait_speed_detail::SAMPLES], float stride) {
+    return envelopeOfDuty(gait_envelope::STAND_FRAC[(int)gait], strokeMax, swing, stance, stride);
 }
 
 // The stroke `stride` picks on an axis (0 forward, 1 lateral, 2 yaw) at a posture in a stance, with its top cadence and
@@ -393,10 +403,11 @@ inline WalkTarget climbWalkTarget(GaitType gait, float lx, float ly, float rx, f
 
 // The walk `w` with every stroke scaled down alike until its stroke along `axis` (0 forward and 1 lateral in mm, 2 yaw
 // in rad) is the positive `cap`, and stepped faster in proportion, so each axis keeps its speed, up to the shorter
-// strokes' top cadence. A goal's approach walks so, so that no step carries the robot past its target; a walk within
-// the cap is left as it is. The capped axis is set to the cap itself, so a cap at the gait's deadband still steps.
-inline WalkTarget withStrokeCap(GaitType gait, const WalkTarget& w, int axis, float cap, float s1, float h, float fd,
-                                Stance stance) {
+// strokes' top cadence at the duty d. A goal's approach walks so, so that no step carries the robot past its target; a
+// walk within the cap is left as it is. The capped axis is set to the cap itself, so a cap at the gait's deadband still
+// steps.
+inline WalkTarget withStrokeCapAtDuty(float d, const WalkTarget& w, int axis, float cap, float s1, float h, float fd,
+                                      Stance stance) {
     using namespace gait_speed_detail;
     const float strokes[3] = {std::fabs(w.stepY), std::fabs(w.stepX), std::fabs(w.stepAngle)};
     if (!(strokes[axis] > cap)) return w;
@@ -408,12 +419,18 @@ inline WalkTarget withStrokeCap(GaitType gait, const WalkTarget& w, int axis, fl
         const Kappas kappas = kappasAt(a, locate(s1), locate(h), locate(fd), stance);
         const float fraction = scale * strokes[a] / strokeMax;
         rate = std::min(
-            rate, topCadence(gait, kappaAtStroke(kappas.swing, fraction), kappaAtStroke(kappas.stance, fraction)));
+            rate, topCadenceAtDuty(d, kappaAtStroke(kappas.swing, fraction), kappaAtStroke(kappas.stance, fraction)));
     }
     WalkTarget capped {w.stepX * scale, w.stepY * scale, w.stepAngle * scale, rate};
     float& alongAxis = axis == 0 ? capped.stepY : axis == 1 ? capped.stepX : capped.stepAngle;
     alongAxis = std::copysign(cap, alongAxis);
     return capped;
+}
+
+// withStrokeCapAtDuty for a classic gait, at its own duty.
+inline WalkTarget withStrokeCap(GaitType gait, const WalkTarget& w, int axis, float cap, float s1, float h, float fd,
+                                Stance stance) {
+    return withStrokeCapAtDuty(gait_envelope::STAND_FRAC[(int)gait], w, axis, cap, s1, h, fd, stance);
 }
 
 // AUTO walks the speed the stick asks of the fastest classic gait, BI: the stick's share of BI's top speed at the

@@ -1243,39 +1243,6 @@ void test_full_stick_walk_stays_in_travel_for_every_classic_gait() {
     }
 }
 
-// AUTO picks the gait in the ramp's window at the start of a walk, after the command was already turned into a
-// stroke and cadence for the gait it left; WAVE-like and TRI-like top speeds differ several times, so the target
-// is recomputed for the new gait on the same tick, from the stick already held.
-void test_an_auto_gait_switch_retargets_the_held_stick() {
-    struct Case {
-        float s;
-        GaitType selected;
-    };
-    for (const Case &k : {Case {-0.5f, GaitType::TRI_GATE}, Case {1.0f, GaitType::BI_GATE}}) {
-        VirtualRobot robot;
-        standUp(robot);
-        robot.setGait(GaitType::AUTO);
-        robot.tick();
-        TEST_ASSERT_EQUAL(GaitType::RIPPLE, robot.gait());
-        robot.setMode(MOTION_STATE::WALK);
-        settleWalk(robot);
-        TEST_ASSERT_EQUAL(GaitType::RIPPLE, robot.gait());
-
-        robot.command({0, 1, 0, 0, 0, k.s, 0, 0});
-        robot.tick();
-        TEST_ASSERT_EQUAL(k.selected, robot.gait());
-        const AutoDemand demand = autoDemand(0, 1, 0, k.s, 0, 0, 0, 0);
-        const WalkTarget left = autoWalkTarget(GaitType::RIPPLE, demand, 0, 1, 0, 0, 0, 0, 0);
-        const WalkTarget expected = autoWalkTarget(k.selected, demand, 0, 1, 0, 0, 0, 0, 0);
-        TEST_ASSERT_TRUE(std::fabs(expected.phaseRate - left.phaseRate) > 0.1f * expected.phaseRate);
-        const gait_state_t &target = robot.gaitCommand();
-        TEST_ASSERT_EQUAL_FLOAT(expected.stepX, target.step_x);
-        TEST_ASSERT_EQUAL_FLOAT(expected.stepY, target.step_y);
-        TEST_ASSERT_EQUAL_FLOAT(expected.stepAngle, target.step_angle);
-        TEST_ASSERT_EQUAL_FLOAT(expected.phaseRate, target.phase_rate);
-    }
-}
-
 // Narrowing the stance at full stick stops the walk, steps the stance in at rest and walks on: no joint leaves its
 // travel on the way, and the walk is back on its own, with a stroke, by the end.
 void test_feet_distance_change_while_walking_stays_in_travel() {
@@ -1311,8 +1278,8 @@ void test_unwalkable_posture_is_clamped() {
     TEST_ASSERT_TRUE(asked == clamped);
 }
 
-// The dead-man zeroes the stick it last heard, not just the stroke: an AUTO walk that sped up while stepping, and so
-// still holds its slow gait, must not have the faster gait chosen and walked once the timeout has stopped it.
+// The dead-man zeroes the stick it last heard, not just the stroke: an AUTO walk that sped up while stepping must
+// not walk on at the faster stick once the timeout has stopped it.
 void test_a_timed_out_auto_walk_stays_at_rest() {
     VirtualRobot robot;
     standUp(robot);
@@ -1321,7 +1288,6 @@ void test_a_timed_out_auto_walk_stays_at_rest() {
     robot.setMode(MOTION_STATE::WALK);
     hold(robot, {0, 0.1f, 0, 0, 0, 0, 0, 0}, ticksFor(1.0f));
     hold(robot, fullStick(0, 1, 0), ticksFor(1.0f));
-    TEST_ASSERT_EQUAL(GaitType::RIPPLE, robot.gait());
 
     largestStep(robot, ticksFor(0.6f + 2.0f)); // the timeout, then the ramp's settle and the feet's ease
     TEST_ASSERT_LESS_THAN_FLOAT(1e-3f, largestStep(robot, ticksFor(1.0f)));
@@ -1497,7 +1463,7 @@ void test_a_gait_change_during_a_settle_waits_for_it() {
         robot.setMode(MOTION_STATE::WALK);
         const CommandMsg slow {0, 0.1f, 0, 0, 0, 0, 0, 0};
         hold(robot, slow, ticksFor(3.0f));
-        TEST_ASSERT_EQUAL(GaitType::RIPPLE, robot.gait());
+        TEST_ASSERT_EQUAL(GaitType::WAVE, robot.gait());
         hold(robot, withPosture(slow, moved), ticksFor(delay));
         const HeldRun run = hold(robot, withPosture(fullStick(0, 1, 0), moved), ticksFor(4.0f));
         char msg[96];
@@ -2838,7 +2804,6 @@ int main(int, char **) {
     RUN_TEST(test_angles_on_the_bus_leave_the_motions_angles_alone);
     RUN_TEST(test_a_gait_selected_while_standing_is_applied);
     RUN_TEST(test_full_stick_walk_stays_in_travel_for_every_classic_gait);
-    RUN_TEST(test_an_auto_gait_switch_retargets_the_held_stick);
     RUN_TEST(test_feet_distance_change_while_walking_stays_in_travel);
     RUN_TEST(test_unwalkable_posture_is_clamped);
     RUN_TEST(test_a_timed_out_auto_walk_stays_at_rest);
