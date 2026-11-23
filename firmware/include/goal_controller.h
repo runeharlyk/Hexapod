@@ -74,6 +74,9 @@ class GoalController {
     // 1.25 tau. The virtual robot coasts 0.19 s of its speed at full speed, measured on TRI and BI, on the strokes of
     // the 31.5 deg coxa's envelope, and not fitted again.
     static constexpr float STOP_S = 1.25f * RAMP_TAU_S;
+    // A pass judged on a rest that includes its stop arrives within this share of its tolerance: its stroke is capped
+    // at what remains (strokeCap), so its speed falls with the remainder and it would close the last of it only slowly.
+    static constexpr float ARRIVE_SLACK = 0.25f;
 
     /** A finite goal with a nonzero target, a positive radius for an arc, at a speed in (0, 1]. */
     static bool valid(const Goal& goal) {
@@ -111,9 +114,13 @@ class GoalController {
         beginPass(pose);
     }
 
-    /** One control tick: the odometry and whether the robot is at rest. Returns the sticks, centred unless running. */
-    GoalSticks update(const OdometryEstimate& pose, bool atRest, float dt) {
+    /**
+     * One control tick: the odometry and whether the robot is at rest. `stopIncluded` says `pose` is where a stop from
+     * now comes to rest, its coast included, so none is added to it. Returns the sticks, centred unless running.
+     */
+    GoalSticks update(const OdometryEstimate& pose, bool atRest, float dt, bool stopIncluded = false) {
         if (!active()) return {};
+        restPredicted = stopIncluded;
         // The odometry's yaw wraps at pi; a turn of any size is followed on the sum of its wrapped changes.
         turned += std::remainder(pose.yaw - lastYaw, 2.0f * static_cast<float>(M_PI));
         lastYaw = pose.yaw;
@@ -188,7 +195,8 @@ class GoalController {
     // The pass in progress: the sign of the remainder it walks (0 for a pass only across the line), where it began and
     // its clock.
     float direction = 0, passTurned = 0, passDistance = 0, elapsed = 0, deadline = 0;
-    float walked = 0; // the axis's speed the gait walks now, as its ramp follows the sticks: m/s, or rad/s
+    float walked = 0;           // the axis's speed the gait walks now, as its ramp follows the sticks: m/s, or rad/s
+    bool restPredicted = false; // the last pose was a stop's rest, walked ahead by the caller
 
     bool active() const { return current == GoalState::RUNNING || current == GoalState::SETTLING; }
     bool linear() const { return target.kind == GoalKind::FORWARD || target.kind == GoalKind::SIDEWAYS; }
@@ -198,8 +206,11 @@ class GoalController {
     float share() const { return std::clamp(std::fabs(remaining) / zone(), MIN_FRACTION, 1.0f); }
     float axisTolerance() const { return linear() ? REACHED_M : REACHED_RAD; }
     float turnPerForward() const { return topSpeedMs / target.radius / topTurnRads; }
-    // Within the stop's coast of the target, or past it; a pass only across the line has no axis to walk.
-    bool arriving() const { return remaining * direction <= walked * STOP_S; }
+    // Within the stop's coast of the target, within ARRIVE_SLACK of the tolerance for a rest that includes the stop, or
+    // past it; a pass only across the line has no axis to walk.
+    bool arriving() const {
+        return remaining * direction <= (restPredicted ? ARRIVE_SLACK * axisTolerance() : walked * STOP_S);
+    }
 
     // The pose relative to the start: x right and y forward of the heading it started on.
     float startRight(const OdometryEstimate& p) const {

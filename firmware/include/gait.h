@@ -342,6 +342,9 @@ class GaitController {
 
     bool hasPendingStanceChange() const { return !positionsMatch(defaultPosition, targetDefaultPosition); }
 
+    // Whether a cycle is stepping: its schedule cannot be left without a foot dropping.
+    bool cycling() const { return cycleRunning; }
+
     void setGait(gait_state_t& gait) {
         switch (gait.gait_type) {
             // Every schedule but the bipod's is its own mirror image half a cycle on: a leg's mirror (0<->3, 1<->4,

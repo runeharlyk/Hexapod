@@ -203,9 +203,19 @@ Commands arrive asynchronously and only set targets.
 If no command arrives within a timeout, `MotionService` applies a zero command; the timeout is shorter while a stick is steering, because the senders repeat their command while one is held.
 A command the inbox drops is no command to this dead-man: its window runs from the arrival of the last command taken.
 Gait changes are deferred until the gait is not commanded, not repositioning and not settling a posture, because swapping the phase schedule mid-stride drops a swinging foot.
-`GaitType::AUTO` picks a gait from the commanded speed at the same safe moments.
-That speed is the stick's share of BI's top speed at the posture and stride, whichever gait walks it, and AUTO picks the slowest of `RIPPLE`, `TRI_GATE` and `BI_GATE` whose top speed covers it.
-A stick pushed past the top of the gait in effect therefore walks at that top until the next stop.
+`GaitType::AUTO` changes gait while it walks (`include/gait_morph.h`): from a standstill in the default stance, off the climb, `GaitMorph` steps the feet in place of `GaitController` until the walk's stroke has eased away.
+The stick runs linearly over AUTO's speeds: the wave family's, whose duty falls from WAVE's 5/6 at a crawl through ripple-like duties to TRI's 1/2 at TRI's top, then BI's, from `BI_FLOOR`, 70% of BI's top speed, where it stands up, to its top; each duty walks at most 90% of its top speed (`RESERVE`).
+The planner (`auto_morph::Planner`) picks the duty and the legs' pattern for the stick, and the morph changes gait through the legs' timing alone: a foot on the floor never moves on it, a foot lifts when the current pattern says, and its swing is stretched, or shortened as far as the servos allow, to land on the pattern's phase.
+A foot waits on the floor while lifting it would leave fewer standing than its pattern stands on, three in the wave family and two in BI.
+While it waits, the pattern's clock and the stance wait with it for the feet in the air, whose swings run on the servos' time, so the waiting foot stays within its joints' travel and the feet keep to the pattern; a foot that lands late lifts early, from half its duty, to catch up.
+A foot in the air keeps the shape of the swing it lifted on, so a plan of another duty, as at the step between TRI and BI, moves it nowhere at once.
+A foot still being lowered when the walk starts, as by the ease home of a stop cut short, swings from where it is.
+A centred stick stops the walk on the plan it walked; the feet then ease home as after a classic walk.
+The telemetry's gait is the classic gait nearest the plan walked, as the plan changes; the schedule loaded is that gait's from the next stop, as gait changes are.
+AUTO selected while a classic gait is stepping walks that gait on, picking the slowest of `RIPPLE`, `TRI_GATE` and `BI_GATE` whose top speed covers the stick, until the next stop.
+A classic gait selected while the morph walks is walked on as AUTO until the next stop, and a classic gait's goal waits for that stop before it starts.
+A stand or a walk entered from `WALK_NN` snaps out the stroke the walk before it left commanded, and the feet ease home from where the policy left them.
+`test/test_auto_morph` checks AUTO's walks against the classic walks' joint speed and the feet their patterns stand on.
 
 Mode changes are decided by the pure function in `include/animation/mode_arbiter.h` and applied only by the control task, in the order the modes arrived, which makes it the one place the mode changes.
 An animation play borrows `ANIMATE` from the current mode, and the control task asks for the mode back when the clip ends by posting the hand-back into its own inbox, behind every mode that arrived before it.
@@ -278,7 +288,7 @@ A reset asked while a goal drives is refused with 409 and resets nothing, since 
 A goal is a correlation request (`goal_move`, 131) carrying a kind and the walking style, accepted by `MotionService::startGoal` on the adapter's task and walked by the control task, through the motion inbox as every other input.
 The kinds are `FORWARD` (m, negative is backwards), `SIDEWAYS` (m, positive is right in the firmware's frame, which the facade maps), `TURN` (rad, counter-clockwise positive) and `ARC` (radius in m above 0 and an angle, positive curving left; a circle is an arc of 360 deg).
 The style carries `gait`, `speed`, `stride`, `s1`, `h` and `fd`.
-Speed is a share in (0, 1] of the gait's top speed at the posture (`goalTops` over `gait_speed.h`'s envelope), and AUTO's is a share of BI's top.
+Speed is a share in (0, 1] of the gait's top speed at the posture (`goalTops` over `gait_speed.h`'s envelope), and AUTO's is the stick it walks on AUTO's speed scale, whose top is the span of its linear run (`auto_morph::StickScale`), so the speed a goal slows and stops at walks in proportion to its stick.
 The reply is 202 with the goal's status when accepted, 400 when malformed, 409 when the mode the robot last reported, not one requested and not yet applied, is other than `STAND` or `WALK` (deactivated, animating, or `WALK_NN`, which has no stance flags for the odometry) or a firmware update is running, and 422 for a style it cannot walk: TUNED (no speed envelope), or a posture none of whose cells walks the goal's axes.
 A goal asked for while the ESP-NOW handheld drives is answered 423 (Handheld priority).
 A goal accepted while a `DEACTIVATED` is queued is answered 202, and is then refused at the take with the status `REFUSED`, since the robot is deactivated by then.
@@ -295,9 +305,12 @@ Each tick `GoalController` compares the odometry with the target in the frame th
 - **Arc:** a forward stick with the turn stick its radius implies, slowed on the remaining angle; the same heading gain steers the heading toward the arc's ideal heading at the distance travelled.
   That drift correction changes the arc's length as well as its end heading.
 
-The goal's walk strides no further along its axis than what remains (`GoalController::strokeCap`, applied in `applyWalkTarget` by `withStrokeCap` in `gait_speed.h`): every stroke is scaled down alike and the cadence raised in proportion, up to the shorter strokes' top cadence, so the speed holds and no step carries the robot past the target; the cap never goes under the gait's deadband, which would stop the gait with the goal still running, and a client's walk keeps the stride's stroke.
+The goal's walk strides no further along its axis than what remains (`GoalController::strokeCap`, applied in `applyWalkTarget` by `withStrokeCap` in `gait_speed.h`): every stroke is scaled down alike and the cadence raised in proportion, up to the shorter strokes' top cadence at the duty walked, AUTO's plan's own under the morph, so the speed holds and no step carries the robot past the target; the cap never goes under the gait's deadband, which would stop the gait with the goal still running, and a client's walk keeps the stride's stroke.
 
 Once the remainder is within the coast the stop is predicted to take (the live command ramp stepped ahead, with `STOP_TAIL` for a foot that sets down off its stance), the sticks centre and the controller waits until the gait is not commanded and the feet are at rest, then judges the settled pose.
+That coast models the classic stop, not the morph's: a planted foot of the morph never moves on the floor, so the ease home gives back what the stop coasted on every foot that stayed down, a foot that waits holds the walk still, and a capped stroke steps no faster than the plan's duty lets it.
+A goal on AUTO's walk is therefore judged on where a stop from now comes to rest, walked ahead on copies of the command ramp, the morph and the odometry (`MotionService::morphRestPose`), every fourth control tick; the controller adds no coast to that rest and centres the sticks once it is within `ARRIVE_SLACK`, a quarter, of the tolerance.
+The capped stroke makes the last centimetre slow at the wave family's high duties, whose short strokes step at about 1.2 cycles a second: 45 forward goals on the virtual robot took 0.75 s longer on average than on the coast, where 10 of them needed a second or third pass.
 The tolerances are 10 mm and 3 deg, an arc's end within 30 mm and 3 deg, and a straight walk's cross-track within 20 mm.
 Outside them it runs a corrective pass on the remainder, `MAX_PASSES` (3) passes in all, and then ends `TIMED_OUT`; so does a pass longer than twice its expected time plus 2 s.
 
