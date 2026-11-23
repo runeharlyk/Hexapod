@@ -745,6 +745,12 @@ class MotionService {
     // 5 deg turns, and above 1.05 a TRI metre's predicted progress steps back more often. Fitted on the strokes of the
     // 31.5 deg coxa's envelope and not fitted again.
     static constexpr float STOP_TAIL = 1.05f;
+    // A goal on AUTO's walk is judged on its stop walked ahead (morphRestPose), some 20 to 40 steps of the morph and
+    // the odometry, so only every fourth control tick, the period the stop is stepped at. Its cost is not measured on
+    // the ESP32.
+    static constexpr int MORPH_GOAL_PERIOD_TICKS = 4;
+    int _goalTicks = 0;
+    float _goalDt = 0;
 
     static constexpr float smoothing_factor = BODY_SMOOTHING;
     // Ramp time constant for the locomotion command: ~0.45 s to settle. Slow enough that a slammed
@@ -1173,8 +1179,14 @@ class MotionService {
                 goalTops(_goalTaken.goal.kind, _goalTaken.gait, _walkPosture, _goalTaken.style.stride, _walkStance);
             _goal.start(_goalTaken.goal, restPose(), tops.speed, tops.turn);
             _goalStarted = true;
+            _goalTicks = 0;
+            _goalDt = 0;
         } else {
-            const GoalSticks sticks = _goal.update(restPose(), !gaitIsCommanded(gait_state) && feetAtRest(), dt);
+            _goalDt += dt;
+            const bool predicted = _morph.running();
+            if (predicted && ++_goalTicks % MORPH_GOAL_PERIOD_TICKS != 0) return;
+            const GoalSticks sticks = _goal.update(restPose(), !gaitIsCommanded(gait_state) && feetAtRest(),
+                                                   std::exchange(_goalDt, 0.f), predicted);
             if (_inbox.goalDrives()) {
                 lastWalkCommand_.lx = sticks.lx;
                 lastWalkCommand_.ly = sticks.ly;
@@ -1271,12 +1283,39 @@ class MotionService {
     // ease home, so a walk too short for any foot to swing has gone nowhere. A planted foot the stop still lifts before
     // the gait comes to rest steps on instead, as the coast the goal predicts.
     OdometryEstimate restPose() const {
+        if (_morph.running()) return morphRestPose();
         const float phase = stopPhase();
         std::array<bool, 6> stays;
         for (int leg = 0; leg < 6; ++leg)
             stays[leg] = (_morph.running() ? _morph.phaseToLift(leg) : gait.phaseToLift(gait_state, leg)) > phase;
         return KinematicOdometry::advance(
             _odometry.estimate(), KinematicOdometry::restStep(body_state, stanceFlags(), default_feet_pos, stays));
+    }
+
+    // Control task: where AUTO's walk comes to rest if its sticks centre now, its stop walked ahead on copies of the
+    // command ramp, the morph and the odometry, and the ease home after it fitted. The classic stop's coast does not
+    // model the morph's: its planted feet never move on the floor, so the ease home gives back what the stop coasts on
+    // every foot that stays down, and the walk holds still while a foot waits to lift.
+    OdometryEstimate morphRestPose() const {
+        GaitCommandRamp ramp = _commandRamp;
+        gait_state_t live = gait_state, stopped = target_gait_state;
+        stopped.step_x = stopped.step_y = stopped.step_angle = stopped.phase_rate = 0;
+        GaitMorph morph = _morph;
+        BodyStateMsg body = body_state;
+        FusedOdometry odometry = _odometry;
+        std::array<bool, 6> stance = stanceFlags();
+        const float a = easeShare(STOP_PREDICTION_DT_S, GAIT_COMMAND_TAU_S);
+        for (int step = 0; step < STOP_PREDICTION_STEPS; ++step) {
+            ramp.stepBy(live, stopped, a);
+            if (!gaitIsCommanded(live)) break;
+            morph.step(live, body, default_feet_pos, STOP_PREDICTION_DT_S);
+            for (int leg = 0; leg < 6; ++leg) stance[leg] = morph.inStance(leg);
+            odometry.update(body, stance, std::nullopt, STOP_PREDICTION_DT_S);
+        }
+        std::array<bool, 6> stays;
+        stays.fill(true);
+        return KinematicOdometry::advance(odometry.estimate(),
+                                          KinematicOdometry::restStep(body, stance, default_feet_pos, stays));
     }
 
     // Control task: the phase a stop from now still steps, from the stop ramp run ahead on a copy of it and of the

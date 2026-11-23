@@ -398,6 +398,24 @@ void test_a_fast_auto_goal_walks_bi_safely() {
     assertSafe(run, BI_FEET, "fast goal");
 }
 
+// The morph's stop is not the classic one a goal's coast models: its planted feet never move on the floor, so the ease
+// home gives back the coast of each foot that stayed down, a foot that waits holds the walk still, and a capped stroke
+// steps no faster than its duty lets it. Judged on the stop walked ahead, a goal ends on its first pass at every speed,
+// through the family and down from BI, well within its tolerance.
+void test_an_auto_goal_ends_on_its_first_pass() {
+    for (const float metres : {0.3f, 0.5f})
+        for (const float speed : {0.3f, 0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1.0f}) {
+            VirtualRobot robot;
+            autoGoal(robot, speed, metres);
+            char what[80];
+            std::snprintf(what, sizeof(what), "goal %.2f m at %.1f: %d passes, ended at %.1f mm", metres, speed,
+                          (int)robot.goalStatus().passes, robot.odometry().y * 1000.0f);
+            TEST_ASSERT_EQUAL_MESSAGE(GoalState::REACHED, static_cast<GoalState>(robot.goalStatus().state), what);
+            TEST_ASSERT_EQUAL_INT_MESSAGE(1, robot.goalStatus().passes, what);
+            TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.5f * GoalController::REACHED_M, metres, robot.odometry().y, what);
+        }
+}
+
 } // namespace
 
 void setUp() { host_bus::resetAll(); }
@@ -423,5 +441,6 @@ int main(int, char **) {
     RUN_TEST(test_a_classic_goal_waits_for_the_morph_to_stop);
     RUN_TEST(test_a_released_bi_walk_stops_on_two_feet);
     RUN_TEST(test_a_fast_auto_goal_walks_bi_safely);
+    RUN_TEST(test_an_auto_goal_ends_on_its_first_pass);
     return UNITY_END();
 }

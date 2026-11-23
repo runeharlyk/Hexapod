@@ -255,6 +255,25 @@ void test_arcs_land_on_their_end_pose_and_follow_their_circle() {
     }
 }
 
+// A caller that walks the stop ahead passes where the robot comes to rest, coast included: the goal adds none, and
+// arrives only once that rest is within ARRIVE_SLACK of its tolerance of the target, however fast it walks.
+void test_a_rest_that_includes_its_stop_gets_no_coast_added() {
+    GoalController goal;
+    goal.start(forward(0.5f, 1), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
+    // Two seconds at full speed, whose coast is 22.5 mm.
+    for (int t = 0; t < 400; ++t) goal.update(at(0, 0.1f, 0), false, DT, true);
+    TEST_ASSERT_FALSE(centred(goal.update(at(0, 0.49f, 0), false, DT, true))); // 10 mm left
+    TEST_ASSERT_EQUAL(GoalState::RUNNING, goal.state());
+    TEST_ASSERT_FALSE(centred(goal.update(at(0, 0.497f, 0), false, DT, true))); // 3 mm left
+    TEST_ASSERT_TRUE(centred(goal.update(at(0, 0.498f, 0), false, DT, true)));  // 2 mm left
+    TEST_ASSERT_EQUAL(GoalState::SETTLING, goal.state());
+
+    // The same walk judged on a pose before its stop arrives within the coast.
+    goal.start(forward(0.5f, 1), at(0, 0, 0), TOP_SPEED_MM, TOP_TURN);
+    for (int t = 0; t < 400; ++t) goal.update(at(0, 0.1f, 0), false, DT);
+    TEST_ASSERT_TRUE(centred(goal.update(at(0, 0.49f, 0), false, DT)));
+}
+
 // An arc tighter than the turn stick can follow at the asked speed slows its forward stick instead.
 void test_a_tight_arc_slows_its_forward_stick_to_keep_its_curvature() {
     constexpr float RADIUS = 0.05f;
@@ -720,6 +739,7 @@ int main(int, char**) {
     RUN_TEST(test_a_sideways_goal_signs_its_stick_by_motion_services_convention);
     RUN_TEST(test_turns_land_in_both_directions_across_the_wrap);
     RUN_TEST(test_arcs_land_on_their_end_pose_and_follow_their_circle);
+    RUN_TEST(test_a_rest_that_includes_its_stop_gets_no_coast_added);
     RUN_TEST(test_a_tight_arc_slows_its_forward_stick_to_keep_its_curvature);
     RUN_TEST(test_it_slows_over_the_last_stretch_down_to_a_floor);
     RUN_TEST(test_a_fast_goal_slows_early_and_stops_its_coast_short);
