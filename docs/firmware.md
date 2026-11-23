@@ -214,6 +214,7 @@ A centred stick stops the walk on the plan it walked; the feet then ease home as
 The telemetry's gait is the classic gait nearest the plan walked, as the plan changes; the schedule loaded is that gait's from the next stop, as gait changes are.
 AUTO selected while a classic gait is stepping walks that gait on, picking the slowest of `RIPPLE`, `TRI_GATE` and `BI_GATE` whose top speed covers the stick, until the next stop.
 A classic gait selected while the morph walks is walked on as AUTO until the next stop, and a classic gait's goal waits for that stop before it starts.
+A stand or a walk entered from `WALK_NN` snaps out the stroke the walk before it left commanded, and the feet ease home from where the policy left them.
 `test/test_auto_morph` checks AUTO's walks against the classic walks' joint speed and the feet their patterns stand on.
 
 Mode changes are decided by the pure function in `include/animation/mode_arbiter.h` and applied only by the control task, in the order the modes arrived, which makes it the one place the mode changes.

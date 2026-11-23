@@ -1723,6 +1723,29 @@ const char *stopName(Stop stop) {
 // (13.1 rad/s over 5 ms), and their stops at 3.78 deg.
 constexpr float STEP_BOUND_DEG = 4.0f;
 
+// A stand entered from WALK_NN snaps out the stroke the walk before it left live, as a walk entered from it does, and
+// the feet ease home from where the policy left them. Ramped out instead, that stroke stepped on from feet the gait
+// never placed: a joint by up to 31 deg in a tick on TRI, and by up to 70 on AUTO, whose morph stepped on from the
+// feet it had left. Checked for walks left in several parts of the cycle and a policy that ran a tick or a second.
+void test_a_stand_after_walk_nn_eases_the_feet_home() {
+    for (const GaitType gait : {GaitType::TRI_GATE, GaitType::AUTO})
+        for (const int policyTicks : {1, 40, 200})
+            for (int walkMs = 2000; walkMs <= 2200; walkMs += 65) {
+                VirtualRobot robot;
+                walkIn(robot, gait);
+                hold(robot, fullStick(0, 1, 0), ticksFor(walkMs / 1000.0f));
+                robot.setMode(MOTION_STATE::WALK_NN);
+                largestStep(robot, policyTicks);
+                robot.setMode(MOTION_STATE::STAND);
+                const float step = largestStep(robot, ticksFor(2.0f));
+                char msg[96];
+                std::snprintf(msg, sizeof(msg), "gait %d, a %d ms walk, %d ticks of WALK_NN: %.2f deg", (int)gait,
+                              walkMs, policyTicks, step);
+                TEST_ASSERT_LESS_OR_EQUAL_FLOAT_MESSAGE(STEP_BOUND_DEG, step, msg);
+                TEST_ASSERT_FALSE_MESSAGE(gaitIsCommanded(robot.gaitState()), msg);
+            }
+}
+
 struct StopRun {
     float walkPeak = 0.0f;            // the largest joint step in a tick of the steady walk
     HeldRun stop;                     // the stop, from its first tick until the feet are home
@@ -2816,6 +2839,7 @@ int main(int, char **) {
     RUN_TEST(test_a_gait_change_during_a_settle_waits_for_it);
     RUN_TEST(test_leaving_a_walk_for_stand_mid_stride_stays_in_travel);
     RUN_TEST(test_a_walk_after_walk_nn_takes_its_posture_again);
+    RUN_TEST(test_a_stand_after_walk_nn_eases_the_feet_home);
     RUN_TEST(test_walk_nn_reads_the_sticks_alone);
     RUN_TEST(test_walk_nn_walks_the_stance_it_was_trained_on);
     RUN_TEST(test_an_interrupted_settle_starts_over);

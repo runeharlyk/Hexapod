@@ -188,8 +188,11 @@ class MotionService {
         }
 #endif
         if (leavingPolicy && mode != MOTION_STATE::WALK_NN) updateFeetTarget(_feetDistance, _feetStance);
-        // ANIMATE drives no gait, so a half-stride left in gait_state would resume after it.
-        if (!isWalkingMode(mode)) stopLocomotionCommand(!actuated(mode) || mode == MOTION_STATE::ANIMATE);
+        // ANIMATE drives no gait, so a half-stride left in gait_state would resume after it. WALK_NN's policy moves the
+        // feet under the stroke the walk before it left commanded: a stand after it stepped that stroke on from feet
+        // the gait never placed, a joint by tens of degrees in a tick, so it is snapped out too and the feet ease home.
+        if (!isWalkingMode(mode))
+            stopLocomotionCommand(!actuated(mode) || mode == MOTION_STATE::ANIMATE || leavingPolicy);
         // WALK_NN keeps the command, and its policy moves the ride height and the feet; a stride or a posture left
         // from before it would be walked through whatever it left. The stick comes back with the next heartbeat.
         // The classic stroke WALK_NN left in gait_state is snapped out too: ramped out from the feet the policy left,
