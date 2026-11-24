@@ -76,37 +76,34 @@ class KinematicOdometry {
      * The step a stopped gait's ease home takes the robot. The ease moves every foot from where it is to `home` (mm, as
      * BodyStateMsg's) along one blend, lowering the lifted ones: the feet on the floor carry the body by the inverse of
      * their rigid motion, and a lowered foot joins them once it is within LIFTED_MM of the floor, for the rest of its
-     * way. A foot on the floor that does not `stay`, as the stop lifts it first, holds the body where it stands; one in
-     * its swing that does not carries nothing.
+     * way.
      *
      * The ease is fitted in parts, from one foot's joining to the next, on the feet down in each: one fit over the
      * whole ease counted the feet down before the others joined at the share of the whole set, so a tripod stopped with
      * its three lifted feet high missed where the feet carried it by up to 3 mm.
      */
-    static BodyStep restStep(const BodyStateMsg &body, const std::array<bool, 6> &stance, const float home[6][4],
-                             const std::array<bool, 6> &stays) {
-        float feet[6][2], to[6][2], joins[6];
-        bool contact[6], carries[6];
-        floorFeet(body, stance, feet, contact);
+    static BodyStep restStep(const BodyStateMsg &body, const float home[6][4]) {
+        // A gait that is not cycling has every leg in stance.
+        constexpr std::array<bool, 6> EASED {true, true, true, true, true, true};
+        float feet[6][2], joins[6];
+        bool contact[6];
+        floorFeet(body, EASED, feet, contact);
         for (int leg = 0; leg < 6; leg++) {
             const float above = body.feet[leg][2] - home[leg][2];
             // The share of the ease gone when the foot comes within LIFTED_MM of the floor.
             joins[leg] = contact[leg] || above <= LIFTED_MM ? 0.0f : 1.0f - LIFTED_MM / above;
-            carries[leg] = contact[leg] || stays[leg];
-            for (int axis = 0; axis < 2; axis++)
-                to[leg][axis] = stays[leg] ? home[leg][axis] / 1000.f : feet[leg][axis];
         }
         OdometryEstimate rest;
         for (float start = 0; start < 1;) {
             float end = 1;
             for (int leg = 0; leg < 6; leg++)
-                if (carries[leg] && joins[leg] > start) end = std::min(end, joins[leg]);
+                if (joins[leg] > start) end = std::min(end, joins[leg]);
             float from[6][2], until[6][2];
             bool down[6];
             for (int leg = 0; leg < 6; leg++) {
-                down[leg] = carries[leg] && joins[leg] <= start;
+                down[leg] = joins[leg] <= start;
                 for (int axis = 0; axis < 2; axis++) {
-                    const float way = to[leg][axis] - feet[leg][axis];
+                    const float way = home[leg][axis] / 1000.f - feet[leg][axis];
                     from[leg][axis] = feet[leg][axis] + start * way;
                     until[leg][axis] = feet[leg][axis] + end * way;
                 }

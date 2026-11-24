@@ -144,9 +144,10 @@ void assertAtRest(Rig &rig) {
     TEST_ASSERT_LESS_THAN_FLOAT(1e-3f, rig.largestStep(0.25f));
 }
 
-// The longest stroke a goal lets its walk take along its axis is what remains of it, so no step carries the robot past
-// the target: in mm forward or sideways, in rad for a turn and for an arc, which is judged on its turn. Never less than
-// the least stroke the gait steps (its deadband), or the gait would stop short with the goal still running.
+// The longest stroke a goal lets its walk take along its axis is what remains of it from its rest pose, so no step
+// carries the robot past the target: in mm forward or sideways, in rad for a turn, and in rad of turn for an arc, by
+// the angle its position has left to sweep about the arc's centre. Never less than the least stroke the gait steps
+// (its deadband), or the gait would stop short with the goal still running.
 void test_a_goal_strides_no_further_than_what_remains() {
     struct Case {
         Goal goal;
@@ -164,6 +165,14 @@ void test_a_goal_strides_no_further_than_what_remains() {
     nearlyAhead.y = 0.9995f;
     nearlyRight.x = 0.2999f;
     nearlyTurned.yaw = 90 * DEG - 0.001f;
+    // On a left arc of 0.5 m, swept `angle` about its centre and facing along it.
+    const auto onArc = [](float angle) {
+        OdometryEstimate p {};
+        p.x = -0.5f * (1 - std::cos(angle));
+        p.y = 0.5f * std::sin(angle);
+        p.yaw = angle;
+        return p;
+    };
     const Case cases[] = {
         {forward(1.0f), 0, 1000.0f, ahead, 100.0f, nearlyAhead, GAIT_STRIDE_DEADBAND_MM},
         {{GoalKind::SIDEWAYS, 0.3f, 0, 0, 0.5f}, 1, 300.0f, right, 50.0f, nearlyRight, GAIT_STRIDE_DEADBAND_MM},
@@ -171,9 +180,9 @@ void test_a_goal_strides_no_further_than_what_remains() {
         {{GoalKind::ARC, 0, 90 * DEG, 0.5f, 0.5f},
          2,
          90 * DEG,
-         turned,
+         onArc(1.0f),
          90 * DEG - 1.0f,
-         nearlyTurned,
+         onArc(90 * DEG - 0.001f),
          GAIT_YAW_DEADBAND_RAD}};
     for (const Case &c : cases) {
         GoalController controller;
@@ -207,6 +216,29 @@ void test_the_slow_gaits_reach_their_goals_at_half_speed() {
             TEST_ASSERT_EQUAL_MESSAGE(GoalState::REACHED, rig.state(), msg);
             TEST_ASSERT_FLOAT_WITHIN_MESSAGE(GoalController::REACHED_M, goal.distance, sideways ? end.x : end.y, msg);
         }
+    }
+}
+
+// A slow gait's approach, its stroke capped to what remains at the short strokes' top cadence, slows in proportion to
+// what remains, and so does its rest's advance per call: half that advance never exceeds the remainder before the cap
+// reaches the deadband, and the pass arrives once its rest is within GoalController::ARRIVE_SLACK of the tolerance
+// instead. WAVE's and RIPPLE's 90 deg turns at full speed took 5.8 s on this rig (2026-11-03), and 6.8 s and 6.9 s
+// arriving on the rest's advance alone; 6.2 s holds them with 0.4 s to spare.
+void test_a_slow_gaits_turn_arrives_within_its_tolerance_without_crawling() {
+    for (const GaitType gait : {GaitType::WAVE, GaitType::RIPPLE}) {
+        Rig &rig = newRig();
+        standUp(rig);
+        const OdometryEstimate start = rig.robot.odometry();
+        TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(turn(90 * DEG, 1.0f), style(), gait));
+        const float seconds = static_cast<float>(rig.runGoal()) / TICKS_PER_SECOND;
+        const OdometryEstimate end = relative(start, rig.robot.odometry());
+        char msg[100];
+        std::snprintf(msg, sizeof(msg), "gait %d: %.2f s, %u passes, at %.2f deg", (int)gait, seconds,
+                      (unsigned)rig.robot.goalStatus().passes, end.yaw / DEG);
+        TEST_ASSERT_EQUAL_MESSAGE(GoalState::REACHED, rig.state(), msg);
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(1, rig.robot.goalStatus().passes, msg);
+        TEST_ASSERT_FLOAT_WITHIN_MESSAGE(GoalController::REACHED_RAD, 90 * DEG, end.yaw, msg);
+        TEST_ASSERT_LESS_THAN_FLOAT_MESSAGE(6.2f, seconds, msg);
     }
 }
 
@@ -326,22 +358,26 @@ void test_a_turn_goal_turns_90_degrees_in_place() {
     assertAtRest(rig);
 }
 
-// A left arc of 0.5 m through 90 deg ends half a metre ahead and half a metre left, facing left.
+// A left arc of radius r through 90 deg ends r ahead and r left, facing left: 0.5 m, and a tight 0.15 m, on which the
+// end tolerance of 3 cm allows 11 deg of the arc.
 void test_an_arc_goal_ends_on_its_arc() {
-    Rig &rig = newRig();
-    standUp(rig);
-    const OdometryEstimate start = rig.robot.odometry();
-    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(arc(0.5f, 90 * DEG), style(), GaitType::TRI_GATE));
-    rig.runGoal();
-    TEST_ASSERT_EQUAL(GoalState::REACHED, rig.state());
-    const OdometryEstimate end = relative(start, rig.robot.odometry());
-    TEST_ASSERT_FLOAT_WITHIN(GoalController::REACHED_RAD, 90 * DEG, end.yaw);
-    TEST_ASSERT_LESS_OR_EQUAL_FLOAT(GoalController::ARC_REACHED_M, std::hypot(end.x + 0.5f, end.y - 0.5f));
-    assertAtRest(rig);
+    for (const float radius : {0.5f, 0.15f}) {
+        Rig &rig = newRig();
+        standUp(rig);
+        const OdometryEstimate start = rig.robot.odometry();
+        TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(arc(radius, 90 * DEG), style(), GaitType::TRI_GATE));
+        rig.runGoal();
+        TEST_ASSERT_EQUAL(GoalState::REACHED, rig.state());
+        const OdometryEstimate end = relative(start, rig.robot.odometry());
+        TEST_ASSERT_FLOAT_WITHIN(GoalController::REACHED_RAD, 90 * DEG, end.yaw);
+        TEST_ASSERT_LESS_OR_EQUAL_FLOAT(GoalController::ARC_REACHED_M, std::hypot(end.x + radius, end.y - radius));
+        assertAtRest(rig);
+    }
 }
 
 // A left arc of 0.5 m through 90 deg in every classic gait, at full and half speed, ends on its arc. WAVE's ended 34 to
-// 39 mm off with the 50.5 deg coxa, past ARC_REACHED_M; with the 90 deg coxa it ends 19 to 22 mm off.
+// 39 mm off with the 50.5 deg coxa, past ARC_REACHED_M, and 19 to 22 mm off with the 90 deg coxa while an arc was
+// judged on its yaw; judged on its position's angle about the centre, it ends 10 to 18 mm off (2026-11-03).
 void test_every_gait_ends_an_arc_on_it() {
     for (const GaitType gait : {GaitType::TRI_GATE, GaitType::BI_GATE, GaitType::WAVE, GaitType::RIPPLE}) {
         for (const float speed : {1.0f, 0.5f}) {
@@ -363,23 +399,19 @@ void test_every_gait_ends_an_arc_on_it() {
     }
 }
 
-// A fast goal slows over a zone that grows with its speed and centres its sticks the predicted coast short of its
-// target, so TRI and BI at full speed, BI near 640 mm/s, reach it within the tolerances as they do at half of it. At a
-// quarter of it the stop steps too slowly to move the feet off their stance, and the goal judges where their ease home
-// will set the robot down, so a corrective pass walks on until a step has carried it there.
-// The coast the goal predicts is smooth, and the stop a tripod walks is not: it lands a whole tripod or none, so some
-// goals take a corrective pass that an exact stop prediction would save (roadmap 3.11). At full and half speed each
-// case walks five targets, 0.90 to 1.10 m or 70 to 110 deg, and its passes in all are held to those measured on this
-// rig plus one, the slack for another platform's floating point: a target that needs two passes more, or two that need
-// one more, fails. Measured 2026-11-01 with the approach's stroke capped at what remains, never under the gait's
-// deadband (GoalController::strokeCap), the envelope of the 90 deg corner and 45 deg middle coxas, and a combined stick
-// stepped at the weighted harmonic mean of its axes' top cadences (walkAtShares); 2026-10-31's, with the 50.5 deg
-// coxa, were 7, 6, 9, 9, 5, 6, 7 and 7 for TRI and BI, and 2026-10-29's, before both, 6, 5, 7, 10, 5, 5, 9 and 7. A
-// goal's cross-track and heading corrections add a little lx and rx to its stick: stepped at the slowest axis's top
-// cadence, as walkAtShares once stepped it, that slowed TRI's forward walk by 18 % on this envelope, and every TRI
-// metre target at full speed stopped short and took a second pass. WAVE and RIPPLE reach every target in one pass. At
-// a quarter of the speed only the metre and the right angle are walked, and no pass count is held.
-static uint32_t walkToTarget(GaitType gait, const Goal &goal) {
+// A fast goal slows over a zone that grows with its speed, so TRI and BI at full speed, BI near 630 mm/s, reach it
+// within the tolerances as they do at half of it. A goal judges where a stop now would come to rest, walking the stop
+// ahead on copies of the ramp, the gait and the odometry every 20 ms, so it centres its sticks on the call that
+// stopping lands nearest the target and needs no corrective pass: each of 21 forward goals (0.90 to 1.10 m) and 21
+// turns (70 to 110 deg) per classic gait at full and half speed ended in one pass on the msys2 host (2026-11-03),
+// within 3.4 mm and 1.9 deg, and five of each are walked here. The pass count is held as a budget, at most one second
+// pass among the ten goals of a gait and speed: another toolchain's float functions can move an arrival by one 20 ms
+// call, about the 1.1 deg BI's full-speed turns have left, while a systematic return of corrective passes still fails;
+// the arrival on a predicted coast that this replaced took seven in TRI's ten at half speed. At a quarter of the speed
+// the stop steps too slowly to move the feet off their stance and a corrective pass may walk on until a step has
+// carried the robot to where the ease home sets it down, so only TRI's and BI's metre and right angle are walked, with
+// no pass budget; WAVE's and RIPPLE's metre outlasts GOAL_LIMIT_S there. Returns the passes the goal took.
+static int walkToTarget(GaitType gait, const Goal &goal) {
     Rig &rig = newRig();
     standUp(rig);
     const OdometryEstimate start = rig.robot.odometry();
@@ -398,36 +430,74 @@ static uint32_t walkToTarget(GaitType gait, const Goal &goal) {
         TEST_ASSERT_FLOAT_WITHIN_MESSAGE(GoalController::REACHED_M, goal.distance, end.y, msg);
         TEST_ASSERT_FLOAT_WITHIN_MESSAGE(GoalController::CROSS_REACHED_M, 0, end.x, msg);
     }
-    return rig.robot.goalStatus().passes;
+    return static_cast<int>(rig.robot.goalStatus().passes);
 }
 
 void test_fast_and_slow_goals_reach_their_targets() {
-    struct Case {
-        GaitType gait;
-        float speed;
-        bool turning;
-        uint32_t passes; // measured over the five targets
-    };
-    const Case cases[] = {
-        {GaitType::TRI_GATE, 1.0f, false, 5}, {GaitType::TRI_GATE, 1.0f, true, 6}, {GaitType::TRI_GATE, 0.5f, false, 8},
-        {GaitType::TRI_GATE, 0.5f, true, 9},  {GaitType::BI_GATE, 1.0f, false, 5}, {GaitType::BI_GATE, 1.0f, true, 6},
-        {GaitType::BI_GATE, 0.5f, false, 8},  {GaitType::BI_GATE, 0.5f, true, 7},  {GaitType::WAVE, 1.0f, false, 5},
-        {GaitType::WAVE, 1.0f, true, 5},      {GaitType::WAVE, 0.5f, false, 5},    {GaitType::WAVE, 0.5f, true, 5},
-        {GaitType::RIPPLE, 1.0f, false, 5},   {GaitType::RIPPLE, 1.0f, true, 5},   {GaitType::RIPPLE, 0.5f, false, 5},
-        {GaitType::RIPPLE, 0.5f, true, 5}};
-    for (const Case &c : cases) {
-        uint32_t passes = 0;
-        for (int i = -10; i <= 10; i += 5)
-            passes +=
-                walkToTarget(c.gait, c.turning ? turn((90 + 2 * i) * DEG, c.speed) : forward(1 + 0.01f * i, c.speed));
-        char msg[80];
-        std::snprintf(msg, sizeof(msg), "gait %d speed %.2f %s: %u passes over five targets", (int)c.gait, c.speed,
-                      c.turning ? "turn" : "forward", (unsigned)passes);
-        TEST_ASSERT_LESS_OR_EQUAL_UINT32_MESSAGE(c.passes + 1, passes, msg);
+    for (const GaitType gait : {GaitType::TRI_GATE, GaitType::BI_GATE, GaitType::WAVE, GaitType::RIPPLE}) {
+        for (const float speed : {1.0f, 0.5f}) {
+            int corrective = 0;
+            for (int i = -10; i <= 10; i += 5) {
+                corrective += walkToTarget(gait, forward(1 + 0.01f * i, speed)) - 1;
+                corrective += walkToTarget(gait, turn((90 + 2 * i) * DEG, speed)) - 1;
+            }
+            char msg[60];
+            std::snprintf(msg, sizeof(msg), "gait %d speed %.2f: %d corrective passes", (int)gait, speed, corrective);
+            TEST_ASSERT_LESS_OR_EQUAL_INT_MESSAGE(1, corrective, msg);
+        }
     }
     for (const GaitType gait : {GaitType::TRI_GATE, GaitType::BI_GATE}) {
         walkToTarget(gait, forward(1.0f, 0.25f));
         walkToTarget(gait, turn(90 * DEG, 0.25f));
+    }
+}
+
+// A goal in the crab predicts its rest on the crab's feet, from the strokes the crab's envelope gives it, capped to
+// what remains (test_stance holds the cap): its sideways walk, the crab's own axis, its turn and a short forward walk
+// end in one pass at full and half speed, as the default stance's goals do. Measured 2026-11-03 on TRI and BI, five
+// sideways targets (0.90 to 1.10 m), five turns (70 to 110 deg) and a forward 0.2 m per gait and speed ended in one
+// pass, within 2.5 mm and 0.7 deg; the arrival on a predicted coast that this replaced took three corrective passes in
+// TRI's five sideways targets at half speed, and three in BI's. A prediction that eased home onto the default stance's
+// feet ended TRI's 1.05 m at both speeds and its 0.95 m at half speed, and BI's 90 deg turn at full speed, TIMED_OUT,
+// while TRI's 1.0 m still reached it. The pass count is held to the budget of
+// test_fast_and_slow_goals_reach_their_targets, at most one second pass among a gait's eight goals here.
+void test_a_goal_in_the_crab_ends_in_one_pass() {
+    for (const GaitType gait : {GaitType::TRI_GATE, GaitType::BI_GATE}) {
+        int corrective = 0;
+        for (const float speed : {1.0f, 0.5f}) {
+            for (const Goal &goal :
+                 {Goal {GoalKind::SIDEWAYS, 0.95f, 0, 0, speed}, Goal {GoalKind::SIDEWAYS, 1.05f, 0, 0, speed},
+                  turn(90 * DEG, speed), forward(0.2f, speed)}) {
+                Rig &rig = newRig();
+                standUp(rig);
+                rig.robot.setStance(Stance::CRAB);
+                rig.run(3.0f);
+                TEST_ASSERT_EQUAL(Stance::CRAB, rig.robot.feetStance());
+                const OdometryEstimate start = rig.robot.odometry();
+                TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(goal, style(), gait));
+                rig.runGoal();
+                const OdometryEstimate end = relative(start, rig.robot.odometry());
+                char msg[120];
+                std::snprintf(msg, sizeof(msg), "gait %d kind %d speed %.1f: state %d, %u passes, at %.4f %.4f %.4f",
+                              (int)gait, (int)goal.kind, speed, (int)rig.state(),
+                              (unsigned)rig.robot.goalStatus().passes, end.x, end.y, end.yaw);
+                TEST_ASSERT_EQUAL_MESSAGE(GoalState::REACHED, rig.state(), msg);
+                TEST_ASSERT_EQUAL_MESSAGE(Stance::CRAB, rig.robot.feetStance(), msg);
+                switch (goal.kind) {
+                    case GoalKind::SIDEWAYS:
+                        TEST_ASSERT_FLOAT_WITHIN_MESSAGE(GoalController::REACHED_M, goal.distance, end.x, msg);
+                        break;
+                    case GoalKind::TURN:
+                        TEST_ASSERT_FLOAT_WITHIN_MESSAGE(GoalController::REACHED_RAD, goal.angle, end.yaw, msg);
+                        break;
+                    default: TEST_ASSERT_FLOAT_WITHIN_MESSAGE(GoalController::REACHED_M, goal.distance, end.y, msg);
+                }
+                corrective += static_cast<int>(rig.robot.goalStatus().passes) - 1;
+            }
+        }
+        char msg[60];
+        std::snprintf(msg, sizeof(msg), "gait %d: %d corrective passes in the crab", (int)gait, corrective);
+        TEST_ASSERT_LESS_OR_EQUAL_INT_MESSAGE(1, corrective, msg);
     }
 }
 
@@ -951,14 +1021,11 @@ void test_a_new_goal_replaces_the_one_in_progress() {
 
 // The status is pushed on every change of state and on every 5 % of progress, and on nothing else. A one-pass goal goes
 // SETTLING (its posture), RUNNING, SETTLING (coming to rest) and REACHED, and its progress crosses each of the 20 steps
-// once on the way up. Progress is judged on the pose the feet will settle in, which can step back a little as a step
-// lands, so a step may be crossed back and forth: each crossing back costs two pushes more. TRI's metre at half
-// speed stops 12 mm short and takes a second pass (test_fast_and_slow_goals_reach_their_targets), so the goal is
-// 0.8 m, which one pass reaches.
+// once on the way up, never back. TRI's metre at half speed is such a goal.
 void test_the_status_is_pushed_on_state_changes_and_every_5_percent() {
     Rig &rig = newRig();
     standUp(rig);
-    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(0.8f), style(), GaitType::TRI_GATE));
+    TEST_ASSERT_EQUAL_INT(202, rig.robot.goalMove(forward(1.0f), style(), GaitType::TRI_GATE));
     const uint32_t id = rig.robot.goalStatus().id;
     rig.runGoal();
     TEST_ASSERT_EQUAL(GoalState::REACHED, rig.state());
@@ -975,13 +1042,11 @@ void test_the_status_is_pushed_on_state_changes_and_every_5_percent() {
     const std::vector<int> expected {socket_message_GoalState_GOAL_SETTLING, socket_message_GoalState_GOAL_RUNNING,
                                      socket_message_GoalState_GOAL_SETTLING, socket_message_GoalState_GOAL_REACHED};
     TEST_ASSERT_TRUE(states == expected);
-    // At most four state changes, twenty steps up and two pushes for every step back; a state change on a new step is
-    // one push for both.
-    TEST_ASSERT_LESS_OR_EQUAL(4 + 20 + 2 * backs, pushes.size());
-    // The progress is read off the rest pose, which steps back as a step lifts feet it counted on. Over 21 TRI goals of
-    // 0.90 to 1.10 m at this speed (2026-10-29) the most step-backs were 7 (8 with the old staggered tripod); the bound
-    // on the pushes above follows from it.
-    TEST_ASSERT_LESS_OR_EQUAL(7, backs);
+    // The progress is the furthest the predicted rest has come, which moves back and forth by a few millimetres within
+    // each step: it never steps back.
+    TEST_ASSERT_EQUAL_INT(0, backs);
+    // At most four state changes and twenty steps up; a state change on a new step is one push for both.
+    TEST_ASSERT_LESS_OR_EQUAL(4 + 20, pushes.size());
     for (int k = 0; k <= 20; ++k)
         TEST_ASSERT_TRUE(std::any_of(pushes.begin(), pushes.end(),
                                      [&](const socket_message_GoalStatus &s) { return step(s.progress) == k; }));
@@ -994,6 +1059,7 @@ int main(int, char **) {
     RUN_TEST(test_a_turn_goal_turns_90_degrees_in_place);
     RUN_TEST(test_an_arc_goal_ends_on_its_arc);
     RUN_TEST(test_fast_and_slow_goals_reach_their_targets);
+    RUN_TEST(test_a_goal_in_the_crab_ends_in_one_pass);
     RUN_TEST(test_a_goal_of_a_centimetre_or_a_few_degrees_reaches_it);
     RUN_TEST(test_centred_commands_during_a_goal_change_nothing);
     RUN_TEST(test_an_off_centre_stick_cancels_the_goal_and_drives_the_walk);
@@ -1020,6 +1086,7 @@ int main(int, char **) {
     RUN_TEST(test_a_new_goal_replaces_the_one_in_progress);
     RUN_TEST(test_a_goal_strides_no_further_than_what_remains);
     RUN_TEST(test_the_slow_gaits_reach_their_goals_at_half_speed);
+    RUN_TEST(test_a_slow_gaits_turn_arrives_within_its_tolerance_without_crawling);
     RUN_TEST(test_every_gait_ends_an_arc_on_it);
     RUN_TEST(test_the_status_is_pushed_on_state_changes_and_every_5_percent);
     RUN_TEST(test_an_odometry_reset_is_refused_while_a_goal_runs);
